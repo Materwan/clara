@@ -180,8 +180,6 @@ def create_app(
         tool_timeout=settings.tool_timeout,
         first_token_timeout=settings.llm_first_token_timeout,
         idle_timeout=settings.llm_idle_timeout,
-        retries=settings.llm_retries,
-        retry_delay=settings.llm_retry_delay,
         reminders=reminders,
         notifier=notifier,
         long_turn_seconds=settings.notify_long_turn,

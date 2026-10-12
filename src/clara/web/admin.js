@@ -236,6 +236,32 @@ function models(box) {
     try { state.data = await api.patch("/v1/admin/catalog", body); drawAll(); } catch (error) { fail(error); drawAll(); }
   }
 
+  /** The ordered list of fallback models: the next one is asked when a model is busy or unreachable. */
+  async function setFallbacks(refs) {
+    try { state.data.fallbacks = (await api.put("/v1/admin/catalog/fallbacks", { models: refs })).fallbacks; } catch (error) { fail(error); }
+    drawAll();
+  }
+
+  function fallbackPanel(data) {
+    const refs = data.fallbacks || [];
+    const move = (index, by) => { const next = [...refs]; next.splice(index + by, 0, next.splice(index, 1)[0]); setFallbacks(next); };
+    const candidates = data.models.filter((m) => m.enabled && !refs.includes(m.ref));
+    const add = h("select", { "aria-label": "Add a fallback model" }, h("option", { value: "" }, "Add a model…"),
+      candidates.map((m) => h("option", { value: m.ref }, `${m.ref}, ${costText(m.weight)}`)));
+    add.addEventListener("change", () => add.value && setFallbacks([...refs, add.value]));
+    return h("div", { class: "stack" },
+      h("h4", {}, "Fallback models"),
+      h("p", { class: "muted small" }, "When the model of an answer is overloaded or unreachable (before it said anything), Clara asks the first model of this list, then the second if that one fails too, and so on. Credits are those of the model that answered. Only models selected below can be listed; with an empty list a failing model is not asked again."),
+      refs.length ? h("ol", { class: "stack", style: "margin: 0; padding-left: 1.4rem" }, refs.map((ref, index) => {
+        const m = data.models.find((model) => model.ref === ref);
+        return h("li", { class: "row wrap" }, h("strong", {}, ref), m && h("span", { class: "muted small" }, costText(m.weight)),
+          h("button", { class: "ghost sm", disabled: index === 0, "aria-label": `Move ${ref} up`, onclick: () => move(index, -1) }, "↑"),
+          h("button", { class: "ghost sm", disabled: index === refs.length - 1, "aria-label": `Move ${ref} down`, onclick: () => move(index, 1) }, "↓"),
+          h("button", { class: "ghost sm", "aria-label": `Remove ${ref}`, onclick: () => setFallbacks(refs.filter((other) => other !== ref)) }, "Remove"));
+      })) : h("p", { class: "muted small" }, "No fallback model."),
+      refs.length < 10 && candidates.length > 0 && add);
+  }
+
   const bulk = (enabled) => {
     const refs = shown().map((m) => m.ref);
     if (refs.length) change({ refs, enabled });
@@ -261,7 +287,8 @@ function models(box) {
         h("div", { class: "model-pick" },
           h("label", { class: "field" }, "Server default (for users who chose none)", h("input", { type: "text", readOnly: true, value: `${data.default}${defaultModel ? `, ${costText(defaultModel.weight)}` : ""}` }),
             h("span", { class: "hint" }, "Changed on the Server tab.")),
-          h("label", { class: "field" }, "Discord", discord, h("span", { class: "hint" }, "One model for everybody on Discord. It does not have to be selected below."))))));
+          h("label", { class: "field" }, "Discord", discord, h("span", { class: "hint" }, "One model for everybody on Discord. It does not have to be selected below."))),
+        fallbackPanel(data))));
     clear(problems).append(...Object.entries(data.problems).map(([id, why]) => h("p", { class: "notice warn small" }, `${data.providers.find((p) => p.id === id)?.label || id} did not answer: ${why}`)));
     const chosen = providerFilter.value;
     clear(providerFilter).append(h("option", { value: "" }, "All providers"),

@@ -39,8 +39,7 @@ def at(**delta) -> str:
 def build(memory, tmp_path, backend):
     clock = Clock()
     service = ScheduleService(memory, Notifier(memory, clock), clock)
-    # retries=0: a broken model fails at once instead of sleeping through the retry delays
-    service.agent = Agent(memory, backend, default_toolbox(), SystemPrompt(tmp_path / "none.md"), retries=0)
+    service.agent = Agent(memory, backend, default_toolbox(), SystemPrompt(tmp_path / "none.md"))
     person = memory.resolve("cli", "erwan", "Erwan")
     return service, clock, person
 

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from clara.agent import Agent, ChatRequest
 from clara.commands import CommandContext, registry
 from clara.limits import UsageLimits, credits_for
+from clara.llm import LlmChunk, LlmError
 from clara.models import Capabilities, ModelCatalog, auto_weight, parse_size, size_from_name
 from clara.prompt import SystemPrompt
 from clara.providers import ProviderError, ProviderManager, make_ref, split_ref
@@ -517,3 +518,96 @@ def test_users_and_administrators_are_told_what_each_model_can_do(described_http
     told = described_http.get("/v1/admin/models", headers=admin).json()
     assert told["capabilities"]["fake-big"]["context"] == 131072
     assert told["capabilities"]["other-model"] == {"thinking": None, "tools": None, "vision": None, "context": None}
+
+
+# --- the fallback models -----------------------------------------------------------------------------------
+
+
+class Failing(FakeBackend):
+    """Fails with `error` (before saying anything, or after a word when `after_text`) every time it is asked."""
+
+    def __init__(self, error, model="fake", after_text=False):
+        super().__init__(model=model)
+        self.error, self.after_text, self.attempts = error, after_text, 0
+
+    async def stream(self, messages, tools):
+        self.attempts += 1
+        if self.after_text:
+            yield LlmChunk(text="Hel")
+        raise self.error
+        yield  # pragma: no cover
+
+
+def busy():
+    return LlmError("high demand", 503)
+
+
+def test_the_fallbacks_are_an_ordered_list_of_models_users_may_choose(catalog):
+    assert catalog.fallbacks() == []
+    with pytest.raises(ProviderError, match="not a selected model"):
+        catalog.set_fallbacks(["cloud:fake"])
+    catalog.set_enabled(["cloud:fake", "cloud:other-model"], True)
+    catalog.set_fallbacks(["cloud:other-model", "cloud:fake", "cloud:other-model"])
+    assert catalog.fallbacks() == ["cloud:other-model", "cloud:fake"]
+    catalog.set_enabled(["cloud:other-model"], False)  # no longer selected: no longer asked
+    assert catalog.fallbacks() == ["cloud:fake"]
+
+
+def test_a_choice_carries_the_fallbacks_without_the_model_itself(memory, catalog):
+    person = memory.resolve("web", "erwan", "Erwan")
+    catalog.set_enabled(["local:fake", "cloud:fake", "cloud:other-model"], True)
+    catalog.set_fallbacks(["cloud:fake", "local:fake", "cloud:other-model"])
+    assert [option.ref for option in catalog.choose("web", person.id).fallbacks] == ["cloud:fake", "cloud:other-model"]
+
+
+def start_on(memory, catalog, ref):
+    """Make `ref` (not the server's own, which the manager built long ago) the model of the person."""
+    catalog.set_enabled([ref], True)
+    catalog.set_choice(memory.resolve("web", "erwan", "Erwan").id, "web", ref)
+
+
+async def test_the_next_model_answers_when_one_is_busy_and_its_weight_is_paid(memory, tmp_path, providers, catalog, farm):
+    limits = UsageLimits(memory)
+    agent = make_agent(memory, tmp_path, providers, catalog, limits)
+    person = memory.resolve("web", "erwan", "Erwan")
+    await catalog.listing()
+    farm.backends["local:fake-big"] = Failing(busy())
+    farm.backends["cloud:fake"] = Failing(LlmError("down", 502))
+    start_on(memory, catalog, "local:fake-big")
+    catalog.set_enabled(["cloud:fake", "local:other-model"], True)
+    catalog.set_fallbacks(["cloud:fake", "local:other-model"])
+    events = await run(agent)
+    assert [e["message"] for e in events if e["type"] == "retrying"] == [
+        "The model is busy, trying fake…", "The model is busy, trying other-model…",
+    ]
+    done = events[-1]
+    assert done["reply"] == "ok" and done["model_ref"] == "local:other-model"
+    assert done["weight"] == 8.75 and done["credits"] == 114 and limits.used(person.id) == 114
+    assert farm.backends["local:fake-big"].attempts == farm.backends["cloud:fake"].attempts == 1
+
+
+async def test_the_error_is_the_last_models_when_every_one_fails(memory, tmp_path, providers, catalog, farm):
+    agent = make_agent(memory, tmp_path, providers, catalog, UsageLimits(memory))
+    farm.backends["local:fake-big"] = Failing(busy())
+    farm.backends["cloud:fake"] = Failing(LlmError("last", 503))
+    start_on(memory, catalog, "local:fake-big")
+    catalog.set_enabled(["cloud:fake"], True)
+    catalog.set_fallbacks(["cloud:fake"])
+    with pytest.raises(LlmError, match="last"):
+        await run(agent)
+
+
+async def test_a_refusal_or_a_started_answer_does_not_fall_back(memory, tmp_path, providers, catalog, farm):
+    agent = make_agent(memory, tmp_path, providers, catalog)
+    farm.backends["cloud:fake"] = spare = Failing(busy())
+    start_on(memory, catalog, "local:fake-big")
+    catalog.set_enabled(["cloud:fake"], True)
+    catalog.set_fallbacks(["cloud:fake"])
+    primary = farm.backends["local:fake-big"] = Failing(LlmError("bad key", 401))
+    with pytest.raises(LlmError, match="bad key"):
+        await run(agent)
+    primary.error, primary.after_text = busy(), True  # the manager keeps the backend it built
+    with pytest.raises(LlmError, match="high demand"):
+        await run(agent)
+    assert primary.attempts == 2
+    assert spare.attempts == 0

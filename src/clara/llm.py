@@ -46,7 +46,8 @@ class LlmChunk:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0  # of the prompt tokens, those the provider read from its prompt cache (0: it does not say)
-    notice: str = ""  # not from the model: the agent says it is waiting to ask again (see agent._model)
+    notice: str = ""  # not from the model: the agent says it moves on to another model (see agent._model)
+    switched: str = ""  # with a notice: the `provider:model` that is asked now
 
 
 class LlmBackend(Protocol):

@@ -10,6 +10,9 @@ own provider and model, `/provider` and `/model`, stay the default).
   parameters weighs 1, one twice as big 2, one of 1 billion 0.125. The size comes from what the provider says
   (Ollama's list) or from the name (`gpt-oss:120b`); a model whose size is unknown (the Gemini, DeepSeek and
   Mistral APIs do not say) weighs 1. An administrator can set any weight by hand.
+* **The fallbacks.** An administrator orders a list of selected models. When the model a turn runs on is busy or
+  unreachable before it said anything, the next model of the list is asked, then the next (agent.py); the credits
+  are those of the model that answered.
 * **The choice.** Each person picks a model for each surface (web, app, cli, console), from the enabled ones.
   Without a valid choice they get the server's own model. Discord has no choice of its own: an administrator
   sets the model of the whole surface.
@@ -23,7 +26,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from .memory import Memory
 from .providers import ProviderError, ProviderManager, make_ref, split_ref
@@ -37,6 +40,8 @@ MAX_WEIGHT = 1_000.0
 CACHE_SECONDS = 60.0  # how long what the providers offered is kept
 DISCORD = "discord"
 DISCORD_OPTION = "models.discord"
+FALLBACKS_OPTION = "models.fallbacks"  # JSON list of refs
+MAX_FALLBACKS = 10
 
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmbt])\b", re.IGNORECASE)
 _UNITS = {"k": 1e-6, "m": 1e-3, "b": 1.0, "t": 1e3}
@@ -137,6 +142,7 @@ class Chosen:
     weight: float = 1.0
     window: int | None = None  # None: the agent's own
     api_key: str | None = field(default=None, repr=False)  # the person's own key for this provider (userkeys.py)
+    fallbacks: tuple[Chosen, ...] = ()  # asked in turn when this one is busy or unreachable
 
     @property
     def own_key(self) -> bool:
@@ -293,6 +299,30 @@ class ModelCatalog:
             raise ProviderError(f"A weight is between {MIN_WEIGHT:g} and {MAX_WEIGHT:g} credits per token.")
         self._upsert(self._checked(ref), weight=weight)
 
+    def fallbacks(self) -> list[str]:
+        """The models asked, in this order, when the one a turn runs on fails: those of the administrators' list
+        that are still selected and whose provider can be used."""
+        try:
+            stored = json.loads(self._memory.option(FALLBACKS_OPTION) or "[]")
+        except ValueError:
+            return []
+        if not isinstance(stored, list):
+            return []
+        return [ref for ref in stored if isinstance(ref, str) and self.is_usable(ref)]
+
+    def set_fallbacks(self, refs: list[str]) -> None:
+        """The ordered list of fallback models; only models users may choose, each at most once."""
+        checked: list[str] = []
+        for ref in refs:
+            ref = self._checked(ref)
+            if not self.is_usable(ref):
+                raise ProviderError(f"{ref} is not a selected model: select it first.")
+            if ref not in checked:
+                checked.append(ref)
+        if len(checked) > MAX_FALLBACKS:
+            raise ProviderError(f"At most {MAX_FALLBACKS} fallback models.")
+        self._memory.set_option(FALLBACKS_OPTION, json.dumps(checked))
+
     def discord_model(self) -> str | None:
         """The model of the Discord surface (None: the server's own)."""
         ref = self._memory.option(DISCORD_OPTION)
@@ -371,11 +401,20 @@ class ModelCatalog:
                 return chosen
         return self._providers.default_ref
 
-    def choose(self, surface: str, person_id: int | None) -> Chosen:
-        ref = self.effective_ref(surface, person_id)
+    def _chosen(self, ref: str, surface: str, person_id: int | None) -> Chosen:
         window = self._providers.window_of(ref)
         if surface != DISCORD and person_id is not None and self.user_keys is not None:  # Discord is shared: never
             key = self.user_keys.key_of(person_id, split_ref(ref)[0])
             if key:
                 return Chosen(ref, 0.0, window, key)
         return Chosen(ref, self.weight(ref), window)
+
+    def choose(self, surface: str, person_id: int | None) -> Chosen:
+        chosen = self._chosen(self.effective_ref(surface, person_id), surface, person_id)
+        if chosen.own_key:  # their key, their model: no other one is spent for them
+            return chosen
+        fallbacks = tuple(
+            option for option in (self._chosen(ref, surface, person_id) for ref in self.fallbacks())
+            if option.ref != chosen.ref and not (chosen.window and option.window and option.window < chosen.window)
+        )  # a model with a smaller window would not take the prompt that was fitted to this one
+        return replace(chosen, fallbacks=fallbacks)

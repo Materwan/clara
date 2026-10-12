@@ -13,6 +13,8 @@ person and surface, so the same on every computer where they log in.
                                         users may choose, the weights, the model of Discord
     PATCH  /v1/admin/catalog            {refs, enabled?, weight?, auto_weight?}: select or unselect models, set a
                                         weight (credits a token) or go back to the one worked out from the size
+    PUT    /v1/admin/catalog/fallbacks  {models}: the ordered list of selected models asked, one after the other,
+                                        when the model of a turn is busy or unreachable
     PUT    /v1/admin/catalog/discord    {model}: the model the Discord surface answers with (null: the server's own)
 """
 
@@ -25,7 +27,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from .auth import Admin, Client, require_account
-from .models import DISCORD, MAX_WEIGHT, MIN_WEIGHT, ModelCatalog, ModelInfo
+from .models import DISCORD, MAX_FALLBACKS, MAX_WEIGHT, MIN_WEIGHT, ModelCatalog, ModelInfo
 from .providers import ProviderError, make_ref
 
 log = logging.getLogger("clara")
@@ -49,6 +51,10 @@ class CatalogPatch(BaseModel):
     enabled: bool | None = None
     weight: float | None = Field(default=None, ge=MIN_WEIGHT, le=MAX_WEIGHT)
     auto_weight: bool = False  # back to the weight worked out from the size
+
+
+class Fallbacks(BaseModel):
+    models: list[str] = Field(max_length=MAX_FALLBACKS)
 
 
 class DiscordModel(BaseModel):
@@ -139,6 +145,7 @@ def _catalog_state(request: Request, found: list[ModelInfo]) -> dict:
         "problems": catalog.problems,
         "default": providers.default_ref,
         "discord": catalog.discord_model(),
+        "fallbacks": catalog.fallbacks(),
         "reference_b": catalog.reference,
         "providers": [{"id": c.id, "label": c.label, "usable": c.usable} for c in providers.configs.values()],
     }
@@ -167,6 +174,17 @@ async def admin_catalog_patch(body: CatalogPatch, admin: Admin, request: Request
         raise HTTPException(422, str(error)) from None
     log.info("%s edited the models: %s", admin, ", ".join(body.refs[:5]) + (" ..." if len(body.refs) > 5 else ""))
     return _catalog_state(request, await catalog.listing())
+
+
+@router.put("/v1/admin/catalog/fallbacks")
+async def admin_fallbacks(body: Fallbacks, admin: Admin, request: Request) -> dict:
+    catalog: ModelCatalog = request.app.state.models
+    try:
+        catalog.set_fallbacks(body.models)
+    except ProviderError as error:
+        raise HTTPException(422, str(error)) from None
+    log.info("%s set the fallback models to %s", admin, ", ".join(catalog.fallbacks()) or "none")
+    return {"fallbacks": catalog.fallbacks()}
 
 
 @router.put("/v1/admin/catalog/discord")

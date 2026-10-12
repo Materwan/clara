@@ -1087,15 +1087,18 @@ administrators (a *Restart needed* button in the navigation rail, on every page)
 
 The pages that say "then restart the server" (the Discord bot's token, `discord.py` missing) carry the button too.
 
-## Model overload and retries
+## Model overload and fallback models
 
-A model that is overloaded (HTTP 429, 500, 502, 503, 504, `Retry-After` honoured up to a minute) or that cannot be
-reached (connection refused or cut) is asked again, **only while it has said nothing yet**: once a piece of the answer
-was sent on, asking again would repeat it, so that failure ends the turn as before. The wait starts at
-`CLARA_LLM_RETRY_DELAY` seconds (2) and doubles, with a little jitter, for at most `CLARA_LLM_RETRIES` new tries (3;
-`0` never retries). The model's slot is free while waiting. Clients get `{"type": "retrying", "message": "The model is
-busy, trying again (1/3)…"}` events (the web site shows them as a notice; the other clients ignore them). A model that
-stays silent (`CLARA_LLM_FIRST_TOKEN_TIMEOUT`) and a refused key are not retried.
+On the admin **Models** tab, administrators order a list of fallback models (only models they selected for users;
+up to 10; `PUT /v1/admin/catalog/fallbacks`). A model that is overloaded (HTTP 429, 500, 502, 503, 504) or that cannot be
+reached (connection refused or cut) is replaced by the first model of the list, then the second if that one fails too,
+and so on, **only while the failing model has said nothing yet**: once a piece of the answer was sent on, asking again
+would repeat it, so that failure ends the turn. The same model is not asked twice, and a model with a smaller context
+window than the first one is skipped. The credits are those of the model that answered (the `done` event and the
+usage log name it). Clients get `{"type": "retrying", "message": "The model is busy, trying <model>…"}` events (the web
+site shows them as a notice; the other clients ignore them). A model that stays silent
+(`CLARA_LLM_FIRST_TOKEN_TIMEOUT`), a refused key and a person's own API key (their key is never swapped for the server's)
+do not fall back. With an empty list nothing is asked again.
 
 ## Simultaneous use
 

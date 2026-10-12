@@ -49,7 +49,7 @@ from .projects import Projects
 from .prompt import SystemPrompt
 from .qcm import SURFACES as QCM_SURFACES
 from .reminders import ReminderService
-from .retry import delay_before, retryable
+from .retry import retryable
 from .tasks import TaskService
 from .tools import (
     ABOUT_PERSON,
@@ -262,6 +262,7 @@ class _Tally:
     cached_tokens: int = 0
     credits: int = 0
     estimated: bool = False
+    used: Chosen | None = None  # the model that answered the last round, when it was a fallback
 
 
 @dataclass
@@ -295,8 +296,6 @@ class Agent:
         tool_timeout: float = 900.0,
         first_token_timeout: float = 300.0,
         idle_timeout: float = 120.0,
-        retries: int = 3,
-        retry_delay: float = 2.0,
         clock: Callable[[str | None], datetime] = now_in,
         reminders: ReminderService | None = None,
         notifier: Notifier | None = None,
@@ -344,8 +343,6 @@ class Agent:
         self.tool_timeout = tool_timeout
         self.first_token_timeout = first_token_timeout  # seconds before the model starts answering
         self.idle_timeout = idle_timeout  # seconds the model may pause once it has started
-        self.retries = retries  # times a busy or unreachable model is asked again, before it has said anything
-        self.retry_delay = retry_delay  # seconds before the first new try; doubled each time
         self._clock = clock
         self._context_window = context_window
         self.stats = AgentStats()
@@ -913,7 +910,7 @@ class Agent:
             # total: the whole turn, tools and waits included; generating: the model rounds alone (the speed's base)
             "timing": {"total": time.monotonic() - started, "generating": generating},
             "context": self._context_info(context_tokens, window),
-            **self._model_fields(chosen),  # the model may change between turns (/provider, a person's choice)
+            **self._model_fields(tally.used or chosen),  # the model may change between turns (/provider, a person's choice, a fallback)
             "credits": credits,  # what this turn cost: its tokens times the weight of the model
             "passed": declined,  # a "maybe" message Clara chose not to answer (reply is "")
             "quota": self.limits.quota(person.id).describe() if self.limits is not None else None,
@@ -927,11 +924,13 @@ class Agent:
         cost the person. `separate`: an earlier round wrote something, so this one's text starts a new paragraph."""
         model_failed = False
         begun = time.monotonic()
+        used = chosen
         try:
             # aclosing: if the client goes away at a yield, the model task stops now
-            async with contextlib.aclosing(self._model(messages, tools, chosen.ref, chosen.api_key)) as model:
+            async with contextlib.aclosing(self._model(messages, tools, chosen)) as model:
                 async for chunk in model:
-                    if chunk.notice:  # the model is busy and is asked again: say so
+                    if chunk.notice:  # the model is busy and the next one is asked: say so
+                        used = next((option for option in chosen.fallbacks if option.ref == chunk.switched), used)
                         yield {"type": "retrying", "message": chunk.notice}
                         continue
                     current.prompt_tokens += chunk.prompt_tokens
@@ -956,7 +955,8 @@ class Agent:
             current.seconds = time.monotonic() - begun
             if not model_failed:
                 prompt, completion, estimated = self._round_tokens(current, messages, tools)
-                current.credits = 0 if chosen.own_key else self._count_usage(person, prompt + completion, chosen.weight)
+                current.credits = 0 if used.own_key else self._count_usage(person, prompt + completion, used.weight)
+                tally.used = used if used is not chosen else None
                 tally.rounds += 1
                 tally.prompt_tokens += prompt
                 tally.completion_tokens += completion
@@ -1059,6 +1059,7 @@ class Agent:
         """Keep what an answer (or a compaction, a title) used in the usage log, if there is one."""
         if self.usage_log is None or not tally.rounds:
             return
+        chosen = tally.used or chosen
         fields = self._model_fields(chosen)
         self.usage_log.record(
             person_id, kind, surface, conversation, fields.get("model_ref", ""), fields["model"], fields["provider"],
@@ -1073,7 +1074,7 @@ class Agent:
         to the person who wrote in the conversation (nobody, when several did). Not counted against any limit."""
         parts: list[str] = []
         tally = _Tally()
-        async with contextlib.aclosing(self._model(messages, None, chosen.ref, chosen.api_key)) as model:
+        async with contextlib.aclosing(self._model(messages, None, chosen)) as model:
             async for chunk in model:
                 parts.append(chunk.text)
                 tally.prompt_tokens += chunk.prompt_tokens
@@ -1130,25 +1131,24 @@ class Agent:
             "observed": True,
         }
 
-    async def _model(
-        self, messages: list[dict], tools: list[dict] | None, ref: str | None = None, api_key: str | None = None
-    ) -> AsyncIterator[LlmChunk]:
-        """One model round (of the model `ref`, `provider:model`; by default the backend's own; `api_key`: the
-        person's own key for its provider). A task reads
+    async def _model(self, messages: list[dict], tools: list[dict] | None, chosen: Chosen) -> AsyncIterator[LlmChunk]:
+        """One model round, on the model `chosen` (by default the backend's own; its `api_key` is the person's own
+        key for its provider). If it is busy or cannot be reached before it said anything, the next of
+        `chosen.fallbacks` is asked, and so on; the chunk that tells it names the model asked now. A task reads
         the model and holds a slot while it works, and passes the chunks on through a queue: a client that
         reads slowly (or not at all) cannot keep a slot busy, and a model that hangs times out."""
         queue: asyncio.Queue = asyncio.Queue()
+        options = [chosen, *chosen.fallbacks]
 
         async def produce() -> None:
-            attempt = 0
-            while True:
+            for index, option in enumerate(options):
                 started = False
                 try:
-                    async with self._llm_slots:  # released while waiting to ask again
+                    async with self._llm_slots:  # released while moving on to the next model
                         stream = (
                             self.backend.stream(messages, tools)
-                            if ref is None
-                            else self.backend.stream_ref(ref, messages, tools, api_key)
+                            if option.ref is None
+                            else self.backend.stream_ref(option.ref, messages, tools, option.api_key)
                         )
                         async for chunk in with_idle_timeout(stream, self.first_token_timeout, self.idle_timeout):
                             started = True
@@ -1156,16 +1156,14 @@ class Agent:
                     queue.put_nowait(_END)
                     return
                 except Exception as error:
-                    wait = None
-                    if not started and attempt < self.retries and retryable(error):
-                        wait = delay_before(error, attempt, self.retry_delay)
-                    if wait is None:
+                    if started or index + 1 == len(options) or not retryable(error):
                         queue.put_nowait(error)
                         return
-                    attempt += 1
-                    log.warning("the model failed (%s), asking again in %.1f s (%d/%d)", error, wait, attempt, self.retries)
-                    queue.put_nowait(LlmChunk(notice=f"The model is busy, trying again ({attempt}/{self.retries})…"))
-                    await asyncio.sleep(wait)
+                    following = options[index + 1]
+                    log.warning("the model %s failed (%s), asking %s", option.ref, error, following.ref)
+                    queue.put_nowait(LlmChunk(
+                        notice=f"The model is busy, trying {following.ref.partition(':')[2]}…", switched=following.ref
+                    ))
 
         producer = asyncio.ensure_future(produce())
         try:
