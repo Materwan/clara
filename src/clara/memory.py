@@ -449,6 +449,10 @@ _ADDED_COLUMNS = {
         "tool_calls": "TEXT",
         "tool_name": "TEXT",
         "thinking": "TEXT",  # the model's reasoning before tool calls: some providers want it back (DeepSeek)
+        # The messages form a tree: a question edited or asked again is a sibling of the first one (same parent) and
+        # what followed the first goes to the side. Only the `active` path is the conversation (versions below).
+        "parent_id": "INTEGER",  # the message before it on its path (NULL: the first of the conversation)
+        "active": "INTEGER NOT NULL DEFAULT 1",  # on the path the conversation follows now
     },
     "tasks": {
         "parent_id": "INTEGER REFERENCES tasks (id) ON DELETE CASCADE",  # the task it is a sub task of (NULL: a main task)
@@ -677,11 +681,18 @@ class Memory:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.executescript(_SCHEMA)
+        unlinked = "parent_id" not in {row["name"] for row in self._db.execute("PRAGMA table_info(messages)")}
         for table, columns in _ADDED_COLUMNS.items():
             present = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
             for column, definition in columns.items():
                 if column not in present:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        if unlinked:  # messages from before the versions: one path, each message follows the one before
+            self._db.execute(
+                "UPDATE messages SET parent_id = (SELECT MAX(p.id) FROM messages p"
+                " WHERE p.conversation = messages.conversation AND p.id < messages.id)"
+            )
+        self._heal_versions()
         self._migrate_fact_keys()
         self._drop_admin_flag()
         for statement in _INDEXES_ON_ADDED_COLUMNS:
@@ -1428,12 +1439,12 @@ class Memory:
         next one, tool calls included), oldest first, ignoring messages up to `after_id`."""
         with self._lock:
             start = self._db.execute(
-                "SELECT id FROM messages WHERE conversation = ? AND role = 'user' AND id > ?"
+                "SELECT id FROM messages WHERE conversation = ? AND role = 'user' AND id > ? AND active = 1"
                 " ORDER BY id DESC LIMIT 1 OFFSET ?",
                 (conversation, after_id, max(turns, 1) - 1),
             ).fetchone()
             rows = self._db.execute(
-                self._MESSAGE_COLUMNS + " WHERE m.conversation = ? AND m.id >= ? ORDER BY m.id",
+                self._MESSAGE_COLUMNS + " WHERE m.conversation = ? AND m.id >= ? AND m.active = 1 ORDER BY m.id",
                 (conversation, start["id"] if start else after_id + 1),
             ).fetchall()
         return [self._stored(row) for row in rows]
@@ -1442,7 +1453,7 @@ class Memory:
         """How many turns (user messages) a conversation has after `after_id`."""
         with self._lock:
             return self._db.execute(
-                "SELECT COUNT(*) FROM messages WHERE conversation = ? AND role = 'user' AND id > ?",
+                "SELECT COUNT(*) FROM messages WHERE conversation = ? AND role = 'user' AND id > ? AND active = 1",
                 (conversation, after_id),
             ).fetchone()[0]
 
@@ -1450,7 +1461,7 @@ class Memory:
         """Every message of a conversation after `after_id`, oldest first."""
         with self._lock:
             rows = self._db.execute(
-                self._MESSAGE_COLUMNS + " WHERE m.conversation = ? AND m.id > ? ORDER BY m.id",
+                self._MESSAGE_COLUMNS + " WHERE m.conversation = ? AND m.id > ? AND m.active = 1 ORDER BY m.id",
                 (conversation, after_id),
             ).fetchall()
         return [self._stored(row) for row in rows]
@@ -1459,13 +1470,15 @@ class Memory:
         """How many messages (of every role) a conversation has after `after_id`."""
         with self._lock:
             return self._db.execute(
-                "SELECT COUNT(*) FROM messages WHERE conversation = ? AND id > ?", (conversation, after_id)
+                "SELECT COUNT(*) FROM messages WHERE conversation = ? AND id > ? AND active = 1",
+                (conversation, after_id),
             ).fetchone()[0]
 
     def first_exchange(self, conversation: str) -> tuple[str, str]:
         """The first question of a conversation still stored, and the first answer that has text ("": none)."""
         first = (
-            "SELECT content FROM messages WHERE conversation = ? AND role = ? AND content != '' ORDER BY id LIMIT 1"
+            "SELECT content FROM messages WHERE conversation = ? AND role = ? AND content != '' AND active = 1"
+            " ORDER BY id LIMIT 1"
         )
         with self._lock:
             question = self._db.execute(first, (conversation, "user")).fetchone()
@@ -1475,7 +1488,7 @@ class Memory:
     def last_message_id(self, conversation: str) -> int:
         with self._lock:
             row = self._db.execute(
-                "SELECT MAX(id) FROM messages WHERE conversation = ?", (conversation,)
+                "SELECT MAX(id) FROM messages WHERE conversation = ? AND active = 1", (conversation,)
             ).fetchone()
         return row[0] or 0
 
@@ -1487,9 +1500,10 @@ class Memory:
         rows: list[TurnRow],
         prefix: str = "",
         project_id: int | None = None,
-    ) -> None:
-        """Store a question and everything that followed it (calls, results, answer), or nothing. A new
-        conversation is put in `project_id`; one that exists stays where it is."""
+    ) -> int:
+        """Store a question and everything that followed it (calls, results, answer), or nothing, after the
+        path the conversation follows. A new conversation is put in `project_id`; one that exists stays where it
+        is. Returns the id of the question."""
         now = _now()
         with self._lock, self._db:
             self._db.execute(
@@ -1497,15 +1511,18 @@ class Memory:
                 " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (conversation) DO UPDATE SET updated_at = excluded.updated_at",
                 (conversation, person_id, conversation.partition(":")[0], now, now, project_id),
             )
-            self._db.execute(
-                "INSERT INTO messages (conversation, person_id, role, content, created_at, prefix)"
-                " VALUES (?, ?, 'user', ?, ?, ?)",
-                (conversation, person_id, question, now, prefix),
-            )
-            self._db.executemany(
-                "INSERT INTO messages (conversation, person_id, role, content, created_at,"
-                " tool_calls, tool_name, thinking) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)",
-                [
+            parent = self._db.execute(
+                "SELECT MAX(id) FROM messages WHERE conversation = ? AND active = 1", (conversation,)
+            ).fetchone()[0]
+            question_id = parent = self._db.execute(
+                "INSERT INTO messages (conversation, person_id, role, content, created_at, prefix, parent_id)"
+                " VALUES (?, ?, 'user', ?, ?, ?, ?)",
+                (conversation, person_id, question, now, prefix, parent),
+            ).lastrowid
+            for row in rows:
+                parent = self._db.execute(
+                    "INSERT INTO messages (conversation, person_id, role, content, created_at,"
+                    " tool_calls, tool_name, thinking, parent_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         conversation,
                         row.role,
@@ -1514,10 +1531,121 @@ class Memory:
                         json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
                         row.tool_name,
                         row.thinking or None,
+                        parent,
+                    ),
+                ).lastrowid
+        return question_id
+
+    # ------------------------------------------------------------------
+    # Versions of a question: asked again, or edited
+    # ------------------------------------------------------------------
+    def question(self, conversation: str, message_id: int) -> StoredMessage | None:
+        """A question on the path the conversation follows (None: there is no such one)."""
+        with self._lock:
+            row = self._db.execute(
+                self._MESSAGE_COLUMNS + " WHERE m.conversation = ? AND m.id = ? AND m.active = 1 AND m.role = 'user'",
+                (conversation, message_id),
+            ).fetchone()
+        return self._stored(row) if row else None
+
+    def tools_after(self, conversation: str, message_id: int) -> list[str]:
+        """The tools the path ran from this message on, in order."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT tool_name FROM messages WHERE conversation = ? AND active = 1 AND id >= ? AND role = 'tool'"
+                " ORDER BY id",
+                (conversation, message_id),
+            ).fetchall()
+        return [row[0] for row in rows if row[0]]
+
+    def detach_from(self, conversation: str, message_id: int) -> list[int]:
+        """Take this message and everything after it off the path (they stay, as a version): returns their ids,
+        for `reattach`."""
+        with self._lock, self._db:
+            ids = [
+                row[0]
+                for row in self._db.execute(
+                    "SELECT id FROM messages WHERE conversation = ? AND active = 1 AND id >= ? ORDER BY id",
+                    (conversation, message_id),
+                )
+            ]
+            self._db.executemany("UPDATE messages SET active = 0 WHERE id = ?", [(i,) for i in ids])
+        return ids
+
+    def reattach(self, ids: list[int]) -> None:
+        """Put back on the path what `detach_from` took off (the new version was not stored)."""
+        with self._lock, self._db:
+            self._db.executemany("UPDATE messages SET active = 1 WHERE id = ?", [(i,) for i in ids])
+
+    def versions_of(self, conversation: str, message_ids: list[int]) -> dict[int, list[int]]:
+        """For each question, the ids of all its versions (itself included, oldest first); only the questions
+        that have more than one are given."""
+        found: dict[int, list[int]] = {}
+        with self._lock:
+            for message_id in message_ids:
+                siblings = [
+                    row[0]
+                    for row in self._db.execute(
+                        "SELECT s.id FROM messages m JOIN messages s ON s.conversation = m.conversation"
+                        " AND s.parent_id IS m.parent_id AND s.role = 'user' WHERE m.id = ? AND m.conversation = ?"
+                        " ORDER BY s.id",
+                        (message_id, conversation),
                     )
-                    for row in rows
-                ],
-            )
+                ]
+                if len(siblings) > 1:
+                    found[message_id] = siblings
+        return found
+
+    def switch_version(self, conversation: str, message_id: int, upto_id: int) -> None:
+        """Make another version of a question the one the conversation follows, with what followed it then
+        (ValueError when it cannot: not a version of a question here, or a summary stands for the messages)."""
+        with self._lock, self._db:
+            target = self._db.execute(
+                "SELECT id, parent_id FROM messages WHERE id = ? AND conversation = ? AND role = 'user'",
+                (message_id, conversation),
+            ).fetchone()
+            if target is None:
+                raise ValueError("No such message in this conversation.")
+            current = self._db.execute(
+                "SELECT id FROM messages WHERE conversation = ? AND parent_id IS ? AND role = 'user' AND active = 1",
+                (conversation, target["parent_id"]),
+            ).fetchone()
+            if current is not None and current["id"] == message_id:
+                return
+            if min(message_id, current["id"] if current else message_id) <= upto_id:
+                raise ValueError("This part of the conversation was summarised: it cannot go another way.")
+            if current is not None:
+                self._db.execute(
+                    "UPDATE messages SET active = 0 WHERE conversation = ? AND active = 1 AND id >= ?",
+                    (conversation, current["id"]),
+                )
+            self._activate_from(conversation, message_id)
+
+    def _activate_from(self, conversation: str, message_id: int) -> None:
+        """Put a message and, below it, the newest message at each step, on the path."""
+        node: int | None = message_id
+        while node is not None:
+            self._db.execute("UPDATE messages SET active = 1 WHERE id = ?", (node,))
+            child = self._db.execute(
+                "SELECT MAX(id) FROM messages WHERE conversation = ? AND parent_id = ?", (conversation, node)
+            ).fetchone()
+            node = child[0]
+
+    def _heal_versions(self) -> None:
+        """A server that stopped while a question was being asked again left the old version off the path and the
+        new one not stored: bring the newest version of that question back (nothing runs when this is called)."""
+        rows = self._db.execute(
+            "SELECT DISTINCT m.conversation, m.parent_id FROM messages m WHERE m.active = 0 AND m.role = 'user'"
+            " AND NOT EXISTS (SELECT 1 FROM messages a WHERE a.conversation = m.conversation AND a.active = 1"
+            " AND a.parent_id IS m.parent_id)"
+            " AND (m.parent_id IS NULL OR EXISTS (SELECT 1 FROM messages p WHERE p.id = m.parent_id AND p.active = 1))"
+        ).fetchall()
+        for conversation, parent in rows:
+            newest = self._db.execute(
+                "SELECT MAX(id) FROM messages WHERE conversation = ? AND parent_id IS ? AND role = 'user'",
+                (conversation, parent),
+            ).fetchone()[0]
+            self._activate_from(conversation, newest)
 
     def add_exchange(self, conversation: str, person_id: int, question: str, answer: str) -> None:
         """Store a question and its plain answer."""
@@ -1539,7 +1667,7 @@ class Memory:
     _CONVERSATION_COLUMNS = (
         "SELECT c.conversation, c.person_id, c.surface, c.title, c.titled_by, c.pinned, c.created_at,"
         " c.updated_at, c.project_id, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation = c.conversation"
-        " AND m.role = 'user' ORDER BY m.id LIMIT 1) AS preview FROM conversations c"
+        " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview FROM conversations c"
     )
 
     @staticmethod
@@ -1640,7 +1768,7 @@ class Memory:
         with self._lock:
             rows = self._db.execute(
                 "SELECT id, role, content, created_at, tool_calls FROM messages WHERE conversation = ?"
-                f" AND role IN ('user', 'assistant') AND (content != ''{keep}) ORDER BY id DESC LIMIT ?",
+                f" AND active = 1 AND role IN ('user', 'assistant') AND (content != ''{keep}) ORDER BY id DESC LIMIT ?",
                 (conversation, limit + 1),
             ).fetchall()
         shown = []
@@ -1659,7 +1787,7 @@ class Memory:
             return []
         with self._lock:
             rows = self._db.execute(
-                "SELECT role, content FROM messages WHERE id > ? AND conversation ="
+                "SELECT role, content FROM messages WHERE id > ? AND active = 1 AND conversation ="
                 " (SELECT conversation FROM messages WHERE id = ?) ORDER BY id LIMIT ?",
                 (message_id, message_id, len(stored)),
             ).fetchall()

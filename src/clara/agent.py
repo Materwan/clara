@@ -49,7 +49,7 @@ from .projects import Projects
 from .prompt import SystemPrompt
 from .qcm import SURFACES as QCM_SURFACES
 from .reminders import ReminderService
-from .retry import retryable
+from .retry import moves_on
 from .tasks import TaskService
 from .tools import (
     ABOUT_PERSON,
@@ -218,6 +218,10 @@ class ChatRequest:
     project: int | None = None  # the project the conversation is in (its files are in the prompt, or read by tools)
     images: tuple[Image, ...] = ()  # pictures of this message, for a model that reads them (attachments.py)
     files: tuple[Attached, ...] = ()  # the files the message carries, as they were sent: kept with the conversation
+    # The question asked again or edited (its id): the turn is a new version of it, and the old one and what followed
+    # it are set aside (memory.py, "versions")
+    fork_of: int | None = None
+    model: str | None = None  # `provider:model` for this turn alone, instead of the person's choice
 
     @property
     def conversation_id(self) -> str:
@@ -368,6 +372,35 @@ class Agent:
         if lock is None:
             lock = self._locks[conversation] = asyncio.Lock()
         return lock
+
+    def answering(self, conversation: str) -> bool:
+        """Is a turn running in this conversation?"""
+        lock = self._locks.get(conversation)
+        return lock is not None and lock.locked()
+
+    @contextlib.asynccontextmanager
+    async def _versioning_lock(
+        self, request: ChatRequest, conversation: str, detached: list[int]
+    ) -> AsyncIterator[list[str]]:
+        """The conversation's lock. For a question asked again (`request.fork_of`), the old version and what followed
+        it are taken off the path inside it, so that the model sees the conversation as it was before the question;
+        they are put back if the turn ends without storing the new version (the caller empties `detached` when it
+        did). Gives the names of the tools the old version ran that may have changed something."""
+        async with self._conversation_lock(conversation):
+            discarded: list[str] = []
+            if request.fork_of is not None:
+                state = self.memory.state(conversation)
+                question = self.memory.question(conversation, request.fork_of)
+                if question is None or question.id <= state.upto_id:
+                    raise ValueError("That message is no longer there to ask again.")
+                ran = self.memory.tools_after(conversation, question.id)
+                discarded = sorted({name for name in ran if not self.toolbox.parallel(name)})
+                detached.extend(self.memory.detach_from(conversation, question.id))
+            try:
+                yield discarded
+            finally:
+                if detached:
+                    self.memory.reattach(detached)
 
     @property
     def window(self) -> int:
@@ -605,11 +638,12 @@ class Agent:
     # ------------------------------------------------------------------
     # The model of a turn
     # ------------------------------------------------------------------
-    def choose(self, surface: str, person_id: int | None) -> Chosen:
-        """The model a person is answered by on a surface, what a token of it costs and its window."""
+    def choose(self, surface: str, person_id: int | None, ref: str | None = None) -> Chosen:
+        """The model a person is answered by on a surface (or `ref`, for one turn), what a token of it costs and
+        its window."""
         if self.models is None:
             return Chosen(None)
-        return self.models.choose(surface, person_id)
+        return self.models.choose(surface, person_id, ref)
 
     def _chosen_for(self, conversation: str) -> Chosen:
         """The model of a conversation's owner on its surface (the server's own when it has several people)."""
@@ -707,7 +741,7 @@ class Agent:
     async def _turn(self, request: ChatRequest, owner: str) -> AsyncIterator[dict]:
         self.validate(request)
         known = self.memory.find_person(request.surface, request.user_id)
-        chosen = self.choose(request.surface, known.id if known else None)
+        chosen = self.choose(request.surface, known.id if known else None, request.model)
         window = chosen.window or self.window
         new_tokens = estimate_tokens(request.message) + estimate_tokens(request.prefix) + IMAGE_TOKENS * len(request.images)
         if new_tokens > MAX_MESSAGE_SHARE * window:
@@ -760,8 +794,11 @@ class Agent:
         turn_id = uuid.uuid4().hex
         yield {"type": "turn", "id": turn_id}
 
-        lock = contextlib.nullcontext() if ephemeral else self._conversation_lock(conversation)
-        async with lock:
+        detached: list[int] = []  # the version this turn replaces, off the path until the new one is stored
+        lock = contextlib.nullcontext() if ephemeral else self._versioning_lock(request, conversation, detached)
+        async with lock as discarded:
+            if discarded:  # tools the replaced version ran: what they changed stays changed
+                yield {"type": "discarded", "tools": discarded}
             state = ConversationState() if ephemeral else self.memory.state(conversation)
             if not ephemeral and self._history_overflows(conversation, state):
                 # Older turns would fall out of the prompt without ever being summarised: summarise
@@ -876,17 +913,21 @@ class Agent:
                 )
                 if not finished and not ephemeral and request.mode == "answer":
                     # What was done stays known: the files a client tool changed are changed for good
-                    self._keep_interrupted(request, person, rows, current.text if round_open else "", reason)
+                    if self._keep_interrupted(request, person, rows, current.text if round_open else "", reason):
+                        detached.clear()  # the interrupted version is the new one
 
             if news and self.integrations is not None:
                 self.integrations.told(news)
             reply = "".join(reply_parts).strip()
             declined = request.mode == "maybe" and passed(reply)
+            question_id = None
             if declined:  # nothing to add: the message is kept as context, without the model's work
                 reply, rows = "", []
-                self.memory.add_turn(conversation, person.id, request.message, [], request.prefix, request.project)
+                question_id = self.memory.add_turn(conversation, person.id, request.message, [], request.prefix, request.project)
+                detached.clear()
             elif not ephemeral and (reply or rows):  # an empty answer would only pollute the history
-                self.memory.add_turn(conversation, person.id, request.message, rows, request.prefix, request.project)
+                question_id = self.memory.add_turn(conversation, person.id, request.message, rows, request.prefix, request.project)
+                detached.clear()
                 self.memory.set_context_tokens(conversation, context_tokens)
                 over_window = bool(self.compact_percent) and 100 * context_tokens / window >= self.compact_percent
                 over_tokens = bool(self.compact_tokens) and context_tokens - fixed_tokens >= self.compact_tokens
@@ -907,6 +948,8 @@ class Agent:
             "tools": tools_used,
             "files": made,  # the markdown files Clara wrote, for a client that posts them (Discord)
             "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            "message_id": question_id,  # the stored question (None: nothing stored): what asks it again is given this
+            "versions": self._versions(conversation, question_id),
             # total: the whole turn, tools and waits included; generating: the model rounds alone (the speed's base)
             "timing": {"total": time.monotonic() - started, "generating": generating},
             "context": self._context_info(context_tokens, window),
@@ -915,6 +958,12 @@ class Agent:
             "passed": declined,  # a "maybe" message Clara chose not to answer (reply is "")
             "quota": self.limits.quota(person.id).describe() if self.limits is not None else None,
         }
+
+    def _versions(self, conversation: str, question_id: int | None) -> list[int]:
+        """The ids of every version of a stored question (just itself when it has one)."""
+        if question_id is None:
+            return []
+        return self.memory.versions_of(conversation, [question_id]).get(question_id, [question_id])
 
     async def _model_round(
         self, current: _Round, messages: list[dict], tools: list[dict] | None, chosen: Chosen, person: Person,
@@ -1092,12 +1141,12 @@ class Agent:
 
     def _keep_interrupted(
         self, request: ChatRequest, person: Person, rows: list[TurnRow], partial: str, reason: str
-    ) -> None:
+    ) -> bool:
         """Store a turn that did not finish (the client went away, the model failed...): the question, what
         was done (tool calls left without a result get a note) and what was written, then why it stopped.
-        Nothing is stored when nothing happened."""
+        Nothing is stored when nothing happened (False)."""
         if not rows and not partial.strip():
-            return
+            return False
         rows = list(rows)
         last = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].role == "assistant"), None)
         if last is not None and rows[last].tool_calls:
@@ -1112,6 +1161,8 @@ class Agent:
             )
         except Exception:
             log.exception("could not store the interrupted turn of %s", request.conversation_id)
+            return False
+        return True
 
     async def _observe(self, request: ChatRequest, person: Person, chosen: Chosen) -> AsyncIterator[dict]:
         """A message that was not for Clara: stored in the conversation, so that she knows what was said."""
@@ -1156,7 +1207,7 @@ class Agent:
                     queue.put_nowait(_END)
                     return
                 except Exception as error:
-                    if started or index + 1 == len(options) or not retryable(error):
+                    if started or index + 1 == len(options) or not moves_on(error, fallback=index > 0):
                         queue.put_nowait(error)
                         return
                     following = options[index + 1]

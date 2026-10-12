@@ -3,7 +3,11 @@
     GET    /v1/conversations            the conversations an account's person started on its surface (the web
                                         site and the app share theirs, auth.SHARED_SURFACES)
                                         (?project=<id>: those of a project; ?project=none: those in none)
-    GET    /v1/conversations/{id}/messages   its questions and answers (?calls=true: with the tools called)
+    GET    /v1/conversations/{id}/messages   its questions and answers (?calls=true: with the tools called); a
+                                        question asked again has `versions` (the ids of all of them) and `version` (its
+                                        place); `forkable` says the question can be edited or asked again
+    POST   /v1/conversations/{id}/version  {surface, user_id, message}: go to another version of a question, with
+                                        what followed it
     PATCH  /v1/conversations/{id}       {title?, pinned?, project?}
     POST   /v1/conversations/{id}/title Clara writes a title for it
     GET    /v1/conversations/{id}       context size and summary
@@ -32,6 +36,10 @@ class ConversationBody(AccountBody):
     title: str | None = Field(default=None, max_length=MAX_TITLE_LENGTH)  # "": no title
     pinned: bool | None = None
     project: int | None = Field(default=None, ge=1)  # given as null: out of its project
+
+
+class VersionBody(AccountBody):
+    message: int = Field(ge=1)  # the id of the version of a question to go to
 
 
 class CompactBody(BaseModel):
@@ -108,6 +116,7 @@ async def conversation_messages(
     shown, more = memory.transcript(conversation, limit, forms=True, calls=calls)
     state = memory.state(conversation)
     first_kept = shown[0].id if shown else 0
+    versions = memory.versions_of(conversation, [m.id for m in shown if m.role == "user"])
     return {
         **describe_conversation(info),
         # the summary, when it stands for messages not given (deleted by CLARA_PURGE_SUMMARISED, or too old)
@@ -118,9 +127,25 @@ async def conversation_messages(
             # a QCM asked by this answer, with the answers the user gave it later (null: not answered)
             | ({"qcm": with_answers(list(m.forms), [n.content for n in shown[at + 1 :] if n.role == "user"])} if m.forms else {})
             | ({"calls": list(m.calls)} if m.calls else {})
+            | ({"forkable": m.id > state.upto_id} if m.role == "user" else {})
+            | ({"versions": versions[m.id], "version": versions[m.id].index(m.id) + 1} if m.id in versions else {})
             for at, m in enumerate(shown)
         ],
     }
+
+
+@router.post("/v1/conversations/{conversation:path}/version")
+async def conversation_version(conversation: str, body: VersionBody, client: Client, request: Request) -> dict:
+    own_conversation(request, client, body.surface, body.user_id, conversation)
+    memory: Memory = request.app.state.memory
+    refuse_when_stopping(request)
+    if request.app.state.agent.answering(conversation):
+        raise HTTPException(409, "Clara is answering in this conversation: wait for her to finish.")
+    try:
+        memory.switch_version(conversation, body.message, memory.state(conversation).upto_id)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+    return {"id": conversation}
 
 
 @router.patch("/v1/conversations/{conversation:path}")

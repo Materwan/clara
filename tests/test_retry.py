@@ -7,7 +7,7 @@ from conftest import FakeBackend
 from clara.agent import Agent, ChatRequest
 from clara.llm import LlmChunk, LlmError
 from clara.prompt import SystemPrompt
-from clara.retry import retryable
+from clara.retry import moves_on, retryable
 from clara.tools import default_toolbox
 
 
@@ -61,3 +61,9 @@ async def test_a_busy_model_with_no_fallback_fails_at_once(memory, tmp_path):
     with pytest.raises(LlmError, match="high demand"):
         await events_of(make_agent(memory, tmp_path, backend))
     assert backend.attempts == 1
+
+
+def test_the_next_model_is_asked_after_a_busy_or_gone_model_and_after_any_failure_of_a_fallback():
+    assert moves_on(LlmError("busy", 503), fallback=False) and moves_on(LlmError("gone", 404), fallback=False)
+    assert not moves_on(LlmError("bad key", 401), fallback=False) and not moves_on(LlmError("long", 400), fallback=False)
+    assert moves_on(LlmError("bad key", 401), fallback=True) and moves_on(ValueError("odd"), fallback=True)

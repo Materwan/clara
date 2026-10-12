@@ -7,7 +7,7 @@ import { DocumentError, MAX_TOTAL_CHARS, compose, imageNote, imagesOf, readAttac
 import { icon, mark, ring } from "./icons.js";
 import { labelOf, renderGroups } from "./history.js";
 import { connectionCount, openConnections } from "./integrations.js";
-import { anyModel, chooseModel, costText, loadModels, modelSelect } from "./models.js";
+import { anyModel, chooseModel, costText, loadModels, modelLabel, modelSelect, personalModels } from "./models.js";
 import { displayAnswers } from "./qcm.js";
 import { addCall, addFile, addForm, addText, endCall, fileNamesIn, messagesFrom, newReply, replyBody, toolNote } from "./reply.js";
 import { chooseProject, listProjects } from "./projects.js";
@@ -330,6 +330,17 @@ export function mountChat(container, user, { slot, fresh = false, project = null
     switchTo(id);
     state.live = null;
     remember();
+    if (!await loadMessages(id)) return;
+    state.context = null;
+    state.approvals = [];
+    renderAll();
+    refreshContext();
+    countConnections();
+    loadApprovals();
+  }
+
+  /** Read the messages of a conversation from the server into the state (false: it could not be read). */
+  async function loadMessages(id) {
     try {
       const body = await api.get(conversationPath(id) + "/messages", { ...who, calls: true });
       state.messages = messagesFrom(body.messages, await filesNamed(fileNamesIn(body.messages)));
@@ -342,15 +353,11 @@ export function mountChat(container, user, { slot, fresh = false, project = null
         state.messages = []; state.summary = ""; state.earlier = false; state.stamp = null;
         state.project = readDrafts()[id]?.project || null; // a conversation not started yet remembers its project
       } else {
-        return toast(error.detail || String(error), true);
+        toast(error.detail || String(error), true);
+        return false;
       }
     }
-    state.context = null;
-    state.approvals = [];
-    renderAll();
-    refreshContext();
-    countConnections();
-    loadApprovals();
+    return true;
   }
 
   async function refreshContext() {
@@ -409,14 +416,93 @@ export function mountChat(container, user, { slot, fresh = false, project = null
     }
   }
 
-  function messageNode(message) {
+  /** The small buttons under a message: a question's versions and Edit; Retry under the answer to a question. */
+  const actionButton = (glyph, label, onclick) =>
+    h("button", { type: "button", class: "ghost icon-btn sm", title: label, "aria-label": label, onclick }, icon(glyph, { size: 16 }));
+
+  function userActions(message) {
+    if (!message.id) return null;
+    const versions = message.versions?.length > 1 ? message.versions : null;
+    const go = (by) => switchVersion(versions[message.version - 1 + by]);
+    return h("div", { class: "msg-actions" },
+      versions && h("span", { class: "versions" },
+        h("button", { type: "button", class: "ghost sm", "aria-label": "Previous version", title: "Previous version", disabled: message.version === 1, onclick: () => go(-1) }, "‹"),
+        h("span", { "aria-live": "polite" }, `${message.version}/${versions.length}`),
+        h("button", { type: "button", class: "ghost sm", "aria-label": "Next version", title: "Next version", disabled: message.version === versions.length, onclick: () => go(1) }, "›")),
+      message.forkable !== false && actionButton("edit", "Edit and ask again", () => { message.editing = true; renderMessages(); }));
+  }
+
+  function replyActions(question) {
+    if (!question?.id || question.forkable === false) return null;
+    return h("div", { class: "msg-actions" },
+      actionButton("refresh", "Ask again", () => ask(question)),
+      actionButton("down", "Ask again with another model", (event) => retryMenu(event.currentTarget, question)));
+  }
+
+  /** The question asked again (not edited), with the model of the person or the one given. */
+  function ask(question, model) {
+    if (state.busy) return toast("Wait for Clara to finish, or stop the answer first.");
+    send(null, { question, model });
+  }
+
+  async function retryMenu(anchor, question) {
+    let info;
+    try { info = await loadModels(who); } catch (error) { return toast(error.detail || String(error), true); }
+    const models = [...info.models, ...personalModels(info)];
+    popupMenu(anchor, [
+      { label: "Same model as before", icon: "refresh", run: () => ask(question) },
+      models.length > 0 && "-",
+      ...models.map((model) => ({ label: `${modelLabel(model)}, ${costText(model.weight)}`, icon: "bot", run: () => ask(question, model.ref) })),
+    ]);
+  }
+
+  /** Go to another version of a question, with the answers that followed it. */
+  async function switchVersion(id) {
+    if (state.busy || !id) return;
+    const conversation = state.current;
+    await safely(async () => {
+      await api.post(conversationPath(conversation) + "/version", { ...who, message: id });
+      if (conversation !== state.current || !await loadMessages(conversation)) return;
+      renderMessages();
+      refreshContext();
+      await loadList();
+    });
+  }
+
+  function editBox(message) {
+    const box = h("textarea", { class: "edit-box", rows: 3, "aria-label": "Edit your message" });
+    box.value = message.content;
+    const grow = () => { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 320) + "px"; };
+    box.addEventListener("input", grow);
+    const stop = () => { message.editing = false; renderMessages(); };
+    const save = () => {
+      const text = box.value.trim();
+      if (!text || text === message.content.trim()) return stop();
+      message.editing = false;
+      send(null, { question: message, text });
+    };
+    box.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") stop();
+      else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); save(); }
+    });
+    setTimeout(() => { grow(); box.focus(); box.setSelectionRange(box.value.length, box.value.length); }, 0);
+    return h("div", { class: "edit" }, box,
+      h("div", { class: "row" }, h("button", { class: "ghost sm", onclick: stop }, "Cancel"), h("button", { class: "primary sm", onclick: save }, "Save and ask again")));
+  }
+
+  function messageNode(message, question) {
     if (message.role === "user") {
+      if (message.editing) return h("div", { class: "msg user editing" }, h("div", { class: "body" }, editBox(message)));
       const { text, names } = splitMessage(displayAnswers(message.content));
       return h("div", { class: "msg user" }, h("div", { class: "body" },
         text && h("div", { class: "bubble" }, text),
-        names.length > 0 && h("div", { class: "chips" }, names.map((name) => h("span", { class: "chip" }, icon("file", { size: 15 }), h("span", { class: "name" }, name))))));
+        names.length > 0 && h("div", { class: "chips" }, names.map((name) => h("span", { class: "chip" }, icon("file", { size: 15 }), h("span", { class: "name" }, name)))),
+        userActions(message)));
     }
-    return assistantNode(message);
+    const node = assistantNode(message);
+    const actions = message.live ? null : replyActions(question);
+    if (actions) node.lastElementChild.append(actions);
+    return node;
   }
 
   function renderMessages() {
@@ -430,7 +516,11 @@ export function mountChat(container, user, { slot, fresh = false, project = null
         h("h1", {}, `${greeting()}, ${displayName.charAt(0).toUpperCase()}${displayName.slice(1)}`),
         h("p", {}, projectName ? `A new chat in ${projectName}: Clara can use its files and instructions.` : "What would you like to talk about?")));
     }
-    for (const message of state.messages) messagesInner.append(messageNode(message));
+    let question = null;
+    for (const message of state.messages) {
+      if (message.role === "user") question = message;
+      messagesInner.append(messageNode(message, question));
+    }
     scrollDown(true);
   }
 
@@ -455,25 +545,33 @@ export function mountChat(container, user, { slot, fresh = false, project = null
     sendButton.title = busy ? "Stop the answer" : "Send";
     sendButton.disabled = !canSend();
     input.disabled = false;
+    messagesBox.classList.toggle("busy", busy); // the buttons under the messages wait for the answer to end
   }
 
-  /** Send what is in the box (with its documents), or, given a text, that text alone (the answers of a QCM). */
-  async function send(answers) {
+  /**
+   * Send what is in the box (with its documents), or, given a text, that text alone (the answers of a QCM). With `fork`
+   * (`{question, text?, model?}`), ask a question of the conversation again: as it was written, or edited (`text`);
+   * the old version and what followed it are kept by the server as another version (the arrows of the question).
+   */
+  async function send(answers, fork = null) {
     if (state.busy) { state.abort?.abort(); return; }
     const direct = typeof answers === "string";
-    const text = direct ? answers : input.value;
-    if (!direct && !text.trim() && !state.docs.length) return;
-    const attached = direct ? [] : state.docs;
-    const message = direct ? text : compose(text, attached);
+    const edited = fork?.text !== undefined;
+    const text = fork ? (fork.text ?? "") : direct ? answers : input.value;
+    if (!fork && !direct && !text.trim() && !state.docs.length) return;
+    const attached = direct || fork ? [] : state.docs;
+    const message = direct || fork ? text : compose(text, attached);
     const conversation = state.current;
-    if (!direct) {
+    if (fork) state.messages = state.messages.slice(0, state.messages.indexOf(fork.question)); // the server sets the rest aside
+    if (!direct && !fork) {
       input.value = "";
       autosize();
       state.docs = [];
       renderChips();
       saveDraft(); // nothing is left to keep
     }
-    state.messages.push({ role: "user", content: [imageNote(attached), message].filter(Boolean).join("\n\n") });
+    const question = { role: "user", content: fork && !edited ? fork.question.content : [imageNote(attached), message].filter(Boolean).join("\n\n") };
+    state.messages.push(question);
     const reply = newReply();
     reply.live = true; // what draws it shows the dots, the caret and the spinners
     state.messages.push(reply);
@@ -494,7 +592,8 @@ export function mountChat(container, user, { slot, fresh = false, project = null
     let finished = false;
     try {
       const request = {
-        ...who, user_name: displayName, message, conversation, instructions: INSTRUCTIONS,
+        ...who, user_name: displayName, message: fork && !edited ? "" : message, conversation, instructions: INSTRUCTIONS,
+        fork_of: fork?.question.id, model: fork?.model,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         project: state.project || undefined, // a new conversation goes in it; one that exists stays where it is
         attachments: imagesOf(attached), // the pictures: the server reads them with the message
@@ -519,12 +618,14 @@ export function mountChat(container, user, { slot, fresh = false, project = null
         } else if (event.type === "approval") {
           if (!state.approvals.some((a) => a.id === event.approval.id)) state.approvals.push(event.approval);
           if (conversation === state.current) drawApprovals();
-        } else if (event.type === "compacted") toast("Older messages were summarised to make room.");
+        } else if (event.type === "discarded") toast(`The earlier answer used ${event.tools.join(", ")}: what it changed is not undone.`);
+        else if (event.type === "compacted") toast("Older messages were summarised to make room.");
         else if (event.type === "warning" || event.type === "retrying") toast(event.message);
         else if (event.type === "error") { reply.failed = event.message; finished = true; }
         else if (event.type === "done") {
           if (event.reply && !reply.content) addText(reply, event.reply);
           reply.stats = { ...event.usage, ...event.timing };
+          if (event.message_id) Object.assign(question, { id: event.message_id, versions: event.versions, version: event.versions.indexOf(event.message_id) + 1, forkable: true });
           state.context = { ...state.context, ...event.context, messages: (state.context?.messages || 0) + 2 };
           finished = true;
         }
@@ -541,8 +642,14 @@ export function mountChat(container, user, { slot, fresh = false, project = null
     state.abort = null;
     setBusy(false);
     if (conversation === state.current) {
+      if (fork && (reply.failed || !finished)) {
+        // the server keeps the version that was there (or what the interrupted one wrote): show what it has
+        toast(reply.failed || "The answer was cut off.", true);
+        await loadMessages(conversation);
+      }
       renderMessages();
       renderMeter();
+      if (fork) refreshContext();
     }
     if (matchMedia("(hover: hover)").matches) input.focus(); // a phone would pop its keyboard back up
     await loadList();

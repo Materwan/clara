@@ -441,6 +441,16 @@ button.sm { padding: .32rem .65rem; font-size: .85rem; border-radius: var(--r-sm
   background: var(--accent-soft); color: var(--text); padding: .65rem 1rem; border-radius: var(--r-lg) var(--r-lg) var(--r-xs) var(--r-lg);
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+.msg-actions { display: flex; align-items: center; gap: .15rem; margin-top: .25rem; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s; }
+.msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
+@media (hover: none) { .msg-actions { opacity: 1; } }
+.msg-actions:empty { display: none; }
+.messages.busy .msg-actions { visibility: hidden; }
+.msg-actions .versions { display: inline-flex; align-items: center; gap: .1rem; }
+.msg-actions .versions .ghost { padding: 0 .35rem; min-height: 1.6rem; font-size: 1.1rem; line-height: 1; }
+.msg.user .edit { display: flex; flex-direction: column; gap: .5rem; width: min(560px, 80vw); }
+.msg.user .edit-box { width: 100%; resize: none; padding: .65rem 1rem; border-radius: var(--r-lg); font: inherit; border: 1px solid var(--accent); background: var(--surface, transparent); color: var(--text); }
+.msg.user .edit .row { justify-content: flex-end; }
 .msg.assistant { gap: .85rem; align-items: flex-start; }
 .msg.assistant .who { flex: none; width: 30px; height: 30px; margin-top: .1rem; }
 .msg.assistant .body { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 1.0625rem; line-height: 1.68; padding-top: .15rem; }

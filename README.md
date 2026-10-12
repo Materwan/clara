@@ -149,6 +149,7 @@ All routes except `/health` need `Authorization: Bearer <token>`.
 | `POST /v1/turns/{id}/tool-results` | `{results: [{id, content}]}`: a client's answer to a `tool_requests` event (see below) |
 | `GET /v1/conversations?surface=&user_id=&q=&limit=` | `{conversations: [{id, title, titled_by, pinned, created_at, updated_at, preview}]}`: the conversations the account's person started on that surface, pinned first, then the last written in; `q` keeps those whose title, messages or summary contain it (see *Conversation history*) |
 | `GET /v1/conversations/{id}/messages?surface=&user_id=&limit=&calls=` | the same fields, and `{messages: [{id, role, content, created_at}], summary, earlier}`: its last questions and answers (200), to show it again. With `calls=true` an answer also has `calls: [{name, arguments}]`, the tools it called (arguments cut to 300 characters), and one that only called tools is given with an empty `content` |
+| `POST /v1/conversations/{id}/version` | `{surface, user_id, message}`: go to another version of a question (see *Asking a question again*); 409 when Clara is answering there or a summary stands for it |
 | `PATCH /v1/conversations/{id}` | `{surface, user_id, title?, pinned?}`: rename (`""`: no title) and/or pin |
 | `POST /v1/conversations/{id}/title` | `{surface, user_id}` → `{id, title}`: Clara writes its title if it has none; 409 nothing to title yet, 502 the model failed |
 | `GET /v1/conversations/{id}` | `{tokens, window, percent, summary, messages}`: how full the context is |
@@ -1095,6 +1096,21 @@ the owner (a *Restart needed* button in the navigation rail, on every page) when
 
 The pages that say "then restart the server" (the Discord bot's token, `discord.py` missing) carry the button too.
 
+## Asking a question again
+
+On the web site, an answer has an *Ask again* button (and a menu to ask again with another model), and a question has an
+*Edit* button. Both send `POST /v1/chat/stream` with `fork_of` (the id of the question, from `GET .../messages`), and a
+`message` when the question is edited (without one, the question is asked as it was written); `model` (`provider:model`,
+one the person may choose) answers that turn alone with another model. The old question, its answer and everything
+that followed stay in the database as another **version** of the question (`parent_id`/`active` in `messages`: only
+the `active` path is the conversation, the one the model reads and the history shows). The messages of a question that
+has several versions carry `versions` (the ids of all of them) and `version` (its place), and
+`POST /v1/conversations/{id}/version` goes back to one, with what followed it then. If the new answer fails before
+anything was stored, the old version stays where it was. A `discarded` event names the tools the replaced answer ran
+that may have changed something (they are not undone). A question before a summary of the conversation (`forkable:
+false`) cannot be asked again, and its versions cannot be changed; pictures sent with a question are not kept, so
+they are not sent again.
+
 ## Model overload and fallback models
 
 On the admin **Models** tab, the owner orders a list of fallback models (only models they selected for users;
@@ -1104,9 +1120,11 @@ and so on, **only while the failing model has said nothing yet**: once a piece o
 would repeat it, so that failure ends the turn. The same model is not asked twice, and a model with a smaller context
 window than the first one is skipped. The credits are those of the model that answered (the `done` event and the
 usage log name it). Clients get `{"type": "retrying", "message": "The model is busy, trying <model>…"}` events (the web
-site shows them as a notice; the other clients ignore them). A model that stays silent
-(`CLARA_LLM_FIRST_TOKEN_TIMEOUT`), a refused key and a person's own API key (their key is never swapped for the server's)
-do not fall back. With an empty list nothing is asked again.
+site shows them as a notice; the other clients ignore them). A model of the list that fails for any reason (retired,
+takes no tools, refuses the prompt) is skipped for the next one; the first model falls back only when busy,
+unreachable or gone (404): a refused key or an over-long prompt end the turn, as does a model that stays silent
+(`CLARA_LLM_FIRST_TOKEN_TIMEOUT`) when it is the first. A person's own API key is never swapped for the server's, so it
+does not fall back. With an empty list nothing is asked again.
 
 ## Simultaneous use
 

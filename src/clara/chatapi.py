@@ -87,11 +87,18 @@ class ChatBody(Body):
     mode: Literal["answer", "observe", "maybe"] = "answer"
     # The project a new conversation is part of (one that exists stays in its own, see PATCH /v1/conversations)
     project: int | None = Field(default=None, ge=1)
+    # Ask a question again: the id of a question of the conversation (GET .../messages). With a `message`, that is the
+    # question edited; without, the same question. The old version stays, as another version of the question
+    # (POST .../version goes back to it). `model` (provider:model) answers this turn alone with that model.
+    fork_of: int | None = Field(default=None, ge=1)
+    model: str | None = Field(default=None, min_length=1, max_length=300)
 
     @model_validator(mode="after")
     def _says_something(self) -> ChatBody:
-        if not self.message.strip() and not self.attachments:
+        if not self.message.strip() and not self.attachments and self.fork_of is None:
             raise ValueError("Write a message, or attach a file.")
+        if self.fork_of is not None and (not self.conversation or self.ephemeral or self.mode != "answer" or self.tools):
+            raise ValueError("A question is asked again in its own conversation, as a plain answer.")
         return self
 
     def to_request(self, roster: tuple[Person, ...] = (), focus: tuple[Person, ...] = (), mode: str = "") -> ChatRequest:
@@ -100,7 +107,7 @@ class ChatBody(Body):
             conversation=self.conversation, tools=tuple(self.tools), instructions=self.instructions,
             prefix=self.prefix, ephemeral=self.ephemeral, timezone=self.timezone,
             quiet=self.quiet or self.mode != "answer", space=self.space, roster=roster, focus=focus,
-            mode=mode or self.mode,
+            mode=mode or self.mode, fork_of=self.fork_of, model=self.model,
         )
 
 
@@ -156,6 +163,42 @@ def prepared_message(body: ChatBody) -> Prepared:
         raise HTTPException(422, str(error)) from None
 
 
+def asker(request: Request, body: ChatBody) -> Person:
+    person = request.app.state.memory.find_person(body.surface, body.user_id)
+    if person is None:
+        raise HTTPException(404, "No such conversation of yours")
+    return person
+
+
+def same_question(request: Request, body: ChatBody, turn: ChatRequest) -> ChatRequest:
+    """The turn that asks a question again as it was written (its text and the context put before it)."""
+    memory: Memory = request.app.state.memory
+    question = memory.question(body.conversation or "", body.fork_of or 0)
+    if question is None or question.person_id != asker(request, body).id:
+        raise HTTPException(404, "No such message of yours in this conversation")
+    return dataclasses.replace(turn, message=question.content, prefix=turn.prefix or question.prefix)
+
+
+def check_fork(request: Request, body: ChatBody) -> None:
+    """A question may be asked again when it is the person's own, on the path of the conversation and after the
+    summary; a model may be chosen for the turn when the person may choose it."""
+    memory: Memory = request.app.state.memory
+    person = asker(request, body)
+    if body.fork_of is not None:
+        question = memory.question(body.conversation or "", body.fork_of)
+        if question is None or question.person_id != person.id:
+            raise HTTPException(404, "No such message of yours in this conversation")
+        if question.id <= memory.state(body.conversation or "").upto_id:
+            raise HTTPException(409, "That part of the conversation was summarised: it cannot be asked again.")
+    if body.model:
+        try:
+            usable = request.app.state.models.is_usable_by(body.model, person.id)
+        except Exception:
+            usable = False
+        if not usable:
+            raise HTTPException(422, f"{body.model} is not one of the models you may choose.")
+
+
 def checked(request: Request, client: str, body: ChatBody) -> ChatRequest:
     """The turn a chat request asks for, once everything in it was checked (else an HTTPException)."""
     refuse_when_stopping(request)
@@ -175,10 +218,15 @@ def checked(request: Request, client: str, body: ChatBody) -> ChatRequest:
     if mode == "maybe" and not request.app.state.memory.chime_allowed(body.space):
         mode = "observe"  # the owner did not let Clara answer what is not for her there
     turn = body.to_request(roster, focus, mode)
-    prepared = prepared_message(body)
-    turn = dataclasses.replace(
-        turn, message=prepared.message, images=prepared.images, files=attached_files(body)
-    )
+    if body.fork_of is not None and not body.message.strip() and not body.attachments:
+        turn = same_question(request, body, turn)
+    else:
+        prepared = prepared_message(body)
+        turn = dataclasses.replace(
+            turn, message=prepared.message, images=prepared.images, files=attached_files(body)
+        )
+    if body.fork_of is not None or body.model:
+        check_fork(request, body)
     project = None if body.ephemeral else conversation_project(request, body)
     if project is not None:
         turn = dataclasses.replace(turn, project=project)

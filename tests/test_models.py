@@ -597,6 +597,32 @@ async def test_the_error_is_the_last_models_when_every_one_fails(memory, tmp_pat
         await run(agent)
 
 
+async def test_a_fallback_that_fails_in_any_way_is_skipped_for_the_next_one(memory, tmp_path, providers, catalog, farm):
+    agent = make_agent(memory, tmp_path, providers, catalog)
+    await catalog.listing()
+    farm.backends["local:fake-big"] = Failing(LlmError("quota", 429))
+    farm.backends["cloud:fake"] = retired = Failing(LlmError("model retired", 404))
+    farm.backends["cloud:other-model"] = nothing = Failing(LlmError("no tools", 400))
+    start_on(memory, catalog, "local:fake-big")
+    catalog.set_enabled(["cloud:fake", "cloud:other-model", "local:other-model"], True)
+    catalog.set_fallbacks(["cloud:fake", "cloud:other-model", "local:other-model"])
+    done = (await run(agent))[-1]
+    assert done["model_ref"] == "local:other-model" and done["reply"] == "ok"
+    assert retired.attempts == nothing.attempts == 1
+
+
+async def test_the_first_model_falls_back_when_it_is_gone_but_not_for_a_bad_prompt(memory, tmp_path, providers, catalog, farm):
+    agent = make_agent(memory, tmp_path, providers, catalog)
+    primary = farm.backends["local:fake-big"] = Failing(LlmError("model retired", 404))
+    start_on(memory, catalog, "local:fake-big")
+    catalog.set_enabled(["cloud:fake"], True)
+    catalog.set_fallbacks(["cloud:fake"])
+    assert (await run(agent))[-1]["model_ref"] == "cloud:fake"
+    primary.error = LlmError("prompt too long", 400)
+    with pytest.raises(LlmError, match="too long"):
+        await run(agent)
+
+
 async def test_a_refusal_or_a_started_answer_does_not_fall_back(memory, tmp_path, providers, catalog, farm):
     agent = make_agent(memory, tmp_path, providers, catalog)
     farm.backends["cloud:fake"] = spare = Failing(busy())

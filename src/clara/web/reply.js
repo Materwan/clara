@@ -112,7 +112,8 @@ export function messagesFrom(rows, files = new Map()) {
   const messages = [];
   for (const row of rows) {
     if (row.role === "user") {
-      messages.push({ role: "user", content: row.content });
+      // id, versions (the ids of every version of the question), version (its place among them), forkable: see conversationapi.py
+      messages.push({ role: "user", content: row.content, id: row.id, versions: row.versions, version: row.version, forkable: row.forkable });
       continue;
     }
     let reply = messages[messages.length - 1];

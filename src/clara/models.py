@@ -409,8 +409,9 @@ class ModelCatalog:
                 return Chosen(ref, 0.0, window, key)
         return Chosen(ref, self.weight(ref), window)
 
-    def choose(self, surface: str, person_id: int | None) -> Chosen:
-        chosen = self._chosen(self.effective_ref(surface, person_id), surface, person_id)
+    def choose(self, surface: str, person_id: int | None, ref: str | None = None) -> Chosen:
+        """The model of a person on a surface, or `ref` for one turn (the caller checked they may use it)."""
+        chosen = self._chosen(ref or self.effective_ref(surface, person_id), surface, person_id)
         if chosen.own_key:  # their key, their model: no other one is spent for them
             return chosen
         fallbacks = tuple(
