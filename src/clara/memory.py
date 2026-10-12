@@ -7,6 +7,10 @@
     accounts(surface, external_id, person)  "discord:1234" and "cli:erwan" can be the same person
     facts(id, person, text, text_key)       what Clara knows about a person (shared by every surface);
                                             text_key is the text folded for comparison (no duplicates)
+    person_aliases(id, person, alias, alias_key)
+                                            the other names a person goes by (a nickname, a user name that is not
+                                            their Discord name): Clara knows who is meant, and can mention them;
+                                            alias_key is the alias folded, unique over all people
     messages(id, conversation, person, role, content)
                                             conversation history, one thread per conversation id
     reminders(id, person, text, due_at, ...)    what is still to be announced (see reminders.py)
@@ -49,6 +53,7 @@ import re
 import sqlite3
 import threading
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +62,9 @@ from .qcm import forms_in
 
 MAX_FACT_LENGTH = 300
 MAX_NAME_LENGTH = 80
+MAX_ALIAS_LENGTH = 32
+MAX_ALIAS_WORDS = 3  # the words of a name an "@Name" in an answer is searched for (discord_bot/mentions.py)
+MAX_ALIASES = 10  # per person
 MAX_TITLE_LENGTH = 100
 MAX_NOTIFY_AFTER = 7 * 86400  # seconds: the longest threshold a person can set
 RELATION_START = 50  # where a relationship starts when it first moves
@@ -84,6 +92,14 @@ CREATE TABLE IF NOT EXISTS facts (
     created_at TEXT NOT NULL,
     text_key   TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS person_aliases (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id  INTEGER NOT NULL REFERENCES people (id),
+    alias      TEXT NOT NULL,
+    alias_key  TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_person ON person_aliases (person_id);
 CREATE TABLE IF NOT EXISTS messages (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation TEXT NOT NULL,
@@ -493,6 +509,15 @@ class Person:
 
 
 @dataclass(frozen=True)
+class Member(Person):
+    """A person in a group space, as Clara is told about them: the other names they go by, and the text she writes
+    to mention them (what the client gave: `<@123>` on Discord; empty where a mention is just "@name")."""
+
+    mention: str = ""
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class PersonSummary:
     person: Person
     accounts: list[str]  # "surface:external_id"
@@ -525,6 +550,12 @@ class Footprint:
 
 @dataclass(frozen=True)
 class Fact:
+    id: int
+    text: str
+
+
+@dataclass(frozen=True)
+class Alias:
     id: int
     text: str
 
@@ -670,6 +701,12 @@ def fact_key(text: str) -> str:
     """A fact folded for comparison: "Élan " and "élan" are the same fact (SQLite's lower() only
     knows ASCII)."""
     return " ".join(unicodedata.normalize("NFKC", text or "").casefold().split())
+
+
+def alias_key(text: str) -> str:
+    """A name folded for comparison: no case, no accents, no leading @ ("@Élan" and "elan" are the same)."""
+    decomposed = unicodedata.normalize("NFKD", (text or "").strip().lstrip("@"))
+    return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).casefold().split())
 
 
 class Memory:
@@ -902,6 +939,7 @@ class Memory:
             self._db.execute("DELETE FROM reminders WHERE person_id = ?", (person_id,))
             self._db.execute("DELETE FROM reminder_events WHERE person_id = ?", (person_id,))
             self._db.execute("DELETE FROM facts WHERE person_id = ?", (person_id,))
+            self._db.execute("DELETE FROM person_aliases WHERE person_id = ?", (person_id,))
             self._db.execute(
                 "DELETE FROM account_logins WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.person_id = ?"
                 " AND a.surface = account_logins.surface AND a.external_id = account_logins.external_id)",
@@ -932,6 +970,7 @@ class Memory:
         )
         db.execute("UPDATE OR IGNORE facts SET person_id = ? WHERE person_id = ?", (target, source))
         db.execute("DELETE FROM facts WHERE person_id = ?", (source,))  # duplicates left behind
+        db.execute("UPDATE person_aliases SET person_id = ? WHERE person_id = ?", (target, source))  # keys are unique
         db.execute("UPDATE accounts SET person_id = ? WHERE person_id = ?", (target, source))
         db.execute("UPDATE messages SET person_id = ? WHERE person_id = ?", (target, source))
         db.execute("UPDATE reminders SET person_id = ? WHERE person_id = ?", (target, source))
@@ -1183,6 +1222,77 @@ class Memory:
         with self._lock, self._db:
             cursor = self._db.execute(
                 "DELETE FROM facts WHERE id = ? AND person_id = ?", (fact_id, person_id)
+            )
+            return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Aliases: the other names a person goes by
+    # ------------------------------------------------------------------
+    def aliases(self, person_id: int) -> list[Alias]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, alias FROM person_aliases WHERE person_id = ? ORDER BY id", (person_id,)
+            ).fetchall()
+        return [Alias(row["id"], row["alias"]) for row in rows]
+
+    def aliases_of(self, person_ids: Iterable[int]) -> dict[int, tuple[str, ...]]:
+        """The aliases of several people at once: person id -> aliases (people without any are left out)."""
+        wanted = sorted(set(person_ids))
+        if not wanted:
+            return {}
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT person_id, alias FROM person_aliases WHERE person_id IN (SELECT value FROM json_each(?))"
+                " ORDER BY id",
+                (json.dumps(wanted),),
+            ).fetchall()
+        found: dict[int, list[str]] = {}
+        for row in rows:
+            found.setdefault(row["person_id"], []).append(row["alias"])
+        return {person_id: tuple(names) for person_id, names in found.items()}
+
+    def add_alias(self, person_id: int, text: str) -> Alias | None:
+        """Give a person another name; None when they already have it (or it is their name).
+        Raises ValueError if it is invalid, another person goes by it, or the person has too many."""
+        alias = _one_line(text).lstrip("@").strip()
+        if not alias:
+            raise ValueError("An alias cannot be empty.")
+        if len(alias) > MAX_ALIAS_LENGTH:
+            raise ValueError(f"An alias is at most {MAX_ALIAS_LENGTH} characters long.")
+        if len(alias.split()) > MAX_ALIAS_WORDS:
+            raise ValueError(f"An alias is at most {MAX_ALIAS_WORDS} words long.")
+        if any(c in alias for c in "<>@") or any(unicodedata.category(c).startswith("C") for c in alias):
+            raise ValueError("An alias cannot hold <, > or @, nor control characters.")
+        key = alias_key(alias)
+        with self._lock, self._db:
+            person = self.person_by_id(person_id)
+            if person is None:
+                raise ValueError("No such person.")
+            if key == alias_key(person.name):
+                return None
+            taken = self._db.execute(
+                "SELECT person_id FROM person_aliases WHERE alias_key = ?", (key,)
+            ).fetchone()
+            if taken is not None:
+                if taken["person_id"] == person_id:
+                    return None
+                raise ValueError(f"Someone else already goes by {alias}.")
+            count = self._db.execute(
+                "SELECT COUNT(*) FROM person_aliases WHERE person_id = ?", (person_id,)
+            ).fetchone()[0]
+            if count >= MAX_ALIASES:
+                raise ValueError(f"A person has at most {MAX_ALIASES} aliases: remove one first.")
+            cursor = self._db.execute(
+                "INSERT INTO person_aliases (person_id, alias, alias_key, created_at) VALUES (?, ?, ?, ?)",
+                (person_id, alias, key, _now()),
+            )
+            return Alias(cursor.lastrowid, alias)
+
+    def delete_alias(self, person_id: int, alias_id: int) -> bool:
+        """Remove one of the person's aliases (never someone else's)."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "DELETE FROM person_aliases WHERE id = ? AND person_id = ?", (alias_id, person_id)
             )
             return cursor.rowcount > 0
 

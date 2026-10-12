@@ -132,6 +132,7 @@ class FakeServer:
     def __init__(self):
         self.requests: list[httpx.Request] = []
         self.signed_in: dict[str, str] = {}
+        self.aliases: dict[str, list[str]] = {}  # Discord id -> the other names of the account
         self.reply = "Hello!"
         self.chat_status = 200
         self.chat_detail = ""
@@ -142,7 +143,10 @@ class FakeServer:
         self.requests.append(request)
         path = request.url.path
         if path == "/v1/accounts/signed-in":
-            accounts = [{"user_id": uid, "user": user, "name": user} for uid, user in self.signed_in.items()]
+            accounts = [
+                {"user_id": uid, "user": user, "name": user, "aliases": self.aliases.get(uid, [])}
+                for uid, user in self.signed_in.items()
+            ]
             return httpx.Response(200, json={"accounts": accounts})
         if path == "/v1/chat":
             if self.chat_status != 200:

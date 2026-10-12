@@ -31,6 +31,7 @@ administration of users and people, reading a PDF, and the web site itself (`web
     GET    /v1/admin/models             what the active provider offers
     GET    /v1/admin/people             everybody Clara knows
     GET|POST /v1/admin/people/{id}/facts, DELETE /v1/admin/people/{id}/facts/{fact}, GET /v1/admin/people/{id}/footprint
+    GET|POST /v1/admin/people/{id}/aliases, DELETE /v1/admin/people/{id}/aliases/{alias}
 """
 
 from __future__ import annotations
@@ -112,6 +113,10 @@ class DefaultLimit(BaseModel):
 
 class FactText(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class AliasText(BaseModel):
+    alias: str = Field(min_length=1, max_length=200)  # the rules are memory.add_alias's
 
 
 def describe_user(app: FastAPI, user: User) -> dict:
@@ -327,6 +332,7 @@ async def export_my_data(caller: LoggedIn, request: Request) -> JSONResponse:
             "person": {"name": person.name if person else None, "relation": memory.relation(user.person_id)},
             "accounts": [f"{s}:{e}" for s, e in memory.accounts_of(user.person_id)],
             "facts": [f.text for f in memory.facts(user.person_id, 100_000)],
+            "aliases": [a.text for a in memory.aliases(user.person_id)],
             "conversations": conversations,
             "tasks": [asdict(t) for t in state.tasks.tasks(person, None)] if person else [],
             "reminders": [asdict(r) for r in state.reminders.upcoming(person)] if person else [],
@@ -612,11 +618,14 @@ async def admin_models(admin: Admin, request: Request) -> dict:
 async def admin_people(admin: Admin, request: Request) -> dict:
     state = request.app.state
     by_person: dict[int, str] = {u.person_id: u.name for u in state.users.list()}
+    summaries = state.memory.summaries()
+    aliases = state.memory.aliases_of(s.person.id for s in summaries)
     return {
         "people": [
             {"id": s.person.id, "name": s.person.name, "facts": s.facts, "accounts": s.accounts,
-             "user": by_person.get(s.person.id), "relation": s.relation}
-            for s in state.memory.summaries()
+             "user": by_person.get(s.person.id), "relation": s.relation,
+             "aliases": list(aliases.get(s.person.id, ()))}
+            for s in summaries
         ]
     }
 
@@ -651,6 +660,37 @@ async def admin_delete_fact(person_id: int, fact_id: int, admin: Admin, request:
     if not request.app.state.memory.delete_fact(person.id, fact_id):
         raise HTTPException(404, "No such fact")
     return {"ok": True}
+
+
+def describe_aliases(request: Request, person) -> dict:
+    return {
+        "person": {"id": person.id, "name": person.name},
+        "aliases": [{"id": a.id, "alias": a.text} for a in request.app.state.memory.aliases(person.id)],
+    }
+
+
+@router.get("/v1/admin/people/{person_id}/aliases")
+async def admin_person_aliases(person_id: int, admin: Admin, request: Request) -> dict:
+    return describe_aliases(request, person_or_404(request, person_id))
+
+
+@router.post("/v1/admin/people/{person_id}/aliases", status_code=201)
+async def admin_add_alias(person_id: int, body: AliasText, admin: Admin, request: Request) -> dict:
+    person = person_or_404(request, person_id)
+    try:
+        alias = request.app.state.memory.add_alias(person.id, body.alias)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    log.info("admin %s: alias %s for %s", admin, alias.text if alias else "(already there)", person.name)
+    return {"created": alias is not None, **describe_aliases(request, person)}
+
+
+@router.delete("/v1/admin/people/{person_id}/aliases/{alias_id}")
+async def admin_delete_alias(person_id: int, alias_id: int, admin: Admin, request: Request) -> dict:
+    person = person_or_404(request, person_id)
+    if not request.app.state.memory.delete_alias(person.id, alias_id):
+        raise HTTPException(404, "No such alias")
+    return describe_aliases(request, person)
 
 
 @router.get("/v1/admin/people/{person_id}/footprint")

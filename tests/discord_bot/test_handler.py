@@ -38,10 +38,23 @@ async def test_a_mention_is_answered_with_the_space_roster_and_focus(handler, se
     body = server.bodies("/v1/chat")[0]
     assert body["message"] == "what does @Bob like?" and body["mode"] == "answer" and body["quiet"] is True
     assert body["conversation"] == "discord:channel:10" and body["space"] == "discord:guild:5"
-    assert body["roster"] == [{"user_id": "222", "name": "Bob"}, {"user_id": "111", "name": "Erwan"}]  # sorted
+    assert body["roster"] == [  # sorted, each with the mention Clara writes
+        {"user_id": "222", "name": "Bob", "mention": "<@222>"}, {"user_id": "111", "name": "Erwan", "mention": "<@111>"},
+    ]
     assert body["focus"] == ["222"] and body["timezone"] == "Europe/Paris"
     assert "Home" in body["instructions"] and "#general" in body["instructions"]
     assert msg.replies == ["<@222> likes chess."]
+
+
+async def test_she_writes_the_mention_she_was_given_and_an_alias_still_works(handler, server, guild, accounts):
+    server.signed_in = {"111": "erwan", "222": "bob"}
+    server.aliases = {"222": ["Bobby"]}
+    await accounts.refresh()
+    msg = message("<@1> and him?", guild=guild, mentions=[CLARA])
+    server.reply = "<@222> and @Bobby, but not <@999>."
+    await handler.handle(msg)
+    assert msg.replies == ["<@222> and <@222>, but not @someone."]
+    assert "<@123>" in server.bodies("/v1/chat")[0]["instructions"]
 
 
 async def test_other_messages_go_as_maybe_and_nothing_is_posted_when_she_passes(handler, server, guild):

@@ -43,6 +43,24 @@ class SystemPrompt:
             self._mtime = mtime
         return self._text
 
+    @staticmethod
+    def _people(roster: tuple[Person, ...]) -> str:
+        """The people of a group: their names, in a line; one per line when some can be mentioned with a text of
+        their own (`<@123>`) or go by other names too: people say "Pablo" for Paul, and she must know who is meant."""
+        details = [(member, getattr(member, "mention", ""), getattr(member, "aliases", ())) for member in roster]
+        if not any(mention or aliases for _, mention, aliases in details):
+            return ", ".join(f"@{member.name}" for member in roster)
+        lines = []
+        for member, mention, aliases in details:
+            line = f"- @{member.name}"
+            notes = []
+            if mention:
+                notes.append(f"to mention them, write exactly {mention}")
+            if aliases:
+                notes.append(f"also called: {', '.join(aliases)}")
+            lines.append(f"{line} ({'; '.join(notes)})" if notes else line)
+        return "\n".join(lines)
+
     def render(
         self,
         person: Person,
@@ -83,10 +101,9 @@ class SystemPrompt:
             f"- You are talking to: {person.name} (through: {surface})\n"
         ]
         if roster:
-            names = ", ".join(f"@{member.name}" for member in roster)
             parts.append(
                 "## People here who have an account\n"
-                f"{names}\n"
+                f"{self._people(roster)}\n"
                 "Messages from people in this conversation start with their name. To know what you remember "
                 "about one of them, use about_person.\n"
             )

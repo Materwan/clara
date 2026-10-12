@@ -78,7 +78,7 @@ def test_an_account_must_register_before_talking(make_client):
     me = client.get("/v1/accounts/me", params={"surface": "discord", "user_id": "111"}, headers=BOT).json()
     assert me["signed_in"] and me["user"] == "erwan" and me["relation"] is None and me["facts"] == []
     listed = client.get("/v1/accounts/signed-in", params={"surface": "discord"}, headers=BOT).json()
-    assert listed == {"accounts": [{"user_id": "111", "user": "erwan", "name": "Erwan"}]}
+    assert listed == {"accounts": [{"user_id": "111", "user": "erwan", "name": "Erwan", "aliases": []}]}
 
 
 def test_the_registered_user_signs_in_on_the_web_with_the_same_memories(make_client):

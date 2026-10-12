@@ -110,16 +110,23 @@ export function mountAccount(container, user, onSignOut) {
   container.append(pageHead("Account"), h("div", { class: "scroll" }, page));
 
   async function draw() {
-    let me, devices, prefs, models;
+    let me, devices, prefs, models, aliases;
     try {
       me = await api.get("/v1/auth/me");
-      [devices, prefs, models] = await Promise.all([api.get("/v1/auth/sessions"), api.get("/v1/settings", who(me)), loadModels(who(me))]);
+      [devices, prefs, models, aliases] = await Promise.all([
+        api.get("/v1/auth/sessions"), api.get("/v1/settings", who(me)), loadModels(who(me)),
+        api.get("/v1/memory/aliases", who(me)).then((found) => found.aliases, (error) => {
+          if (error.status !== 404) throw error; // Clara does not know this account yet: no alias
+          return [];
+        }),
+      ]);
     } catch (error) {
       return void toast(error.detail, true);
     }
     clear(page);
     page.append(
       profileCard(me),
+      aliasesCard(me, aliases),
       appearanceCard(),
       usageCard(me),
       modelsCard(me, models),
@@ -138,6 +145,34 @@ export function mountAccount(container, user, onSignOut) {
       h("p", { class: "muted small" }, `Signed in as ${me.name}. Clara knows you on these accounts:`),
       h("div", { class: "accounts" }, me.accounts.length ? me.accounts.map((a) => h("span", { class: "badge" }, a)) : h("span", { class: "muted small" }, "none yet"))),
     h("button", { onclick: onSignOut }, icon("logout", { size: 18 }), "Sign out"));
+
+  /** The other names you go by: Clara knows who is meant when someone says "Pablo" for Paul, and on Discord she tags
+   * you whatever your Discord name is. */
+  function aliasesCard(me, aliases) {
+    const text = h("input", { type: "text", placeholder: "A name people call you, e.g. a nickname", maxLength: 32, "aria-label": "New alias" });
+    return h("section", { class: "panel" },
+      h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, "Aliases"),
+        h("p", { class: "muted small" }, "The other names you go by. When someone says one of them, Clara knows it is you, and she can tag you on Discord even if your Discord name is different. Up to 10, no two people share one. On Discord: /alias."))),
+      h("ul", { class: "list", "aria-label": "Your aliases" }, aliases.length ? aliases.map((item) => h("li", {},
+        h("span", { class: "text" }, item.alias),
+        h("button", { class: "ghost icon-btn danger forget", title: "Remove this alias", "aria-label": `Remove alias: ${item.alias}`, onclick: async () => {
+          try {
+            await api.delete(`/v1/memory/aliases/${item.id}`, who(me));
+            toast("Alias removed.");
+          } catch (error) { toast(error.detail, true); }
+          draw();
+        } }, icon("trash", { size: 18 })))) : h("li", { class: "empty-row" }, "No alias yet.")),
+      h("form", { class: "panel-body add-form", onsubmit: async (event) => {
+        event.preventDefault();
+        const value = text.value.trim();
+        if (!value) return;
+        try {
+          const done = await api.post("/v1/memory/aliases", { ...who(me), alias: value });
+          toast(done.created ? "Alias added." : "You already go by that name.");
+          draw();
+        } catch (error) { toast(error.detail, true); }
+      } }, text, h("button", { type: "submit" }, icon("plus", { size: 18 }), "Add alias")));
+  }
 
   /** Credits used today against the daily limit the owner set (or none). */
   function usageCard(me) {

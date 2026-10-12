@@ -5,6 +5,8 @@
     /logout
     /me         the account, the relationship, what Clara remembers (with a menu to make her forget something)
     /remember   /forget   /reset   /help
+    /alias      add | remove | list: the other names you go by, so Clara knows who is meant and can tag you
+                (the owner can give a `user` to do it for someone else)
     /tasks      your to-do list: each task with the reminders sent and the next one;  /task: one in full
 
 Descriptions are in English, and in French for people whose Discord is in French (FrenchTranslator).
@@ -46,6 +48,13 @@ FRENCH_DESCRIPTIONS = {
     "Which ones": "Lesquelles",
     "One of your tasks in full": "Le détail d'une de tes tâches",
     "The task": "La tâche",
+    "The other names you go by": "Les autres noms sous lesquels on te connaît",
+    "Add a name you go by": "Ajouter un nom sous lequel on te connaît",
+    "Remove a name you go by": "Retirer un nom sous lequel on te connaît",
+    "List the names you go by": "Lister les noms sous lesquels on te connaît",
+    "The name": "Le nom",
+    "The name to remove": "Le nom à retirer",
+    "Owner only: someone else": "Propriétaire seulement : quelqu'un d'autre",
 }
 
 
@@ -309,6 +318,96 @@ def register_commands(tree: app_commands.CommandTree, bot: ClaraBot) -> None:
         wanted = current.lower().strip()
         matching = [f for f in reversed(facts) if wanted in f["text"].lower() or wanted == str(f["id"])]
         return [app_commands.Choice(name=f["text"][:100], value=f["id"]) for f in matching[:25]]
+
+    alias = app_commands.Group(name="alias", description=describe("The other names you go by"))
+    tree.add_command(alias)
+
+    async def alias_target(interaction: discord.Interaction, user: discord.User | discord.Member | None) -> int | None:
+        """The account whose names are meant: someone else's (only the owner may, the server checks) or None."""
+        return user.id if user is not None and user.id != interaction.user.id else None
+
+    async def alias_failed(interaction: discord.Interaction, lang: str, error: ClaraError) -> None:
+        if error.not_signed_in:
+            text = t(lang, "need_account")
+        elif error.status == 403:
+            text = t(lang, "alias_owner_only")
+        elif error.status == 404:
+            text = t(lang, "alias_unknown_person")
+        else:
+            text = describe_error(lang, error)
+        await reply(interaction, text)
+
+    @alias.command(name="add", description=describe("Add a name you go by"))
+    @app_commands.describe(name=describe("The name"), user=describe("Owner only: someone else"))
+    async def alias_add(
+        interaction: discord.Interaction, name: app_commands.Range[str, 1, 32],
+        user: discord.User | discord.Member | None = None,
+    ) -> None:
+        lang = lang_of(bot, interaction)
+        target = await alias_target(interaction, user)
+        try:
+            done = await bot.api.add_alias(interaction.user.id, name, target)
+        except ClaraError as error:
+            await alias_failed(interaction, lang, error)
+            return
+        bot.accounts.remember_aliases(target or interaction.user.id, (item["alias"] for item in done["aliases"]))
+        shown = done["aliases"][-1]["alias"] if done.get("created") else name.strip().lstrip("@")
+        who = user.display_name if target else ""
+        key = "alias_added" if done.get("created") else "alias_known"
+        await reply(interaction, t(lang, key + ("_other" if target else ""), alias=shown, who=who))
+
+    @alias.command(name="remove", description=describe("Remove a name you go by"))
+    @app_commands.describe(name=describe("The name to remove"), user=describe("Owner only: someone else"))
+    async def alias_remove(
+        interaction: discord.Interaction, name: app_commands.Range[str, 1, 32],
+        user: discord.User | discord.Member | None = None,
+    ) -> None:
+        lang = lang_of(bot, interaction)
+        target = await alias_target(interaction, user)
+        try:
+            found = await bot.api.person_aliases(interaction.user.id, target)
+            wanted = name.strip().lstrip("@").casefold()
+            item = next((x for x in found if x["alias"].casefold() == wanted), None)
+            if item is None:
+                await reply(interaction, t(lang, "alias_none_such", alias=name))
+                return
+            await bot.api.delete_alias(interaction.user.id, item["id"], target)
+            remaining = await bot.api.person_aliases(interaction.user.id, target)
+        except ClaraError as error:
+            await alias_failed(interaction, lang, error)
+            return
+        bot.accounts.remember_aliases(target or interaction.user.id, (x["alias"] for x in remaining))
+        who = user.display_name if target else ""
+        await reply(interaction, t(lang, "alias_removed" + ("_other" if target else ""), alias=item["alias"], who=who))
+
+    @alias_remove.autocomplete("name")
+    async def alias_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        try:
+            chosen = interaction.namespace.user
+            target = int(getattr(chosen, "id", chosen)) if chosen else None
+            found = await bot.api.person_aliases(interaction.user.id, target if target != interaction.user.id else None)
+        except (ClaraError, TypeError, ValueError):
+            return []
+        wanted = current.strip().lstrip("@").casefold()
+        return [app_commands.Choice(name=x["alias"], value=x["alias"]) for x in found if wanted in x["alias"].casefold()][:25]
+
+    @alias.command(name="list", description=describe("List the names you go by"))
+    @app_commands.describe(user=describe("Owner only: someone else"))
+    async def alias_list(interaction: discord.Interaction, user: discord.User | discord.Member | None = None) -> None:
+        lang = lang_of(bot, interaction)
+        target = await alias_target(interaction, user)
+        try:
+            found = await bot.api.person_aliases(interaction.user.id, target)
+        except ClaraError as error:
+            await alias_failed(interaction, lang, error)
+            return
+        bot.accounts.remember_aliases(target or interaction.user.id, (x["alias"] for x in found))
+        names = ", ".join(f"**{x['alias']}**" for x in found)
+        who = user.display_name if target else ""
+        if not found:
+            await reply(interaction, t(lang, "alias_list_empty" + ("_other" if target else ""), who=who))
+        else:
+            await reply(interaction, t(lang, "alias_list" + ("_other" if target else ""), names=names, who=who))
 
     @tree.command(name="tasks", description=describe("Your to-do list"))
     @app_commands.describe(which=describe("Which ones"))

@@ -74,10 +74,26 @@ def test_names_become_pings_longest_first_never_clara():
     assert add_pings("mail me at a@Paul.com", members, 1) == "mail me at a@Paul.com"
 
 
+def test_a_mention_clara_was_given_pings_only_a_member():
+    members = [CLARA, PAUL, JEAN]
+    assert add_pings("Hi <@2> and <@!3>", members, 1) == "Hi <@2> and <@3>"
+    assert add_pings("Hi <@99>, <@1>", members, 1) == "Hi @someone, @someone"  # not a member, and never herself
+    assert add_pings("<@&5> <@2>", members, 1) == "<@&5> <@2>"  # a role stays as it is (the client refuses it)
+
+
+def test_an_alias_is_a_name_like_the_others_but_real_names_win():
+    members = [CLARA, PAUL, JEAN]
+    aliases = {2: ("Pablo",), 3: ("Paul", "JP")}
+    assert add_pings("@Pablo and @jp", members, 1, aliases=aliases) == "<@2> and <@3>"
+    assert add_pings("@Paul", members, 1, aliases=aliases) == "<@2>"  # Paul is the display name of 2
+    assert add_pings("@Pablo", [CLARA, JEAN], 1, aliases={2: ("Pablo",)}) == "@Pablo"  # 2 is not in this server
+
+
 def test_pings_are_limited():
     members = [FakeUser(10 + i, f"u{i}") for i in range(5)]
     text = " ".join(f"@u{i}" for i in range(5))
     assert add_pings(text, members, 1, max_pings=2) == "<@10> <@11> @u2 @u3 @u4"
+    assert add_pings("<@10> <@11> <@12>", members, 1, max_pings=2) == "<@10> <@11> @someone"
 
 
 def test_long_answers_are_split_and_code_blocks_stay_closed():

@@ -4,6 +4,9 @@ same person.
     GET    /v1/memory/facts             facts of an account's person
     POST   /v1/memory/facts
     DELETE /v1/memory/facts/{id}
+    GET    /v1/memory/aliases           the other names an account's person goes by (so Clara knows who is meant, and
+    POST   /v1/memory/aliases           can mention them); `for_user_id`: another account of the surface, the owner's
+    DELETE /v1/memory/aliases/{id}      alone
     GET    /v1/settings                 the settings of an account's person (notify_after: seconds a task takes
     PATCH  /v1/settings                 before it notifies them when done; 0: never; null: the server's default)
     POST   /v1/accounts/link-code       a code proving control of an account
@@ -26,6 +29,12 @@ router = APIRouter()
 class FactBody(AccountBody):
     user_name: str | None = Field(default=None, max_length=80)
     text: str = Field(min_length=1)
+
+
+class AliasBody(AccountBody):
+    user_name: str | None = Field(default=None, max_length=80)
+    alias: str = Field(min_length=1, max_length=200)  # the rules (length, words, characters) are memory.add_alias's
+    for_user_id: ExternalId | None = None  # the owner: give the alias to this account's person instead
 
 
 class SettingsBody(AccountBody):
@@ -75,6 +84,62 @@ async def delete_fact(fact_id: int, client: Client, request: Request, surface: S
     if not request.app.state.memory.delete_fact(person.id, fact_id):
         raise HTTPException(404, "No such fact for this person")
     return {"deleted": fact_id}
+
+
+# ----------------------------------------------------------------------
+# Aliases
+# ----------------------------------------------------------------------
+def alias_owner(request: Request, client: Client, surface: str, user_id: str, for_user_id: str | None) -> Person:
+    """The person whose aliases are meant: the account's own, or (`for_user_id`) another account's, which only the
+    owner may name. 404 when the server does not know the account."""
+    if for_user_id is None or for_user_id == user_id:
+        return known_person(request, surface, user_id)
+    user = getattr(client, "user", None) or request.app.state.users.account_user(surface, user_id)
+    if user is None or not user.is_owner or user.disabled:
+        raise HTTPException(403, "Only the owner sets the aliases of someone else")
+    return known_person(request, surface, for_user_id)
+
+
+def describe_aliases(memory: Memory, person: Person) -> dict:
+    return {
+        "person": {"id": person.id, "name": person.name},
+        "aliases": [{"id": alias.id, "alias": alias.text} for alias in memory.aliases(person.id)],
+    }
+
+
+@router.get("/v1/memory/aliases")
+async def list_aliases(
+    client: Client, request: Request, surface: Surface, user_id: ExternalId, for_user_id: ExternalId | None = None
+) -> dict:
+    require_account(request, client, surface, user_id)
+    person = alias_owner(request, client, surface, user_id, for_user_id)
+    return describe_aliases(request.app.state.memory, person)
+
+
+@router.post("/v1/memory/aliases", status_code=201)
+async def add_alias(body: AliasBody, client: Client, request: Request) -> dict:
+    require_account(request, client, body.surface, body.user_id)
+    memory: Memory = request.app.state.memory
+    memory.resolve(body.surface, body.user_id, body.user_name)
+    person = alias_owner(request, client, body.surface, body.user_id, body.for_user_id)
+    try:
+        alias = memory.add_alias(person.id, body.alias)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    return {"created": alias is not None, "id": alias.id if alias else None, **describe_aliases(memory, person)}
+
+
+@router.delete("/v1/memory/aliases/{alias_id}")
+async def delete_alias(
+    alias_id: int, client: Client, request: Request, surface: Surface, user_id: ExternalId,
+    for_user_id: ExternalId | None = None,
+) -> dict:
+    require_account(request, client, surface, user_id)
+    person = alias_owner(request, client, surface, user_id, for_user_id)
+    memory: Memory = request.app.state.memory
+    if not memory.delete_alias(person.id, alias_id):
+        raise HTTPException(404, "No such alias for this person")
+    return {"deleted": alias_id, **describe_aliases(memory, person)}
 
 
 # ----------------------------------------------------------------------

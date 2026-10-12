@@ -254,12 +254,13 @@ async def account_me(surface: str, user_id: str, client: Client, request: Reques
         "relation": relation,
         "relation_label": relation_label(relation),
         "facts": [{"id": f.id, "text": f.text} for f in state.memory.facts(person.id, ME_FACTS)] if person else [],
+        "aliases": [{"id": a.id, "alias": a.text} for a in state.memory.aliases(person.id)] if person else [],
     }
 
 
 @router.get("/v1/accounts/signed-in")
 async def signed_in_accounts(surface: str, client: Client, request: Request) -> dict:
-    """Every account of the surface that is signed in: `{accounts: [{user_id, user, name}]}`."""
+    """Every account of the surface that is signed in: `{accounts: [{user_id, user, name, aliases}]}`."""
     body = _Account(surface=surface, user_id="-")
     state = request.app.state
     if getattr(client, "user", None) is not None:
@@ -268,9 +269,16 @@ async def signed_in_accounts(surface: str, client: Client, request: Request) -> 
     if allowed is not None and body.surface not in allowed:
         raise HTTPException(403, f"This client may not use the surface {body.surface!r}")
     accounts = []
-    for external_id, user in state.users.signed_in_accounts(body.surface).items():
-        person = state.memory.find_person(body.surface, external_id)
-        accounts.append({"user_id": external_id, "user": user.name, "name": person.name if person else user.name})
+    found = {
+        external_id: (user, state.memory.find_person(body.surface, external_id))
+        for external_id, user in state.users.signed_in_accounts(body.surface).items()
+    }
+    aliases = state.memory.aliases_of(person.id for _, person in found.values() if person)
+    for external_id, (user, person) in found.items():
+        accounts.append({
+            "user_id": external_id, "user": user.name, "name": person.name if person else user.name,
+            "aliases": list(aliases.get(person.id, ())) if person else [],
+        })
     return {"accounts": accounts}
 
 

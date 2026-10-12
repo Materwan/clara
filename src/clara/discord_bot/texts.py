@@ -94,6 +94,47 @@ TEXTS: dict[str, dict[str, str]] = {
         FRENCH: "Sur un serveur, seuls ceux qui peuvent gérer le serveur effacent la conversation d'un salon.",
         ENGLISH: "On a server, only people who can manage it may clear a channel's conversation.",
     },
+    # -- /alias ---------------------------------------------------------------------------------------
+    "alias_added": {
+        FRENCH: "C'est noté : **{alias}** est un autre nom pour toi. Je saurai que c'est toi, et je pourrai te mentionner.",
+        ENGLISH: "Noted: **{alias}** is another name for you. I will know it is you, and I can tag you.",
+    },
+    "alias_added_other": {
+        FRENCH: "C'est noté : **{alias}** est un autre nom pour {who}.",
+        ENGLISH: "Noted: **{alias}** is another name for {who}.",
+    },
+    "alias_known": {
+        FRENCH: "**{alias}** est déjà un de tes noms.",
+        ENGLISH: "**{alias}** is already one of your names.",
+    },
+    "alias_known_other": {
+        FRENCH: "**{alias}** est déjà un des noms de {who}.",
+        ENGLISH: "**{alias}** is already one of the names of {who}.",
+    },
+    "alias_removed": {FRENCH: "Retiré : **{alias}**.", ENGLISH: "Removed: **{alias}**."},
+    "alias_removed_other": {FRENCH: "Retiré pour {who} : **{alias}**.", ENGLISH: "Removed for {who}: **{alias}**."},
+    "alias_none_such": {
+        FRENCH: "Je n'ai pas de nom **{alias}** (vois `/alias list`).",
+        ENGLISH: "I have no name **{alias}** (see `/alias list`).",
+    },
+    "alias_list": {FRENCH: "Tes autres noms : {names}", ENGLISH: "Your other names: {names}"},
+    "alias_list_other": {FRENCH: "Les autres noms de {who} : {names}", ENGLISH: "The other names of {who}: {names}"},
+    "alias_list_empty": {
+        FRENCH: "Tu n'as pas d'autre nom. Ajoute-en un avec `/alias add`.",
+        ENGLISH: "You have no other name. Add one with `/alias add`.",
+    },
+    "alias_list_empty_other": {
+        FRENCH: "{who} n'a pas d'autre nom.",
+        ENGLISH: "{who} has no other name.",
+    },
+    "alias_owner_only": {
+        FRENCH: "Seul le propriétaire de Clara peut changer les noms de quelqu'un d'autre.",
+        ENGLISH: "Only Clara's owner can change someone else's names.",
+    },
+    "alias_unknown_person": {
+        FRENCH: "Cette personne n'a pas de compte Clara (elle doit d'abord faire `/register` ou `/login`).",
+        ENGLISH: "That person has no Clara account (they must `/register` or `/login` first).",
+    },
     # -- the to-do list -------------------------------------------------------------------------------
     "tasks_title": {FRENCH: "Tes tâches", ENGLISH: "Your tasks"},
     "tasks_done_title": {FRENCH: "Tes tâches terminées", ENGLISH: "Your finished tasks"},
@@ -129,6 +170,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "existant, `/logout` te déconnecte.\n"
             "`/me` montre ce que je sais de toi, `/remember` me fait retenir quelque chose, `/forget` me le fait "
             "oublier, `/reset` efface la conversation du salon (ou de nos messages privés).\n"
+            "`/alias` gère tes autres noms (un surnom, un pseudo différent de ton nom Discord) : je saurai de qui "
+            "on parle, et je pourrai te mentionner.\n"
             "`/tasks` montre ta liste de tâches (demande-moi d'ajouter, de changer ou de finir une tâche), `/task` "
             "le détail de l'une d'elles.\n"
             "Tes rappels arrivent en message privé."
@@ -139,6 +182,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "`/logout` signs you out.\n"
             "`/me` shows what I know about you, `/remember` makes me remember something, `/forget` makes me "
             "forget it, `/reset` clears the channel's conversation (or our private one).\n"
+            "`/alias` manages the other names you go by (a nickname, a name that is not your Discord one): I will "
+            "know who is meant, and I can tag you.\n"
             "`/tasks` shows your to-do list (ask me to add, change or finish a task), `/task` shows one in full.\n"
             "Your reminders arrive as private messages."
         ),

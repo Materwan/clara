@@ -1,23 +1,27 @@
 """Discord text in both directions: a message -> what Clara reads, her answer -> what Discord shows.
 
-Clara never sees raw ids: `<@123>` becomes `@Paul`. In her answers, `@Paul` becomes a ping of the member of that
-server called Paul (display name or user name; the longest name that matches wins). Roles, @everyone and @here
-are never pinged (the client's allowed mentions refuse them too).
+What Clara reads: `<@123>` becomes `@Paul`. In her answers she pings someone by writing the mention she was given for
+them (`<@123>`, kept when it is a member of the server) or, failing that, `@Paul`: it becomes a ping of the member of
+that server called Paul (display name, user name or an alias the person chose; the longest name that matches wins).
+Roles, @everyone and @here are never pinged (the client's allowed mentions refuse them too), nor is an id that is
+not a member of the server.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Protocol
 
 DISCORD_LIMIT = 2000
 MAX_PINGS_PER_REPLY = 10  # beyond this, "@Name" stays plain text (no mass pings)
 MAX_NAME_WORDS = 3
 
-# "@Paul" or "@Jean Pierre Dupont" (up to 3 words) not already inside "<@...>"
-_PING_RE = re.compile(rf"(?<![<\w])@(\w[\w'.-]*(?: \w[\w'.-]*){{0,{MAX_NAME_WORDS - 1}}})")
+_NAME = rf"\w[\w'.-]*(?: \w[\w'.-]*){{0,{MAX_NAME_WORDS - 1}}}"
 _USER_RE = re.compile(r"<@!?(\d+)>")
+# in an answer: the mention Clara was given ("<@123>"), or "@Paul" / "@Jean Pierre Dupont" (up to 3 words) not
+# already inside "<@...>"
+_ANY_PING_RE = re.compile(rf"<@!?(?P<id>\d+)>|(?<![<\w])@(?P<name>{_NAME})")
 _ROLE_RE = re.compile(r"<@&(\d+)>")
 _CHANNEL_RE = re.compile(r"<#(\d+)>")
 
@@ -55,17 +59,34 @@ def readable(
     return text.strip()
 
 
-def add_pings(text: str, members: Iterable[Named], bot_id: int, max_pings: int = MAX_PINGS_PER_REPLY) -> str:
-    """"@Paul" -> "<@id>" for the members named so (display name, global name or user name, any case)."""
+def add_pings(
+    text: str, members: Iterable[Named], bot_id: int, max_pings: int = MAX_PINGS_PER_REPLY,
+    aliases: Mapping[int, Iterable[str]] | None = None,
+) -> str:
+    """The pings of an answer: "<@id>" stays a ping when `id` is one of the members (else it becomes "@someone": an
+    id Clara made up never pings), and "@Paul" -> "<@id>" for the members named so (display name, global name, user
+    name, or one of their `aliases` (id -> names); any case; real names come before aliases)."""
+    members = list(members)
+    present = {member.id for member in members} - {bot_id}
     ids: dict[str, int] = {}
     for member in members:
         for name in (member.display_name, getattr(member, "global_name", None), member.name):
             if name:
                 ids.setdefault(name.lower(), member.id)
+    for user_id, names in (aliases or {}).items():
+        if user_id in present:
+            for name in names:
+                ids.setdefault(name.lower(), user_id)
     pinged: set[int] = set()
 
     def replace(match: re.Match) -> str:
-        words = match.group(1).split(" ")
+        if match.group("id") is not None:
+            user_id = int(match.group("id"))
+            if user_id not in present or (user_id not in pinged and len(pinged) >= max_pings):
+                return "@someone"
+            pinged.add(user_id)
+            return f"<@{user_id}>"
+        words = match.group("name").split(" ")
         for count in range(len(words), 0, -1):
             name = " ".join(words[:count])
             user_id = ids.get(name.lower()) or ids.get(name.rstrip(".").lower())
@@ -74,11 +95,11 @@ def add_pings(text: str, members: Iterable[Named], bot_id: int, max_pings: int =
             if user_id not in pinged and len(pinged) >= max_pings:
                 break
             pinged.add(user_id)
-            rest = match.group(1)[len(name):]
+            rest = match.group("name")[len(name):]
             return f"<@{user_id}>{rest}"
         return match.group(0)  # unknown name, or too many pings: left as text
 
-    return _PING_RE.sub(replace, text)
+    return _ANY_PING_RE.sub(replace, text)
 
 
 def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:

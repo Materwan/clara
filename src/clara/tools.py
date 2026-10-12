@@ -418,8 +418,11 @@ def _about_person(context: ToolContext, name: str, query: str = "") -> str:
     wanted = _fold(name)
     if not wanted:
         raise ValueError("Give the name of the person.")
-    exact = [p for p in context.roster if _fold(p.name) == wanted]
-    found = exact or [p for p in context.roster if wanted in _fold(p.name)]
+    def names(member: Person) -> list[str]:  # the name shown and the other names they go by
+        return [_fold(member.name), *(_fold(alias) for alias in getattr(member, "aliases", ()))]
+
+    exact = [p for p in context.roster if wanted in names(p)]
+    found = exact or [p for p in context.roster if any(wanted in name for name in names(p))]
     if not found:
         return f"Nobody called {name} has an account here. Known here: {', '.join(p.name for p in context.roster)}."
     if len(found) > 1:

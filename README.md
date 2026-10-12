@@ -157,6 +157,9 @@ All routes except `/health` need `Authorization: Bearer <token>`.
 | `GET /v1/memory/facts?surface=&user_id=` | list a person's facts |
 | `POST /v1/memory/facts` | `{surface, user_id, text}` |
 | `DELETE /v1/memory/facts/{id}?surface=&user_id=` | |
+| `GET /v1/memory/aliases?surface=&user_id=&for_user_id=` | the other names a person goes by (*Aliases*): `{person, aliases: [{id, alias}]}`. `for_user_id`: another account of the surface, the owner's alone (403 otherwise, 404 if unknown) |
+| `POST /v1/memory/aliases` | `{surface, user_id, alias, for_user_id?}` → `{created, id, aliases}`; 422 if invalid, taken by someone else or too many |
+| `DELETE /v1/memory/aliases/{id}?surface=&user_id=&for_user_id=` | |
 | `POST /v1/reminders` | `{surface, user_id, user_name?, text, at, repeat?, timezone?, conversation?, targets?}` → `{id, text, due_at, repeat, targets}`; 422 if `at` is past or not ISO 8601 (see *Reminders*); `conversation` (default: the account's own) is where Clara writes the announcement; `targets`: the surfaces it is shown on (default: all of the person's) |
 | `GET /v1/reminders?surface=&user_id=` | the person's reminders that have not fired yet |
 | `DELETE /v1/reminders/{id}?surface=&user_id=` | cancel one of the person's own reminders |
@@ -181,7 +184,7 @@ All routes except `/health` need `Authorization: Bearer <token>`.
 | `POST /v1/documents/extract` | the bytes of a PDF as the body → `{text, pages, truncated}` |
 | `GET /health` | no auth; shows the active provider and model, and `restarted`: the id of the restart that started this server (see *Restarting the server*) |
 | `GET /v1/admin/commands`, `POST /v1/admin/command` | `{line}` → `{output, quit}`; the owner logged in (used by `clara-admin`) |
-| `GET/POST /v1/admin/users`, `PATCH/DELETE /v1/admin/users/{name}`, `POST .../sign-out`, `GET /v1/admin/status`, `GET /v1/admin/models`, `GET /v1/admin/people`, `GET/POST .../people/{id}/facts`, `DELETE .../facts/{fact}`, `GET .../people/{id}/footprint` | what the web site's administration page uses; same rights as above |
+| `GET/POST /v1/admin/users`, `PATCH/DELETE /v1/admin/users/{name}`, `POST .../sign-out`, `GET /v1/admin/status`, `GET /v1/admin/models`, `GET /v1/admin/people`, `GET/POST .../people/{id}/facts`, `DELETE .../facts/{fact}`, `GET/POST .../people/{id}/aliases`, `DELETE .../aliases/{alias}`, `GET .../people/{id}/footprint` | what the web site's administration page uses; same rights as above |
 
 `conversation` defaults to `<surface>:<user_id>` (a private thread). A group
 client such as a Discord channel should pass its own id (`discord:channel:42`);
@@ -350,9 +353,25 @@ it), and reaches the server over HTTP with a client token (`CLARA_TOKENS=discord
 On Discord, people make an account with `/register` (or `/login` to an existing one) before Clara answers them. She
 answers private messages, and on a server the messages that mention her or reply to her; she reads the other messages
 of signed-in members as context, and may answer them where chime in is allowed. Their slash commands are `/register`,
-`/login`, `/logout`, `/me`, `/remember`, `/forget`, `/tasks` (their to-do list, each task with the reminders sent and the
+`/login`, `/logout`, `/me`, `/remember`, `/forget`, `/alias` (the other names they go by, see *Aliases*), `/tasks` (their to-do list, each task with the reminders sent and the
 next one), `/task` (one in full), `/reset` and `/help`; they add or change tasks by asking Clara. **Reminders, task
 reminders and notifications** reach them as **private messages** only, never in a server's channels.
+
+### Aliases
+
+Someone's Clara user name, or the name they are called by their friends, is not always their Discord name, so
+"@Paul" in an answer could not always be turned into a ping. Two things fix it:
+
+- **Clara writes the mention itself.** The bot gives each member of the server to Clara as `@Paul (to mention them,
+  write exactly <@123>)`; she writes `<@123>`. The bot keeps it as a ping only when 123 is a member of the server
+  (any other id becomes `@someone`: she cannot ping a made-up id), at most 10 pings per answer. A plain `@Name`
+  still works when it is a display name, a user name, or an alias.
+- **Aliases.** Each person has up to 10 other names (32 characters, 3 words, no `<`, `>` or `@`), kept with the
+  person, so they hold on every surface; nobody else may take the same one (case and accents ignored). They are
+  listed to Clara with the roster (`also called: Pablo`), `about_person` finds a person by them, and the bot also
+  turns an `@Pablo` into a ping. A person sets their own with `/alias add|remove|list` on Discord or on the web
+  site's *Account* page; the **owner** can do it for anyone: `/alias add name:Pablo user:@Paul` on Discord, or the
+  *People & memory* tab of the administration. Aliases are in the account export and go with an erasure or a merge.
 
 ### What the server provides
 
@@ -384,7 +403,7 @@ may carry:
 
 | Field | |
 | --- | --- |
-| `roster` | `[{user_id, name}]`: the members of the space. Those signed in are listed in the system prompt, and Clara can read what she remembers about any of them with her `about_person` tool (read-only; only offered when someone else is listed). Accounts Clara does not know, or not signed in, are left out |
+| `roster` | `[{user_id, name, mention?}]`: the members of the space. Those signed in are listed in the system prompt (with the other names each goes by, see *Aliases*, and `mention`, the text Clara must write to mention them: `<@id>` for the Discord bot, one word), and Clara can read what she remembers about any of them with her `about_person` tool (read-only; only offered when someone else is listed). Accounts Clara does not know, or not signed in, are left out |
 | `focus` | the ids the message is about (mentioned, replied to): what Clara remembers about them (15 newest facts, 5 people) is in the prompt |
 | `mode` | `answer` (default: the message is for Clara), `observe` (it was not: it is stored as context, no model call, `observed: true`) or `maybe` (it was not; Clara answers only if she has something worth adding, else she replies `<pass>`: the message is stored without her work, `passed: true` and `reply: ""`) |
 

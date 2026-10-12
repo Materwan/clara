@@ -77,7 +77,27 @@ class RemoteBackend:
         found = await self._call("GET", "/v1/accounts/signed-in", params={"surface": SURFACE})
         return {int(entry["user_id"]): entry["user"] for entry in found["accounts"] if entry["user_id"].isdigit()}
 
+    async def aliases(self) -> dict[int, tuple[str, ...]]:
+        """The other names of each Discord account that is signed in (those without any are left out)."""
+        found = await self._call("GET", "/v1/accounts/signed-in", params={"surface": SURFACE})
+        return {
+            int(entry["user_id"]): tuple(entry["aliases"])
+            for entry in found["accounts"] if entry["user_id"].isdigit() and entry.get("aliases")
+        }
+
     # -- memory --------------------------------------------------------------------------------------- #
+
+    async def person_aliases(self, user_id: int, for_user_id: int | None = None) -> list[dict]:
+        params = {**self._account(user_id), **({"for_user_id": str(for_user_id)} if for_user_id else {})}
+        return (await self._call("GET", "/v1/memory/aliases", params=params))["aliases"]
+
+    async def add_alias(self, user_id: int, alias: str, for_user_id: int | None = None) -> dict:
+        body = {**self._account(user_id), "alias": alias, **({"for_user_id": str(for_user_id)} if for_user_id else {})}
+        return await self._call("POST", "/v1/memory/aliases", json=body)
+
+    async def delete_alias(self, user_id: int, alias_id: int, for_user_id: int | None = None) -> None:
+        params = {**self._account(user_id), **({"for_user_id": str(for_user_id)} if for_user_id else {})}
+        await self._call("DELETE", f"/v1/memory/aliases/{alias_id}", params=params)
 
     async def add_fact(self, user_id: int, text: str) -> dict:
         return await self._call("POST", "/v1/memory/facts", json={**self._account(user_id), "text": text})

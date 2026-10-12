@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import ValidationError
 
-from .. import clientapi
+from .. import accountapi, clientapi
 from ..apicommon import model_failure
 from ..auth import Caller, require_account, require_conversation
 from ..chatapi import ChatBody, checked
@@ -90,7 +90,33 @@ class LocalBackend:
         found = await self._guard(clientapi.signed_in_accounts(SURFACE, self.client, self.request))
         return {int(entry["user_id"]): entry["user"] for entry in found["accounts"] if entry["user_id"].isdigit()}
 
+    async def aliases(self) -> dict[int, tuple[str, ...]]:
+        found = await self._guard(clientapi.signed_in_accounts(SURFACE, self.client, self.request))
+        return {
+            int(entry["user_id"]): tuple(entry["aliases"])
+            for entry in found["accounts"] if entry["user_id"].isdigit() and entry["aliases"]
+        }
+
     # -- memory --------------------------------------------------------------------------------------- #
+
+    async def person_aliases(self, user_id: int, for_user_id: int | None = None) -> list[dict]:
+        found = await self._guard(accountapi.list_aliases(
+            self.client, self.request, SURFACE, str(user_id), None if for_user_id is None else str(for_user_id)
+        ))
+        return found["aliases"]
+
+    async def add_alias(self, user_id: int, alias: str, for_user_id: int | None = None) -> dict:
+        body = accountapi.AliasBody(
+            surface=SURFACE, user_id=str(user_id), alias=alias,
+            for_user_id=None if for_user_id is None else str(for_user_id),
+        )
+        return await self._guard(accountapi.add_alias(body, self.client, self.request))
+
+    async def delete_alias(self, user_id: int, alias_id: int, for_user_id: int | None = None) -> None:
+        await self._guard(accountapi.delete_alias(
+            alias_id, self.client, self.request, SURFACE, str(user_id),
+            None if for_user_id is None else str(for_user_id),
+        ))
 
     async def add_fact(self, user_id: int, text: str) -> dict:
         external = self._account(user_id)

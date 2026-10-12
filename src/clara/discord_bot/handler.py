@@ -92,7 +92,7 @@ class MessageHandler:
         """The members of the server who are signed in, in a stable order (the prompt is cached)."""
         members = [guild.get_member(user_id) for user_id in self.accounts.ids]
         return [
-            {"user_id": str(member.id), "name": member.display_name}
+            {"user_id": str(member.id), "name": member.display_name, "mention": f"<@{member.id}>"}
             for member in sorted((m for m in members if m is not None), key=lambda m: (m.display_name.lower(), m.id))
         ]
 
@@ -115,7 +115,7 @@ class MessageHandler:
         where = f"the thread \"{channel}\" of #{parent}" if parent else f"the channel #{channel}"
         return (
             f"You are on Discord, in the server \"{message.guild.name}\", {where}. To mention one of the people "
-            f"listed, write @ followed by their name exactly as listed. {style}"
+            f"listed, write the mention given for them (like <@123>) exactly as listed, not their name. {style}"
         )
 
     def prefix(self, message: discord.Message, replied: discord.Message | None) -> str:
@@ -219,7 +219,7 @@ class MessageHandler:
                     del self._busy[channel_id]
         if reply.answered and (reply.text or reply.files):
             members = guild.members if guild is not None else []
-            text = add_pings(reply.text, members, self.me.id) if reply.text else ""
+            text = add_pings(reply.text, members, self.me.id, aliases=self.accounts.all_aliases()) if reply.text else ""
             await self.send(message, text, await self.made_files(message, reply.files))
 
     async def made_files(self, message: discord.Message, files: tuple[dict, ...]) -> list[discord.File]:

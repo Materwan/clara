@@ -1,7 +1,7 @@
 """Who is signed in, as far as the bot knows, and the language each person uses.
 
 The server is the authority (it refuses a message from an account that is not signed in); this copy saves a
-request per message and tells the bot which members to list to Clara. It is filled at start, updated by the
+request per message and tells the bot which members to list to Clara, and the other names each goes by. It is filled at start, updated by the
 bot's own /register, /login and /logout, and read again every few minutes (the owner may have signed
 someone out, or disabled them, from the web site).
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 
 from .backend import ClaraBackend, ClaraError
 from .texts import ENGLISH
@@ -25,6 +26,7 @@ class Accounts:
         self._api = api
         self._clock = clock
         self._users: dict[int, str] = {}  # Discord id -> Clara user name
+        self._aliases: dict[int, tuple[str, ...]] = {}  # Discord id -> the other names they go by
         self._languages: dict[int, str] = {}
         self._hinted: dict[int, float] = {}
         self.loaded = False
@@ -33,6 +35,7 @@ class Accounts:
         try:
             self._users = await self._api.signed_in()
             self.loaded = True
+            self._aliases = await self._api.aliases()
         except ClaraError as error:
             log.warning("cannot read the signed-in accounts: %s", error.detail)
 
@@ -41,6 +44,16 @@ class Accounts:
 
     def user_of(self, user_id: int) -> str | None:
         return self._users.get(user_id)
+
+    def aliases_of(self, user_id: int) -> tuple[str, ...]:
+        return self._aliases.get(user_id, ())
+
+    def all_aliases(self) -> dict[int, tuple[str, ...]]:
+        return dict(self._aliases)
+
+    def remember_aliases(self, user_id: int, aliases: Iterable[str]) -> None:
+        """What the server just said they are (after /alias): the next answer can already mention them by these."""
+        self._aliases[user_id] = tuple(aliases)
 
     @property
     def ids(self) -> frozenset[int]:

@@ -450,7 +450,7 @@ function people(box) {
     avatar(p.name),
     h("div", { class: "info" },
       h("div", {}, h("strong", {}, p.name), " ", p.user && h("span", { class: "badge admin" }, "Can sign in")),
-      h("div", { class: "sub" }, `${p.facts} ${p.facts === 1 ? "fact" : "facts"}, ${p.relation === null ? "no relationship" : `relationship ${p.relation}/100`}, ${p.accounts.join(", ") || "no account"}`)))));
+      h("div", { class: "sub" }, `${p.facts} ${p.facts === 1 ? "fact" : "facts"}, ${p.relation === null ? "no relationship" : `relationship ${p.relation}/100`}, ${p.accounts.join(", ") || "no account"}${p.aliases?.length ? `, aka ${p.aliases.join(", ")}` : ""}`)))));
     if (!found.length) listBox.append(h("p", { class: "rail-note" }, "Nobody yet."));
     if (selected !== null) {
       const again = found.find((p) => p.id === selected);
@@ -460,7 +460,11 @@ function people(box) {
 
   async function show(person) {
     let body;
-    try { body = await api.get(`/v1/admin/people/${person.id}/facts`); } catch (error) { return fail(error); }
+    let aliases;
+    try {
+      body = await api.get(`/v1/admin/people/${person.id}/facts`);
+      aliases = (await api.get(`/v1/admin/people/${person.id}/aliases`)).aliases;
+    } catch (error) { return fail(error); }
     const text = h("input", { type: "text", placeholder: "Add a fact", maxLength: 300, "aria-label": "New fact" });
     clear(detail).append(h("section", { class: "panel" },
       h("div", { class: "panel-head" }, avatar(person.name),
@@ -475,11 +479,29 @@ function people(box) {
         if (!text.value.trim()) return;
         try { await api.post(`/v1/admin/people/${person.id}/facts`, { text: text.value }); show(person); load(); } catch (error) { fail(error); }
       } }, text, h("button", { type: "submit" }, icon("plus", { size: 18 }), "Add fact"))),
+    aliasPanel(person, aliases),
     relationPanel(person),
     h("section", { class: "panel" }, h("div", { class: "panel-body row wrap" },
       h("button", { onclick: () => link(person) }, icon("link", { size: 18 }), "Link an account…"),
       h("span", { class: "grow" }),
       h("button", { class: "danger", onclick: () => erase(person) }, icon("trash", { size: 18 }), "Erase this person…"))));
+  }
+
+  /** The other names the person goes by (they can set their own in their account page): the owner may set them for anyone. */
+  function aliasPanel(person, aliases) {
+    const text = h("input", { type: "text", placeholder: "Add an alias", maxLength: 32, "aria-label": "New alias" });
+    return h("section", { class: "panel" },
+      h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, "Aliases"),
+        h("p", { class: "muted small" }, "Other names this person goes by. Clara knows who is meant by them and uses them to tag the person on Discord."))),
+      h("ul", { class: "list" }, aliases.length ? aliases.map((item) => h("li", {}, h("span", { class: "text" }, item.alias),
+        h("button", { class: "ghost icon-btn danger forget", title: "Remove this alias", "aria-label": `Remove alias: ${item.alias}`, onclick: async () => {
+          try { await api.delete(`/v1/admin/people/${person.id}/aliases/${item.id}`); show(person); load(); } catch (error) { fail(error); }
+        } }, icon("trash", { size: 18 })))) : h("li", { class: "empty-row" }, "No alias yet.")),
+      h("form", { class: "panel-body add-form", onsubmit: async (event) => {
+        event.preventDefault();
+        if (!text.value.trim()) return;
+        try { await api.post(`/v1/admin/people/${person.id}/aliases`, { alias: text.value }); show(person); load(); } catch (error) { fail(error); }
+      } }, text, h("button", { type: "submit" }, icon("plus", { size: 18 }), "Add alias")));
   }
 
   function relationPanel(person) {

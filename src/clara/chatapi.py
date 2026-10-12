@@ -33,7 +33,7 @@ from .apicommon import (
 from .attachments import MAX_ATTACHMENTS, MAX_NAME, Attached, FileError, Prepared, prepare
 from .auth import Client, require_account, require_conversation, require_space
 from .limits import UsageLimitReached
-from .memory import Memory, Person
+from .memory import Member, Memory, Person
 from .settings import Settings
 
 router = APIRouter()
@@ -44,6 +44,9 @@ MAX_ROSTER = 500
 class RosterEntry(Body):
     user_id: ExternalId
     name: str = Field(default="", max_length=80)
+    # what Clara writes to mention this person where "@name" is not enough (`<@123>` on Discord): given back to her
+    # as it is. A single word, no spaces.
+    mention: str = Field(default="", max_length=64, pattern=r"^\S*$")
 
 
 MAX_ATTACHMENT_CHARS = 40_000_000  # a file in base64 (a 30 MB document is about 40 million)
@@ -123,20 +126,26 @@ class ToolResultsBody(BaseModel):
 # ----------------------------------------------------------------------
 # The checks of a chat request
 # ----------------------------------------------------------------------
-def members(request: Request, surface: str, ids: list[tuple[str, str]]) -> tuple[Person, ...]:
+def members(
+    request: Request, surface: str, ids: list[tuple[str, str]], mentions: dict[str, str] | None = None
+) -> tuple[Member, ...]:
     """The people behind the accounts `ids` of a surface (id, name shown), once each, leaving out the
-    accounts Clara does not know (and, on a login surface, those not signed in): nothing is created."""
+    accounts Clara does not know (and, on a login surface, those not signed in): nothing is created. Each comes
+    with the other names they go by, and `mentions` (account id -> how to mention them) when the client gave some."""
     settings: Settings = request.app.state.settings
     memory: Memory = request.app.state.memory
     signed_in = request.app.state.users.signed_in_accounts(surface) if surface in settings.login_surfaces else None
-    found: dict[int, Person] = {}
+    found: dict[int, tuple[Person, str, str]] = {}
     for user_id, name in ids:
         if signed_in is not None and user_id not in signed_in:
             continue
         person = memory.find_person(surface, user_id)
         if person is not None and person.id not in found:
-            found[person.id] = Person(person.id, " ".join(name.split()) or person.name)
-    return tuple(found.values())
+            found[person.id] = (person, " ".join(name.split()) or person.name, (mentions or {}).get(user_id, ""))
+    aliases = memory.aliases_of(found)
+    return tuple(
+        Member(person.id, shown, mention, aliases.get(person.id, ())) for person, shown, mention in found.values()
+    )
 
 
 def conversation_project(request: Request, body: ChatBody) -> int | None:
@@ -210,7 +219,10 @@ def checked(request: Request, client: str, body: ChatBody) -> ChatRequest:
     mode = body.mode
     if body.space is not None:
         require_space(request, client, body.space, body.surface)
-        roster = members(request, body.surface, [(entry.user_id, entry.name) for entry in body.roster])
+        roster = members(
+            request, body.surface, [(entry.user_id, entry.name) for entry in body.roster],
+            {entry.user_id: entry.mention for entry in body.roster if entry.mention},
+        )
         named = {entry.user_id: entry.name for entry in body.roster}
         focus = members(request, body.surface, [(user_id, named.get(user_id, "")) for user_id in body.focus])
     elif body.roster or body.focus:
