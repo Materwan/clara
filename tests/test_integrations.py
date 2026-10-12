@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 
 import pytest
-from conftest import FakeBackend, call, fake_providers, say
+from conftest import FakeBackend, call, fake_providers, owner_headers, say
 from fastapi.testclient import TestClient
 
 from clara.integrations import permissions
@@ -18,7 +18,6 @@ from clara.integrations.vault import Vault, VaultError
 from clara.server import create_app
 
 AUTH = {"Authorization": "Bearer secret-cli"}
-ADMIN = {"Authorization": "Bearer secret-admin"}
 ME = {"surface": "web", "user_id": "erwan"}
 OTHER = {"surface": "web", "user_id": "zoe"}
 CONVERSATION = "web:erwan:talk"
@@ -173,9 +172,9 @@ def http(app):
 
 @pytest.fixture
 def folder(http, root, tmp_path):
-    """The administrator allows the server's folders; a resource for `root` is added and attached to the talk."""
+    """The owner allows the server's folders; a resource for `root` is added and attached to the talk."""
     response = http.put(
-        "/v1/admin/integrations", headers=ADMIN, json={"enabled": {"server": True}, "roots": [str(tmp_path)]}
+        "/v1/admin/integrations", headers=owner_headers(http), json={"enabled": {"server": True}, "roots": [str(tmp_path)]}
     )
     assert response.status_code == 200, response.text
     resource = http.post("/v1/integrations/resources", headers=AUTH, json={**ME, "kind": "server_path", "path": str(root)})
@@ -297,7 +296,7 @@ def test_a_denied_level_is_refused_and_a_ceiling_beats_what_the_person_allows(ht
     http.patch(
         f"/v1/integrations/resources/{folder['id']}", headers=AUTH, json={**ME, "levels": {"destructive": "allow"}}
     )
-    http.put("/v1/admin/integrations", headers=ADMIN, json={"ceiling": {"server": {"destructive": "deny"}}})
+    http.put("/v1/admin/integrations", headers=owner_headers(http), json={"ceiling": {"server": {"destructive": "deny"}}})
     backend.rounds = [call("res_delete", resource=folder["id"], path="notes.md"), say("no")]
     events = chat(http)
     assert "Not allowed" in next(e for e in events if e["type"] == "tool")["result"]
@@ -359,7 +358,7 @@ def test_a_folder_outside_the_allowed_roots_cannot_be_added(http, folder, tmp_pa
     outside = tmp_path.parent
     refused = http.post("/v1/integrations/resources", headers=AUTH, json={**ME, "kind": "server_path", "path": str(outside)})
     assert refused.status_code == 422
-    http.put("/v1/admin/integrations", headers=ADMIN, json={"enabled": {"server": False}})
+    http.put("/v1/admin/integrations", headers=owner_headers(http), json={"enabled": {"server": False}})
     off = http.post("/v1/integrations/resources", headers=AUTH, json={**ME, "kind": "server_path", "path": str(tmp_path)})
     assert off.status_code == 403
 
@@ -458,7 +457,7 @@ def test_the_log_keeps_what_was_asked_and_done(http, backend, folder):
     asked = next(e for e in chat(http) if e["type"] == "approval")["approval"]
     backend.rounds = [say("Done.")]
     http.post(f"/v1/approvals/{asked['id']}/decide", headers=AUTH, json={**ME, "approve": True})
-    entries = http.get("/v1/admin/integrations/log", headers=ADMIN).json()["entries"]
+    entries = http.get("/v1/admin/integrations/log", headers=owner_headers(http)).json()["entries"]
     outcomes = [(e["op"], e["outcome"]) for e in entries]
     assert ("write", "asked") in outcomes and ("write", "done") in outcomes and ("write", "approved") in outcomes
     assert all(e["resource"] == "docs" for e in entries)
@@ -466,10 +465,10 @@ def test_the_log_keeps_what_was_asked_and_done(http, backend, folder):
 
 
 def test_the_administrator_settings_are_checked(http, tmp_path):
-    assert http.put("/v1/admin/integrations", headers=ADMIN, json={"enabled": {"nothing": True}}).status_code == 422
-    assert http.put("/v1/admin/integrations", headers=ADMIN, json={"roots": [str(tmp_path / "missing")]}).status_code == 422
-    assert http.put("/v1/admin/integrations", headers=ADMIN, json={"ceiling": {"server": {"read": "maybe"}}}).status_code == 422
-    ok = http.put("/v1/admin/integrations", headers=ADMIN, json={"roots": [str(tmp_path)], "enabled": {"server": True}})
+    assert http.put("/v1/admin/integrations", headers=owner_headers(http), json={"enabled": {"nothing": True}}).status_code == 422
+    assert http.put("/v1/admin/integrations", headers=owner_headers(http), json={"roots": [str(tmp_path / "missing")]}).status_code == 422
+    assert http.put("/v1/admin/integrations", headers=owner_headers(http), json={"ceiling": {"server": {"read": "maybe"}}}).status_code == 422
+    ok = http.put("/v1/admin/integrations", headers=owner_headers(http), json={"roots": [str(tmp_path)], "enabled": {"server": True}})
     assert ok.json()["roots"] == [str(tmp_path.resolve())] and ok.json()["enabled"]["server"] is True
     types = {t["id"]: t["available"] for t in ok.json()["types"]}
     assert types["server"] is True

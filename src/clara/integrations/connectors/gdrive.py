@@ -1,6 +1,6 @@
 """A person's Google Drive: a folder (with everything under it) or a single file, worked on live with their own account.
 
-The person connects once with Google's OAuth (the administrator's Google client is in the server's `.env`); Clara keeps
+The person connects once with Google's OAuth (the owner's Google client is in the server's `.env`); Clara keeps
 the refresh token, encrypted, and asks Google for short-lived access tokens when she needs one. Everything is limited to
 the folder (or file) that was attached: a file outside it is refused, even by its id.
 
@@ -139,7 +139,7 @@ class GoogleDrive(Connector):
         if status == 401:
             return ConnectorError("Google refused the connection: connect it again.", True)
         if status == 403 and reason in ("accessNotConfigured", "SERVICE_DISABLED"):
-            return ConnectorError("The Google Drive API is not turned on in the administrator's Google project.")
+            return ConnectorError("The Google Drive API is not turned on in the owner's Google project.")
         if status == 403 and reason in ("rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"):
             return ConnectorError("Google says too many requests for now: try again later.")
         if status == 403:

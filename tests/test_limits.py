@@ -35,12 +35,12 @@ def clock():
 
 @pytest.fixture
 def users(memory):
-    return Users(memory)
+    return Users(memory, owner="root")
 
 
 @pytest.fixture
 def limits(memory, clock):
-    return UsageLimits(memory, clock=clock)
+    return UsageLimits(memory, clock=clock, owner="root")
 
 
 # --- the limits ------------------------------------------------------------------------------------------
@@ -75,14 +75,16 @@ def test_the_default_comes_from_the_settings_until_an_operator_changes_it(memory
     assert limits.default() == 0  # an explicit "no limit" beats the environment
 
 
-def test_an_administrator_has_no_limit_whatever_is_set(memory, users, limits):
-    admin = users.create("root", PASSWORD, admin=True)
+def test_the_owner_has_no_limit_whatever_is_set(memory, users, limits):
+    owner = users.create("root", PASSWORD)
+    other = users.create("other", PASSWORD)
     limits.set_default(10)
     users.set_token_limit("root", 5)
-    assert limits.limit_of(admin.person_id) is None
-    users.create("second", PASSWORD, admin=True)  # the last administrator cannot stop being one
-    users.set_admin("root", False)
-    assert limits.limit_of(admin.person_id) == 5  # only while they are an administrator
+    users.set_token_limit("other", 5)
+    assert limits.limit_of(owner.person_id) is None
+    assert limits.limit_of(other.person_id) == 5  # nobody else is an exception
+    assert Users(memory).get("root").is_owner is False  # a server with no owner has none: the limit follows
+    assert UsageLimits(memory, clock=limits._clock).limit_of(owner.person_id) == 5
 
 
 def test_a_person_without_a_user_follows_the_default(memory, limits):
@@ -187,8 +189,8 @@ async def test_a_message_that_was_not_for_clara_is_only_kept_when_the_person_is_
     assert "thinking aloud" in [m.content for m in memory.history("cli:erwan", 10)]
 
 
-async def test_an_administrator_is_never_refused(memory, tmp_path, limits, users):
-    root = users.create("root", PASSWORD, admin=True)
+async def test_the_owner_is_never_refused(memory, tmp_path, limits, users):
+    root = users.create("root", PASSWORD)
     memory.link_account("app", "root", users.person_of(root))  # what logging in does
     limits.set_default(1)
     agent = make_agent(memory, tmp_path, FakeBackend(say("a"), say("b"), say("c")), limits)
@@ -228,7 +230,7 @@ def http(settings):
     backend = FakeBackend(*[say("ok") for _ in range(40)])
     with TestClient(create_app(settings, fake_providers(settings, backend))) as client:
         users = client.app.state.users
-        users.create("root", PASSWORD, admin=True)
+        users.create("root", PASSWORD)
         users.create("erwan", PASSWORD)
         users.create("alice", PASSWORD)
         yield client
@@ -314,8 +316,8 @@ def test_a_stream_says_why_it_stopped(http):
 
 
 async def test_the_console_command_shows_and_sets_the_limits(settings, memory, tmp_path):
-    users, limits = Users(memory), UsageLimits(memory)
-    users.create("root", PASSWORD, admin=True)
+    users, limits = Users(memory, owner="root"), UsageLimits(memory, owner="root")
+    users.create("root", PASSWORD)
     erwan = users.create("erwan", PASSWORD)
     providers = fake_providers(settings, FakeBackend())
     agent = Agent(memory, providers, default_toolbox(), SystemPrompt(tmp_path / "none.md"), limits=limits)
@@ -329,10 +331,10 @@ async def test_the_console_command_shows_and_sets_the_limits(settings, memory, t
     assert "erwan: 500,000 credits a day" in await command("/limit erwan 500k")
     assert limits.limit_of(erwan.person_id) == 500_000
     shown = await command("/limit")
-    assert "own" in shown and "admin" in shown and "500,000" in shown
+    assert "own" in shown and "owner" in shown and "500,000" in shown
     assert "follows the default (2,000,000" in await command("/limit erwan default")
     assert "erwan: no limit" in await command("/limit erwan off")
-    assert "administrator" in await command("/limit root 5")
+    assert "the owner" in await command("/limit root 5")
     assert (await command("/limit nobody")).startswith("!")
     assert (await command("/limit erwan lots")).startswith("!")
     assert "Change it" in await command("/limit default")

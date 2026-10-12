@@ -9,7 +9,9 @@ Two kinds of credentials reach the API:
 
 A browser keeps its user token in an HttpOnly cookie. A cookie is only honoured with the header
 `X-Clara-Web: 1`, which a page of another site cannot add without our consent (CORS is not enabled).
-Operators use `CLARA_ADMIN_TOKENS`, or a user flagged administrator.
+There are no administrators. The **owner**, the one user named by `CLARA_OWNER`, has the administration: every
+`/v1/admin/...` route, and the `Admin` dependency below, are for them alone. Anything new that nothing says is for
+everybody must be behind `Admin` (or check `caller.user.is_owner`): it is the owner's until decided otherwise.
 """
 
 from __future__ import annotations
@@ -39,7 +41,6 @@ class Caller(str):
     user: User | None = None
     session: Session | None = None
     surface: str | None = None
-    admin_token: bool = False
 
 
 def credentials(headers) -> str:
@@ -104,18 +105,12 @@ def authenticate(request: Request) -> Caller:
 
 
 def authenticate_admin(request: Request) -> Caller:
-    """The calling operator (an admin token, or a user flagged administrator); 403 when remote admin is
-    off or the user is not one, 401 for a bad token."""
-    settings: Settings = request.app.state.settings
-    if not settings.admin_tokens and not credentials(request.headers).startswith(TOKEN_PREFIX):
-        raise HTTPException(403, "Remote admin is disabled: set CLARA_ADMIN_TOKENS")
-    caller = _resolve(request, settings.admin_tokens)
+    """The owner (CLARA_OWNER) logged in; 401 for a bad token, 403 for anybody else (a client token included)."""
+    caller = _resolve(request, request.app.state.settings.tokens)  # a client token is no user: 403 below
     if caller is None:
-        raise HTTPException(401, "Missing or invalid admin token", headers={"WWW-Authenticate": "Bearer"})
-    if caller.user is None:
-        caller.admin_token = True
-    elif not caller.user.is_admin:
-        raise HTTPException(403, "Administrators only")
+        raise HTTPException(401, "Missing or invalid token", headers={"WWW-Authenticate": "Bearer"})
+    if caller.user is None or not caller.user.is_owner:
+        raise HTTPException(403, "Only the owner can do this")
     return caller
 
 
@@ -201,8 +196,7 @@ def peer_of(settings: Settings, users: Users | None, headers) -> str:
     if given.startswith(TOKEN_PREFIX):
         found = users.lookup(given, touch=False) if users is not None else None
         return f"user:{found[0].name}@{found[1].surface}" if found else "unknown-token"
-    for tokens, kind in ((settings.tokens, "client"), (settings.admin_tokens, "admin")):
-        for token, name in tokens.items():
-            if secrets.compare_digest(token.encode(), given.encode()):
-                return f"{kind}:{name}"
+    for token, name in settings.tokens.items():
+        if secrets.compare_digest(token.encode(), given.encode()):
+            return f"client:{name}"
     return "unknown-token"

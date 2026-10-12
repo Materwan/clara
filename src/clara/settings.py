@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from .limits import parse_limit
 from .tailscale import HTTPS_PORTS
 from .tailscale import MODES as TAILSCALE_MODES
+from .users import NAME_RE as USER_NAME_RE
 
 
 class SettingsError(Exception):
@@ -198,7 +199,7 @@ class Settings:
     port: int
     data_dir: Path
     tokens: dict[str, str] = field(repr=False)  # chat token -> client name
-    admin_tokens: dict[str, str] = field(repr=False)  # console token -> admin name
+    owner: str  # the one user who has the administration (CLARA_OWNER): a login name, the same as users.name
     # client name -> surfaces it may speak for; a client with no entry may use any
     client_surfaces: dict[str, frozenset[str]]
     history_turns: int
@@ -231,7 +232,7 @@ class Settings:
     # are their own (musicaccounts.py)
     music_assistant_url: str = ""
     # The second brain (vault/): an Obsidian vault, a git repository shared with the person. Off without a path.
-    # Only the users named in vault_owners (else the administrators) get the vault_* tools, never in groups
+    # Only the users named in vault_owners (else the owner) get the vault_* tools, never in groups
     vault_path: Path | None = None
     vault_owners: frozenset[str] = frozenset()
     vault_in_groups: bool = False
@@ -259,10 +260,10 @@ class Settings:
     session_days: int = 90
     session_max_days: int = 365  # a token never lasts longer than this, however often it is used (0: no limit)
     user_surfaces: frozenset[str] = frozenset({"web", "app", "cli", "console"})
-    # Whether anybody who reaches the web site may make their own user there (off: administrators make them)
+    # Whether anybody who reaches the web site may make their own user there (off: only the owner makes them)
     web_signup: bool = False
     # Whether somebody who made their own user (the web site's sign-up, a Discord /register) may connect GitHub, Google
-    # Drive and folders at once. Off: an administrator switches the integrations on for them, one person at a time.
+    # Drive and folders at once. Off: the owner switches the integrations on for them, one person at a time.
     signup_integrations: bool = False
     # Surfaces where a client signs its people in (POST /v1/accounts/login or register): there, an account that
     # is not signed in as a user cannot talk to Clara
@@ -282,10 +283,10 @@ class Settings:
     project_inline_percent: int = 40
     github_token: str | None = field(default=None, repr=False)
     # Whether every user's project downloads may use github_token (the operator's own access, private repositories
-    # included). Off: only administrators; the others use their own GitHub account (Integrations page) or public repos.
+    # included). Off: only the owner; the others use their own GitHub account (Integrations page) or public repos.
     github_token_shared: bool = False
-    # Tokens a day a user may use when an administrator set no limit for them (limits.py); 0: no limit.
-    # Administrators have none. `/limit default` changes it while the server runs.
+    # Tokens a day a user may use when the owner set no limit for them (limits.py); 0: no limit.
+    # The owner has none. `/limit default` changes it while the server runs.
     default_daily_tokens: int = 0
     # Billions of parameters a model of weight 1 has: a bigger one costs proportionally more credits a token
     # (models.py), a smaller one less
@@ -340,16 +341,24 @@ class Settings:
                 '  python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
                 "and put it in .env as CLARA_TOKENS=terminal:<token>"
             )
-        admin_tokens = parse_tokens(env.get("CLARA_ADMIN_TOKENS", ""))
-        for token in (*tokens, *admin_tokens):
+        for token in tokens:
             if token.lower().startswith(PLACEHOLDER_TOKEN):
                 raise SettingsError(
                     "A token still has the placeholder value of .env.example. Generate a real one with:\n"
                     '  python -c "import secrets; print(secrets.token_urlsafe(32))"'
                 )
-        if set(tokens) & set(admin_tokens):
-            raise SettingsError("A token cannot be both a chat token and an admin token.")
 
+        owner = text("CLARA_OWNER").lower()
+        if not owner:
+            raise SettingsError(
+                "CLARA_OWNER is empty: the server refuses to start without an owner, the one user who has the\n"
+                "administration. Put the login name of that user in .env, e.g. CLARA_OWNER=erwan, then make it with\n"
+                "`/user add erwan` in the server's console."
+            )
+        if not USER_NAME_RE.match(owner):
+            raise SettingsError(
+                "CLARA_OWNER is a user name: 1 to 32 characters, a-z, 0-9, '.', '_' or '-', not starting with a symbol."
+            )
         tailscale = text("CLARA_TAILSCALE", "off").lower()
         if tailscale not in TAILSCALE_MODES:
             raise SettingsError(f"CLARA_TAILSCALE must be one of {', '.join(TAILSCALE_MODES)}")
@@ -360,7 +369,7 @@ class Settings:
             )
         if tailscale == "funnel":
             weak = sorted(
-                {name for token, name in (*tokens.items(), *admin_tokens.items()) if len(token) < MIN_PUBLIC_TOKEN_LENGTH}
+                {name for token, name in tokens.items() if len(token) < MIN_PUBLIC_TOKEN_LENGTH}
             )
             if weak:
                 raise SettingsError(
@@ -402,7 +411,7 @@ class Settings:
             port=_positive_int(env, "CLARA_PORT", 8765),
             data_dir=Path(text("CLARA_DATA_DIR", "data")),
             tokens=tokens,
-            admin_tokens=admin_tokens,
+            owner=owner,
             client_surfaces=client_surfaces,
             history_turns=_positive_int(env, "CLARA_HISTORY_TURNS", 20),
             max_concurrent_llm=_positive_int(env, "CLARA_MAX_CONCURRENT_LLM", 2),

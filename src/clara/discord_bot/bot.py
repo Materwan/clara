@@ -64,7 +64,7 @@ class ClaraBot(discord.Client):
             await self.accounts.refresh()
 
     async def sync_spaces(self) -> None:
-        """Tell Clara which Discord servers the bot is in (an administrator lets her chime in there)."""
+        """Tell Clara which Discord servers the bot is in (the owner lets her chime in there)."""
         try:
             await self.api.sync_spaces([(space_of(guild.id), guild.name) for guild in self.guilds])
         except ClaraError as error:

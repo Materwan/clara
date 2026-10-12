@@ -2,7 +2,7 @@
 keeps its text files. No git is needed, and nothing is kept of the history.
 
 Public repositories need nothing; a private one needs a token: the person's own GitHub account (Integrations page)
-or, for administrators (and everybody with CLARA_GITHUB_TOKEN_SHARED), the operator's GITHUB_TOKEN. The token never
+or, for the owner (and everybody with CLARA_GITHUB_TOKEN_SHARED), the operator's GITHUB_TOKEN. The token never
 leaves the server.
 """
 

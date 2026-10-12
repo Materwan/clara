@@ -97,7 +97,7 @@ class Approvals:
 
     def _remember(self, approval: Approval, scope: str) -> None:
         """"Approve and do not ask again" for this kind of action, here or on the whole resource. (The
-        administrator's ceiling still applies when it is read.)"""
+        owner's ceiling still applies when it is read.)"""
         resource = self.store.resource(approval.resource_id) if approval.resource_id else None
         if resource is None:
             return

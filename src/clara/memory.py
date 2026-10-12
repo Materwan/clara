@@ -141,7 +141,6 @@ CREATE TABLE IF NOT EXISTS users (
     name          TEXT PRIMARY KEY,
     person_id     INTEGER NOT NULL REFERENCES people (id),
     password_hash TEXT NOT NULL,
-    is_admin      INTEGER NOT NULL DEFAULT 0,
     disabled      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
     last_login_at TEXT
@@ -257,7 +256,7 @@ CREATE TABLE IF NOT EXISTS user_music (
 CREATE TABLE IF NOT EXISTS models (
     ref     TEXT PRIMARY KEY,  -- "provider:model", as models.py names it
     enabled INTEGER NOT NULL DEFAULT 0,  -- may users choose it?
-    weight  REAL,  -- credits per token an administrator set (NULL: worked out from the size)
+    weight  REAL,  -- credits per token the owner set (NULL: worked out from the size)
     size_b  REAL  -- billions of parameters, as the provider last said (NULL: unknown)
 );
 CREATE TABLE IF NOT EXISTS model_choices (
@@ -684,9 +683,16 @@ class Memory:
                 if column not in present:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         self._migrate_fact_keys()
+        self._drop_admin_flag()
         for statement in _INDEXES_ON_ADDED_COLUMNS:
             self._db.execute(statement)
         self._db.commit()
+
+    def _drop_admin_flag(self) -> None:
+        """Databases from before the owner (CLARA_OWNER) have a `users.is_admin` flag: nobody is an administrator any
+        more, so the column goes."""
+        if "is_admin" in {row["name"] for row in self._db.execute("PRAGMA table_info(users)")}:
+            self._db.execute("ALTER TABLE users DROP COLUMN is_admin")
 
     def _migrate_fact_keys(self) -> None:
         """Databases from before `text_key` compared facts with SQL lower(): give every fact its key,

@@ -48,13 +48,14 @@ def open_vault(settings: Settings) -> Vault | None:
 
 
 def owner_check(settings: Settings, users: Users) -> Callable[[int], bool]:
-    """Who may use the vault: the users named in CLARA_VAULT_OWNERS, else the administrators. A person is a
+    """Who may use the vault: the users named in CLARA_VAULT_OWNERS, else the owner. A person is a
     user when an account of theirs is signed in as one (a Discord account linked to the user's name counts)."""
 
     def allowed(person_id: int) -> bool:
+        if not settings.vault_owners:
+            owner = users.owner_user()
+            return owner is not None and not owner.disabled and owner.person_id == person_id
         user = users.of_person(person_id)
-        if user is None or user.disabled:
-            return False
-        return user.name in settings.vault_owners if settings.vault_owners else user.is_admin
+        return user is not None and not user.disabled and user.name in settings.vault_owners
 
     return allowed

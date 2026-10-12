@@ -134,18 +134,18 @@ export function mountAccount(container, user, onSignOut) {
   const profileCard = (me) => h("section", { class: "panel panel-body profile" },
     avatar(me.person?.name || me.name, "lg"),
     h("div", { class: "who" },
-      h("h2", {}, me.person?.name || me.name, me.is_admin && h("span", { class: "badge admin" }, "Administrator")),
+      h("h2", {}, me.person?.name || me.name, me.is_owner && h("span", { class: "badge admin" }, "Owner")),
       h("p", { class: "muted small" }, `Signed in as ${me.name}. Clara knows you on these accounts:`),
       h("div", { class: "accounts" }, me.accounts.length ? me.accounts.map((a) => h("span", { class: "badge" }, a)) : h("span", { class: "muted small" }, "none yet"))),
     h("button", { onclick: onSignOut }, icon("logout", { size: 18 }), "Sign out"));
 
-  /** Credits used today against the daily limit an administrator set (or none). */
+  /** Credits used today against the daily limit the owner set (or none). */
   function usageCard(me) {
     const usage = me.usage;
     const note = !usage.limit
-      ? (me.is_admin ? "As an administrator you have no limit." : "You have no daily limit.")
+      ? (me.is_owner ? "As the owner you have no limit." : "You have no daily limit.")
       : usage.used >= usage.limit
-        ? `You used all of today's credits. You can talk to Clara again at ${dateTime(usage.resets_at)}, or ask an administrator to raise your limit.`
+        ? `You used all of today's credits. You can talk to Clara again at ${dateTime(usage.resets_at)}, or ask the owner to raise your limit.`
         : `${tokenCount(usage.remaining)} credits left today. The day starts again at ${dateTime(usage.resets_at)}.`;
     return h("section", { class: "panel panel-body usage-card" },
       h("h3", {}, "Usage today"),
@@ -153,13 +153,13 @@ export function mountAccount(container, user, onSignOut) {
       h("p", { class: "muted small" }, note));
   }
 
-  /** The model Clara answers you with, on each surface: one of those an administrator offers, each at its own cost. */
+  /** The model Clara answers you with, on each surface: one of those the owner offers, each at its own cost. */
   function modelsCard(me, models) {
     const head = h("div", { class: "panel-head" }, h("div", {}, h("h3", {}, "Model"),
       h("p", { class: "muted small" }, "Every token Clara reads or writes costs credits: bigger models cost more per token, so a small one lets you talk longer within your daily limit.")));
     if (!anyModel(models)) {
       return h("section", { class: "panel" }, head, h("div", { class: "panel-body" },
-        h("p", { class: "muted small" }, `Clara answers you with ${models.default.name} (${costText(models.default.weight)}). An administrator has not offered other models yet.`)));
+        h("p", { class: "muted small" }, `Clara answers you with ${models.default.name} (${costText(models.default.weight)}). The owner has not offered other models yet.`)));
     }
     const rows = surfaceOrder(models.surfaces).filter((surface) => surface in SURFACE_NAMES || surface in models.choices).map((surface) => {
       const select = modelSelect(models, models.choices[surface] ?? null, async (ref) => {
@@ -176,7 +176,7 @@ export function mountAccount(container, user, onSignOut) {
     });
     return h("section", { class: "panel" }, head, h("div", { class: "panel-body stack" },
       h("div", { class: "model-grid" }, rows),
-      h("p", { class: "muted small" }, "Discord has one model for everybody, chosen by an administrator.")));
+      h("p", { class: "muted small" }, "Discord has one model for everybody, chosen by the owner.")));
   }
 
   /** How long a task takes before you are notified when it is done: the server's delay, never, or your own. */

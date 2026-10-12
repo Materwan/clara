@@ -1,8 +1,8 @@
 """`clara-admin`: the server's console, from another computer.
 
 It is the same prompt as the one embedded in `clara-server` (same commands,
-same completion), but each line travels to the server over HTTP. It needs an
-*admin* token (CLARA_ADMIN_TOKENS on the server), not a chat token.
+same completion), but each line travels to the server over HTTP. It is the
+owner's alone (CLARA_OWNER on the server): sign in as that user.
 """
 
 from __future__ import annotations
@@ -73,24 +73,21 @@ def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(prog="clara-admin", description="Remote Clara console.")
     parser.add_argument("--url", default=os.getenv("CLARA_URL", "http://127.0.0.1:8765"))
-    parser.add_argument("--token", default=os.getenv("CLARA_ADMIN_TOKEN"), help="an admin token (CLARA_ADMIN_TOKEN)")
     parser.add_argument(
-        "--user", default=os.getenv("CLARA_USER"),
-        help="or sign in as an administrator user (CLARA_USER): the password is asked once (or CLARA_PASSWORD)",
+        "--user", default=os.getenv("CLARA_USER") or os.getenv("CLARA_OWNER"),
+        help="the owner's user name (CLARA_USER, else CLARA_OWNER): the password is asked once (or CLARA_PASSWORD)",
     )
     parser.add_argument("command", nargs="*", help="run this command and exit, e.g. /status")
     args = parser.parse_args()
     for stream in (sys.stdout, sys.stderr):  # Windows consoles are not always UTF-8
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    token = args.token
-    if not token and args.user:
-        try:
-            token = session.obtain_token(args.url, args.user.lower(), "console")
-        except session.LoginError as error:
-            raise SystemExit(f"Cannot sign in: {error}") from None
-    if not token:
-        raise SystemExit("No admin token: pass --token (CLARA_ADMIN_TOKEN), or --user (CLARA_USER) to sign in as an administrator.")
+    if not args.user:
+        raise SystemExit("Who are you? Pass --user (CLARA_USER) with the owner's name.")
+    try:
+        token = session.obtain_token(args.url, args.user.lower(), "console")
+    except session.LoginError as error:
+        raise SystemExit(f"Cannot sign in: {error}") from None
     try:
         asyncio.run(amain(args.url, token, " ".join(args.command)))
     except KeyboardInterrupt:

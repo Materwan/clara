@@ -1,5 +1,5 @@
 // The tokens people used (Discord apart from every other surface), the models they prefer, and the history of every
-// call: for administrators about everybody (Admin, Usage), for each person about themselves (the Usage page).
+// call: for the owner about everybody (Admin, Usage), for each person about themselves (the Usage page).
 // The person's page also holds their own API keys (one per provider) and what they used on them, apart from the
 // server's key and the credits.
 
@@ -94,7 +94,7 @@ export function usage(box, { mine = false } = {}) {
     const models = entry.models.map((m) => h("div", { title: `${tokenCount(m.answers)} answers, ${pair(m)}` }, modelName(m), h("span", { class: "muted small" }, ` ×${tokenCount(m.answers)}`)));
     return h("tr", {},
       h("td", {}, h("div", { class: "user-cell" }, avatar(entry.person.name), h("div", {},
-        h("strong", {}, entry.user || entry.person.name), entry.is_admin && h("span", { class: "badge admin" }, "Admin"),
+        h("strong", {}, entry.user || entry.person.name), entry.is_owner && h("span", { class: "badge admin" }, "Owner"),
         !entry.user && h("div", { class: "muted small" }, "no sign-in")))),
       h("td", { class: "num", "data-label": "Answers" }, tokenCount(entry.answers)),
       h("td", { class: "num", "data-label": "Tokens in" }, tokenCount(entry.prompt_tokens)),

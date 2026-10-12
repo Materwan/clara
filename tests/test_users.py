@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import FakeBackend, fake_providers, say
+from conftest import FakeBackend, fake_providers, owner_headers, say
 from fastapi.testclient import TestClient
 
 from clara.commands import registry
@@ -16,7 +16,6 @@ from clara.users import UserError, Users, hash_password, verify_password
 PASSWORD = "correct horse battery"
 WEB = {"X-Clara-Web": "1"}
 CLI_TOKEN = {"Authorization": "Bearer secret-cli"}
-ADMIN_TOKEN = {"Authorization": "Bearer secret-admin"}
 
 
 # --- the store -------------------------------------------------------------------------------------------
@@ -37,7 +36,7 @@ def clock():
 
 @pytest.fixture
 def users(memory, clock):
-    return Users(memory, session_days=90, clock=clock)
+    return Users(memory, session_days=90, clock=clock, owner="root")
 
 
 def test_a_password_is_kept_salted_and_checked():
@@ -48,8 +47,9 @@ def test_a_password_is_kept_salted_and_checked():
 
 
 def test_a_user_is_created_with_rules(users):
-    user = users.create("Erwan", PASSWORD, admin=True)
-    assert (user.name, user.is_admin) == ("erwan", True)
+    user = users.create("Erwan", PASSWORD)
+    assert (user.name, user.is_owner) == ("erwan", False)
+    assert users.create("Root", PASSWORD).is_owner  # the owner is the user CLARA_OWNER names, and nobody else
     for bad in ("", "a b", "-x", "x" * 33, "é"):
         with pytest.raises(UserError):
             users.create(bad, PASSWORD)
@@ -71,7 +71,7 @@ def test_authentication_needs_the_password_and_an_enabled_user(users):
     assert users.authenticate("Erwan", PASSWORD).name == "erwan"
     assert users.authenticate("erwan", "wrong password") is None
     assert users.authenticate("nobody", PASSWORD) is None
-    users.create("root", PASSWORD, admin=True)
+    users.create("root", PASSWORD)
     users.set_disabled("erwan", True)
     assert users.authenticate("erwan", PASSWORD) is None
 
@@ -101,7 +101,7 @@ def test_session_days_zero_never_expires(memory, clock):
 
 def test_a_token_stops_working_when_revoked_disabled_or_the_password_changes(users):
     user = users.create("erwan", PASSWORD)
-    users.create("root", PASSWORD, admin=True)
+    users.create("root", PASSWORD)
     first, one = users.open_session(user, "app")
     second, two = users.open_session(user, "web")
     assert users.revoke_session("erwan", one.id) and users.lookup(first) is None
@@ -114,13 +114,22 @@ def test_a_token_stops_working_when_revoked_disabled_or_the_password_changes(use
     assert users.lookup(third) is None  # disabling signed it out for good
 
 
-def test_the_last_administrator_cannot_be_removed_demoted_or_disabled(users):
-    users.create("root", PASSWORD, admin=True)
-    for action in (lambda: users.delete("root"), lambda: users.set_admin("root", False), lambda: users.set_disabled("root", True)):
-        with pytest.raises(UserError, match="last administrator"):
+def test_the_owner_cannot_be_removed_or_disabled_and_nobody_else_is_special(users):
+    users.create("root", PASSWORD)
+    for action in (lambda: users.delete("root"), lambda: users.set_disabled("root", True)):
+        with pytest.raises(UserError, match="owner"):
             action()
-    users.create("second", PASSWORD, admin=True)
-    users.set_admin("root", False)
+    users.create("second", PASSWORD)
+    users.set_disabled("second", True)
+    users.delete("second")
+    assert users.owner_user().name == "root" and not hasattr(users, "set_admin")
+
+
+def test_the_owner_name_cannot_be_taken_by_a_sign_up(memory):
+    users = Users(memory, owner="erwan")  # a name anybody could otherwise sign up with
+    with pytest.raises(UserError, match="already taken"):
+        users.register("Erwan", PASSWORD)
+    assert users.create("erwan", PASSWORD).is_owner  # only the owner's own console makes it
 
 
 def test_erasing_or_merging_a_person_keeps_the_users_consistent(users, memory):
@@ -146,7 +155,7 @@ def http(settings):
     backend = FakeBackend(*[say("ok") for _ in range(20)])
     with TestClient(create_app(settings, fake_providers(settings, backend))) as client:
         users = client.app.state.users
-        users.create("root", PASSWORD, admin=True)
+        users.create("root", PASSWORD)
         users.create("erwan", PASSWORD)
         users.create("alice", PASSWORD)
         yield client
@@ -353,7 +362,7 @@ def test_signing_up_makes_a_plain_user_who_is_logged_in_on_the_web(open_http):
     assert answer.status_code == 201
     body = answer.json()
     assert "token" not in body and body["surface"] == "web"
-    assert body["user"]["name"] == "newcomer" and not body["user"]["is_admin"]
+    assert body["user"]["name"] == "newcomer" and not body["user"]["is_owner"]
     assert "HttpOnly" in answer.headers["set-cookie"]
     assert open_http.get("/v1/auth/me", headers=WEB).json()["name"] == "newcomer"
     assert login(open_http, "newcomer", "web", password=PASSWORD).status_code == 200  # and the password works
@@ -404,7 +413,7 @@ def test_sign_up_passwords_never_reach_the_traffic_log(open_http):
 
 def test_a_disabled_user_is_signed_out_at_once(http):
     headers = bearer(http)
-    assert http.patch("/v1/admin/users/erwan", json={"disabled": True}, headers=ADMIN_TOKEN).status_code == 200
+    assert http.patch("/v1/admin/users/erwan", json={"disabled": True}, headers=owner_headers(http)).status_code == 200
     assert http.get("/v1/auth/me", headers=headers).status_code == 401
     assert login(http).status_code == 401
 
@@ -412,41 +421,41 @@ def test_a_disabled_user_is_signed_out_at_once(http):
 # --- administration -------------------------------------------------------------------------------------
 
 
-def test_only_administrators_reach_the_admin_routes(http):
+def test_only_the_owner_reaches_the_admin_routes(http):
     assert http.get("/v1/admin/users", headers=bearer(http, "erwan")).status_code == 403
-    assert http.get("/v1/admin/users", headers=CLI_TOKEN).status_code == 401  # a chat token is not an admin token
+    assert http.get("/v1/admin/users", headers=CLI_TOKEN).status_code == 403  # a chat token is no user, let alone the owner
     assert http.get("/v1/admin/users").status_code == 401
     names = [u["name"] for u in http.get("/v1/admin/users", headers=bearer(http, "root")).json()["users"]]
     assert names == ["alice", "erwan", "root"]
-    assert http.get("/v1/admin/users", headers=ADMIN_TOKEN).status_code == 200
+    assert http.get("/v1/admin/users", headers=owner_headers(http)).status_code == 200
 
 
-def test_an_administrator_creates_edits_and_removes_users(http):
+def test_the_owner_creates_edits_and_removes_users(http):
     admin = bearer(http, "root")
     made = http.post("/v1/admin/users", json={"name": "Newbie"}, headers=admin)
     assert made.status_code == 201 and len(made.json()["password"]) >= 10
     assert login(http, "newbie", password=made.json()["password"]).status_code == 200
     assert http.post("/v1/admin/users", json={"name": "newbie"}, headers=admin).status_code == 422
     assert http.post("/v1/admin/users", json={"name": "weak", "password": "short"}, headers=admin).status_code == 422
-    edited = http.patch("/v1/admin/users/newbie", json={"generate_password": True, "admin": True}, headers=admin).json()
-    assert edited["user"]["is_admin"] and edited["user"]["sessions"] == 0  # the new password signed them out
+    edited = http.patch("/v1/admin/users/newbie", json={"generate_password": True}, headers=admin).json()
+    assert not edited["user"]["is_owner"] and edited["user"]["sessions"] == 0  # the new password signed them out
     assert login(http, "newbie", password=edited["password"]).status_code == 200
     assert http.post("/v1/admin/users/newbie/sign-out", headers=admin).json() == {"signed_out": 1}
     assert http.delete("/v1/admin/users/newbie", headers=admin).status_code == 200
     assert http.delete("/v1/admin/users/newbie", headers=admin).status_code == 422
-    assert http.patch("/v1/admin/users/ghost", json={"admin": True}, headers=admin).status_code == 404
+    assert http.patch("/v1/admin/users/ghost", json={"disabled": True}, headers=admin).status_code == 404
 
 
-def test_the_last_administrator_is_protected_through_the_api(http):
-    assert http.patch("/v1/admin/users/root", json={"admin": False}, headers=ADMIN_TOKEN).status_code == 422
-    assert http.delete("/v1/admin/users/root", headers=ADMIN_TOKEN).status_code == 422
+def test_the_owner_is_protected_through_the_api(http):
+    assert http.patch("/v1/admin/users/root", json={"disabled": True}, headers=owner_headers(http)).status_code == 422
+    assert http.delete("/v1/admin/users/root", headers=owner_headers(http)).status_code == 422
 
 
 def test_passwords_never_reach_the_traffic_log(http):
     admin = bearer(http, "root")
     made = http.post("/v1/admin/users", json={"name": "secretive"}, headers=admin).json()["password"]
     changed = http.post("/v1/auth/password", json={"current_password": PASSWORD, "new_password": "my private password"}, headers=bearer(http)).status_code
-    created = http.post("/v1/admin/command", json={"line": "/user add viacommand"}, headers=ADMIN_TOKEN).json()["output"]
+    created = http.post("/v1/admin/command", json={"line": "/user add viacommand"}, headers=owner_headers(http)).json()["output"]
     command_password = created.split("Password: ")[1].split("\n")[0]
     http.app.state.traffic.flush()
     text = "".join(path.read_text(encoding="utf-8") for path in http.app.state.settings.logs_dir.glob("traffic-*.jsonl"))
@@ -478,11 +487,13 @@ def test_the_admin_console_runs_user_commands(http):
 
     import asyncio
 
-    out = asyncio.run(run("/user add zoe admin"))
-    assert out.sensitive and "Password: " in out.output and "administrator" in out.output
+    out = asyncio.run(run("/user add zoe"))
+    assert out.sensitive and "Password: " in out.output and "owner" not in out.output
+    assert asyncio.run(run("/user add zed admin")).output.startswith("! Usage")  # no such flag any more
+    assert "owner" in asyncio.run(run("/user list")).output  # root, made by the fixture
     assert "zoe" in asyncio.run(run("/user list")).output
     assert "signed out" in asyncio.run(run("/user passwd zoe")).output
-    assert "no longer" in asyncio.run(run("/user admin zoe off")).output
+    assert asyncio.run(run("/user admin zoe on")).output.startswith("! ")  # there are no administrators to make
     assert "disabled" in asyncio.run(run("/user disable zoe")).output
     assert "can no longer log in" in asyncio.run(run("/user remove zoe")).output
     assert asyncio.run(run("/user passwd ghost")).output.startswith("! No user called ghost")

@@ -2,7 +2,7 @@
 
 The server is the authority (it refuses a message from an account that is not signed in); this copy saves a
 request per message and tells the bot which members to list to Clara. It is filled at start, updated by the
-bot's own /register, /login and /logout, and read again every few minutes (an administrator may have signed
+bot's own /register, /login and /logout, and read again every few minutes (the owner may have signed
 someone out, or disabled them, from the web site).
 """
 

@@ -1,6 +1,8 @@
 """Users with a password, and the tokens they get by logging in.
 
 A user is a login name, a password (kept only as a salted scrypt hash) and the *person* Clara knows them as.
+There are no administrators: the **owner**, the one user named by `CLARA_OWNER`, has the administration and
+everything new that is not said to be for everybody; every other user is a plain user.
 Logging in on a surface (`web`, `app`, `cli`...) gives a token that is bound to that user and that surface:
 the server then knows who is speaking, instead of believing whatever `user_id` a client claims. Tokens are
 random, only their SHA-256 is stored, each can be revoked (sign out) and one unused for `session_days`
@@ -27,7 +29,8 @@ MIN_PASSWORD = 10
 MAX_PASSWORD = 256
 TOKEN_PREFIX = "clu_"  # tells a user token from a client token (CLARA_TOKENS) at a glance
 # Names nobody may make for themselves (the web site's sign-up, a Discord /register): they would pass for the people
-# who run the server. An administrator can still make one with /user add.
+# who run the server (the owner's own name is refused too, see `Users.register`). The owner can still make one with
+# /user add.
 RESERVED_NAMES = frozenset({
     "admin", "administrator", "administrateur", "root", "system", "clara", "support", "moderator", "mod", "owner",
     "operator", "staff", "official", "security", "null", "none", "anonymous", "everyone", "here", "me",
@@ -44,7 +47,7 @@ class UserError(ValueError):
 class User:
     name: str
     person_id: int
-    is_admin: bool
+    is_owner: bool  # the user named by CLARA_OWNER: the only one who has the administration
     disabled: bool
     created_at: str
     last_login_at: str | None
@@ -139,9 +142,11 @@ def _token_hash(token: str) -> str:
 
 class Users:
     def __init__(
-        self, memory: Memory, session_days: int = 90, clock: Callable[[], datetime] = _now, session_max_days: int = 0
+        self, memory: Memory, session_days: int = 90, clock: Callable[[], datetime] = _now, session_max_days: int = 0,
+        owner: str = "",
     ):
         self._memory = memory
+        self.owner = owner.strip().lower()  # the login name of the owner (CLARA_OWNER); empty: nobody is
         self.session_days = session_days  # 0: tokens never expire
         self.session_max_days = session_max_days  # the longest a token lasts, used or not (0: no limit)
         self._clock = clock
@@ -149,11 +154,10 @@ class Users:
     # ------------------------------------------------------------------
     # Users
     # ------------------------------------------------------------------
-    @staticmethod
-    def _user(row) -> User:
+    def _user(self, row) -> User:
         return User(
-            row["name"], row["person_id"], bool(row["is_admin"]), bool(row["disabled"]), row["created_at"],
-            row["last_login_at"], row["daily_token_limit"],
+            row["name"], row["person_id"], bool(self.owner) and row["name"] == self.owner, bool(row["disabled"]),
+            row["created_at"], row["last_login_at"], row["daily_token_limit"],
         )
 
     def get(self, name: str) -> User | None:
@@ -174,13 +178,11 @@ class Users:
             rows = self._memory.database.execute("SELECT * FROM users ORDER BY name").fetchall()
         return [self._user(row) for row in rows]
 
-    def admin_count(self) -> int:
-        with self._memory.lock:
-            return self._memory.database.execute(
-                "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND disabled = 0"
-            ).fetchone()[0]
+    def owner_user(self) -> User | None:
+        """The owner's user, if CLARA_OWNER names one that exists yet."""
+        return self.get(self.owner) if self.owner else None
 
-    def create(self, name: str, password: str, admin: bool = False, person: Person | None = None) -> User:
+    def create(self, name: str, password: str, person: Person | None = None) -> User:
         """A new user. They are `person` if given, else the person already known by an account with this
         name (`cli:erwan`, `app:erwan`...), or a new one."""
         name = check_name(name)
@@ -197,8 +199,8 @@ class Users:
                 ).fetchone()
                 person_id = row["person_id"] if row else self._memory.resolve("web", name, name).id
             db.execute(
-                "INSERT INTO users (name, person_id, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)",
-                (name, person_id, hash_password(password), int(admin), _stamp(self._clock())),
+                "INSERT INTO users (name, person_id, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (name, person_id, hash_password(password), _stamp(self._clock())),
             )
         return self.get(name)  # type: ignore[return-value]
 
@@ -206,7 +208,7 @@ class Users:
         """A user who made themselves (the web site's sign-up). Unlike `create`, they never take over the
         memories of an account that already has their name (`cli:erwan`, `discord:1234`...): anybody could
         claim them, so such a name is refused and the person is always a new one."""
-        name = check_self_service_name(name)
+        name = self.check_self_service_name(name)
         check_password_rules(password)
         with self._memory.lock:
             if self._memory.database.execute("SELECT 1 FROM accounts WHERE external_id = ?", (name,)).fetchone():
@@ -217,6 +219,14 @@ class Users:
         except UserError:
             self._memory.delete_person(person.id)
             raise
+
+    def check_self_service_name(self, name: str) -> str:
+        """`check_self_service_name`, and not the owner's: their account is made by the owner (/user add), nobody
+        may take it first."""
+        name = check_self_service_name(name)
+        if name == self.owner:
+            raise UserError(f"The name {name} is already taken.")
+        return name
 
     def person_of(self, user: User) -> Person:
         person = self._memory.person_by_id(user.person_id)
@@ -232,13 +242,6 @@ class Users:
             db.execute("UPDATE users SET password_hash = ? WHERE name = ?", (hash_password(password), name))
         return self.revoke_all(name, except_id=keep_session)
 
-    def set_admin(self, name: str, admin: bool) -> None:
-        user = self._must_exist(name)
-        if user.is_admin and not admin and not user.disabled and self.admin_count() <= 1:
-            raise UserError("This is the last administrator: make someone else one first.")
-        with self._memory.lock, self._memory.database as db:
-            db.execute("UPDATE users SET is_admin = ? WHERE name = ?", (int(admin), name))
-
     def set_token_limit(self, name: str, limit: int | None) -> None:
         """Tokens this user may use a day: 0 for no limit, None to follow the server's default."""
         self._must_exist(name)
@@ -249,8 +252,8 @@ class Users:
 
     def set_disabled(self, name: str, disabled: bool) -> None:
         user = self._must_exist(name)
-        if disabled and user.is_admin and not user.disabled and self.admin_count() <= 1:
-            raise UserError("This is the last administrator: it cannot be disabled.")
+        if disabled and user.is_owner:
+            raise UserError("This is the owner (CLARA_OWNER): it cannot be disabled.")
         with self._memory.lock, self._memory.database as db:
             db.execute("UPDATE users SET disabled = ? WHERE name = ?", (int(disabled), name))
         if disabled:
@@ -259,8 +262,8 @@ class Users:
     def delete(self, name: str) -> None:
         """Remove the login; the person, their facts and conversations stay."""
         user = self._must_exist(name)
-        if user.is_admin and not user.disabled and self.admin_count() <= 1:
-            raise UserError("This is the last administrator: it cannot be removed.")
+        if user.is_owner:
+            raise UserError("This is the owner (CLARA_OWNER): it cannot be removed.")
         with self._memory.lock, self._memory.database as db:
             db.execute("DELETE FROM users WHERE name = ?", (name,))  # their sessions go with them
 
@@ -382,8 +385,8 @@ class Users:
                 "SELECT 1 FROM users WHERE person_id = ?", (person_id,)
             ).fetchone() is not None
 
-    def attach_account(self, user: User, surface: str, external_id: str, client: str = "admin") -> None:
-        """An administrator signs the account in as `user`, with no password. It belongs to the user's person
+    def attach_account(self, user: User, surface: str, external_id: str, client: str = "owner") -> None:
+        """The owner signs the account in as `user`, with no password. It belongs to the user's person
         from then on: an account that was another user's is only moved (that user keeps their memories), the
         person of any other account is merged into the user's, even when both have memories."""
         target = self.person_of(user)
@@ -395,13 +398,13 @@ class Users:
         self.sign_in_account(user, surface, external_id, client, touch=False)
 
     def create_with_account(
-        self, name: str, password: str, admin: bool, surface: str, external_id: str, client: str = "admin"
+        self, name: str, password: str, surface: str, external_id: str, client: str = "owner"
     ) -> User:
-        """A new user, signed in on the account by an administrator. They are the person Clara already knows
+        """A new user, signed in on the account by the owner. They are the person Clara already knows
         from the account (with its memories), unless that person is another user's."""
         current = self._memory.find_person(surface, external_id)
         person = current if current is not None and not self.owns_person(current.id) else None
-        user = self.create(name, password, admin, person)
+        user = self.create(name, password, person=person)
         self.attach_account(user, surface, external_id, client)
         return user
 

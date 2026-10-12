@@ -4,17 +4,17 @@ A model is named `provider:model` (`local:llama3.2`, `cloud:gpt-oss:120b`, `gemi
 same name can exist at two providers, and every provider that has its key can run at the same time (the server's
 own provider and model, `/provider` and `/model`, stay the default).
 
-* **The catalogue.** Everything the providers offer is listed for the administrators, who select the models
+* **The catalogue.** Everything the providers offer is listed for the owner, who selects the models
   users may choose (`enabled`). Users only ever see those.
 * **The weight** is what a token of a model costs, in credits (limits.py). A model of `REFERENCE_B` billion
   parameters weighs 1, one twice as big 2, one of 1 billion 0.125. The size comes from what the provider says
   (Ollama's list) or from the name (`gpt-oss:120b`); a model whose size is unknown (the Gemini, DeepSeek and
-  Mistral APIs do not say) weighs 1. An administrator can set any weight by hand.
-* **The fallbacks.** An administrator orders a list of selected models. When the model a turn runs on is busy or
+  Mistral APIs do not say) weighs 1. The owner can set any weight by hand.
+* **The fallbacks.** The owner orders a list of selected models. When the model a turn runs on is busy or
   unreachable before it said anything, the next model of the list is asked, then the next (agent.py); the credits
   are those of the model that answered.
 * **The choice.** Each person picks a model for each surface (web, app, cli, console), from the enabled ones.
-  Without a valid choice they get the server's own model. Discord has no choice of its own: an administrator
+  Without a valid choice they get the server's own model. Discord has no choice of its own: the owner
   sets the model of the whole surface.
 """
 
@@ -120,7 +120,7 @@ class ModelInfo:
     name: str
     size_b: float | None  # billions of parameters, when known
     enabled: bool  # may users choose it?
-    override: float | None  # the weight an administrator set (None: worked out)
+    override: float | None  # the weight the owner set (None: worked out)
     weight: float  # the credits a token costs
     listed: bool = True  # the provider offers it now
     capabilities: Capabilities = Capabilities()  # what the provider says it can do (as last asked)
@@ -216,7 +216,7 @@ class ModelCatalog:
         return self.info(ref).capabilities.describe()
 
     # ------------------------------------------------------------------
-    # What the providers offer (administrators)
+    # What the providers offer (the owner)
     # ------------------------------------------------------------------
     async def refresh(self, force: bool = False) -> None:
         """Ask every provider that can be used what it offers (at most once a minute unless `force`); the sizes
@@ -281,7 +281,7 @@ class ModelCatalog:
         )
 
     # ------------------------------------------------------------------
-    # What administrators decide
+    # What the owner decides
     # ------------------------------------------------------------------
     def _checked(self, ref: str) -> str:
         provider, name = split_ref(ref)
@@ -300,7 +300,7 @@ class ModelCatalog:
         self._upsert(self._checked(ref), weight=weight)
 
     def fallbacks(self) -> list[str]:
-        """The models asked, in this order, when the one a turn runs on fails: those of the administrators' list
+        """The models asked, in this order, when the one a turn runs on fails: those of the owner's list
         that are still selected and whose provider can be used."""
         try:
             stored = json.loads(self._memory.option(FALLBACKS_OPTION) or "[]")
@@ -342,7 +342,7 @@ class ModelCatalog:
     # What users see and choose
     # ------------------------------------------------------------------
     def usable(self) -> list[ModelInfo]:
-        """The models a user may choose: those an administrator selected whose provider can be used."""
+        """The models a user may choose: those the owner selected whose provider can be used."""
         rows = self._rows()
         found = []
         for ref, row in rows.items():
@@ -364,7 +364,7 @@ class ModelCatalog:
             return False
 
     def is_usable_by(self, ref: str, person_id: int | None) -> bool:
-        """May this person choose this model: one an administrator selected, or any model of a provider they
+        """May this person choose this model: one the owner selected, or any model of a provider they
         brought their own key for."""
         return self.is_usable(ref) or self.brings_key(person_id, ref)
 
@@ -377,7 +377,7 @@ class ModelCatalog:
         return {row["surface"]: row["model"] for row in rows if self.is_usable_by(row["model"], person_id)}
 
     def set_choice(self, person_id: int, surface: str, ref: str | None) -> None:
-        """A person's model for a surface; None: the server's own. Only a model an administrator selected."""
+        """A person's model for a surface; None: the server's own. Only a model the owner selected."""
         with self._memory.lock, self._memory.database as db:
             if ref is None:
                 db.execute("DELETE FROM model_choices WHERE person_id = ? AND surface = ?", (person_id, surface))

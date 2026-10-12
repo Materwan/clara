@@ -14,9 +14,9 @@ administration of users and people, reading a PDF, and the web site itself (`web
     POST   /v1/documents/extract        the text of a PDF (body: the bytes)
     POST   /v1/documents/docx           the text of a Word document (body: the bytes)
 
-    GET    /v1/admin/users              (administrators; also with an admin token)
-    POST   /v1/admin/users              {name, password?, admin?, discord_id?} -> the password, shown once
-    PATCH  /v1/admin/users/{name}       {admin?, disabled?, password?, generate_password?}
+    GET    /v1/admin/users              (the owner)
+    POST   /v1/admin/users              {name, password?, discord_id?} -> the password, shown once
+    PATCH  /v1/admin/users/{name}       {disabled?, password?, generate_password?}
     DELETE /v1/admin/users/{name}
     POST   /v1/admin/users/{name}/sign-out
     GET    /v1/admin/limits             {default}: the tokens a day of a user with no limit of their own (null: none)
@@ -95,12 +95,10 @@ class PasswordBody(BaseModel):
 class NewUserBody(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     password: str | None = Field(default=None, max_length=512)  # none: Clara makes one
-    admin: bool = False
     discord_id: str | None = Field(default=None, pattern=DISCORD_ID)  # signed in as the new user at once
 
 
 class UserPatch(BaseModel):
-    admin: bool | None = None
     disabled: bool | None = None
     token_limit: int | None = Field(default=None, ge=0, le=10**13)  # tokens a day; 0: no limit
     follow_default_limit: bool = False  # back to the server's default (instead of token_limit)
@@ -123,10 +121,10 @@ def describe_user(app: FastAPI, user: User) -> dict:
     accounts = users.accounts_signed_in_as(user.name)
     discord_ids = [account.removeprefix(f"{DISCORD}:") for account in accounts if account.startswith(f"{DISCORD}:")]
     limits = app.state.limits
-    quota = limits.quota_for_user(user.person_id, user.is_admin and not user.disabled, user.token_limit)
+    quota = limits.quota_for_user(user.person_id, user.is_owner and not user.disabled, user.token_limit)
     return {
         "name": user.name,
-        "is_admin": user.is_admin,
+        "is_owner": user.is_owner,
         "disabled": user.disabled,
         "created_at": user.created_at,
         "last_login_at": user.last_login_at,
@@ -134,8 +132,8 @@ def describe_user(app: FastAPI, user: User) -> dict:
         "sessions": len(sessions),
         "surfaces": sorted({s.surface for s in sessions}),
         "signed_in_accounts": accounts,  # signed in by a client (Discord)
-        # tokens used today and the limit (null: none; administrators have none); `own_limit` is what an
-        # administrator set for this user (null: the default, 0: no limit)
+        # tokens used today and the limit (null: none; the owner has none); `own_limit` is what the
+        # owner set for this user (null: the default, 0: no limit)
         "usage": {**quota.describe(), "own_limit": user.token_limit, "default_limit": limits.default() or None},
         "discord_accounts": [
             {"user_id": user_id, "discord_name": app.state.discord.discord_name(user_id)} for user_id in discord_ids
@@ -228,7 +226,7 @@ async def signup_open(request: Request) -> dict:
 
 @router.post("/v1/auth/register", status_code=201)
 async def register(body: RegisterBody, request: Request) -> JSONResponse:
-    """Make a user (never an administrator) and log them in on the web site, when the server allows it."""
+    """Make a user (never the owner) and log them in on the web site, when the server allows it."""
     state = request.app.state
     settings = state.settings
     if not settings.web_signup:
@@ -325,7 +323,7 @@ async def export_my_data(caller: LoggedIn, request: Request) -> JSONResponse:
         return {
             "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "user": {"name": user.name, "created_at": user.created_at, "last_login_at": user.last_login_at,
-                     "is_admin": user.is_admin},
+                     "is_owner": user.is_owner},
             "person": {"name": person.name if person else None, "relation": memory.relation(user.person_id)},
             "accounts": [f"{s}:{e}" for s, e in memory.accounts_of(user.person_id)],
             "facts": [f.text for f in memory.facts(user.person_id, 100_000)],
@@ -356,8 +354,8 @@ async def delete_my_account(body: DeleteAccountBody, caller: LoggedIn, request: 
     if await asyncio.to_thread(state.users.authenticate, caller.user.name, body.password) is None:
         state.auth_limiter.failed(address)
         raise HTTPException(403, "The password is wrong")
-    if caller.user.is_admin and state.users.admin_count() <= 1:
-        raise HTTPException(422, "This is the last administrator: make someone else one first.")
+    if caller.user.is_owner:
+        raise HTTPException(422, "This is the owner (CLARA_OWNER): it cannot be erased. Name another owner first.")
     name, person_id = caller.user.name, caller.user.person_id
     found, lines = await asyncio.to_thread(erase_person, state.memory, state.traffic, person_id)
     log.info("%s erased their own account: %d messages, %d lines of the traffic log", name, found.messages, lines)
@@ -446,9 +444,9 @@ async def admin_add_user(body: NewUserBody, admin: Admin, request: Request) -> d
     users = request.app.state.users
     try:
         if body.discord_id:
-            user = await asyncio.to_thread(users.create_with_account, body.name, password, body.admin, DISCORD, body.discord_id)
+            user = await asyncio.to_thread(users.create_with_account, body.name, password, DISCORD, body.discord_id)
         else:
-            user = await asyncio.to_thread(users.create, body.name, password, body.admin)
+            user = await asyncio.to_thread(users.create, body.name, password)
     except UserError as error:
         raise HTTPException(422, str(error)) from None
     secret(request)
@@ -465,8 +463,6 @@ async def admin_edit_user(name: str, body: UserPatch, admin: Admin, request: Req
     try:
         if users.get(name) is None:
             raise HTTPException(404, f"No user called {name}")
-        if body.admin is not None:
-            users.set_admin(name, body.admin)
         if body.disabled is not None:
             users.set_disabled(name, body.disabled)
         if body.follow_default_limit and body.token_limit is not None:

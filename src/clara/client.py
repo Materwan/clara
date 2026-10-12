@@ -59,7 +59,7 @@ HELP = """\
                   (no argument: show it; off: never; default: the server's)
 /model [<number> | <name> | default]
                   the model Clara answers you with here: no argument lists the ones an
-                  administrator offers, with what a token of each costs in credits
+                  the owner offers, with what a token of each costs in credits
 /new              start a fresh conversation thread (facts are kept)
 /quit             leave"""
 
@@ -374,7 +374,7 @@ def describe_models(info: dict) -> str:
     current = info["current"]
     lines = [f"Clara answers you here with {current['name']} ({current['provider_label']}), {cost(current)}."]
     if not info["models"]:
-        return lines[0] + "\n" + "An administrator has not offered other models."
+        return lines[0] + "\n" + "The owner has not offered other models."
     default = info["default"]
     lines.append(f"  0. default: {default['name']} ({default['provider_label']}), {cost(default)}")
     for number, model in enumerate(info["models"], 1):

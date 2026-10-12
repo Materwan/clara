@@ -149,6 +149,6 @@ def test_client_surfaces_setting():
     for bad in ("ghost=cli", "terminal=Bad Surface", "terminal=", "terminal"):
         with pytest.raises(SettingsError):
             parse_client_surfaces(bad, {"terminal"})
-    settings = Settings.from_env({"CLARA_TOKENS": "a:one,b:two", "CLARA_CLIENT_SURFACES": "a=cli"})
+    settings = Settings.from_env({"CLARA_OWNER": "root", "CLARA_TOKENS": "a:one,b:two", "CLARA_CLIENT_SURFACES": "a=cli"})
     assert settings.client_surfaces == {"a": frozenset({"cli"})}
     assert settings.unrestricted_clients == ["b"]

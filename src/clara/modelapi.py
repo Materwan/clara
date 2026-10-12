@@ -1,4 +1,4 @@
-"""The routes of the models (models.py): what a person may choose and what they chose, and the administrators'
+"""The routes of the models (models.py): what a person may choose and what they chose, and the owner's
 catalogue. Like projects, a person is asked for with an account (`surface`, `user_id`); their choices are kept per
 person and surface, so the same on every computer where they log in.
 
@@ -7,7 +7,7 @@ person and surface, so the same on every computer where they log in.
                                         are answered by on this one
     PUT    /v1/models/choice            {surface, user_id, model, for_surface?}: choose a model for a surface
                                         (`for_surface`, default `surface`); null: the server's own. Not Discord's:
-                                        an administrator sets that one
+                                        the owner sets that one
 
     GET    /v1/admin/catalog            ?refresh=true  every model of every provider that can be used, which ones
                                         users may choose, the weights, the model of Discord
@@ -123,7 +123,7 @@ async def choose_model(body: ChoiceBody, client: Client, request: Request) -> di
     catalog: ModelCatalog = state.models
     target = body.for_surface or body.surface
     if target == DISCORD:
-        raise HTTPException(403, "The model of Discord is chosen by an administrator.")
+        raise HTTPException(403, "The model of Discord is chosen by the owner.")
     person = state.memory.resolve(body.surface, body.user_id, None)
     try:
         catalog.set_choice(person.id, target, body.model)

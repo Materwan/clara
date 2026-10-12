@@ -1,4 +1,4 @@
-// Clara's web site: sign in, then a chat, your tasks, projects, what Clara remembers, your account, and (for administrators)
+// Clara's web site: sign in, then a chat, your tasks, projects, what Clara remembers, your account, and (for the owner)
 // the administration. Everything talks to the same HTTP API as the other clients, as the surface "web".
 
 import { mountAccount, mountMemory } from "./account.js";
@@ -25,7 +25,7 @@ let pageName = "";
 let healthTimer = null;
 let railHistory = null; // the list of conversations on the work pages other than the chat
 let approvalBadge = null; // "waiting for you": requests for permission, in the rail
-let restartBadge = null; // "restart needed", for administrators
+let restartBadge = null; // "restart needed", for the owner
 let wantNewChat = false;
 
 // ---- signing in ----------------------------------------------------------------------------------------
@@ -166,7 +166,7 @@ const ADMIN_PAGES = new Set(["discord", "admin"]);
 /** The bar at the top of the settings pages. */
 function settingsBar(current) {
   return h("nav", { class: "settings-bar", "aria-label": "Settings" },
-    SETTINGS_PAGES.filter((id) => !ADMIN_PAGES.has(id) || user.is_admin).map((id) =>
+    SETTINGS_PAGES.filter((id) => !ADMIN_PAGES.has(id) || user.is_owner).map((id) =>
       h("a", { href: `#/${id}`, "aria-current": id === current ? "page" : null }, icon(PAGES[id][1], { size: 17 }), PAGES[id][0])));
 }
 
@@ -184,7 +184,7 @@ function shell() {
     h("div", { class: "rail-slot", id: "rail-slot" }),
     h("div", { class: "rail-foot" },
       h("div", { class: "approvals-slot", id: "approvals-slot" }),
-      h("a", { class: "me", href: "#/account", title: "Your settings: memory, account, integrations" + (user.is_admin ? ", Discord, administration" : "") },
+      h("a", { class: "me", href: "#/account", title: "Your settings: memory, account, integrations" + (user.is_owner ? ", Discord, administration" : "") },
         avatar(displayName),
         h("div", { class: "who" }, h("strong", {}, displayName), status),
         icon("chevron", { size: 17 }))));
@@ -241,7 +241,7 @@ function route() {
   if (!user) return;
   const [, id = "chat", sub, arg] = location.hash.split("/");
   if (id === "music") return location.replace("/music/"); // the music site has its own address (its own page)
-  const name = Object.hasOwn(PAGES, id) && (!ADMIN_PAGES.has(id) || user.is_admin) ? id : "chat";
+  const name = Object.hasOwn(PAGES, id) && (!ADMIN_PAGES.has(id) || user.is_owner) ? id : "chat";
   for (const link of document.querySelectorAll(".pages a")) {
     const active = link.dataset.page === name;
     link.classList.toggle("active", active);
@@ -307,7 +307,7 @@ async function boot() {
   shell();
   if (!location.hash) history.replaceState(null, "", "#/chat"); // no hashchange: the page is drawn once
   route();
-  if (user.is_admin) resumeRestart();
+  if (user.is_owner) resumeRestart();
 }
 
 boot().catch((error) => toast(String(error), true));

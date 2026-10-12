@@ -1,4 +1,4 @@
-// The models people may choose (the administrators select them, see admin.js) and the picker used by the account
+// The models people may choose (the owner selects them, see admin.js) and the picker used by the account
 // page and the chat. A model costs its weight in credits for every token, whatever it reads or writes.
 
 import { api } from "./api.js";

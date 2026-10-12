@@ -225,7 +225,7 @@ def test_the_server_writes_announcements_unless_told_not_to(settings):
 def test_the_timeout_comes_from_the_environment():
     from clara.settings import Settings, SettingsError
 
-    base = {"CLARA_TOKENS": "terminal:secret-cli"}
+    base = {"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:secret-cli"}
     assert Settings.from_env(base).reminder_ai_timeout == 60
     assert Settings.from_env({**base, "CLARA_REMINDER_AI_TIMEOUT": "0"}).reminder_ai_timeout == 0
     with pytest.raises(SettingsError):

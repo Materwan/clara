@@ -306,7 +306,7 @@ class TrafficMiddleware:
     def __init__(self, app: Any, traffic: Callable[[], TrafficLog | None], identify: Callable[[dict[str, str]], str]):
         self.app = app
         self._traffic = traffic  # read at each request: the log is created with the application's state
-        self._identify = identify  # request headers -> "client:<name>", "admin:<name>", "user:<name>@<surface>" or "anonymous"
+        self._identify = identify  # request headers -> "client:<name>", "user:<name>@<surface>" or "anonymous"
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         traffic = self._traffic() if scope["type"] == "http" else None

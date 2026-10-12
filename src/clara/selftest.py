@@ -40,7 +40,7 @@ Report = Callable[[Result], None]
 def check_configuration(settings: Settings) -> Result:
     # the settings are validated when they are read: reaching this point means they are consistent
     detail = (
-        f"{len(settings.tokens)} chat token(s), {len(settings.admin_tokens)} admin token(s), "
+        f"{len(settings.tokens)} chat token(s), owner {settings.owner}, "
         f"provider {settings.default_provider}"
     )
     if settings.unrestricted_clients:

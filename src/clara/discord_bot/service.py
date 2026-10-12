@@ -1,5 +1,5 @@
 """The Discord bot inside clara-server: started with the server when AUTO_START_DISCORD_BOT is on, and started or
-stopped by an administrator (`/discord` in the console, the web site's Discord page).
+stopped by the owner (`/discord` in the console, the web site's Discord page).
 
 It runs on the server's own event loop and reaches Clara through LocalBackend. discord.py is optional
 (`pip install clara-server[discord]`): without it this module still loads and says so.
@@ -135,12 +135,12 @@ class DiscordService:
         return str(user) if user is not None else None
 
     def signed_out(self, user_id: str) -> None:
-        """An administrator signed the account out: the running bot forgets it now, not at its next refresh."""
+        """The owner signed the account out: the running bot forgets it now, not at its next refresh."""
         if self.running and user_id.isdigit():
             self._bot.accounts.signed_out(int(user_id))
 
     def signed_in(self, user_id: str, user: str) -> None:
-        """An administrator signed the account in: the running bot answers it now, not after its next refresh."""
+        """The owner signed the account in: the running bot answers it now, not after its next refresh."""
         if self.running and user_id.isdigit():
             self._bot.accounts.signed_in_as(int(user_id), user)
 

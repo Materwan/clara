@@ -173,7 +173,7 @@ def checked(request: Request, client: str, body: ChatBody) -> ChatRequest:
     elif body.roster or body.focus:
         raise HTTPException(422, "roster and focus need a space")
     if mode == "maybe" and not request.app.state.memory.chime_allowed(body.space):
-        mode = "observe"  # an administrator did not let Clara answer what is not for her there
+        mode = "observe"  # the owner did not let Clara answer what is not for her there
     turn = body.to_request(roster, focus, mode)
     prepared = prepared_message(body)
     turn = dataclasses.replace(

@@ -121,7 +121,7 @@ async def test_purging_summarised_messages_is_optional(memory, tmp_path, purge):
 
 
 def test_the_purge_setting():
-    base = {"CLARA_TOKENS": "a:secret-one"}
+    base = {"CLARA_OWNER": "root", "CLARA_TOKENS": "a:secret-one"}
     assert Settings.from_env(base).purge_summarised is False
     assert Settings.from_env({**base, "CLARA_PURGE_SUMMARISED": "true"}).purge_summarised is True
     assert Settings.from_env({**base, "CLARA_PURGE_SUMMARISED": "off"}).purge_summarised is False

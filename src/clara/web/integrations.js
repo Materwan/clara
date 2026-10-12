@@ -1,6 +1,6 @@
 // Integrations: the accounts you connect (GitHub, Google Drive), the repositories, Drive folders and folders you add,
 // and what Clara may do with each (look, add or change, replace or delete: allow, ask you, or never). The same
-// "Connections" panel attaches them to a project or to one conversation. The administrator's switches, the folders of
+// "Connections" panel attaches them to a project or to one conversation. The owner's switches, the folders of
 // the server and the log are at the bottom of the page.
 
 import { api } from "./api.js";
@@ -43,7 +43,7 @@ export function levelBadges(effective) {
 }
 
 /** Three selects, one per level. `inherit`: the text of the choice that leaves a level to the layer above (none: every
- *  level has a value, `defaults` when it has not). `ceiling`: the most the administrator lets through. */
+ *  level has a value, `defaults` when it has not). `ceiling`: the most the owner lets through. */
 export function levelEditor(levels, { inherit = "", ceiling = {}, defaults = DEFAULT_LEVELS } = {}) {
   const selects = {};
   const rows = LEVELS.map(([level, name, help]) => {
@@ -52,7 +52,7 @@ export function levelEditor(levels, { inherit = "", ceiling = {}, defaults = DEF
       inherit && h("option", { value: "" }, inherit),
       ...DECISIONS.map(([value, text]) => {
         const blocked = limit !== undefined && OPENNESS[value] > OPENNESS[limit];
-        return h("option", { value, disabled: blocked }, blocked ? `${text} (the administrator does not allow it)` : text);
+        return h("option", { value, disabled: blocked }, blocked ? `${text} (the owner does not allow it)` : text);
       }),
     ]);
     select.value = levels[level] || (inherit ? "" : defaults[level]);
@@ -86,7 +86,7 @@ export function mountIntegrations(container, user) {
   const accountsPanel = h("section", { class: "panel" });
   const resourcesPanel = h("section", { class: "panel" });
   const settingsPanel = h("section", { class: "panel" });
-  const adminPanel = user.is_admin ? h("section", { class: "panel" }) : null;
+  const adminPanel = user.is_owner ? h("section", { class: "panel" }) : null;
   container.append(pageHead("Integrations"), h("div", { class: "scroll" }, h("div", { class: "container wide" },
     h("p", { class: "intro" }, "Connect your GitHub and Google Drive accounts, add folders, then attach them to a project or a conversation: Clara can then read and work on them. You decide what she may do. She asks you before anything that replaces or deletes, and goes on with something else while she waits."),
     approvalsPanel, accountsPanel, resourcesPanel, settingsPanel, adminPanel)));
@@ -136,7 +136,7 @@ export function mountIntegrations(container, user) {
     fill(accountsPanel, 
       h("div", { class: "panel-head" }, h("div", { class: "grow" }, h("h3", {}, "Accounts"),
         h("p", { class: "muted small" }, "What you connected is kept encrypted on the server and is never shown again.")), buttons),
-      !drive.available && drive.enabled && h("div", { class: "panel-body" }, h("p", { class: "notice small" }, "Google Drive is not set up on this server: the administrator has to put a Google client in the server's .env (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).")),
+      !drive.available && drive.enabled && h("div", { class: "panel-body" }, h("p", { class: "notice small" }, "Google Drive is not set up on this server: the owner has to put a Google client in the server's .env (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).")),
       rows.length ? h("ul", { class: "list" }, rows) : h("div", { class: "empty-state" }, mark(36), h("strong", {}, "No account yet"), "Connect GitHub with a token, or Google Drive with your Google account."));
   }
 
@@ -349,7 +349,7 @@ export function mountIntegrations(container, user) {
     async function show(path) {
       let found;
       try { found = await api.get("/v1/integrations/browse/server", { ...who(user), path }); } catch (error) { return fail(error); }
-      fill(crumb, found.path || "Folders the administrator allows");
+      fill(crumb, found.path || "Folders the owner allows");
       clear(list);
       if (found.path) {
         list.append(h("li", {}, h("button", { class: "ghost row-pick", onclick: () => show(found.parent || "") }, icon("back", { size: 16 }), "Up")));
@@ -361,7 +361,7 @@ export function mountIntegrations(container, user) {
         const full = found.roots ? dir : `${found.path}${found.path.includes("\\") ? "\\" : "/"}${dir}`;
         list.append(h("li", {}, h("button", { class: "ghost row-pick", onclick: () => show(full) }, icon("folder", { size: 16 }), h("span", { class: "grow" }, dir), icon("chevron", { size: 16 }))));
       }
-      if (!found.dirs.length) list.append(h("li", { class: "empty-row" }, found.path ? "No sub-folder." : "The administrator has not allowed any folder yet."));
+      if (!found.dirs.length) list.append(h("li", { class: "empty-row" }, found.path ? "No sub-folder." : "The owner has not allowed any folder yet."));
     }
     fill(body, h("h4", {}, "Folder on the server"), crumb, list, h("div", { class: "actions" }, h("button", { onclick: back }, "Back")));
     show("");
@@ -381,7 +381,7 @@ export function mountIntegrations(container, user) {
       h("div", { class: "panel-body" }, h("label", { class: "field" }, "Send it to my other devices after", select)));
   }
 
-  // ---- administrator ----
+  // ---- owner ----
   async function loadAdmin() {
     let policy;
     let users = [];

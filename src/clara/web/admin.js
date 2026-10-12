@@ -1,4 +1,4 @@
-// Administration (for users flagged administrator): users, the server, what Clara knows about people, a console.
+// Administration (for the owner, CLARA_OWNER): users, the server, what Clara knows about people, a console.
 
 import { api } from "./api.js";
 import { discordPicker, signInDiscordDialog } from "./discord.js";
@@ -71,10 +71,9 @@ function users(box, me) {
       popupMenu(more, [
         { label: "Generate a new password", icon: "key", run: () => reset(user, true) },
         { label: "Set a password…", icon: "edit", run: () => reset(user, false) },
-        { label: user.is_admin ? "Remove administrator rights" : "Make administrator", icon: "admin", run: () => edit(user, { admin: !user.is_admin }) },
         { label: "Set the daily credit limit…", icon: "edit", run: () => setLimit(user) },
         user.usage.own_limit !== null && { label: "Use the default credit limit", icon: "refresh", run: () => edit(user, { follow_default_limit: true }) },
-        { label: user.disabled ? "Enable" : "Disable", icon: "power", run: () => edit(user, { disabled: !user.disabled }) },
+        !user.is_owner && { label: user.disabled ? "Enable" : "Disable", icon: "power", run: () => edit(user, { disabled: !user.disabled }) },
         "-",
         !user.disabled && { label: "Sign in a Discord account…", icon: "link", run: async () => { if (await signInDiscordDialog(user.name)) load(); } },
         ...user.discord_accounts.map((account) => ({ label: `Sign out of Discord: ${discordLabel(account)}`, icon: "logout", run: () => signOutDiscord(user, account) })),
@@ -87,7 +86,7 @@ function users(box, me) {
       "Discord: ", user.discord_accounts.map(discordLabel).join(", "));
     return h("tr", {},
       h("td", {}, h("div", { class: "user-cell" }, avatar(user.name), h("div", {}, h("strong", {}, user.name), user.name === me.name && h("span", { class: "muted" }, " (you)"), discord))),
-      h("td", {}, user.disabled ? h("span", { class: "badge off" }, "Disabled") : user.is_admin ? h("span", { class: "badge admin" }, "Administrator") : h("span", { class: "badge" }, "User")),
+      h("td", {}, user.disabled ? h("span", { class: "badge off" }, "Disabled") : user.is_owner ? h("span", { class: "badge admin" }, "Owner") : h("span", { class: "badge" }, "User")),
       h("td", { "data-label": "Person" }, user.person ? `${user.person.name} (#${user.person.id})` : "None"),
       h("td", { class: "num", "data-label": "Devices", title: [...user.surfaces, ...user.signed_in_accounts].join(", ") },
         String(user.sessions + user.signed_in_accounts.length)),
@@ -100,7 +99,7 @@ function users(box, me) {
     try { await api.patch(`/v1/admin/users/${encodeURIComponent(user.name)}`, change); toast("Saved."); load(); } catch (error) { fail(error); }
   }
 
-  const limitNote = (user) => user.is_admin ? "Administrators have no limit"
+  const limitNote = (user) => user.is_owner ? "The owner has no limit"
     : user.usage.own_limit === 0 ? "No limit for this user"
     : user.usage.own_limit === null ? (user.usage.limit ? `The default: ${tokenCount(user.usage.limit)} credits a day` : "No limit (the default)")
     : `${tokenCount(user.usage.own_limit)} credits a day, set for this user`;
@@ -108,7 +107,7 @@ function users(box, me) {
   async function setLimit(user) {
     const current = user.usage.own_limit === null ? "" : user.usage.own_limit === 0 ? "off" : String(user.usage.own_limit);
     const value = await promptDialog(`Daily credit limit for ${user.name}`, "Credits a day (500000, 500k, 2m, or off)", current, "Save", {
-      hint: user.is_admin ? "They are an administrator: they have no limit whatever is set here."
+      hint: user.is_owner ? "They are the owner: they have no limit whatever is set here."
         : "Prompt and answer tokens times the weight of the model that answered (see the Models tab), counted over a day that ends at midnight UTC. “off” means no limit for this user.",
     });
     if (value === null) return;
@@ -120,7 +119,7 @@ function users(box, me) {
 
   async function setDefaultLimit() {
     const value = await promptDialog("Default daily credit limit", "Credits a day (500000, 500k, 2m, or off)", defaultLimit ? String(defaultLimit) : "off", "Save", {
-      hint: "For every user who has no limit of their own. Administrators never have one.",
+      hint: "For every user who has no limit of their own. The owner never has one.",
     });
     if (value === null) return;
     const tokens = parseTokens(value);
@@ -174,20 +173,18 @@ function users(box, me) {
       let named = false; // the name was typed: a Discord account chosen afterwards does not replace it
       const name = h("input", { type: "text", autocomplete: "off", autocapitalize: "none", required: true, pattern: "[a-zA-Z0-9][a-zA-Z0-9_.\\-]{0,31}", autofocus: true, oninput: () => { named = name.value !== ""; } });
       const password = h("input", { type: "text", autocomplete: "off", placeholder: "Leave empty to generate one" });
-      const admin = h("input", { type: "checkbox" });
       const discord = discordPicker({ browse: false, onPick: (member) => {
         if (!named && member.name) name.value = member.name.toLowerCase().replace(/[^a-z0-9_.-]/g, "").replace(/^[^a-z0-9]+/, "").slice(0, 32);
       } });
       return h("form", { onsubmit: (event) => {
         event.preventDefault();
         if (discord.pending) return discord.complain("Pick someone in the list, paste a Discord user id, or clear the field.");
-        close({ name: name.value, password: password.value, admin: admin.checked, discord_id: discord.value || null });
+        close({ name: name.value, password: password.value, discord_id: discord.value || null });
       } },
         h("h3", {}, "Add a user"),
         h("div", { class: "stack" },
           h("label", { class: "field" }, "User name", name, h("span", { class: "hint" }, "Letters, digits, dots, dashes and underscores")),
           h("label", { class: "field" }, "Password", password, h("span", { class: "hint" }, "10 characters or more")),
-          h("label", { class: "check" }, admin, "Administrator"),
           h("label", { class: "field" }, "Discord account (optional)", discord.node)),
         h("p", { class: "muted small" }, "With a Discord account, Clara answers them there right away (no /login) and the user starts with what she already knows from it. Otherwise, if Clara knows an account with this name (cli:name, app:name…), the user takes it over with its memories."),
         h("div", { class: "actions" }, h("button", { type: "button", onclick: () => close(null) }, "Cancel"), h("button", { class: "primary", type: "submit" }, "Add user")));

@@ -104,17 +104,22 @@ def test_cloud_backend_sends_the_api_key_and_local_does_not(settings):
 
 def test_secrets_are_not_in_the_settings_repr(settings):
     shown = repr(settings)
-    assert "key-123" not in shown and "secret-cli" not in shown and "secret-admin" not in shown
+    assert "key-123" not in shown and "secret-cli" not in shown
 
 
 def test_settings_cloud_default_needs_a_key():
     with pytest.raises(SettingsError):
-        Settings.from_env({"CLARA_TOKENS": "a:b", "CLARA_PROVIDER": "cloud"})
+        Settings.from_env({"CLARA_OWNER": "root", "CLARA_TOKENS": "a:b", "CLARA_PROVIDER": "cloud"})
 
 
-def test_settings_reject_a_token_used_for_chat_and_admin():
-    with pytest.raises(SettingsError):
-        Settings.from_env({"CLARA_TOKENS": "a:same", "CLARA_ADMIN_TOKENS": "b:same"})
+@pytest.mark.parametrize("owner", ["", "  ", "not a name", "-x", "x" * 33])
+def test_settings_need_an_owner_who_is_a_user_name(owner):
+    with pytest.raises(SettingsError, match="CLARA_OWNER"):
+        Settings.from_env({"CLARA_OWNER": owner, "CLARA_TOKENS": "a:b"})
+
+
+def test_the_owner_is_a_lower_case_user_name():
+    assert Settings.from_env({"CLARA_OWNER": " Erwan ", "CLARA_TOKENS": "a:b"}).owner == "erwan"
 
 
 async def test_api_key_provider_rejects_a_bad_key(settings, monkeypatch):

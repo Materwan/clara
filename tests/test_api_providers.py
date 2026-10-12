@@ -192,7 +192,7 @@ def test_with_a_key_a_provider_can_be_chosen_and_speaks_the_openai_api(settings)
 
 def test_settings_read_the_keys_hosts_models_and_windows(tmp_path):
     settings = Settings.from_env({
-        "CLARA_TOKENS": "terminal:secret-cli",
+        "CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:secret-cli",
         "CLARA_DATA_DIR": str(tmp_path),
         "MISTRAL_API_KEY": "mistral-secret-key",
         "CLARA_MISTRAL_MODEL": "mistral-small-latest",
@@ -209,7 +209,7 @@ def test_settings_read_the_keys_hosts_models_and_windows(tmp_path):
 
 def test_choosing_a_provider_without_its_key_at_start_is_refused(tmp_path):
     with pytest.raises(SettingsError, match="DEEPSEEK_API_KEY"):
-        Settings.from_env({"CLARA_TOKENS": "t:secret", "CLARA_DATA_DIR": str(tmp_path), "CLARA_PROVIDER": "deepseek"})
+        Settings.from_env({"CLARA_OWNER": "root", "CLARA_TOKENS": "t:secret", "CLARA_DATA_DIR": str(tmp_path), "CLARA_PROVIDER": "deepseek"})
 
 
 # --- what the agent keeps of a round of tool calls ------------------------------------------------------

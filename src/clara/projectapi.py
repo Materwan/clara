@@ -270,11 +270,11 @@ async def remove_files(
 # ----------------------------------------------------------------------
 def _download_token(request: Request, client: str, project: Project) -> str:
     """The token a download for this project may use ("": none, public repositories only). The operator's
-    GITHUB_TOKEN is the operator's: an administrator may use it, everybody else only when the server says so
+    GITHUB_TOKEN is the operator's: the owner may use it, everybody else only when the server says so
     (CLARA_GITHUB_TOKEN_SHARED). Otherwise it is the GitHub account the project's owner connected."""
     state = request.app.state
     caller = getattr(client, "user", None)
-    if state.settings.github_token_shared or (caller is not None and caller.is_admin) or getattr(client, "admin_token", False):
+    if state.settings.github_token_shared or (caller is not None and caller.is_owner):
         shared = state.github.server_token
         if shared:
             return shared

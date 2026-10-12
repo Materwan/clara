@@ -481,7 +481,7 @@ async def link_command(ctx: CommandContext, args: str) -> str:
     return f"{target.name} now has: {accounts}"
 
 
-USER_ACTIONS = ["list", "add", "passwd", "admin", "disable", "enable", "remove", "logout", "link", "unlink"]
+USER_ACTIONS = ["list", "add", "passwd", "disable", "enable", "remove", "logout", "link", "unlink"]
 DISCORD_REFERENCE = re.compile(r"^(?:discord:|<@!?)?([0-9]{1,20})>?$")
 
 
@@ -507,7 +507,7 @@ def discord_account(ctx: CommandContext, text: str) -> str:
 
 @registry.command(
     "user",
-    "[list | add <name> [admin] [discord:<id>] | passwd <name> | admin <name> on|off | disable|enable|remove|logout <name>"
+    "[list | add <name> [discord:<id>] | passwd <name> | disable|enable|remove|logout <name>"
     " | link|unlink <name> <discord:id | member>]",
     "People who log in with a password: add one (a password is made and shown once), reset it, sign out,"
     " sign a Discord account in as them",
@@ -529,11 +529,11 @@ async def user_command(ctx: CommandContext, args: str) -> CommandResult | str:
         if verb == "list":
             found = users.list()
             if not found:
-                return "Nobody can log in yet. Add someone: /user add <name> admin"
+                return f"Nobody can log in yet. Add the owner first: /user add {ctx.settings.owner}"
             rows = []
             for user in found:
                 person = ctx.memory.person_by_id(user.person_id)
-                state = "disabled" if user.disabled else ("admin" if user.is_admin else "user")
+                state = "disabled" if user.disabled else ("owner" if user.is_owner else "user")
                 rows.append(
                     [user.name, state, f"{person.name} (id {person.id})" if person else "?",
                      str(len(users.sessions_of(user.name))), ", ".join(users.accounts_signed_in_as(user.name)) or "-",
@@ -543,21 +543,20 @@ async def user_command(ctx: CommandContext, args: str) -> CommandResult | str:
 
         if verb == "add":
             name = named()
-            flags = [word.lower() for word in words[1:]]
-            discord = [flag for flag in flags if flag != "admin"]
+            discord = [word.lower() for word in words[1:]]
             if len(discord) > 1 or (discord and not DISCORD_REFERENCE.match(discord[0])):
-                raise CommandError("Usage: /user add <name> [admin] [discord:<id>]")
+                raise CommandError("Usage: /user add <name> [discord:<id>]")
             password = generate_password()
             if discord:
                 discord_id = discord_account(ctx, discord[0])
-                user = users.create_with_account(name, password, "admin" in flags, DISCORD, discord_id, "console")
+                user = users.create_with_account(name, password, DISCORD, discord_id, "console")
                 if ctx.discord is not None:
                     ctx.discord.signed_in(discord_id, user.name)
             else:
-                user = users.create(name, password, admin="admin" in flags)
+                user = users.create(name, password)
             person = ctx.memory.person_by_id(user.person_id)
             return CommandResult(
-                f"Created {user.name}{' (administrator)' if user.is_admin else ''}, the person {person.name} (id {person.id})"
+                f"Created {user.name}{' (the owner)' if user.is_owner else ''}, the person {person.name} (id {person.id})"
                 + (f", signed in on discord:{discord_id}" if discord else "") + ".\n"
                 f"Password: {password}\n"
                 "Shown once. They can change it on the web site (Account), or you can reset it: /user passwd " + user.name,
@@ -597,13 +596,6 @@ async def user_command(ctx: CommandContext, args: str) -> CommandResult | str:
                 f"New password for {name}: {password}\nShown once. {signed_out} device(s) were signed out.",
                 sensitive=True,
             )
-
-        if verb == "admin":
-            name = named()
-            if len(words) != 2 or words[1].lower() not in ("on", "off"):
-                raise CommandError("Usage: /user admin <name> on|off")
-            users.set_admin(name, words[1].lower() == "on")
-            return f"{name} is {'now' if words[1].lower() == 'on' else 'no longer'} an administrator."
 
         if verb in ("disable", "enable"):
             name = named()
@@ -739,7 +731,7 @@ async def discord_command(ctx: CommandContext, args: str) -> str:
     "limit",
     "[list | default <credits|off> | <user> [<credits|off|default>]]",
     "Credits a day each user may use (a token costs the weight of the model, see /models; a day ends at midnight "
-    "UTC; administrators have no limit): see the usage, set the default, or set one user's (credits: 500000, "
+    "UTC; the owner has no limit): see the usage, set the default, or set one user's (credits: 500000, "
     "500k, 2m; off: no limit; default: follow the default)",
     lambda ctx: ["list", "default"] + [user.name for user in (ctx.users.list() if ctx.users else [])],
 )
@@ -751,12 +743,12 @@ async def limit_command(ctx: CommandContext, args: str) -> str:
     verb = words[0].lower() if words else "list"
 
     def quota_of(user):
-        return limits.quota_for_user(user.person_id, user.is_admin and not user.disabled, user.token_limit)
+        return limits.quota_for_user(user.person_id, user.is_owner and not user.disabled, user.token_limit)
 
     def row(user) -> list[str]:
         quota = quota_of(user)
         if quota.limit is None:
-            own = "admin" if user.is_admin and not user.disabled else "none"
+            own = "owner" if user.is_owner and not user.disabled else "none"
             return [user.name, own, f"{quota.used:,}", "-", "-"]
         own = "default" if user.token_limit is None else "own"
         return [user.name, own, f"{quota.used:,}", f"{quota.limit:,}", f"{quota.remaining:,}"]
@@ -782,7 +774,7 @@ async def limit_command(ctx: CommandContext, args: str) -> str:
             raise CommandError("Usage: /limit <user> <credits|off|default>")
         users.set_token_limit(user.name, None if words[1].lower() == "default" else parse_limit(words[1]))
         user = users.get(user.name)
-        note = " They are an administrator: they have no limit whatever is set." if user.is_admin else ""
+        note = " They are the owner: they have no limit whatever is set." if user.is_owner else ""
         if user.token_limit is None:
             return f"{user.name} follows the default ({show_limit(limits.default())}).{note}"
         return f"{user.name}: {show_limit(user.token_limit)}.{note}"
@@ -815,8 +807,7 @@ async def vault_command(ctx: CommandContext, args: str) -> str:
             owners = sorted(ctx.settings.vault_owners)
             if owners:
                 return "Users who may use the vault (CLARA_VAULT_OWNERS): " + ", ".join(owners)
-            admins = [user.name for user in ctx.users.list() if user.is_admin and not user.disabled] if ctx.users else []
-            return "CLARA_VAULT_OWNERS is empty: the administrators may use the vault: " + (", ".join(admins) or "(none)")
+            return f"CLARA_VAULT_OWNERS is empty: the owner may use the vault: {ctx.settings.owner}"
     except VaultError as error:
         raise CommandError(str(error)) from None
     raise CommandError("Usage: /vault [status|sync|health|reindex [full]|owners]")

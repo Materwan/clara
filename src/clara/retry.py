@@ -1,5 +1,5 @@
 """Which failures of a model are worth asking another model about (its service is overloaded or unreachable; Gemini
-often is). The next model of the administrators' list is asked (agent._model, models.py).
+often is). The next model of the owner's list is asked (agent._model, models.py).
 
 Only a failure before the model has said anything counts: once a piece of the answer has been passed on,
 asking again would repeat it.

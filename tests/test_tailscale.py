@@ -50,7 +50,7 @@ def make(mode="serve", port=443, **answers) -> tuple[Tailscale, FakeTailscale]:
 
 
 def env(**changes: str) -> dict[str, str]:
-    base = {"CLARA_TOKENS": "terminal:" + "a" * 40, "CLARA_ADMIN_TOKENS": "ops:" + "b" * 40}
+    base = {"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:" + "a" * 40}
     return {**base, **changes}
 
 
@@ -71,11 +71,9 @@ def test_bad_tailscale_settings_are_refused(changes):
 
 
 def test_funnel_refuses_short_tokens_but_serve_does_not():
-    short = {"CLARA_TOKENS": "terminal:short-token"}
+    short = {"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:short-token"}
     with pytest.raises(SettingsError, match="terminal"):
         Settings.from_env(env(CLARA_TAILSCALE="funnel", **short))
-    with pytest.raises(SettingsError, match="ops"):
-        Settings.from_env(env(CLARA_TAILSCALE="funnel", CLARA_ADMIN_TOKENS="ops:short"))
     assert Settings.from_env(env(CLARA_TAILSCALE="serve", **short)).tailscale == "serve"
     assert Settings.from_env(env(CLARA_TAILSCALE="funnel")).tailscale == "funnel"
 
@@ -304,15 +302,15 @@ def test_wrong_tokens_end_in_429_with_retry_after_and_block_the_right_token_too(
                            headers={"Authorization": "Bearer secret-cli"})
         assert blocked.status_code == 429 and 0 < int(blocked.headers["Retry-After"]) <= 120
         assert http.post("/v1/admin/command", json={"line": "/status"},
-                         headers={"Authorization": "Bearer secret-admin"}).status_code == 429
+                         headers={"Authorization": "Bearer secret-cli"}).status_code == 429
         assert http.get("/health").status_code == 200  # no token needed there
 
 
 def test_the_admin_route_counts_wrong_tokens_too(settings):
     limited = replace(settings, auth_max_failures=2)
     with TestClient(app_with(limited, make()[0]), client=("203.0.113.9", 4000)) as http:
-        chat_token = {"Authorization": "Bearer secret-cli"}  # right for chat, wrong for admin
-        codes = [http.post("/v1/admin/command", json={"line": "/status"}, headers=chat_token).status_code for _ in range(3)]
+        wrong = {"Authorization": "Bearer nope"}
+        codes = [http.post("/v1/admin/command", json={"line": "/status"}, headers=wrong).status_code for _ in range(3)]
     assert codes == [401, 401, 429]
 
 

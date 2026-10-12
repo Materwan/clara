@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 
 import pytest
-from conftest import FakeBackend, fake_providers, say
+from conftest import FakeBackend, fake_providers, owner_headers, say
 from fastapi.testclient import TestClient
 
 from clara.commands import registry
@@ -17,7 +17,6 @@ from clara.server import create_app
 from clara.settings import Settings
 
 PASSWORD = "correct horse battery"
-ADMIN = {"Authorization": "Bearer secret-admin"}
 TOKEN = "MTIz.fake.token"  # the first part is base64 of "123", the bot's id
 
 
@@ -117,7 +116,7 @@ def app(discord_settings):
 
 
 def test_the_settings_of_the_built_in_bot(tmp_path):
-    base = {"CLARA_TOKENS": "discord:secret-discord", "CLARA_DATA_DIR": str(tmp_path)}
+    base = {"CLARA_OWNER": "root", "CLARA_TOKENS": "discord:secret-discord", "CLARA_DATA_DIR": str(tmp_path)}
     off = Settings.from_env(base)
     assert (off.discord_token, off.discord_auto_start, off.discord_invite_url) == (None, False, "")
     on = Settings.from_env({**base, "DISCORD_BOT_TOKEN": TOKEN, "AUTO_START_DISCORD_BOT": "true",
@@ -276,12 +275,12 @@ def test_auto_start_starts_the_bot_with_the_server_and_stops_it_with_it(discord_
 
 def test_the_discord_page_routes(app):
     with TestClient(app) as client:
-        assert client.get("/v1/admin/discord", headers={"Authorization": "Bearer secret-discord"}).status_code == 401
-        page = client.get("/v1/admin/discord", headers=ADMIN).json()
+        assert client.get("/v1/admin/discord", headers={"Authorization": "Bearer secret-discord"}).status_code == 403
+        page = client.get("/v1/admin/discord", headers=owner_headers(client)).json()
         assert page["bot"]["state"] == "stopped" and page["bot"]["token_set"] and page["accounts"] == []
         assert "token" not in str(page["bot"]).lower().replace("token_set", "")
 
-        started = client.post("/v1/admin/discord/start", headers=ADMIN).json()
+        started = client.post("/v1/admin/discord/start", headers=owner_headers(client)).json()
         assert started["bot"]["state"] == "running" and "running" in started["output"]
 
         users = app.state.users
@@ -289,15 +288,15 @@ def test_the_discord_page_routes(app):
         app.state.memory.resolve("discord", "111", "Erwan")
         users.sign_in_account(user, "discord", "111", "discord-bot")
         app.state.memory.sync_spaces("discord", [("discord:guild:5", "Home")])
-        page = client.get("/v1/admin/discord", headers=ADMIN).json()
+        page = client.get("/v1/admin/discord", headers=owner_headers(client)).json()
         assert page["accounts"] == [{"user_id": "111", "user": "erwan", "person": "Erwan", "discord_name": "erwan_d"}]
         assert [space["name"] for space in page["spaces"]] == ["Home"]
 
-        assert client.delete("/v1/admin/discord/accounts/111", headers=ADMIN).json() == {"signed_out": True}
+        assert client.delete("/v1/admin/discord/accounts/111", headers=owner_headers(client)).json() == {"signed_out": True}
         assert FakeDiscord.made[-1].accounts.forgotten == [111]
-        assert client.delete("/v1/admin/discord/accounts/111", headers=ADMIN).status_code == 404
-        assert client.post("/v1/admin/discord/explode", headers=ADMIN).status_code == 404
-        assert client.post("/v1/admin/discord/stop", headers=ADMIN).json()["bot"]["state"] == "stopped"
+        assert client.delete("/v1/admin/discord/accounts/111", headers=owner_headers(client)).status_code == 404
+        assert client.post("/v1/admin/discord/explode", headers=owner_headers(client)).status_code == 404
+        assert client.post("/v1/admin/discord/stop", headers=owner_headers(client)).json()["bot"]["state"] == "stopped"
 
 
 # --- an administrator signs a Discord account in --------------------------------------------------------
@@ -305,30 +304,30 @@ def test_the_discord_page_routes(app):
 
 def test_the_members_of_the_bots_servers_can_be_searched(app):
     with TestClient(app) as client:
-        stopped = client.get("/v1/admin/discord/members", headers=ADMIN).json()
+        stopped = client.get("/v1/admin/discord/members", headers=owner_headers(client)).json()
         assert stopped == {"running": False, "members": []}
-        client.post("/v1/admin/discord/start", headers=ADMIN)
+        client.post("/v1/admin/discord/start", headers=owner_headers(client))
         app.state.users.sign_in_account(app.state.users.create("bob", PASSWORD), "discord", "222")
-        everybody = client.get("/v1/admin/discord/members", headers=ADMIN).json()
+        everybody = client.get("/v1/admin/discord/members", headers=owner_headers(client)).json()
         assert everybody["running"]
         assert [(m["display_name"], m["user"]) for m in everybody["members"]] == [("Alice", None), ("Bob", "bob"), ("Erwan", None)]
-        assert [m["user_id"] for m in client.get("/v1/admin/discord/members?q=BOB", headers=ADMIN).json()["members"]] == ["222"]
-        assert [m["name"] for m in client.get("/v1/admin/discord/members?q=33", headers=ADMIN).json()["members"]] == ["alice.w"]
-        assert client.get("/v1/admin/discord/members?q=clara", headers=ADMIN).json()["members"] == []  # bots are left out
-        assert client.get("/v1/admin/discord/members", headers={"Authorization": "Bearer secret-discord"}).status_code == 401
+        assert [m["user_id"] for m in client.get("/v1/admin/discord/members?q=BOB", headers=owner_headers(client)).json()["members"]] == ["222"]
+        assert [m["name"] for m in client.get("/v1/admin/discord/members?q=33", headers=owner_headers(client)).json()["members"]] == ["alice.w"]
+        assert client.get("/v1/admin/discord/members?q=clara", headers=owner_headers(client)).json()["members"] == []  # bots are left out
+        assert client.get("/v1/admin/discord/members", headers={"Authorization": "Bearer secret-discord"}).status_code == 403
 
 
 def test_an_administrator_signs_a_discord_account_in_without_a_password(app):
     users, memory = app.state.users, app.state.memory
     with TestClient(app) as client:
-        client.post("/v1/admin/discord/start", headers=ADMIN)
+        client.post("/v1/admin/discord/start", headers=owner_headers(client))
         bot = FakeDiscord.made[-1]
         erwan = users.create("erwan", PASSWORD)
         stranger = memory.resolve("discord", "111", "Erwan D")  # talked before signing in was required
         memory.add_fact(stranger.id, "Likes chess")
         memory.add_fact(users.person_of(erwan).id, "Lives in Paris")
 
-        done = client.post("/v1/admin/discord/accounts", json={"user_id": "111", "user": "Erwan"}, headers=ADMIN)
+        done = client.post("/v1/admin/discord/accounts", json={"user_id": "111", "user": "Erwan"}, headers=owner_headers(client))
         assert done.json() == {"user_id": "111", "user": "erwan", "person": "erwan", "discord_name": "erwan_d"}
         assert users.account_user("discord", "111").name == "erwan" and bot.accounts.known == {111: "erwan"}
         person = users.person_of(erwan)
@@ -338,42 +337,42 @@ def test_an_administrator_signs_a_discord_account_in_without_a_password(app):
 
         # signed in as somebody else: the account moves, bob keeps his memories
         bob = users.create("bob", PASSWORD)
-        assert client.post("/v1/admin/discord/accounts", json={"user_id": 111, "user": "bob"}, headers=ADMIN).status_code == 200
+        assert client.post("/v1/admin/discord/accounts", json={"user_id": 111, "user": "bob"}, headers=owner_headers(client)).status_code == 200
         assert users.account_user("discord", "111").name == "bob" and bot.accounts.known == {111: "bob"}
         assert memory.find_person("discord", "111") == users.person_of(bob)
         assert [f.text for f in memory.facts(person.id)] != [] and memory.person_by_id(person.id) is not None
 
-        listed = {u["name"]: u for u in client.get("/v1/admin/users", headers=ADMIN).json()["users"]}
+        listed = {u["name"]: u for u in client.get("/v1/admin/users", headers=owner_headers(client)).json()["users"]}
         assert listed["bob"]["discord_accounts"] == [{"user_id": "111", "discord_name": "erwan_d"}]
         assert listed["erwan"]["discord_accounts"] == []
 
-        assert client.post("/v1/admin/discord/accounts", json={"user_id": "111", "user": "nobody"}, headers=ADMIN).status_code == 404
-        assert client.post("/v1/admin/discord/accounts", json={"user_id": "abc", "user": "bob"}, headers=ADMIN).status_code == 422
+        assert client.post("/v1/admin/discord/accounts", json={"user_id": "111", "user": "nobody"}, headers=owner_headers(client)).status_code == 404
+        assert client.post("/v1/admin/discord/accounts", json={"user_id": "abc", "user": "bob"}, headers=owner_headers(client)).status_code == 422
         users.set_disabled("bob", True)
-        refused = client.post("/v1/admin/discord/accounts", json={"user_id": "222", "user": "bob"}, headers=ADMIN)
+        refused = client.post("/v1/admin/discord/accounts", json={"user_id": "222", "user": "bob"}, headers=owner_headers(client))
         assert refused.status_code == 422 and "disabled" in refused.json()["detail"]
         assert client.post("/v1/admin/discord/accounts", json={"user_id": "222", "user": "erwan"},
-                           headers={"Authorization": "Bearer secret-discord"}).status_code == 401
+                           headers={"Authorization": "Bearer secret-discord"}).status_code == 403
 
 
 def test_a_user_is_made_with_a_discord_account(app):
     users, memory = app.state.users, app.state.memory
     with TestClient(app) as client:
-        client.post("/v1/admin/discord/start", headers=ADMIN)
+        client.post("/v1/admin/discord/start", headers=owner_headers(client))
         known = memory.resolve("discord", "333", "Alice")
         memory.add_fact(known.id, "Has a cat")
-        made = client.post("/v1/admin/users", json={"name": "alice", "discord_id": "333"}, headers=ADMIN).json()
+        made = client.post("/v1/admin/users", json={"name": "alice", "discord_id": "333"}, headers=owner_headers(client)).json()
         assert made["password"] and made["user"]["person"] == {"id": known.id, "name": "Alice"}  # the account's person
         assert made["user"]["discord_accounts"] == [{"user_id": "333", "discord_name": None}]
         assert users.account_user("discord", "333").name == "alice" and FakeDiscord.made[-1].accounts.known == {333: "alice"}
 
         # an account that is another user's: the new user is a new person, the account moves to them
-        other = client.post("/v1/admin/users", json={"name": "alice2", "discord_id": "333"}, headers=ADMIN).json()
+        other = client.post("/v1/admin/users", json={"name": "alice2", "discord_id": "333"}, headers=owner_headers(client)).json()
         assert other["user"]["person"]["id"] != known.id and users.account_user("discord", "333").name == "alice2"
         assert [f.text for f in memory.facts(known.id)] == ["Has a cat"]
 
-        assert client.post("/v1/admin/users", json={"name": "x", "discord_id": "<@1>"}, headers=ADMIN).status_code == 422
-        taken = client.post("/v1/admin/users", json={"name": "alice", "discord_id": "444"}, headers=ADMIN)
+        assert client.post("/v1/admin/users", json={"name": "x", "discord_id": "<@1>"}, headers=owner_headers(client)).status_code == 422
+        taken = client.post("/v1/admin/users", json={"name": "alice", "discord_id": "444"}, headers=owner_headers(client))
         assert taken.status_code == 422 and users.account_user("discord", "444") is None
 
 

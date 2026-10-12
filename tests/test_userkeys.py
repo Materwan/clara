@@ -196,7 +196,7 @@ async def test_without_a_key_a_model_nobody_selected_is_refused_and_removing_the
 @pytest.fixture
 def http(settings, farm):
     with TestClient(create_app(settings, ProviderManager.from_settings(settings, factory=farm))) as client:
-        client.app.state.users.create("root", PASSWORD, admin=True)
+        client.app.state.users.create("root", PASSWORD)
         client.app.state.users.create("erwan", PASSWORD)
         yield client
 

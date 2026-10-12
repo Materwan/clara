@@ -40,6 +40,18 @@ class FakeBackend:
             yield chunk
 
 
+OWNER = "root"  # CLARA_OWNER of the test servers: the one user who has the administration
+OWNER_PASSWORD = "correct horse battery"
+
+
+def owner_headers(target, surface: str = "web") -> dict[str, str]:
+    """`Authorization` of the owner logged in on a test server (an app, or a TestClient): the user is made if needed."""
+    users = getattr(target, "app", target).state.users
+    user = users.owner_user() or users.create(OWNER, OWNER_PASSWORD)
+    token, _ = users.open_session(user, surface)
+    return {"Authorization": f"Bearer {token}"}
+
+
 def untimed(text: str) -> str:
     """A user message without the `[time: HH:MM]` line the agent puts on the newest one."""
     return re.sub(r"^\[time: \d\d:\d\d\]\n\n", "", text)
@@ -67,7 +79,7 @@ def settings(tmp_path: Path) -> Settings:
     return Settings.from_env(
         {
             "CLARA_TOKENS": "terminal:secret-cli,discord:secret-discord",
-            "CLARA_ADMIN_TOKENS": "ops:secret-admin",
+            "CLARA_OWNER": OWNER,
             "OLLAMA_API_KEY": "key-123",
             "CLARA_LOCAL_MODEL": "fake",
             "CLARA_CLOUD_MODEL": "fake-big",

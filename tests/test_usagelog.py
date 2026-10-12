@@ -197,7 +197,7 @@ def http(settings):
     backend = FakeBackend(*[say("ok", prompt_tokens=20, completion_tokens=4) for _ in range(40)])
     with TestClient(create_app(settings, fake_providers(settings, backend))) as client:
         users = client.app.state.users
-        users.create("root", PASSWORD, admin=True)
+        users.create("root", PASSWORD)
         users.create("erwan", PASSWORD)
         yield client
 

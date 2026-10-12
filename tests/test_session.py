@@ -15,7 +15,7 @@ PASSWORD = "correct horse battery"
 def server(live, monkeypatch, tmp_path):
     app, url = live
     app.state.users.create("erwan", PASSWORD)
-    app.state.users.create("root", PASSWORD, admin=True)
+    app.state.users.create("root", PASSWORD)
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.delenv("CLARA_PASSWORD", raising=False)
     return app, url

@@ -794,7 +794,7 @@ def test_the_server_lets_clara_plan_and_follow_up_unless_told_not_to(settings):
 
 
 def test_the_maximum_of_reminders_comes_from_the_environment():
-    base = {"CLARA_TOKENS": "terminal:secret-cli"}
+    base = {"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:secret-cli"}
     assert Settings.from_env(base).task_max_reminders == 10
     assert Settings.from_env({**base, "CLARA_TASK_MAX_REMINDERS": "3"}).task_max_reminders == 3
     with pytest.raises(SettingsError):

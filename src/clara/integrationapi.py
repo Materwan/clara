@@ -17,7 +17,7 @@ person, so it is the same on every surface of theirs.
     DELETE /v1/integrations/attachments/{id}
     GET    /v1/approvals                                ?status=pending|all&conversation=
     POST   /v1/approvals/{id}/decide                    {approve, remember?}
-    GET    /v1/admin/integrations                       the administrator's settings
+    GET    /v1/admin/integrations                       the owner's settings
     PUT    /v1/admin/integrations                       {enabled?, disabled_users?, roots?, ceiling?}
     GET    /v1/admin/integrations/log                   what Clara did and was asked
 """
@@ -391,7 +391,7 @@ def _drive(request: Request) -> GoogleDrive:
     connector = svc(request).connectors.get(permissions.GDRIVE)
     if not isinstance(connector, GoogleDrive):
         raise HTTPException(
-            422, "Google Drive is not set up on this server: the administrator needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"
+            422, "Google Drive is not set up on this server: the owner needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"
         )
     return connector
 
@@ -585,13 +585,13 @@ def _server_roots(request: Request) -> list[Path]:
 
 
 def _inside_roots(request: Request, path: str) -> Path:
-    """A folder of the server the administrator allows (it exists and is inside a root); 422 otherwise."""
+    """A folder of the server the owner allows (it exists and is inside a root); 422 otherwise."""
     try:
         folder = Path(path).resolve()
     except (OSError, RuntimeError, ValueError):
         raise HTTPException(422, "Not a usable path") from None
     if not any(folder == root or folder.is_relative_to(root) for root in _server_roots(request)):
-        raise HTTPException(422, "That folder is not inside one the administrator allows")
+        raise HTTPException(422, "That folder is not inside one the owner allows")
     if not folder.is_dir():
         raise HTTPException(422, "That is not a folder")
     return folder

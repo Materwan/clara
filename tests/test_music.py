@@ -237,7 +237,7 @@ def test_only_the_reads_may_run_in_parallel(memory):
 def test_the_music_server_is_read_from_the_environment_and_no_player_or_token_is_global():
     settings = Settings.from_env(
         {
-            "CLARA_TOKENS": "terminal:" + "t" * 40,
+            "CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:" + "t" * 40,
             "MUSIC_ASSISTANT_URL": "http://100.104.72.57:8095/",
             "MUSIC_ASSISTANT_PLAYER": "pc",
             "MUSIC_ASSISTANT_TOKEN": "ma-secret",

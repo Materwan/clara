@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import FakeBackend, fake_providers, say
+from conftest import FakeBackend, fake_providers, owner_headers, say
 from fastapi.testclient import TestClient
 
 from clara.agent import Agent, ChatRequest
@@ -13,11 +13,9 @@ from clara.prompt import SystemPrompt
 from clara.server import create_app
 from clara.settings import Settings
 from clara.tools import default_toolbox
-from clara.users import Users
+from clara.users import UserError, Users
 from clara.vault import Vault, owner_check
 from clara.vaulttools import VAULT_TOOLS, vault_tools
-
-ADMIN = {"Authorization": "Bearer secret-admin"}
 
 
 def use(tool: str, **arguments) -> list[LlmChunk]:
@@ -150,23 +148,25 @@ async def test_loose_argument_types_from_the_model_are_accepted(memory, tmp_path
 # --- who owns the vault ------------------------------------------------------------------------------------
 
 
-def test_the_owners_are_the_named_users_or_else_the_administrators(memory, settings):
-    users = Users(memory, session_days=90)
-    boss = users.create("boss", "correct horse battery", admin=True)
+def test_the_owners_are_the_named_users_or_else_the_owner(memory, settings):
+    users = Users(memory, session_days=90, owner=settings.owner)
+    boss = users.create(settings.owner, "correct horse battery")
     friend = users.create("friend", "correct horse battery")
     stranger = memory.resolve("discord", "999", "Stranger")
     admins_only = owner_check(settings, users)
     assert admins_only(boss.person_id) and not admins_only(friend.person_id) and not admins_only(stranger.id)
     named = owner_check(replace(settings, vault_owners=frozenset({"friend"})), users)
     assert named(friend.person_id) and not named(boss.person_id)
-    users.create("spare", "correct horse battery", admin=True)
-    users.set_disabled("boss", True)
+    with pytest.raises(UserError):  # the owner cannot be disabled through Users...
+        users.set_disabled(boss.name, True)
+    with memory.lock, memory.database as db:  # ...but a disabled one (the database was edited) has no vault
+        db.execute("UPDATE users SET disabled = 1 WHERE name = ?", (boss.name,))
     assert not admins_only(boss.person_id)
 
 
 def test_the_settings_read_the_vault_variables(settings, tmp_path):
     env = {
-        "CLARA_TOKENS": "t:abcdefghijklmnopqrstuvwxyz0123456789", "CLARA_DATA_DIR": str(tmp_path),
+        "CLARA_OWNER": "root", "CLARA_TOKENS": "t:abcdefghijklmnopqrstuvwxyz0123456789", "CLARA_DATA_DIR": str(tmp_path),
         "CLARA_VAULT_PATH": "~/second-brain", "CLARA_VAULT_OWNERS": "Erwan, clara-friend", "CLARA_VAULT_IN_GROUPS": "true",
         "CLARA_VAULT_PUSH": "no", "CLARA_VAULT_EMBED_MODEL": "off",
     }
@@ -183,9 +183,9 @@ def test_the_server_opens_the_vault_and_the_operator_console_manages_it(settings
     configured = replace(settings, vault_path=root, vault_embed_model="off")
     with TestClient(create_app(configured, fake_providers(configured, FakeBackend()))) as client:
         assert client.app.state.vault is not None
-        run_command = lambda line: client.post("/v1/admin/command", json={"line": line}, headers=ADMIN).json()["output"]  # noqa: E731
+        run_command = lambda line: client.post("/v1/admin/command", json={"line": line}, headers=owner_headers(client)).json()["output"]  # noqa: E731
         assert "vault is empty" in run_command("/vault")
-        assert "administrators may use the vault" in run_command("/vault owners")
+        assert "the owner may use the vault" in run_command("/vault owners")
         assert "not a git repository" in run_command("/vault sync")
         assert "Semantic search is not set up" in run_command("/vault reindex")  # reported, not a crash
         assert "good shape" in run_command("/vault health")
@@ -195,7 +195,7 @@ def test_the_server_opens_the_vault_and_the_operator_console_manages_it(settings
 def test_without_a_vault_path_the_server_has_none(settings):
     with TestClient(create_app(settings, fake_providers(settings, FakeBackend()))) as client:
         assert client.app.state.vault is None
-        output = client.post("/v1/admin/command", json={"line": "/vault"}, headers=ADMIN).json()["output"]
+        output = client.post("/v1/admin/command", json={"line": "/vault"}, headers=owner_headers(client)).json()["output"]
         assert "CLARA_VAULT_PATH" in output
 
 

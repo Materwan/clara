@@ -67,5 +67,5 @@ def test_an_async_tool_is_not_run_synchronously():
 def test_the_setting_turns_them_off(value, expected):
     from clara.settings import Settings
 
-    settings = Settings.from_env({"CLARA_TOKENS": "terminal:" + "t" * 40, "CLARA_WEB_TOOLS": value})
+    settings = Settings.from_env({"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:" + "t" * 40, "CLARA_WEB_TOOLS": value})
     assert settings.web_tools is expected

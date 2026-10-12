@@ -5,14 +5,13 @@ import os
 import subprocess
 
 import pytest
-from conftest import FakeBackend, fake_providers
+from conftest import FakeBackend, fake_providers, owner_headers
 from fastapi.testclient import TestClient
 
 from clara import restart as restart_module
 from clara.restart import RestartError, RestartService, Step, merged_env, relaunch, update_code, update_env
 from clara.server import create_app
 
-ADMIN = {"Authorization": "Bearer secret-admin"}
 CHAT = {"Authorization": "Bearer secret-cli"}
 
 
@@ -183,37 +182,37 @@ def client(settings, monkeypatch):
         yield http
 
 
-def test_only_an_administrator_may_look_or_restart(client):
+def test_only_the_owner_may_look_or_restart(client):
     assert client.get("/v1/admin/restart").status_code == 401
-    assert client.get("/v1/admin/restart", headers=CHAT).status_code == 401
-    assert client.post("/v1/admin/restart", json={}, headers=CHAT).status_code == 401
+    assert client.get("/v1/admin/restart", headers=CHAT).status_code == 403
+    assert client.post("/v1/admin/restart", json={}, headers=CHAT).status_code == 403
     assert not client.app.state.restart.requested
 
 
 def test_the_status_says_whether_a_restart_is_needed(client):
-    found = client.get("/v1/admin/restart", headers=ADMIN).json()
+    found = client.get("/v1/admin/restart", headers=owner_headers(client)).json()
     assert found["in_progress"] is False and found["last"] is None
 
 
 def test_asking_for_a_restart_updates_then_stops(client, monkeypatch):
     monkeypatch.setattr(restart_module, "update_code", steps_ok)
-    response = client.post("/v1/admin/restart", json={}, headers=ADMIN)
+    response = client.post("/v1/admin/restart", json={}, headers=owner_headers(client))
     assert response.status_code == 202
     assert response.json()["id"] and response.json()["steps"][0]["name"] == "git pull"
     assert client.app.state.restart.requested and client.app.state.lifecycle.stopping
-    assert client.get("/v1/admin/restart", headers=ADMIN).json()["in_progress"] is True
-    assert client.post("/v1/admin/restart", json={}, headers=ADMIN).status_code == 409
+    assert client.get("/v1/admin/restart", headers=owner_headers(client)).json()["in_progress"] is True
+    assert client.post("/v1/admin/restart", json={}, headers=owner_headers(client)).status_code == 409
 
 
 def test_a_failed_update_answers_with_its_output_and_the_server_goes_on(client, monkeypatch):
     monkeypatch.setattr(restart_module, "update_code", lambda root, head: [Step("pip install", False, "no network")])
-    response = client.post("/v1/admin/restart", json={}, headers=ADMIN)
+    response = client.post("/v1/admin/restart", json={}, headers=owner_headers(client))
     assert response.status_code == 500 and "no network" in response.json()["detail"]
     assert not client.app.state.lifecycle.stopping
 
 
 def test_the_restart_command_does_the_same(client, monkeypatch):
     monkeypatch.setattr(restart_module, "update_code", steps_ok)
-    output = client.post("/v1/admin/command", json={"line": "/restart"}, headers=ADMIN).json()["output"]
+    output = client.post("/v1/admin/command", json={"line": "/restart"}, headers=owner_headers(client)).json()["output"]
     assert "git pull: Already up to date." in output and "Stopping" in output
     assert client.app.state.restart.requested

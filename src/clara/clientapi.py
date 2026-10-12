@@ -14,7 +14,7 @@ the web site, the desktop app or the terminal.
     GET    /v1/accounts/signed-in       ?surface=  every account of the surface that is signed in
     PUT    /v1/spaces                   {surface, spaces: [{id, name}]}: the spaces the client is in now
 
-    GET    /v1/admin/spaces             (administrators) the spaces, and whether Clara may chime in
+    GET    /v1/admin/spaces             (the owner) the spaces, and whether Clara may chime in
     PATCH  /v1/admin/spaces             {default_chime}
     PATCH  /v1/admin/spaces/{id}        {chime?: true | false | null, instructions?: [{text, enabled}]}: the list replaces
                                         the personality file of Clara in that space while some are enabled
@@ -39,7 +39,7 @@ from .auth import Admin, Client, require_account
 from .memory import MergeRefused, Person, Space
 from .prompt import relation_label
 from .ratelimit import FailureLimiter
-from .users import User, UserError, check_self_service_name
+from .users import User, UserError
 
 log = logging.getLogger("clara")
 
@@ -159,7 +159,7 @@ def _signed_in(request: Request, user: User, body: _Account) -> dict:
     person = memory.person_by_id(user.person_id)
     return {
         "user": user.name,
-        "is_admin": user.is_admin,
+        "is_owner": user.is_owner,
         "person": {"id": person.id, "name": person.name} if person else None,
         "accounts": [f"{s}:{e}" for s, e in memory.accounts_of(user.person_id)],
         "account": f"{body.surface}:{body.user_id}",
@@ -185,7 +185,7 @@ async def register(body: SignInBody, client: Client, request: Request) -> dict:
                             headers={"Retry-After": str(math.ceil(wait))})
     memory, users = state.memory, state.users
     try:
-        check_self_service_name(body.username)  # nobody makes themselves the operator
+        users.check_self_service_name(body.username)  # nobody makes themselves the owner or the operator
     except UserError as error:
         raise HTTPException(409 if "already" in str(error) else 422, str(error)) from None
     current = memory.find_person(body.surface, body.user_id)
@@ -193,7 +193,7 @@ async def register(body: SignInBody, client: Client, request: Request) -> dict:
     person = current if current is not None and not _owned_by_a_user(request, current) else None
     fresh = None if person is not None else memory.create_person(body.user_name or body.username)
     try:
-        user = await asyncio.to_thread(users.create, body.username, body.password, False, person or fresh)  # scrypt
+        user = await asyncio.to_thread(users.create, body.username, body.password, person or fresh)  # scrypt
     except UserError as error:
         if fresh is not None:
             memory.delete_person(fresh.id)
@@ -358,7 +358,7 @@ def describe_discord_account(request: Request, user_id: str, user: User) -> dict
 
 
 def announce_discord_sign_in(request: Request, user: User, user_id: str, admin: str) -> None:
-    """An administrator signed a Discord account in as `user`: the running bot answers it at once."""
+    """The owner signed a Discord account in as `user`: the running bot answers it at once."""
     request.app.state.discord.signed_in(user_id, user.name)
     log.info("admin %s signed discord:%s in as %s", admin, user_id, user.name)
 

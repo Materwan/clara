@@ -1,6 +1,6 @@
 // Restarting the server from the web site: the server pulls the code, updates, stops the careful way and starts again.
 // The page that asked waits for /health to say `restarted: <id>` (the new server reads the id from data/restart.json),
-// then tells the person it worked and reloads itself to load the new pages. Every administrator sees a badge when a
+// then tells the person it worked and reloads itself to load the new pages. The owner sees a badge when a
 // restart is worth it (a changed .env, new code on disk or on the remote), and the pages that tell you to restart
 // carry the button.
 
@@ -104,9 +104,9 @@ export function restartNotice(text) {
     h("button", { onclick: () => askRestart() }, icon("refresh", { size: 16 }), "Restart…"));
 }
 
-/** For the rail: a button that shows only when a restart is worth it, and why. Administrators only. */
+/** For the rail: a button that shows only when a restart is worth it, and why. The owner only. */
 export function mountRestartBadge(user, container) {
-  if (!user.is_admin) return { refresh() {}, destroy() {} };
+  if (!user.is_owner) return { refresh() {}, destroy() {} };
   const button = h("button", { class: "approvals-badge restart-badge", hidden: true, onclick: () => askRestart(reasons) },
     icon("refresh", { size: 18 }), h("span", { class: "text" }, "Restart needed"));
   container.append(button);
@@ -119,7 +119,7 @@ export function mountRestartBadge(user, container) {
       reasons = status.reasons;
       button.hidden = !status.needed || status.in_progress;
       button.title = reasons.map((reason) => reason.text).join("\n");
-    } catch { /* not an administrator any more, or the server is away */ }
+    } catch { /* not the owner any more, or the server is away */ }
   }
 
   const timer = setInterval(refresh, POLL);

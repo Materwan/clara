@@ -4,7 +4,7 @@ that provider then run on their key instead of the server's.
 * **Where.** A key is kept encrypted (integrations/vault.py, the same secret key as the connected accounts) in
   `user_api_keys`, one per person and provider. The API never gives it back: only its last characters (`hint`).
 * **When.** A person who saved a key for a provider is answered with it, on every surface but Discord, by every model
-  of that provider, whether it is one an administrator selected (models.py) or not; without a key, the server's key
+  of that provider, whether it is one the owner selected (models.py) or not; without a key, the server's key
   and the daily credits apply. Removing the key goes back to that.
 * **What it costs.** Nothing in credits (limits.py never sees these answers, and a person out of credits can still use
   their key). Their tokens are logged apart (`usage_log.own_key`, usagelog.py).

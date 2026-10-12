@@ -15,7 +15,7 @@ Runs the same on Linux and Windows (pure Python, SQLite, no native extension).
 
 It also serves a **web site** (open the server's address in a browser): sign in with a user name and a password,
 chat, keep **projects** (files, folders and GitHub repositories Clara uses in their conversations), see what Clara
-remembers, and, for administrators, manage users and the server. See *Users*, *Projects* and *The web site*.
+remembers, and, for the owner, manage users and the server. See *Users*, *Projects* and *The web site*.
 
 ## Quick start
 
@@ -48,12 +48,11 @@ Two options change how it starts (they exclude each other):
 | `--headless` (alias `--no-console`) | No prompt, and **the server survives the end of its terminal**: closing an SSH session no longer kills it. It ignores SIGHUP, lets go of the terminal's input and output, and logs to `data/logs/clara-server.log` (5 files of 5 MB). Start it with `clara-server --headless &` (or `nohup`, tmux, systemd: it works the same), stop it with `kill <pid>` (SIGTERM stops it the careful way, see *Stopping the server*) or `clara-admin /stop`. Windows has no SIGHUP: there it only drops the console and logs to the file. |
 | `--test` | Before the prompt appears, checks the installation and shows the state of each check (`PASS`, `WARN`, `FAIL`, `SKIP`): configuration, data directory writable, database sound, system prompt, web site files, port free, model provider reachable and model installed, Tailscale. Nothing is changed. When nothing failed it goes on to start normally; when a check failed it asks `Start anyway? [y/N]` (and does not start when there is no terminal to ask on, exit code 1). |
 
-To use the same console **from another computer**, set `CLARA_ADMIN_TOKENS` on
-the server and run:
+To use the same console **from another computer**, sign in as the owner (`CLARA_OWNER`, see *Users*) and run:
 
 ```bash
-clara-admin --url http://my-server:8765 --token <admin token>   # or CLARA_URL / CLARA_ADMIN_TOKEN
-clara-admin /status                                              # one command, then exit
+clara-admin --url http://my-server:8765 --user erwan   # or CLARA_URL / CLARA_USER; the password is asked once
+clara-admin /status                                     # one command, then exit
 ```
 
 Both consoles run the same commands (the `/` is optional):
@@ -106,8 +105,8 @@ The choice and the models picked with `/model` are saved in `data/runtime.json`
 and survive restarts. The API keys only ever live in the environment: they are not
 saved, printed, or reachable through the API.
 
-Remote admin tokens are separate from chat tokens: a Discord adapter cannot
-switch the provider or edit memory, and an admin token cannot chat.
+The administration is the owner's alone (a user who logged in, never a chat token): a Discord adapter cannot
+switch the provider or edit memory, and the owner's login does not chat for anybody else.
 
 ## How the memory works
 
@@ -170,17 +169,17 @@ All routes except `/health` need `Authorization: Bearer <token>`.
 | `POST /v1/accounts/register`, `POST /v1/accounts/login` | `{surface, user_id, user_name?, username, password}`: a client signs one of its accounts in (see *Discord*); 401 wrong password, 409 name taken or already signed in, 422 rules, 429 too many |
 | `POST /v1/accounts/logout`, `GET /v1/accounts/me?surface=&user_id=`, `GET /v1/accounts/signed-in?surface=` | sign it out; who it is signed in as, with its facts and relationship; every signed-in account of a surface |
 | `PUT /v1/spaces` | `{surface, spaces: [{id, name}]}`: the group spaces (Discord servers) the client is in now |
-| `GET /v1/admin/spaces`, `PATCH /v1/admin/spaces` `{default_chime}`, `PATCH /v1/admin/spaces/{id}` `{chime?, instructions?}`, `PATCH /v1/admin/people/{id}` `{relation}` | chime in, and the relationship (administrators) |
+| `GET /v1/admin/spaces`, `PATCH /v1/admin/spaces` `{default_chime}`, `PATCH /v1/admin/spaces/{id}` `{chime?, instructions?}`, `PATCH /v1/admin/people/{id}` `{relation}` | chime in, and the relationship (the owner) |
 | `POST /v1/accounts/link-code` | `{surface, user_id}` → `{code, expires_in}`: proof of control of that account |
 | `POST /v1/accounts/link` | `{surface, user_id, code, to_surface, to_user_id}`; 403 bad code, 409 both accounts have memories |
 | `DELETE /v1/conversations/{id}?surface=&user_id=` | forget a thread, keep the facts; with an account, only one its person started (404 otherwise) |
 | `POST /v1/auth/login` | `{username, password, surface?, device?}` → `{token, user, surface}`; with the header `X-Clara-Web: 1` (the web site) the token goes in an HttpOnly cookie instead; 401 wrong, 403 surface not allowed, 409 accounts cannot be merged, 429 too many tries (see *Users*) |
-| `GET /v1/auth/signup`, `POST /v1/auth/register` | `{open, privacy}`: whether the web site lets people make their own user, and what it does with their words; `{username, password}` makes a user (never an administrator) and logs them in on `web`, as login does. 403 when `CLARA_WEB_SIGNUP` is off, 409 name taken, 422 rules, 429 too many (see *Users*) |
+| `GET /v1/auth/signup`, `POST /v1/auth/register` | `{open, privacy}`: whether the web site lets people make their own user, and what it does with their words; `{username, password}` makes a user (never the owner) and logs them in on `web`, as login does. 403 when `CLARA_WEB_SIGNUP` is off, 409 name taken, 422 rules, 429 too many (see *Users*) |
 | `POST /v1/auth/logout`, `GET /v1/auth/me`, `POST /v1/auth/password` `{current_password, new_password}`, `GET /v1/auth/sessions`, `DELETE /v1/auth/sessions/{id}` | the signed-in user's own account and devices |
 | `GET /v1/auth/export`, `POST /v1/auth/delete-account` `{password}` | download everything the server keeps about me; erase my user, my memories and my lines of the traffic log |
 | `POST /v1/documents/extract` | the bytes of a PDF as the body → `{text, pages, truncated}` |
 | `GET /health` | no auth; shows the active provider and model, and `restarted`: the id of the restart that started this server (see *Restarting the server*) |
-| `GET /v1/admin/commands`, `POST /v1/admin/command` | `{line}` → `{output, quit}`; an **admin token** or an administrator user (used by `clara-admin`) |
+| `GET /v1/admin/commands`, `POST /v1/admin/command` | `{line}` → `{output, quit}`; the owner logged in (used by `clara-admin`) |
 | `GET/POST /v1/admin/users`, `PATCH/DELETE /v1/admin/users/{name}`, `POST .../sign-out`, `GET /v1/admin/status`, `GET /v1/admin/models`, `GET /v1/admin/people`, `GET/POST .../people/{id}/facts`, `DELETE .../facts/{fact}`, `GET .../people/{id}/footprint` | what the web site's administration page uses; same rights as above |
 
 `conversation` defaults to `<surface>:<user_id>` (a private thread). A group
@@ -324,7 +323,7 @@ The Discord bot is part of the server (`src/clara/discord_bot/`) and needs the o
 On the *Bot* page of the developer portal, turn on the **Message Content** and **Server Members** intents (without
 them Discord refuses the connection, and the web page says so).
 
-An administrator starts and stops it at any time with `/discord start|stop|restart` (`/discord` shows its state), or
+The owner starts and stops it at any time with `/discord start|stop|restart` (`/discord` shows its state), or
 on the web site's **Discord** page. That lasts until the server restarts: `AUTO_START_DISCORD_BOT` decides then. When
 the server stops, the bot stops with it. The built-in bot reaches Clara by calling the server's own code (no token,
 no HTTP), under the client name `discord-bot`, through the same checks as the HTTP routes below.
@@ -369,7 +368,7 @@ password, and sends them once.
 - `login` signs the account in as an existing user; wrong passwords are limited per account
   (`CLARA_AUTH_MAX_FAILURES`). The account joins the user's person; an account that was another user's before is
   only *moved*, nobody is merged.
-- An administrator can also sign an account in, with no password: `/user link <name> <discord:id>`, `/user add <name>
+- The owner can also sign an account in, with no password: `/user link <name> <discord:id>`, `/user add <name>
   discord:<id>`, or on the web site (the Discord page, or a user's menu and *Add user* under Administration, with a
   search among the people in the bot's servers). The account replaces whoever it was signed in as and is *moved* if
   it was another user's; otherwise its memories are **merged** into the user's, even when both have some. A new user
@@ -389,12 +388,12 @@ may carry:
 | `mode` | `answer` (default: the message is for Clara), `observe` (it was not: it is stored as context, no model call, `observed: true`) or `maybe` (it was not; Clara answers only if she has something worth adding, else she replies `<pass>`: the message is stored without her work, `passed: true` and `reply: ""`) |
 
 In a group, every message reaches the model prefixed with its author's name. The server turns `maybe` into
-`observe` unless **chime in** is allowed in that space: an administrator switches it per space (`/chime`, or the
+`observe` unless **chime in** is allowed in that space: the owner switches it per space (`/chime`, or the
 web site's *Discord* page), with a default for the spaces nobody set (off). The client tells the server which
 spaces it is in (`PUT /v1/spaces`, when it starts, and when it joins or leaves one). Mind that with chime in, every
 message of a signed-in member costs a model call.
 
-**A personality per server.** An administrator gives a space a list of short instructions (`instructions`: `{text,
+**A personality per server.** The owner gives a space a list of short instructions (`instructions`: `{text,
 enabled}`, at most 30 of 500 characters; the web site's *Discord* page edits them). While at least one is enabled,
 they *replace* the personality file for every message of that space (`ChatRequest.space`): the prompt starts with
 one line naming Clara and the instructions as bullets, and keeps the rest (what she remembers, the relationship,
@@ -414,7 +413,7 @@ change of model) is not sent there.
 Clara keeps a relationship score with each person, 0 to 100 (none at first). It is in the system prompt on every
 surface and sets her tone: from warm complicity (85 and more) to dry and curt, but still helpful, under 25. She
 moves it herself with her `adjust_relation` tool when someone is clearly friendly or rude (at most once per answer,
-from -25 to +10; the first move starts from 50). Administrators read and set it with `/relation`, or on the web site
+from -25 to +10; the first move starts from 50). The owner reads and sets it with `/relation`, or on the web site
 (*People & memory*). Merging two people keeps a relationship; `/forget-person` erases it.
 
 ## Reminders
@@ -587,25 +586,32 @@ desktop app also show and continue each other's conversations (the terminal's an
 
 `CLARA_USER_SURFACES` lists the surfaces a user may sign in on (those four by default).
 
-**Making users** is the administrator's job, in the server's console or from another computer
-(`clara-admin "/user add erwan admin"`):
+**There are no administrators: there is an owner.** `CLARA_OWNER` in `.env` names one user (a login name) who has all
+the administration (every `/v1/admin/...` route, the *Admin* and *Discord* pages, the remote console, no usage limit,
+the vault, the operator's `GITHUB_TOKEN`). Every other user is a plain user and cannot be made more. The server
+refuses to start without `CLARA_OWNER`. **Anything new that is not said to be for everybody is the owner's alone**:
+a new route goes behind the `Admin` dependency (`auth.py`) until it is decided otherwise.
+
+**Making users** is the owner's job, in the server's console or from another computer
+(`clara-admin --user erwan "/user add alice"`). The owner's own user is made the same way, once
+(`/user add <CLARA_OWNER>`): the owner's name cannot be taken by a sign-up or a Discord `/register`, and the owner
+cannot be disabled or removed:
 
 | | |
 | --- | --- |
-| `/user add <name> [admin] [discord:<id>]` | makes the user and **a password, shown once** (it never passes through the traffic log); with a Discord account, signs it in as them |
+| `/user add <name> [discord:<id>]` | makes the user and **a password, shown once** (it never passes through the traffic log); with a Discord account, signs it in as them |
 | `/user link <name> <discord:id \| member>`, `/user unlink <name> <discord:id>` | signs a Discord account in as the user with no password (`1234`, `discord:1234`, `<@1234>`, or a name the running bot sees), or out |
 | `/user passwd <name>` | a new password; the user is signed out everywhere |
-| `/user admin <name> on\|off`, `/user disable <name>`, `/user enable <name>`, `/user remove <name>` | roles and access. The last administrator cannot be demoted, disabled or removed |
+| `/user disable <name>`, `/user enable <name>`, `/user remove <name>` | access. The owner cannot be disabled or removed |
 | `/user logout <name>` | signs a user out of all their devices |
 | `/user list` | users, roles, devices, last sign-in |
 
 **Letting people make their own.** Off by default. With `CLARA_WEB_SIGNUP=true` the web site's sign-in page offers
-*Create one*: a user name, a password (repeated), and the new user is signed in at once. Such a user is never an
-administrator, and always a **new person**: unlike `/user add`, it does not take over the memories of an account that
+*Create one*: a user name, a password (repeated), and the new user is signed in at once. Such a user is never the owner, and always a **new person**: unlike `/user add`, it does not take over the memories of an account that
 has their name (anyone could claim `discord:1234` otherwise), so a name an account already uses is refused. An
 address (other than this machine) may make 5 users a minute, then none for an hour. Leave it off on a server that
 strangers can reach (Tailscale Funnel); if you turn it on there anyway: such a user starts with every integration
-(GitHub, Google Drive, folders) **off** until an administrator allows them (`CLARA_SIGNUP_INTEGRATIONS=true` allows
+(GitHub, Google Drive, folders) **off** until the owner allows them (`CLARA_SIGNUP_INTEGRATIONS=true` allows
 them at once), names that pass for the operator's (`admin`, `root`, `clara`...) are refused, one user may have
 `CLARA_MAX_TURNS_PER_USER` (2) answers running at once, and each has the daily credits of `/limit default`.
 
@@ -625,8 +631,10 @@ once and save the token (`%APPDATA%\clara\sessions.json`, or `~/.config/clara/`;
 the desktop app asks in its settings; `custom-console` signs in by itself with `CLARA_USER` / `CLARA_PASSWORD`.
 Wrong passwords are limited per address (see *Security*).
 
-**The first administrator.** The server's own console can do it. Under systemd there is none, so use
-`CLARA_ADMIN_TOKENS` once: `clara-admin --token <admin token> "/user add erwan admin"`.
+**The first user.** Put your login name in `CLARA_OWNER`, start the server, and make it in the server's own console
+(`/user add erwan`). Under systemd there is no console: use the web site's sign-up (`CLARA_WEB_SIGNUP=true`, then
+off) for another name, or run the server once in a terminal. Databases from before the owner lose their `is_admin`
+column when the server starts: set `CLARA_OWNER` to the user who was the administrator.
 
 ## Projects
 
@@ -639,7 +647,7 @@ desktop app both manage them).
   files), and **GitHub repositories**: the server downloads a snapshot of a branch, tag or commit (the archive
   GitHub makes, no git needed) into a folder named after the repository; *Sync* downloads it again. Public
   repositories need nothing; a private one is downloaded with the GitHub account the person connected (*Integrations*),
-  or, for **administrators only**, with `GITHUB_TOKEN` (a fine-grained token with read access to their contents) in the
+  or, for **the owner only**, with `GITHUB_TOKEN` (a fine-grained token with read access to their contents) in the
   server's `.env`: it is the operator's own access, so it is not lent to other users unless
   `CLARA_GITHUB_TOKEN_SHARED=true`. It never leaves the server. A branch, tag or commit is a name (letters, digits,
   `._+@-` and `/`, never `..`).
@@ -708,16 +716,16 @@ may do is decided per kind of action, and anything that replaces or deletes asks
   **she has no tool to approve her own request**.
 - **Connecting**: *GitHub*: paste a fine-grained personal access token (github.com/settings/personal-access-tokens)
   with access to the repositories she may use: "Contents: read and write" to commit, plus "Pull requests" and
-  "Issues" if wanted. *Google Drive*: the administrator creates an OAuth client in a Google Cloud project, enables the
+  "Issues" if wanted. *Google Drive*: the owner creates an OAuth client in a Google Cloud project, enables the
   Drive API, and puts `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`; the redirect URI to register is
   `<the server's address>/v1/integrations/google/callback` (Google wants `https` or `localhost`: the Tailscale address
   does) and `CLARA_PUBLIC_URL` is that address when the server is reached through a proxy. Keep the app **In
   production** in Google's console: in *Testing* mode Google ends the connection after 7 days (the page then says
   "Connect it again"). Each person then clicks *Connect Google Drive* and confirms on the page they come back to,
   which names the Clara user the Drive would be given to.
-- **Folders on the server** are only reachable inside the roots an administrator lists (Integrations page, bottom): a
+- **Folders on the server** are only reachable inside the roots the owner lists (Integrations page, bottom): a
   person picks a folder under one, and Clara cannot leave it: paths are resolved (links followed, `..` refused) and
-  checked at every call. Remove a root and what was added from it stops working. They are off until the administrator
+  checked at every call. Remove a root and what was added from it stops working. They are off until the owner
   turns them on.
 - **Folders on a computer** are added from the desktop app (*Integrations*, *Add*, *Folder on this computer*). The
   server never learns the path: it only knows the computer's id and the folder's alias. A call becomes a *job* that
@@ -728,7 +736,7 @@ may do is decided per kind of action, and anything that replaces or deletes asks
 - **Secrets** (a GitHub token, a Google refresh token) are encrypted in the database with `CLARA_SECRET_KEY` (a Fernet
   key or any long text; else a key is made in `data/secret.key`). They are never returned by the API, never shown,
   and kept out of the traffic log. Whoever has both the database and the key can read them.
-- **Administrator**: each integration can be turned on or off for the server and, per person; the most open a level may
+- **Owner**: each integration can be turned on or off for the server and, per person; the most open a level may
   be set (*ceiling*: "always ask" or "never"; it beats what a person chose, at every call); the folders of the
   server; and a **log** of everything she asked and did (who, what, where, how it ended). Finished requests are kept 30
   days. Erasing a person erases their accounts, resources and requests.
@@ -748,7 +756,7 @@ may do is decided per kind of action, and anything that replaces or deletes asks
 | `GET /v1/approvals?status=pending\|all&conversation=` | the requests for permission |
 | `POST /v1/approvals/{id}/decide` | `{approve, remember?}`; 409 if it was answered already |
 | `GET /v1/integrations/jobs?device=`, `POST /v1/integrations/jobs/{id}/result` | for the desktop app: what Clara asked of this computer's folders, and the answer |
-| `GET`, `PUT /v1/admin/integrations`, `GET /v1/admin/integrations/log` | the administrator's switches, ceilings and folders; the log |
+| `GET`, `PUT /v1/admin/integrations`, `GET /v1/admin/integrations/log` | the owner's switches, ceilings and folders; the log |
 
 Notification events `approval` (a request to answer, with its summary and buttons) and `approval_resolved` come on the
 same stream as reminders, for the surfaces `app`, `discord` and `web`; the chat stream carries an `approval` event when
@@ -760,21 +768,21 @@ she asks during a turn.
 provider that has its key works at the same time. A model is named `provider:model` (`local:llama3.2`,
 `cloud:gpt-oss:120b`, `gemini:gemini-flash-latest`).
 
-- **The administrators select the models users may choose**: the web site's *Admin, Models* tab lists every model of
+- **The owner selects the models users may choose**: the web site's *Admin, Models* tab lists every model of
   every provider (with a search, a provider filter, *Select shown* / *Unselect shown*, *Refresh*), or `/models` in the
   console. Users only ever see the selected ones. Nothing is selected at first: everybody uses the server's model.
 - **Each user chooses per surface**: a model for the web site, another for the desktop app, the terminal
   (`clara-chat`, `/model`) and the console (`/model`). On the web it is the *Model* card of the *Account* page, and a
   picker next to the message box of the chat; in the app, *Settings*. A user with no valid choice (or whose choice
-  an administrator took away) gets the server's model.
-- **Discord has one model for everybody**, set by an administrator (*Admin, Models*, or `/models discord <model>`);
+  the owner took away) gets the server's model.
+- **Discord has one model for everybody**, set by the owner (*Admin, Models*, or `/models discord <model>`);
   it need not be one of those users may choose. `/provider` and `/model` stay the default of everything else
   (users who chose nothing, summaries and titles).
 - **A token costs the weight of the model**, in credits (see *Usage limits*). The weight is 1 for a model of
   `CLARA_WEIGHT_REFERENCE_B` (default 8) billion parameters, proportional to the size above and below it (120B: 15,
   1B: 0.125; never below 0.01). The size is what the provider says (Ollama lists it), else what the name says
   (`gpt-oss:120b`, `mixtral:8x7b`); the Gemini, DeepSeek and Mistral APIs say nothing, so their models weigh 1 until
-  an administrator sets a weight by hand (a weight set by hand beats the size; *Use the size* goes back). Users see
+  the owner sets a weight by hand (a weight set by hand beats the size; *Use the size* goes back). Users see
   each model's cost wherever they choose. Every `done` event says the `model_ref`, its `weight` and the `credits` the
   turn cost.
 - Each model has the context window of its provider (`CLARA_<ID>_CONTEXT_WINDOW`).
@@ -803,10 +811,10 @@ was given and what it wrote), times the weight of the model that answered (see *
 1 is one credit), added up per person over a calendar day (UTC; it starts again at midnight UTC). The numbers are
 credits wherever the environment variable (`CLARA_DEFAULT_DAILY_TOKENS`) or the database still say tokens.
 
-- An **administrator** (a user flagged administrator) has no limit, whatever is set.
-- Another user has the limit an administrator set for them, or the **default** when none is set. A person with no
+- The **owner** (`CLARA_OWNER`) has no limit, whatever is set.
+- Another user has the limit the owner set for them, or the **default** when none is set. A person with no
   user (a terminal or app using a client token) follows the default.
-- `0` (or `off`) means no limit. Nothing is limited until `CLARA_DEFAULT_DAILY_TOKENS` or an administrator says so.
+- `0` (or `off`) means no limit. Nothing is limited until `CLARA_DEFAULT_DAILY_TOKENS` or the owner says so.
   Limits set before credits existed keep their number: it now counts credits (the same, on a model of weight 1).
 - The limit is checked when an answer starts: the answer that crosses it is finished, the next one is refused with
   `429` (`Retry-After` says when), or an `error` event with `"reason": "usage_limit"` on a stream. A Discord message
@@ -842,7 +850,7 @@ follow them when two accounts are linked.
 **Discord is kept apart from every other surface** everywhere: two totals for the server, and for each person a
 Discord column and an "other surfaces" column (the web site, the app, the terminal and so on, detailed per surface).
 
-For administrators, on the web site, *Admin, Usage*: totals of Discord and of the rest, a table per person (answers,
+For the owner, on the web site, *Admin, Usage*: totals of Discord and of the rest, a table per person (answers,
 tokens in and out, Discord, other surfaces, **preferred models**: the three they use most, last use) over a period
 (24 hours to all time), and the **history** of every call, filtered by person, surface (Discord or not) and kind.
 
@@ -854,7 +862,7 @@ credits against their limit, and the history of their own calls.
 | --- | --- |
 | `GET /v1/me/usage`, `GET /v1/me/usage/history` | the same, for the signed-in user only (all their accounts: the web site, the app, Discord once linked): `{days, usage, quota}` (`usage` is the person's entry above, `null` before their first call; `quota` is today's credits) and `{calls, next, totals}` with the same filters but `person` |
 | `GET /v1/me/api-keys`, `PUT /v1/me/api-keys/{provider}`, `DELETE /v1/me/api-keys/{provider}`, `GET /v1/me/api-keys/history` | the user's own API keys (Usage page): the providers that take one (`cloud`, `gemini`, `deepseek`, `mistral`) with `saved` and a `hint` (the last 4 characters; the key is never given back), `PUT {api_key}` checks the key with the provider and keeps it encrypted (`CLARA_SECRET_KEY`), and the tokens used on those keys, counted apart from the server's. A user with a key for a provider is answered by every model of it on their key (web, app, terminal, console; never Discord): no credits are counted and the daily limit does not stop them |
-| `GET /v1/admin/usage` | `?days=` (0: ever): `{users: [{person, user, is_admin, answers, prompt_tokens, completion_tokens, credits, discord, other, surfaces, models, first_at, last_at}], totals: {discord, other}}` |
+| `GET /v1/admin/usage` | `?days=` (0: ever): `{users: [{person, user, is_owner, answers, prompt_tokens, completion_tokens, credits, discord, other, surfaces, models, first_at, last_at}], totals: {discord, other}}` |
 | `GET /v1/admin/usage/history` | `?person=&group=discord\|other&surface=&kind=message\|scheduled\|compaction\|title&model=&days=&before=&limit=`: `{calls: [{id, at, kind, surface, group, conversation, person, user, model_ref, model, provider, prompt_tokens, completion_tokens, credits, rounds, estimated}], next, totals}`, newest first; pass `next` as `before` for the following page |
 
 ## Markdown files
@@ -887,10 +895,10 @@ Turn it on in `.env` (see `.env.example`):
 
 ```
 CLARA_VAULT_PATH=/home/you/Clara/second-brain     # a clone of the vault repository
-CLARA_VAULT_OWNERS=erwan                          # empty: the administrators
+CLARA_VAULT_OWNERS=erwan                          # empty: the owner
 ```
 
-* **Who.** Only the *users* named in `CLARA_VAULT_OWNERS` (else the administrators) get the `vault_*` tools, on any
+* **Who.** Only the *users* named in `CLARA_VAULT_OWNERS` (else the owner) get the `vault_*` tools, on any
   surface their accounts are signed in on (a Discord account counts once it is signed in as the user). Nobody else
   even sees that a vault exists. **Never in group conversations** (a Discord server), where everybody reads what a tool
   returns, unless `CLARA_VAULT_IN_GROUPS=true`.
@@ -971,13 +979,13 @@ shown, and the user's answers come back as their next message, which Clara then 
 - **Schedule**: prompts Clara runs by herself (see *Scheduled tasks*): each with when it runs next and how the last run
   went; plan one, edit, pause, *Run it now*, delete, open its conversation.
 - **Memory**: what Clara remembers about you, to add to or remove from.
-- **Account**: your usage, the model Clara answers you with on each surface (among those an administrator offers, with
+- **Account**: your usage, the model Clara answers you with on each surface (among those the owner offers, with
   their cost in credits), change your password, see and sign out your devices, link an account that has no password
   (Discord) with a link code. The chat has a model picker too.
-- **Discord** (administrators): the bot built into the server (its state, Discord account, servers, latency, last
+- **Discord** (the owner): the bot built into the server (its state, Discord account, servers, latency, last
   error; *Start*, *Stop*, *Restart*; the invite link), the Discord servers it is in with where Clara may chime in, and
   the Discord accounts signed in, each with *Sign out*.
-- **Admin** (administrators): *Users* (add, reset a password, make administrator, disable, sign out, remove),
+- **Admin** (the owner): *Users* (add, reset a password, disable, sign out, remove),
   *Models* (select the models users may choose, set what a token of each costs, choose Discord's model),
   *Server* (status, switch the server's own provider and model, stop), *People & memory* (everybody Clara knows, their facts,
   the relationship, linking, erasing a person) and a *Console* box with every server command.
@@ -1018,7 +1026,7 @@ one JSON object per line). Entries of one exchange share an `id`:
 
 | `dir` | `kind` | what |
 | --- | --- | --- |
-| `in` | `request` | a client's HTTP request: `peer` (`client:<name>`, `admin:<name>`, `anonymous`, `unknown-token`), method, path, query, address, body |
+| `in` | `request` | a client's HTTP request: `peer` (`client:<name>`, `user:<name>@<surface>`, `anonymous`, `unknown-token`), method, path, query, address, body |
 | `out` | `response` | its answer: status, body, duration, bytes, `outcome` (`complete`, or why it was cut) |
 | `out` | `sse` | each event sent on a stream (a turn, the event stream). The pieces of an answer (`token`) are only counted in the `response`: the `done` event holds the whole answer |
 | `out` | `llm_request` / `llm_response` | each call to the model: provider (`peer` = `ollama:local`, `ollama:cloud`, `gemini`, `deepseek` or `mistral`), host, model, the messages and tools sent; then the text, tool calls, token counts, duration and error |
@@ -1037,7 +1045,7 @@ accounts, their conversations and the prompts that name them). Read it with any 
 
 ## Stopping the server
 
-`/stop` (in the server's console, or `clara-admin /stop` from another computer with an admin token),
+`/stop` (in the server's console, or `clara-admin /stop` from another computer as the owner),
 Ctrl+C or SIGTERM stop the server **without cutting anybody off**:
 
 1. every client connected to `GET /v1/notifications/stream` is told: `{"type": "server", "state": "stopping"}`
@@ -1079,7 +1087,7 @@ and `GET /health` says `"restarted": "<id>"` from then on, which is how the page
 pages). A browser that was reloaded meanwhile goes on waiting. The page gives up after 3 minutes and says so.
 
 `GET /v1/admin/restart[?refresh=true]` → `{needed, reasons, in_progress, last}`. A restart is **proposed** to
-administrators (a *Restart needed* button in the navigation rail, on every page) when:
+the owner (a *Restart needed* button in the navigation rail, on every page) when:
 
 - `.env` changed since the server started;
 - the code on disk is newer than what runs (somebody ran `git pull`);
@@ -1089,7 +1097,7 @@ The pages that say "then restart the server" (the Discord bot's token, `discord.
 
 ## Model overload and fallback models
 
-On the admin **Models** tab, administrators order a list of fallback models (only models they selected for users;
+On the admin **Models** tab, the owner orders a list of fallback models (only models they selected for users;
 up to 10; `PUT /v1/admin/catalog/fallbacks`). A model that is overloaded (HTTP 429, 500, 502, 503, 504) or that cannot be
 reached (connection refused or cut) is replaced by the first model of the list, then the second if that one fails too,
 and so on, **only while the failing model has said nothing yet**: once a piece of the answer was sent on, asking again
@@ -1191,10 +1199,10 @@ Settings (`.env.example`): `CLARA_TAILSCALE` (`off`, `serve`, `funnel`), `CLARA_
 
 **With `funnel`**, anyone who finds the address can try tokens, so:
 
-- every token (chat and admin) must have at least 32 characters, or the server refuses to start. Users are
+- every chat token must have at least 32 characters, or the server refuses to start. Users are
   protected by their passwords (10 characters or more) and by the limit on wrong ones, so give them long ones;
   `python -c "import secrets; print(secrets.token_urlsafe(32))"` makes one;
-- the remote admin console (`CLARA_ADMIN_TOKENS`) is public as well: leave it empty unless you need it;
+- the owner's remote console is public as well: give the owner a long password;
 - wrong tokens are limited per address (see *Security*), and the traffic log shows the real address of each
   request in `from`: the server trusts `X-Forwarded-For` from `127.0.0.1` and `::1` only, which is where
   tailscaled connects from.
@@ -1238,7 +1246,7 @@ src/clara/
   auth.py       who is calling (client token, user token or web cookie) and what they may touch
   webapi.py     login, sign-up, account, administration and PDF routes, and the web site's files
   clientapi.py  what a client of many people (the Discord bot) uses: signing accounts in, spaces; chime in, the
-                relationship and the Discord page for administrators
+                relationship and the Discord page for the owner
   discord_bot/  the Discord bot: service.py runs it in the server (local.py: direct calls), standalone.py on its
                 own (remote.py: HTTP); see its __init__.py
   web/          the web site: index.html, favicon.ico, style.css and ES modules (chat, memory, account, admin, markdown...)

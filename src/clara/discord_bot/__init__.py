@@ -1,6 +1,6 @@
 """Clara on Discord. One bot, two ways to run it:
 
-* inside clara-server (service.py): started with the server (AUTO_START_DISCORD_BOT) or by an administrator, it
+* inside clara-server (service.py): started with the server (AUTO_START_DISCORD_BOT) or by the owner, it
   reaches Clara through direct calls (local.py);
 * on its own (standalone.py, `clara-discord`): it reaches a Clara server over HTTP (remote.py).
 

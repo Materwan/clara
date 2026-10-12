@@ -1,6 +1,6 @@
 """Folders on the machine the server runs on.
 
-Only inside the roots an administrator listed (integrations policy `roots`): a person picks a folder under one of them,
+Only inside the roots the owner listed (integrations policy `roots`): a person picks a folder under one of them,
 and Clara can reach nothing outside that folder. Every path is resolved (symlinks followed, `..` removed) and checked
 to be inside the folder again, at each call, so a link that points out of it, or a root that was removed, stops working.
 """
@@ -60,7 +60,7 @@ class ServerFolders(Connector):
     ops = frozenset({"list", "read", "search", "write", "delete", "move"})
 
     def __init__(self, roots: Callable[[], list[str]]):
-        self._roots = roots  # the administrator's allowed roots, read at each call
+        self._roots = roots  # the owner's allowed roots, read at each call
 
     # -- where --------------------------------------------------------------------------------- #
     def base(self, target: Target) -> Path:
@@ -70,7 +70,7 @@ class ServerFolders(Connector):
         except (OSError, RuntimeError):
             raise ConnectorError(f"{target.label}: the folder cannot be reached.") from None
         if not any(base == root or base.is_relative_to(root) for root in list_roots(self._roots)):
-            raise ConnectorError(f"{target.label} is not inside a folder the administrator allows any more.")
+            raise ConnectorError(f"{target.label} is not inside a folder the owner allows any more.")
         if not base.is_dir():
             raise ConnectorError(f"{target.label}: the folder does not exist (any more).")
         return base

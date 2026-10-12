@@ -7,7 +7,7 @@
 
 Each level is `allow` (just do it), `ask` (wait for the person) or `deny`. Where the answer comes from, from the most
 specific: the attachment (this project or conversation), the resource, the account, the default of the type. An
-administrator's ceiling then caps it: a ceiling of `ask` means `allow` cannot be given.
+owner's ceiling then caps it: a ceiling of `ask` means `allow` cannot be given.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ ALLOW, ASK, DENY = "allow", "ask", "deny"
 DECISIONS = (ALLOW, ASK, DENY)
 _OPEN = {DENY: 0, ASK: 1, ALLOW: 2}  # how much each lets through
 
-# The integration types (what an administrator switches on and off), and the kinds of resource each has
+# The integration types (what the owner switches on and off), and the kinds of resource each has
 GITHUB, GDRIVE, SERVER, COMPUTER = "github", "gdrive", "server", "computer"
 TYPES = (GITHUB, GDRIVE, SERVER, COMPUTER)
 TYPE_NAMES = {GITHUB: "GitHub", GDRIVE: "Google Drive", SERVER: "Server folders", COMPUTER: "Computer folders"}

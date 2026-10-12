@@ -7,8 +7,8 @@ day (UTC). The day starts again at midnight UTC.
 
 Who may use how much:
 
-* an administrator (a user flagged administrator) has no limit, whatever is set;
-* another user has the limit an administrator set for them, or the server's default when none is set
+* the owner (CLARA_OWNER) has no limit, whatever is set;
+* another user has the limit the owner set for them, or the server's default when none is set
   (`CLARA_DEFAULT_DAILY_TOKENS`, changed at run time with `/limit default`); the numbers are credits, whatever
   the names of the variable and of the database columns still say;
 * a person with no user (a terminal or an app that signs in with a client token) follows the default;
@@ -93,8 +93,9 @@ def credits_for(tokens: int, weight: float = 1.0) -> int:
 
 
 class UsageLimits:
-    def __init__(self, memory: Memory, default: int = 0, clock: Callable[[], datetime] = _now):
+    def __init__(self, memory: Memory, default: int = 0, clock: Callable[[], datetime] = _now, owner: str = ""):
         self._memory = memory
+        self.owner = owner.strip().lower()  # CLARA_OWNER: the user with no limit
         self._initial_default = max(0, default)  # what CLARA_DEFAULT_DAILY_TOKENS says; `/limit default` overrides it
         self._clock = clock
         self._pruned_on = ""
@@ -119,18 +120,18 @@ class UsageLimits:
         """Credits this person may use a day, None when they have no limit."""
         with self._memory.lock:
             rows = self._memory.database.execute(
-                "SELECT is_admin, disabled, daily_token_limit FROM users WHERE person_id = ? ORDER BY name",
+                "SELECT name, disabled, daily_token_limit FROM users WHERE person_id = ? ORDER BY name",
                 (person_id,),
             ).fetchall()
-        if any(row["is_admin"] and not row["disabled"] for row in rows):
+        if self.owner and any(row["name"] == self.owner and not row["disabled"] for row in rows):
             return None
         own = next((row["daily_token_limit"] for row in rows if row["daily_token_limit"] is not None), None)
         limit = self.default() if own is None else own
         return limit or None
 
-    def limit_for_user(self, is_admin: bool, own: int | None) -> int | None:
+    def limit_for_user(self, is_owner: bool, own: int | None) -> int | None:
         """The same, for a user already read (the administration's list)."""
-        if is_admin:
+        if is_owner:
             return None
         return (self.default() if own is None else own) or None
 
@@ -154,9 +155,9 @@ class UsageLimits:
     def quota(self, person_id: int) -> Quota:
         return Quota(self.used(person_id), self.limit_of(person_id), self._tomorrow().isoformat(timespec="seconds"))
 
-    def quota_for_user(self, person_id: int, is_admin: bool, own: int | None) -> Quota:
+    def quota_for_user(self, person_id: int, is_owner: bool, own: int | None) -> Quota:
         return Quota(
-            self.used(person_id), self.limit_for_user(is_admin, own), self._tomorrow().isoformat(timespec="seconds")
+            self.used(person_id), self.limit_for_user(is_owner, own), self._tomorrow().isoformat(timespec="seconds")
         )
 
     def record(self, person_id: int, tokens: int, weight: float = 1.0) -> int:
@@ -186,7 +187,7 @@ class UsageLimits:
             when = f"{hours} h {minutes:02d} min" if hours else f"{max(1, minutes)} min"
             raise UsageLimitReached(
                 f"You have used your {quota.limit:,} {LIMIT_MARK}. You can talk to Clara again in {when} "
-                "(the day starts again at midnight UTC), or ask an administrator to raise your limit.",
+                "(the day starts again at midnight UTC), or ask the owner to raise your limit.",
                 wait,
             )
         return quota

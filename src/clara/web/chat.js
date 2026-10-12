@@ -80,7 +80,7 @@ export function mountChat(container, user, { slot, fresh = false, project = null
   const attach = h("button", { class: "ghost icon-btn", title: "Attach documents or pictures (PDF, Word, code, text, PNG, JPEG, GIF, WebP)", "aria-label": "Attach documents or pictures", onclick: () => picker.click() }, icon("clip"));
   const sendButton = h("button", { class: "send", "aria-label": "Send", title: "Send", onclick: send, disabled: true }, icon("send", { size: 19 }));
   const docInfo = h("span", { class: "grow docinfo" });
-  const modelBox = h("span", { class: "model-box", hidden: true }); // the model picker, when an administrator offers a choice
+  const modelBox = h("span", { class: "model-box", hidden: true }); // the model picker, when the owner offers a choice
   const composer = h("div", { class: "composer" }, h("div", { class: "composer-frame" },
     h("div", { class: "composer-inner" }, chips, input, h("div", { class: "composer-bar" }, attach, picker, docInfo, modelBox, sendButton)),
     h("p", { class: "composer-hint" }, "Enter to send, Shift + Enter for a new line. Drop files here to attach them.")));

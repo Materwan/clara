@@ -286,7 +286,7 @@ async def test_each_model_has_the_window_of_its_provider(memory, tmp_path, setti
 def http(settings, farm):
     with TestClient(create_app(settings, make_providers(settings, farm))) as client:
         users = client.app.state.users
-        users.create("root", PASSWORD, admin=True)
+        users.create("root", PASSWORD)
         users.create("erwan", PASSWORD)
         yield client
 
@@ -343,7 +343,7 @@ def test_a_user_cannot_choose_for_somebody_else_or_for_discord(http):
     assert http.put("/v1/models/choice", json={"surface": "web", "user_id": "root", "model": model}, headers=erwan).status_code == 403
     assert http.put("/v1/models/choice", json={"surface": "cli", "user_id": "erwan", "model": model}, headers=erwan).status_code == 403
     discord = http.put("/v1/models/choice", json={"surface": "web", "user_id": "erwan", "model": model, "for_surface": "discord"}, headers=erwan)
-    assert discord.status_code == 403 and "administrator" in discord.json()["detail"]
+    assert discord.status_code == 403 and "owner" in discord.json()["detail"]
 
 
 def test_only_administrators_reach_the_catalogue(http):
@@ -442,7 +442,7 @@ def test_the_terminal_lists_the_models_with_their_cost():
 
     shown = describe_models(offered("big"))
     assert "0.4 credits per token" in shown and "1. big (Ollama API key), 8.75 credits per token" in shown
-    assert "An administrator has not offered other models" in describe_models(offered())
+    assert "The owner has not offered other models" in describe_models(offered())
 
 
 def test_the_terminal_command_chooses_the_model_of_the_cli_surface(http, capsys):
@@ -504,7 +504,7 @@ async def test_the_catalogue_keeps_what_each_provider_says_so_users_see_it_after
 def described_http(settings):
     farm = Farm(capabilities={"local": {"fake-big": {"thinking": True, "tools": True, "vision": True, "context": 131072}}})
     with TestClient(create_app(settings, make_providers(settings, farm))) as client:
-        client.app.state.users.create("root", PASSWORD, admin=True)
+        client.app.state.users.create("root", PASSWORD)
         client.app.state.users.create("erwan", PASSWORD)
         yield client
 

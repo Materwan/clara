@@ -139,13 +139,12 @@ def test_settings_refuse_to_start_without_tokens():
 
 
 def test_settings_token_parsing():
-    parsed = Settings.from_env({"CLARA_TOKENS": "a:one, b:two ,three"}).tokens
+    parsed = Settings.from_env({"CLARA_OWNER": "root", "CLARA_TOKENS": "a:one, b:two ,three"}).tokens
     assert parsed == {"one": "a", "two": "b", "three": "client"}
 
 
-@pytest.mark.parametrize("variable", ["CLARA_TOKENS", "CLARA_ADMIN_TOKENS"])
-def test_settings_refuse_the_placeholder_tokens_of_the_example(variable):
-    env = {"CLARA_TOKENS": "terminal:secret-cli", variable: "terminal:Change-Me-too"}
+def test_settings_refuse_the_placeholder_tokens_of_the_example():
+    env = {"CLARA_OWNER": "root", "CLARA_TOKENS": "terminal:Change-Me-too"}
     with pytest.raises(SettingsError, match="placeholder"):
         Settings.from_env(env)
 

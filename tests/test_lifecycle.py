@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
-from conftest import FakeBackend, call, fake_providers, say
+from conftest import FakeBackend, call, fake_providers, owner_headers, say
 
 from clara.agent import Agent, ChatRequest, ServerStopping
 from clara.lifecycle import Lifecycle
@@ -18,7 +18,6 @@ from clara.reminders import ReminderService
 from clara.server import ClaraServer, create_app
 from clara.tools import default_toolbox
 
-ADMIN = {"Authorization": "Bearer secret-admin"}
 CHAT = {"Authorization": "Bearer secret-cli"}
 READ_FILE = {
     "type": "function",
@@ -329,12 +328,13 @@ def test_stop_from_the_admin_console_finishes_the_reply_then_ends_everything(liv
     while not app.state.agent.busy:
         time.sleep(0.01)
 
-    said = httpx.post(f"{url}/v1/admin/command", json={"line": "/stop"}, headers=ADMIN).json()["output"]
+    owner = owner_headers(app)
+    said = httpx.post(f"{url}/v1/admin/command", json={"line": "/stop"}, headers=owner).json()["output"]
     assert "waiting for 1 running" in said
 
     refused = httpx.post(f"{url}/v1/chat", json={"surface": "cli", "user_id": "x", "message": "me too"}, headers=CHAT)
     assert refused.status_code == 503 and "stopping" in refused.json()["detail"]
-    status = httpx.post(f"{url}/v1/admin/command", json={"line": "/status"}, headers=ADMIN).json()["output"]
+    status = httpx.post(f"{url}/v1/admin/command", json={"line": "/status"}, headers=owner).json()["output"]
     assert "STOPPING" in status
     assert thread.is_alive() and not ended.is_set()  # the reply is still being written
 
@@ -347,9 +347,9 @@ def test_stop_from_the_admin_console_finishes_the_reply_then_ends_everything(liv
     assert states == ["running", "stopping", "stopped"]
 
 
-def test_stop_is_for_admins_only(live):
+def test_stop_is_for_the_owner_only(live):
     _, _, _, url, _ = live
-    assert httpx.post(f"{url}/v1/admin/command", json={"line": "/stop"}, headers=CHAT).status_code == 401
+    assert httpx.post(f"{url}/v1/admin/command", json={"line": "/stop"}, headers=CHAT).status_code == 403
 
 
 def test_a_signal_stops_gracefully_and_a_second_one_forces(live):

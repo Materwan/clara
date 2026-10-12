@@ -29,8 +29,8 @@
     GET    /v1/conversations/{id}       size of the context, summary
     POST   /v1/conversations/{id}/compact   summarise the older messages
     DELETE /v1/conversations/{id}       forget the thread (facts are kept)
-    GET    /v1/admin/commands           console commands, for completion   (admin token)
-    POST   /v1/admin/command            run a console command              (admin token)
+    GET    /v1/admin/commands           console commands, for completion   (the owner)
+    POST   /v1/admin/command            run a console command              (the owner)
 
 The routes are in their own modules (chatapi.py, notificationapi.py, accountapi.py, conversationapi.py, and the
 others named above); this one builds the application and its services, and runs it.
@@ -38,7 +38,7 @@ others named above); this one builds the application and its services, and runs 
 Chat clients are trusted: the bearer token proves *which client* is calling, and
 the client states which user is talking. Give each client its own token, and with
 CLARA_CLIENT_SURFACES limit the surfaces (and so the people and conversations) it can reach.
-Operator commands need a different kind of token (CLARA_ADMIN_TOKENS), so a
+Operator commands are the owner's alone (CLARA_OWNER, a user who logged in), so a
 chat client can never switch the provider or edit memory.
 """
 
@@ -151,14 +151,14 @@ def create_app(
     )
     markdown = MarkdownFiles(memory)
     conversation_files = ConversationFiles(memory)  # what people sent in each conversation
-    limits = UsageLimits(memory, settings.default_daily_tokens)
-    usage_log = UsageLog(memory)
+    limits = UsageLimits(memory, settings.default_daily_tokens, owner=settings.owner)
+    usage_log = UsageLog(memory, owner=settings.owner)
     models = ModelCatalog(memory, providers, settings.weight_reference_b)
     integrations = build_integrations(memory, settings, notifier)
     user_keys = UserKeys(memory, integrations.vault, providers)
     models.user_keys = user_keys
     music_accounts = MusicAccounts(memory, integrations.vault)
-    users = Users(memory, settings.session_days, session_max_days=settings.session_max_days)
+    users = Users(memory, settings.session_days, session_max_days=settings.session_max_days, owner=settings.owner)
     vault = open_vault(settings)  # the second brain, for the users who own it (None: not configured)
     agent = Agent(
         memory,
@@ -220,6 +220,11 @@ def create_app(
     lifecycle = Lifecycle(agent, reminders, tasks=tasks, schedules=schedules)
     restart = RestartService(settings.data_dir, lifecycle)
     users.prune()
+    if users.owner_user() is None:
+        log.warning(
+            "CLARA_OWNER=%s has no user yet: nobody has the administration. Make it in the server's console with"
+            " `/user add %s`.", settings.owner, settings.owner,
+        )
     tailscale = tailscale or Tailscale.from_settings(settings)
     if tailscale.enabled:
         if settings.host not in ("127.0.0.1", "localhost", "::1"):
@@ -227,8 +232,8 @@ def create_app(
                 "CLARA_HOST=%s: the port is reachable without Tailscale too; keep 127.0.0.1 with CLARA_TAILSCALE",
                 settings.host,
             )
-        if tailscale.public and settings.admin_tokens:
-            log.warning("CLARA_TAILSCALE=funnel: the remote admin console (CLARA_ADMIN_TOKENS) is public too")
+        if tailscale.public:
+            log.warning("CLARA_TAILSCALE=funnel: the owner's remote console (%s) is public too", settings.owner)
     discord_bot = DiscordService(
         settings.discord_token, lambda: LocalBackend(app), settings.discord_invite_url, settings.discord_auto_start
     )
@@ -242,7 +247,7 @@ def create_app(
         ]
         # tailscaled may come up (or log in) after the server: keep trying. Slow if tailscale hangs: not before the server is up
         publishing = asyncio.create_task(tailscale.start_until_up())
-        # what the providers say of their models (sizes, capabilities) is stored now, so users see it without an administrator
+        # what the providers say of their models (sizes, capabilities) is stored now, so users see it without the owner
         listing = asyncio.create_task(models.refresh(force=True))
         bot_start = None
         if settings.discord_auto_start:
@@ -331,7 +336,7 @@ def create_app(
 
     @app.post("/v1/admin/command")
     async def admin_command(body: CommandBody, admin: Admin, http: Request) -> dict:
-        log.info("admin %s ran /%s", admin, body.line.lstrip("/").split(None, 1)[0])
+        log.info("owner %s ran /%s", admin, body.line.lstrip("/").split(None, 1)[0])
         result = await registry.execute(body.line, app.state.commands)
         if result.sensitive:
             http.scope["clara_sensitive"] = True  # it holds a password: the traffic log does not keep it

@@ -89,10 +89,10 @@ def test_who_calls_is_named(settings):
     with http:
         http.get("/health")
         http.get("/v1/reminders", params={"surface": "cli", "user_id": "x"}, headers={"Authorization": "Bearer bad"})
-        http.get("/v1/admin/commands", headers={"Authorization": "Bearer secret-admin"})
+        http.get("/v1/admin/commands", headers={"Authorization": "Bearer secret-cli"})
         log = written(http)
     peers = {e["path"]: e["peer"] for e in log if e["kind"] == "request"}
-    assert peers == {"/health": "anonymous", "/v1/reminders": "unknown-token", "/v1/admin/commands": "admin:ops"}
+    assert peers == {"/health": "anonymous", "/v1/reminders": "unknown-token", "/v1/admin/commands": "client:terminal"}
 
 
 def test_big_bodies_are_cut(settings):

@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import replace
 
 import pytest
-from conftest import FakeBackend, call, fake_providers, say, untimed
+from conftest import FakeBackend, call, fake_providers, owner_headers, say, untimed
 from fastapi.testclient import TestClient
 
 from clara.agent import ChatRequest, passed
@@ -17,7 +17,6 @@ from clara.notifications import Notifier
 from clara.server import create_app
 
 BOT = {"Authorization": "Bearer secret-discord"}
-ADMIN = {"Authorization": "Bearer secret-admin"}
 PASSWORD = "correct horse battery"
 GUILD = "discord:guild:1"
 CHANNEL = "discord:channel:10"
@@ -165,7 +164,7 @@ def test_a_new_password_or_a_disabled_user_signs_the_account_out(make_client):
     assert users.account_user("discord", "111") is None
 
     client.post("/v1/accounts/login", json={**account(), "username": "erwan", "password": "another long password"}, headers=BOT)
-    users.create("root", PASSWORD, admin=True)
+    users.create("root", PASSWORD)
     users.set_disabled("erwan", True)
     assert chat(client).status_code == 403
     users.set_disabled("erwan", False)
@@ -212,17 +211,17 @@ def test_the_instructions_of_a_server_replace_the_personality_there_only(make_cl
     register(client)
     client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": GUILD, "name": "Guild"}]}, headers=BOT)
     items = [{"text": "You are a  pirate.", "enabled": True}, {"text": "Never speak of cats.", "enabled": False}]
-    done = client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": items}, headers=ADMIN).json()
+    done = client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": items}, headers=owner_headers(client)).json()
     assert [i["text"] for i in done["instructions"]] == ["You are a pirate.", "Never speak of cats."] and done["chime"] is None
     chat(client, message="hello", conversation=CHANNEL, space=GUILD)
     system = client.backend.calls[0][0][0]["content"]
     assert "- You are a pirate." in system and "cats" not in system and "helpful personal AI assistant" not in system
     chat(client, message="in private")  # no space: the usual personality
     assert "pirate" not in client.backend.calls[1][0][0]["content"]
-    client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": []}, headers=ADMIN)  # nothing defined: the default
+    client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": []}, headers=owner_headers(client))  # nothing defined: the default
     chat(client, message="again", conversation=CHANNEL, space=GUILD)
     assert "pirate" not in client.backend.calls[2][0][0]["content"]
-    assert client.patch("/v1/admin/spaces/discord:guild:404", json={"instructions": []}, headers=ADMIN).status_code == 404
+    assert client.patch("/v1/admin/spaces/discord:guild:404", json={"instructions": []}, headers=owner_headers(client)).status_code == 404
 
 
 def test_about_person_is_only_offered_with_other_people(make_client):
@@ -293,11 +292,11 @@ def test_spaces_are_synced_and_switched_by_an_administrator(make_client):
     assert synced["default_chime"] is False and [s["id"] for s in synced["spaces"]] == [GUILD, "discord:guild:2"]
     assert client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": "cli:x"}]}, headers=BOT).status_code == 422
 
-    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=ADMIN).json()["chime_effective"] is True
-    assert client.patch("/v1/admin/spaces", json={"default_chime": True}, headers=ADMIN).status_code == 200
-    listed = {s["id"]: s for s in client.get("/v1/admin/spaces", headers=ADMIN).json()["spaces"]}
+    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=owner_headers(client)).json()["chime_effective"] is True
+    assert client.patch("/v1/admin/spaces", json={"default_chime": True}, headers=owner_headers(client)).status_code == 200
+    listed = {s["id"]: s for s in client.get("/v1/admin/spaces", headers=owner_headers(client)).json()["spaces"]}
     assert listed["discord:guild:2"]["chime"] is None and listed["discord:guild:2"]["chime_effective"] is True
-    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=BOT).status_code == 401
+    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=BOT).status_code == 403
 
     client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": GUILD, "name": "Renamed"}]}, headers=BOT)
     after = {s.id: s for s in client.app.state.memory.spaces()}
@@ -361,11 +360,11 @@ async def test_the_relation_command_and_the_admin_route(make_client, memory, dis
 
     client = make_client()
     other = client.app.state.memory.resolve("cli", "zoe", "Zoe")
-    done = client.patch(f"/v1/admin/people/{other.id}", json={"relation": 90}, headers=ADMIN).json()
+    done = client.patch(f"/v1/admin/people/{other.id}", json={"relation": 90}, headers=owner_headers(client)).json()
     assert done["relation"] == 90 and done["relation_label"] == "excellent"
-    people = client.get("/v1/admin/people", headers=ADMIN).json()["people"]
+    people = client.get("/v1/admin/people", headers=owner_headers(client)).json()["people"]
     assert next(p for p in people if p["id"] == other.id)["relation"] == 90
-    assert client.patch(f"/v1/admin/people/{other.id}", json={"relation": 101}, headers=ADMIN).status_code == 422
+    assert client.patch(f"/v1/admin/people/{other.id}", json={"relation": 101}, headers=owner_headers(client)).status_code == 422
 
 
 def test_merging_people_keeps_a_relationship(memory):

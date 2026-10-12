@@ -1,4 +1,4 @@
-"""What each person's answers cost in tokens, for the administration.
+"""What each person's answers cost in tokens, for the owner's administration.
 
 One row per answer (all the model rounds of a turn added up), plus one per compaction and per title, with who asked,
 on which surface, which model answered and how many tokens went in and out. It is a record only: the daily credit
@@ -42,9 +42,10 @@ def _zero() -> dict:
 
 
 class UsageLog:
-    def __init__(self, memory: Memory, clock: Callable[[], datetime] = _now):
+    def __init__(self, memory: Memory, clock: Callable[[], datetime] = _now, owner: str = ""):
         self._memory = memory
         self._clock = clock
+        self.owner = owner.strip().lower()  # CLARA_OWNER
 
     # ------------------------------------------------------------------
     # Writing
@@ -87,21 +88,21 @@ class UsageLog:
             rows = self._memory.database.execute(
                 "SELECT l.person_id, p.name AS person,"
                 " (SELECT name FROM users WHERE person_id = l.person_id ORDER BY name LIMIT 1) AS user,"
-                " EXISTS (SELECT 1 FROM users WHERE person_id = l.person_id AND is_admin = 1) AS is_admin,"
+                " EXISTS (SELECT 1 FROM users WHERE person_id = l.person_id AND name = ?) AS is_owner,"
                 " l.surface, l.model_ref, l.model, l.provider, l.kind,"
                 " COUNT(*) AS rows, SUM(l.prompt_tokens) AS prompt, SUM(l.completion_tokens) AS completion,"
                 " SUM(l.credits) AS credits, MIN(l.at) AS first_at, MAX(l.at) AS last_at"
                 " FROM usage_log l JOIN people p ON p.id = l.person_id"
                 " WHERE l.at >= ? AND (? IS NULL OR l.person_id = ?) AND l.own_key = ?"
                 " GROUP BY l.person_id, l.surface, l.model_ref, l.model, l.provider, l.kind",
-                (self._since(days), person_id, person_id, int(own_key)),
+                (self.owner, self._since(days), person_id, person_id, int(own_key)),
             ).fetchall()
         people: dict[int, dict] = {}
         models: dict[int, dict[str, dict]] = {}
         for row in rows:
             entry = people.setdefault(row["person_id"], {
                 "person": {"id": row["person_id"], "name": row["person"]}, "user": row["user"],
-                "is_admin": bool(row["is_admin"]), "prompt_tokens": 0, "completion_tokens": 0, "credits": 0,
+                "is_owner": bool(row["is_owner"]), "prompt_tokens": 0, "completion_tokens": 0, "credits": 0,
                 "answers": 0, "discord": _zero(), "other": _zero(), "surfaces": {}, "first_at": row["first_at"],
                 "last_at": row["last_at"],
             })

@@ -2,7 +2,7 @@
 
 In a private conversation every message is for Clara. On a server a message is for her when it mentions her or
 replies to one of her messages; any other message of a signed-in member is sent too, so that she follows the
-conversation: as `maybe` (she answers only if she has something to add, where an administrator allows it; the
+conversation: as `maybe` (she answers only if she has something to add, where the owner allows it; the
 server decides) or, while she is already busy in that channel, as `observe` (only kept as context).
 Bots are ignored, and so are people who are not signed in (they are only told how to sign in, when they talk
 to her). The files of a message (pictures, documents) are read only when the message is for her: the others are

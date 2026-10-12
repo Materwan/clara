@@ -383,13 +383,13 @@ def test_a_person_can_erase_their_account_with_their_password(me):
     assert me.get("/v1/auth/me", headers=WEB).status_code == 401  # signed out with it
 
 
-def test_the_last_administrator_cannot_erase_themselves(settings):
+def test_the_owner_cannot_erase_themselves(settings):
     with TestClient(create_app(settings, fake_providers(settings, FakeBackend()))) as http:
-        http.app.state.users.create("boss", PASSWORD, admin=True)
-        login = http.post("/v1/auth/login", json={"username": "boss", "password": PASSWORD}, headers=WEB)
+        http.app.state.users.create("root", PASSWORD)
+        login = http.post("/v1/auth/login", json={"username": "root", "password": PASSWORD}, headers=WEB)
         assert login.status_code == 200
         done = http.post("/v1/auth/delete-account", json={"password": PASSWORD}, headers=WEB)
-        assert done.status_code == 422 and http.app.state.users.get("boss") is not None
+        assert done.status_code == 422 and http.app.state.users.get("root") is not None
 
 
 # --- the pages of the Google sign-in cannot be framed -----------------------------------------------------------------

@@ -2,7 +2,7 @@
 connected, the resources they added (a repository, a Drive folder, a folder), what is attached to which project or
 conversation, the requests for permission, the log of what Clara did, and the jobs waiting for the desktop app.
 
-The administrator's settings are one JSON document in the `options` table.
+The owner's settings are one JSON document in the `options` table.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ class IntegrationStore:
         self._lock = memory.lock
 
     # ------------------------------------------------------------------
-    # The administrator's settings
+    # The owner's settings
     # ------------------------------------------------------------------
     def policy(self) -> dict:
         """`{"enabled": {type: bool}, "disabled_users": {type: [person ids]}, "roots": [paths],
@@ -153,7 +153,7 @@ class IntegrationStore:
         return self.policy()
 
     def opt_out(self, person_id: int) -> None:
-        """Switch every kind of integration off for this person (an administrator switches them on, one by one,
+        """Switch every kind of integration off for this person (the owner switches them on, one by one,
         in the administration page). For the people who made their own user: they were not vetted by anybody."""
         policy = self.policy()
         for kind in TYPES:

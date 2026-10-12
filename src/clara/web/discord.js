@@ -1,4 +1,4 @@
-// The Discord page (administrators): the bot built into the server, the Discord servers it is in (and where Clara
+// The Discord page (the owner): the bot built into the server, the Discord servers it is in (and where Clara
 // may chime in), and the Discord accounts signed in.
 
 import { api } from "./api.js";
