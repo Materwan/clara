@@ -453,6 +453,9 @@ _ADDED_COLUMNS = {
     "conversation_state": {
         "vault_open": "INTEGER NOT NULL DEFAULT 0",  # the second brain's tools are offered here (open_second_brain)
     },
+    "conversation_files": {
+        "digest": "TEXT NOT NULL DEFAULT ''",  # a document's text as its message shows it (conversationfiles.py)
+    },
     "usage_log": {
         "own_key": "INTEGER NOT NULL DEFAULT 0",  # answered with the person's own API key (userkeys.py): no credits
         "cached_tokens": "INTEGER NOT NULL DEFAULT 0",  # prompt tokens the provider read from its cache (0: not said)
@@ -1273,6 +1276,9 @@ class Memory:
                 raise ValueError("No such person.")
             if key == alias_key(person.name):
                 return None
+            others = self._db.execute("SELECT name FROM people WHERE id != ?", (person_id,)).fetchall()
+            if any(alias_key(other["name"]) == key for other in others):
+                raise ValueError(f"{alias} is someone else's name.")
             taken = self._db.execute(
                 "SELECT person_id FROM person_aliases WHERE alias_key = ?", (key,)
             ).fetchone()

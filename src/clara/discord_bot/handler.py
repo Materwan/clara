@@ -218,7 +218,7 @@ class MessageHandler:
                 if self._busy[channel_id] <= 0:
                     del self._busy[channel_id]
         if reply.answered and (reply.text or reply.files):
-            members = guild.members if guild is not None else []
+            members = guild.members if guild is not None else [message.author]  # a DM: the one person in it
             text = add_pings(reply.text, members, self.me.id, aliases=self.accounts.all_aliases()) if reply.text else ""
             await self.send(message, text, await self.made_files(message, reply.files))
 

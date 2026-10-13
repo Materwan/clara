@@ -334,16 +334,29 @@ def _line_of(text: str, offset: int, first_line: int) -> int:
     return first_line + text.count("\n", 0, offset)
 
 
+def wikilink_spans(text: str, match: re.Match) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Where a wikilink's note and its anchor are in `text`, without the "\\" that escapes the "|" of an alias in a
+    table (`[[Note\\|alias]]`, `[[Note#Heading\\|alias]]`): it belongs to neither, and stays when either is changed."""
+    target, anchor = match.span(2), match.span(3)
+    if match.group(4):
+        if anchor[0] < anchor[1] and text[anchor[1] - 1] == "\\":
+            anchor = (anchor[0], anchor[1] - 1)
+        elif target[0] < target[1] and text[target[1] - 1] == "\\":
+            target = (target[0], target[1] - 1)
+    return target, anchor
+
+
 def find_links(text: str, first_line: int = 1) -> list[Link]:
     masked = mask_code(text)
     links: list[Link] = []
     for match in WIKILINK_RE.finditer(masked):
-        target = text[match.start(2) : match.end(2)].strip()
+        (start, end), (anchor_start, anchor_end) = wikilink_spans(text, match)
+        target = text[start:end].strip()
         if not target and not match.group(3):
             continue
         links.append(
             Link(
-                target, _line_of(text, match.start(), first_line), text[match.start(3) : match.end(3)],
+                target, _line_of(text, match.start(), first_line), text[anchor_start:anchor_end],
                 text[match.start(4) + 1 : match.end(4)].strip() if match.group(4) else "", bool(match.group(1)),
             )
         )

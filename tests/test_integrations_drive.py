@@ -138,7 +138,6 @@ def app(settings, backend, google):
     configured = replace(settings, google_client_id="client-id", google_client_secret="client-secret", public_url=PUBLIC)
     app = create_app(configured, fake_providers(configured, backend))
     app.state.integrations.connectors["gdrive"]._http.transport = httpx.MockTransport(google.handler)
-    app.state.agent.is_owner = lambda person_id: True  # the integrations here, not who may use them on the web
     return app
 
 

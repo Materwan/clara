@@ -63,11 +63,13 @@ def add_pings(
     text: str, members: Iterable[Named], bot_id: int, max_pings: int = MAX_PINGS_PER_REPLY,
     aliases: Mapping[int, Iterable[str]] | None = None,
 ) -> str:
-    """The pings of an answer: "<@id>" stays a ping when `id` is one of the members (else it becomes "@someone": an
-    id Clara made up never pings), and "@Paul" -> "<@id>" for the members named so (display name, global name, user
-    name, or one of their `aliases` (id -> names); any case; real names come before aliases)."""
+    """The pings of an answer: "<@id>" stays a ping when `id` is one of the members (past `max_pings`, or for the bot
+    itself, it becomes their name as text; an id that is no member becomes "@someone": an id Clara made up never
+    pings), and "@Paul" -> "<@id>" for the members named so (display name, global name, user name, or one of their
+    `aliases` (id -> names); any case; real names come before aliases)."""
     members = list(members)
     present = {member.id for member in members} - {bot_id}
+    shown = {member.id: member.display_name for member in members}
     ids: dict[str, int] = {}
     for member in members:
         for name in (member.display_name, getattr(member, "global_name", None), member.name):
@@ -82,10 +84,10 @@ def add_pings(
     def replace(match: re.Match) -> str:
         if match.group("id") is not None:
             user_id = int(match.group("id"))
-            if user_id not in present or (user_id not in pinged and len(pinged) >= max_pings):
-                return "@someone"
-            pinged.add(user_id)
-            return f"<@{user_id}>"
+            if user_id in present and (user_id in pinged or len(pinged) < max_pings):
+                pinged.add(user_id)
+                return f"<@{user_id}>"
+            return f"@{shown[user_id]}" if user_id in shown else "@someone"
         words = match.group("name").split(" ")
         for count in range(len(words), 0, -1):
             name = " ".join(words[:count])

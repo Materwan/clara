@@ -10,8 +10,9 @@ the animation), since a single picture cannot show what moves.
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
-from collections.abc import Container, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -111,17 +112,32 @@ def documents_in(text: str) -> list[tuple[str, str]]:
     return [(match[1], match[3]) for match in DOCUMENT_BLOCK.finditer(text)]
 
 
-def without_documents(text: str, readable: Container[str]) -> str:
-    """A message whose documents named in `readable` are reduced to a note: read_conversation_file gives them
-    again. A document that cannot be read again stays whole."""
+def document_digest(body: str) -> str:
+    """What tells one document's text from another's: two blocks with the same text are the same document, whatever
+    their names (conversationfiles.py keeps it with the file)."""
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def block_name(name: str) -> str:
+    """The name the `<document>` block of an attached file shows (document_block names it by its cleaned path)."""
+    try:
+        return shown_name(ingest.clean_path(name))
+    except IngestError:
+        return shown_name(name)
+
+
+def without_documents(text: str, readable: Mapping[str, int]) -> str:
+    """A message whose documents that can be read again are reduced to a note naming the file to read
+    (`readable`: the digest of each such document's text -> its number). A document that cannot stays whole."""
 
     def note(match: re.Match) -> str:
         name, kind, body = match.groups()
-        if name not in readable:
+        number = readable.get(document_digest(body))
+        if number is None:
             return match[0]
         return (
-            f'<document name="{name}" type="{kind}">[{len(body):,} characters, not repeated here to save room: '
-            "read_conversation_file gives them again]</document>"
+            f'<document name="{name}" type="{kind}" file="{number}">[{len(body):,} characters, not repeated here to '
+            f"save room: read_conversation_file with file={number} gives them again]</document>"
         )
 
     return DOCUMENT_BLOCK.sub(note, text)

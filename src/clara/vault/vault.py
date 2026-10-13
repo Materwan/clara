@@ -45,6 +45,7 @@ from .markdown import (
     normal_tag,
     parse_properties,
     split_frontmatter,
+    wikilink_spans,
 )
 from .notes import Bm25, Note, parse_note, snippets
 from .schema import (
@@ -64,7 +65,8 @@ READ_CHARS = 20_000  # what vault_read gives at once
 INDEX_READ_CHARS = 1_500_000  # a bigger file is read only up to here
 AUTHOR = "clara"
 ATTACHMENT_EXTENSIONS = frozenset(
-    "png jpg jpeg gif svg webp bmp pdf mp3 mp4 mov wav m4a webm ogg csv json txt canvas base excalidraw".split()
+    "png jpg jpeg gif svg webp bmp pdf mp3 mp4 mov wav m4a webm ogg csv json txt canvas base excalidraw"
+    " doc docx odt rtf xls xlsx ods ppt pptx odp epub zip".split()
 )
 AUTO_START = "<!-- clara:auto-start -->"
 AUTO_END = "<!-- clara:auto-end -->"
@@ -84,7 +86,7 @@ def strip_link(value: Any) -> str:
     """`[[Note|alias]]` -> `Note`; any other value as text."""
     text = str(value).strip()
     match = re.fullmatch(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]", text)
-    return match.group(1).strip() if match else text
+    return match.group(1).strip().removesuffix("\\").strip() if match else text  # "[[Note\|alias]]": a "|" escaped in a table
 
 
 def link_to(name: str) -> str:
@@ -347,7 +349,7 @@ class Vault:
         match = re.fullmatch(r"!?\[\[(.*?)\]\]", text)
         if match:
             text = match.group(1)
-        text = text.split("|", 1)[0].split("#", 1)[0].strip()
+        text = text.split("|", 1)[0].split("#", 1)[0].strip().removesuffix("\\").strip()  # "[[Note\|alias]]" in a table
         if text.lower().endswith(".md"):
             text = text[:-3]
         if not text:
@@ -585,6 +587,7 @@ class Vault:
             return self.resolve(ref).path
         except VaultError as missing:
             text = re.sub(r"^!?\[\[|\]\]$", "", str(ref or "").strip()).split("|", 1)[0].split("#", 1)[0].strip()
+            text = text.removesuffix("\\").strip()  # "[[Note\|alias]]" in a table
             if text.lower().endswith(".md"):
                 text = text[:-3]
             if "/" in text:
@@ -1165,10 +1168,15 @@ class Vault:
                     f"A note called {name!r} already exists: {where}. Names are unique in the vault: read it, "
                     "then extend it (vault_append_note / vault_edit_note), or choose a more precise title."
                 )
+            extras = self._checked_properties(properties)
+            if "type" in extras:
+                raise VaultError("Give the type as `type`, not among the properties.")
+            if "status" in extras:  # given as a property: checked like the status itself
+                status = status or str(extras["status"] or "")
+                del extras["status"]
             status = (status or note_type.default_status).strip().lower()
             if note_type.statuses and status and status not in note_type.statuses:
                 raise VaultError(f"Status for a {note_type.name}: {', '.join(note_type.statuses)}.")
-            extras = self._checked_properties(properties)
             for key in note_type.required:
                 if key not in extras and key not in implied:
                     raise VaultError(f"A {note_type.name} needs the property {key!r} (properties: {{{key!r}: ...}}).")
@@ -1453,7 +1461,8 @@ class Vault:
         edits: list[tuple[int, int, str]] = []
         old_name, new_name = old.rsplit("/", 1)[-1][:-3], new.rsplit("/", 1)[-1][:-3]
         for match in WIKILINK_RE.finditer(masked):
-            target = text[match.start(2): match.end(2)].strip()
+            (start, end), _ = wikilink_spans(text, match)  # in a table, "\|alias" stays as it is
+            target = text[start:end].strip()
             if not target or graph.resolve(target, source) != old:
                 continue
             if "/" in target:
@@ -1462,7 +1471,7 @@ class Vault:
                 replacement = new_name
             else:
                 continue
-            edits.append((match.start(2), match.end(2), replacement))
+            edits.append((start, end, replacement))
         for match in MDLINK_RE.finditer(masked):
             raw = text[match.start(3): match.end(3)]
             path_part, _, anchor = raw.partition("#")

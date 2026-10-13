@@ -8,8 +8,9 @@ from conftest import OWNER, OWNER_PASSWORD, FakeBackend, fake_providers, owner_h
 from fastapi.testclient import TestClient
 
 from clara.llm import LlmChunk, ToolCall
-from clara.memory import MAX_ALIASES, alias_key
+from clara.memory import MAX_ALIASES, Member, alias_key
 from clara.server import create_app
+from clara.tools import ToolContext, _about_person
 
 BOT = {"Authorization": "Bearer secret-discord"}
 PASSWORD = "correct horse battery"
@@ -36,6 +37,21 @@ def test_two_people_cannot_go_by_the_same_alias(memory):
     memory.add_alias(paul.id, "Pablo")
     with pytest.raises(ValueError, match="Someone else"):
         memory.add_alias(marie.id, "pablo")
+
+
+def test_nobody_goes_by_the_name_of_someone_else(memory):
+    memory.resolve("cli", "erwan", "Érwan")
+    bob = memory.resolve("cli", "bob", "Bob")
+    with pytest.raises(ValueError, match="someone else's name"):
+        memory.add_alias(bob.id, "erwan")
+
+
+def test_about_person_takes_a_real_name_before_an_alias(memory):
+    erwan, bob = memory.resolve("cli", "erwan", "Erwan"), memory.resolve("cli", "bob", "Bob")
+    memory.add_fact(erwan.id, "Erwan likes tea")
+    roster = (Member(erwan.id, "Erwan"), Member(bob.id, "Bob", aliases=("Erwan",)))  # an alias taken before Erwan came
+    context = ToolContext(bob, memory, roster=roster)
+    assert "Erwan likes tea" in _about_person(context, "erwan")
 
 
 @pytest.mark.parametrize("text", ["", "   ", "@", "a" * 33, "one two three four", "<@123>", "a>b", "tab\x00"])

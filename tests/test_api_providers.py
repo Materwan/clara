@@ -1,5 +1,6 @@
 """Gemini, DeepSeek and Mistral: the OpenAI-compatible backend, and their place among the providers."""
 
+import contextlib
 import json
 from dataclasses import replace
 
@@ -136,6 +137,30 @@ async def test_usage_repeated_on_every_chunk_is_counted_once():
     assert sum(c.prompt_tokens for c in chunks) == 40
     assert sum(c.completion_tokens for c in chunks) == 3
     assert sum(c.cached_tokens for c in chunks) == 30
+
+
+async def test_usage_given_in_parts_is_all_counted():
+    recorder = Recorder(httpx.Response(200, content=sse(
+        {"choices": [{"delta": {"content": "a"}}], "usage": {"prompt_tokens": 40}},
+        {"choices": [{"delta": {"content": "b"}}], "usage": {"completion_tokens": 3}},
+    )))
+    chunks = await collect(backend(recorder).stream([{"role": "user", "content": "hi"}], None))
+    assert sum(c.prompt_tokens for c in chunks) == 40 and sum(c.completion_tokens for c in chunks) == 3
+
+
+async def test_a_stream_stopped_early_counts_the_usage_said_so_far():
+    usage = {"prompt_tokens": 40, "completion_tokens": 1}
+    recorder = Recorder(httpx.Response(200, content=sse(
+        {"choices": [{"delta": {"content": "a"}}], "usage": usage},
+        {"choices": [{"delta": {"content": "b"}}], "usage": {**usage, "completion_tokens": 2}},
+    )))
+    chunks = []
+    async with contextlib.aclosing(backend(recorder).stream([{"role": "user", "content": "hi"}], None)) as stream:
+        async for chunk in stream:
+            chunks.append(chunk)
+            if chunk.text:
+                break  # the client went away after the first word
+    assert sum(c.prompt_tokens for c in chunks) == 40 and sum(c.completion_tokens for c in chunks) == 1
 
 
 async def test_extra_fields_and_no_usage_request_when_the_flavor_says_so():

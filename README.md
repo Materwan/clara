@@ -296,12 +296,15 @@ The rest is sized in tokens, not only in shares of the window, so that a model w
   the list of a bigger one takes at most 4 000 tokens.
 - The tool outputs of earlier turns are replayed within 15% of the window **and** 8 000 tokens.
 - A document written in a message (the web site writes the documents people attach there) is replayed whole for
-  three turns: the one it came in and the next two. After that the prompt only names it, and Clara reads it again
-  with `read_conversation_file` when she needs it, in parts (`start_line`). The history keeps it whole.
+  three turns: the one it came in and the next two. After that the prompt only names it with the number of its saved
+  copy (found by its text, so two files with the same name are not mixed up), and Clara reads it again with
+  `read_conversation_file` when she needs it, in parts (`start_line`). A document sent again (a question asked
+  again) is not saved twice. The history keeps it whole.
 - One read of a file (`read_project_file`, `read_conversation_file`) gives up to 20% of the window, between 2 000
   and 40 000 characters: fewer rounds for a long file, without filling a small window.
-- Tools are offered only to whoever can use them. On the web site, the integration tools (`github_*`, `res_*`) and
-  the connected resources in the prompt are the owner's alone. The `music_*` tools need a player of one's own
+- Tools are offered only to whoever can use them. The integration tools (`github_*`, `res_*`) and the connected
+  resources in the prompt come only when the person attached something to the conversation or its project (who may
+  use which integration is the owner's choice, *Admin, Integrations*). The `music_*` tools need a player of one's own
   (Music page). The second brain's 20 tools (about 4 000 tokens) come with `open_second_brain`, see *The second
   brain*. A tool that was not offered is not run even if the model calls it.
 - The side jobs (summaries, titles, the Discord join-in check) run on the model set with `/models upkeep`, else on

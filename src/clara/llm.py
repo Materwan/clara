@@ -378,7 +378,7 @@ class OpenAIBackend:
 
     async def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]:
         calls: dict[int, dict[str, Any]] = {}  # tool calls come in pieces, by index
-        usage: dict = {}  # Gemini repeats its running count on every chunk: only the last one is the count
+        counted = (0, 0, 0)  # prompt, completion and cached tokens reported so far
         request = self._http.get().stream("POST", f"{self._host}/chat/completions", json=self.body(messages, tools))
         async with request as response:
             if response.is_error:
@@ -402,7 +402,17 @@ class OpenAIBackend:
                         f"{self._label}: {error.get('message', error) if isinstance(error, dict) else error}",
                         code if isinstance(code, int) else None,
                     )
-                usage = part.get("usage") or usage
+                if usage := part.get("usage"):
+                    # Gemini repeats its running count on every chunk, others give it once at the end, or in parts:
+                    # each count only goes up, and what is sent on is the increase (added up, it is the count)
+                    said = (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0), cached_tokens(usage))
+                    now = tuple(max(old, new) for old, new in zip(counted, said, strict=True))
+                    if now != counted:
+                        yield LlmChunk(
+                            prompt_tokens=now[0] - counted[0], completion_tokens=now[1] - counted[1],
+                            cached_tokens=now[2] - counted[2],
+                        )
+                        counted = now
                 chunk = LlmChunk()
                 for choice in part.get("choices") or []:
                     delta = choice.get("delta") or {}
@@ -419,12 +429,6 @@ class OpenAIBackend:
                             slot["extra"] = piece["extra_content"]
                 if chunk.text or chunk.thinking:
                     yield chunk
-        if usage:  # counted once, from the last chunk, not added up chunk by chunk
-            yield LlmChunk(
-                prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                completion_tokens=int(usage.get("completion_tokens") or 0),
-                cached_tokens=cached_tokens(usage),
-            )
         if calls:
             yield LlmChunk(
                 tool_calls=[

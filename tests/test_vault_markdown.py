@@ -113,6 +113,12 @@ def test_links_have_anchor_alias_embed_and_line():
     ]
 
 
+
+def test_a_link_in_a_table_escapes_the_bar_of_its_alias():
+    links = find_links("| a | [[Note\\|shown]] and [[Other#Part\\|x]] |\n")
+    assert [(x.target, x.anchor, x.alias) for x in links] == [("Note", "", "shown"), ("Other", "#Part", "x")]
+
+
 def test_tags_ignore_headings_urls_and_numbers():
     text = "# Heading\nText #ai/ml and #2026 and http://x.y/#frag and C#. [[Note#Head]] #été"
     assert find_tags(text) == ["ai/ml", "été"]

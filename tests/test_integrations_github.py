@@ -116,7 +116,6 @@ def backend():
 def app(settings, backend, github):
     app = create_app(settings, fake_providers(settings, backend))
     app.state.integrations.connectors["github"]._http.transport = httpx.MockTransport(github.handler)
-    app.state.agent.is_owner = lambda person_id: True  # the integrations here, not who may use them on the web
     return app
 
 

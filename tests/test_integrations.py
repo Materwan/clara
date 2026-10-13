@@ -162,7 +162,6 @@ def backend():
 @pytest.fixture
 def app(settings, backend):
     app = create_app(settings, fake_providers(settings, backend))
-    app.state.agent.is_owner = lambda person_id: True  # the integrations here, not who may use them on the web
     return app
 
 
@@ -511,13 +510,9 @@ def test_erasing_a_person_erases_what_they_connected_and_what_was_logged(app, fo
     assert store.log_entries() == [] and store.jobs_for(person.id, statuses=("queued", "sent")) == []
 
 
-def test_on_the_web_the_integrations_are_the_owners_alone(http, app, backend, folder):
-    app.state.agent.is_owner = lambda person_id: False  # erwan is not the owner here
+def test_on_the_web_a_user_who_is_not_the_owner_works_on_what_they_attached(http, app, backend, folder):
+    assert app.state.users.owner_user().name != ME["user_id"]  # the owner is root, erwan an ordinary user
     backend.rounds.append(say("ok"))
     chat(http)
     offered = {schema["function"]["name"] for schema in backend.calls[-1][1] or []}
-    assert not offered & INTEGRATION_TOOLS and "Server folders: docs" not in backend.calls[-1][0][0]["content"]
-    app.state.agent.is_owner = lambda person_id: True
-    backend.rounds.append(say("ok"))
-    chat(http)
-    assert "Server folders: docs" in backend.calls[-1][0][0]["content"]
+    assert offered & INTEGRATION_TOOLS and "Server folders: docs" in backend.calls[-1][0][0]["content"]

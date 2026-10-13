@@ -87,6 +87,13 @@ async def test_a_private_message_uses_the_persons_own_conversation(handler, serv
     assert msg.replies == ["Hello!"]
 
 
+async def test_in_a_private_message_she_can_mention_the_person_she_talks_to(handler, server):
+    server.reply = "<@111>, and not <@222>."
+    msg = message("hi")
+    await handler.handle(msg)
+    assert msg.replies == ["<@111>, and not @someone."]
+
+
 async def test_someone_without_an_account_is_told_once_how_to_sign_in(handler, server, guild):
     first = message("<@1> hello", author=EVE, guild=guild, mentions=[CLARA])
     await handler.handle(first)

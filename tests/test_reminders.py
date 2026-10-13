@@ -481,7 +481,8 @@ def test_http_stream_is_for_the_person_who_set_it(live):
     for listener in ("terminal/cli:erwan", "discord/cli:bob"):
         memory.set_reminder_cursor(listener, 0)
     memory.add_reminder(person.id, "Only mine", NOW)
-    memory.add_notification(None, "For everybody", NOW)
+    # sent now: the events older than a week go when reminders fire (NOW is a fixed day, long past one day)
+    memory.add_notification(None, "For everybody", datetime.now(UTC))
     asyncio.run(app.state.reminders.fire_due())
 
     mine = first_event(url, AUTH, ME, "/v1/notifications/stream")

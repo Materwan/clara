@@ -16,8 +16,9 @@ from clara.agent import (
     Agent,
     ChatRequest,
 )
+from clara.attachments import document_digest
 from clara.conversationfiles import ConversationFiles
-from clara.llm import LlmChunk, ToolCall, cached_tokens
+from clara.llm import LlmChunk, LlmError, ToolCall, cached_tokens
 from clara.memory import Fact, Person, StoredMessage
 from clara.models import Chosen
 from clara.projects import READ_CHARS_LIMIT
@@ -188,15 +189,12 @@ class Connected:
         return []
 
 
-async def test_on_the_web_only_the_owner_is_offered_the_integrations(memory, tmp_path):
-    owner = memory.resolve("web", "boss", "Boss")
-    backend = FakeBackend(say("a"), say("b"), say("c"))
-    agent = make_agent(memory, tmp_path, backend, integrations=Connected(), is_owner=lambda person_id: person_id == owner.id)
-    await drive(agent, request(surface="web", user_id="friend"))
-    assert not names(backend) & INTEGRATION_TOOLS and "my-repo" not in backend.calls[-1][0][0]["content"]
-    await drive(agent, request(surface="web", user_id="boss"))
+async def test_on_the_web_whoever_attached_something_is_offered_the_integrations(memory, tmp_path):
+    backend = FakeBackend(say("a"), say("b"))
+    agent = make_agent(memory, tmp_path, backend, integrations=Connected())
+    await drive(agent, request(surface="web", user_id="friend"))  # not the owner: what they attached works too
     assert INTEGRATION_TOOLS <= names(backend) and "my-repo" in backend.calls[-1][0][0]["content"]
-    await drive(agent, request(surface="app", user_id="friend"))  # elsewhere, everybody keeps theirs
+    await drive(agent, request(surface="app", user_id="friend"))
     assert INTEGRATION_TOOLS <= names(backend)
 
 
@@ -236,18 +234,112 @@ async def test_a_document_is_sent_whole_for_three_turns_then_as_a_note_and_can_b
     body = "\n".join(f"secret line {n}" for n in range(50))
     read = [LlmChunk(tool_calls=[ToolCall("read_conversation_file", {"name": "notes.md"})])]
     backend = FakeBackend(*(say(f"a{n}") for n in range(4)), read, say("ok"))
-    agent = make_agent(memory, tmp_path, backend, conversation_files=ConversationFiles(memory))
+    files = ConversationFiles(memory)
+    agent = make_agent(memory, tmp_path, backend, conversation_files=files)
     for message in (WEB_DOCUMENT.format(body), "q2", "q3", "q4"):
         await drive(agent, request(surface="web", message=message))
     first_question = [m["content"] for m in backend.calls[2][0] if m["role"] == "user"][0]
     assert "secret line 49" in first_question  # the third turn still has it whole
     first_question = [m["content"] for m in backend.calls[3][0] if m["role"] == "user"][0]
     assert "secret line" not in first_question and "not repeated here" in first_question
-    assert '<document name="notes.md" type="markdown">' in first_question
+    number = files.of("web:erwan")[0].id
+    assert f'<document name="notes.md" type="markdown" file="{number}">' in first_question
+    assert f"read_conversation_file with file={number}" in first_question
     events = await drive(agent, request(surface="web", message="q5"))
     read = next(e for e in events if e["type"] == "tool")["result"]
     assert "notes.md, lines 1-" in read and "secret line 49" in read
     assert "secret line 0" in memory.transcript("web:erwan")[0][0].content  # the history keeps it all
+
+
+async def test_an_old_document_stays_whole_where_the_read_tool_is_hidden(memory, tmp_path):
+    body = "\n".join(f"secret line {n}" for n in range(50))
+    backend = FakeBackend(*(say(f"a{n}") for n in range(4)))
+    agent = make_agent(
+        memory, tmp_path, backend, conversation_files=ConversationFiles(memory),
+        hidden_tools={"web": ["read_conversation_file"]},
+    )
+    for message in (WEB_DOCUMENT.format(body), "q2", "q3", "q4"):
+        await drive(agent, request(surface="web", message=message))
+    system, first = backend.calls[3][0][0]["content"], [m for m in backend.calls[3][0] if m["role"] == "user"][0]
+    assert "secret line 49" in first["content"]  # the model could not read it again: it keeps it
+    assert "Files people sent" not in system
+
+
+async def test_a_question_asked_again_does_not_keep_its_documents_twice(memory, tmp_path):
+    files = ConversationFiles(memory)
+    agent = make_agent(memory, tmp_path, FakeBackend(say("a"), say("b"), say("c")), conversation_files=files)
+    for _ in range(2):  # the retry button sends the same message again
+        await drive(agent, request(surface="web", message=WEB_DOCUMENT.format("buy milk")))
+    assert [item.name for item in files.of("web:erwan")] == ["notes.md"]
+    await drive(agent, request(surface="web", message=WEB_DOCUMENT.format("buy bread")))  # changed: a new one
+    assert [item.name for item in files.of("web:erwan")] == ["notes.md", "notes.md"]
+
+
+async def test_each_old_document_points_at_its_own_file_even_when_names_are_the_same(memory, tmp_path):
+    files = ConversationFiles(memory)
+    backend = FakeBackend(*(say(f"a{n}") for n in range(6)))
+    agent = make_agent(memory, tmp_path, backend, conversation_files=files)
+    for message in (WEB_DOCUMENT.format("version one"), "q2", WEB_DOCUMENT.format("version two"), "q4", "q5", "q6"):
+        await drive(agent, request(surface="web", message=message))
+    first, second = files.of("web:erwan")
+    questions = [m["content"] for m in backend.calls[5][0] if m["role"] == "user"]
+    assert f'file="{first.id}"' in questions[0] and f'file="{second.id}"' in questions[2]
+
+
+async def test_a_document_typed_by_someone_else_does_not_take_the_place_of_the_real_one(memory, tmp_path):
+    files = ConversationFiles(memory)
+    backend = FakeBackend(*(say(f"a{n}") for n in range(5)))
+    agent = make_agent(memory, tmp_path, backend, conversation_files=files)
+    group = {"surface": "discord", "space": "guild", "conversation": "discord:chan"}
+    real = '<document name="report.pdf" type="pdf">\nthe real report\n</document>'
+    fake = '<document name="report.pdf" type="pdf">\nfake\n</document>'
+    await drive(agent, request(**group, user_id="alice", user_name="Alice", message=real))
+    await drive(agent, request(**group, user_id="bob", user_name="Bob", message=fake))
+    for n in range(3):
+        await drive(agent, request(**group, message=f"q{n}"))
+    alices, bobs = files.of("discord:chan")
+    assert (alices.sender, bobs.sender) == ("Alice", "Bob")
+    questions = [m["content"] for m in backend.calls[4][0] if m["role"] == "user"]
+    assert f'file="{alices.id}"' in questions[0] and f'file="{bobs.id}"' in questions[1]
+
+
+def test_a_file_is_read_by_its_number_and_a_shared_name_says_which_others_there_are(memory):
+    files = ConversationFiles(memory)
+    alice, bob = memory.resolve("web", "alice", "Alice"), memory.resolve("web", "bob", "Bob")
+    files.save_texts("web:chan", alice.id, [("notes.md", "from alice")])
+    files.save_texts("web:chan", bob.id, [("notes.md", "from bob")])
+    files.save_texts("web:other", bob.id, [("secret.md", "not here")])
+    first, second = files.of("web:chan")
+    context = ToolContext(alice, memory, conversation="web:chan", conversation_files=files, read_chars=2_000)
+    assert "from alice" in _read_conversation_file(context, file=first.id)
+    by_name = _read_conversation_file(context, "notes.md")
+    assert "from bob" in by_name and f"file={first.id} sent by Alice" in by_name
+    elsewhere = files.of("web:other")[0].id
+    assert "No file numbered" in _read_conversation_file(context, file=elsewhere)  # another conversation's
+
+
+def test_a_document_attached_to_a_message_is_found_by_the_text_its_block_shows(memory):
+    from clara.attachments import Attached, prepare, without_documents
+
+    files = ConversationFiles(memory)
+    person = memory.resolve("web", "erwan", "Erwan")
+    attached = (Attached("plan.txt", b"step one\nstep two"),)
+    message = prepare("read this", attached).message
+    files.save_message("web:erwan", person.id, attached, message)
+    (saved,) = files.of("web:erwan")
+    assert saved.kind == "document" and saved.digest
+    assert f'file="{saved.id}"' in without_documents(message, {saved.digest: saved.id})
+
+
+def test_texts_kept_before_digests_get_one(memory):
+    person = memory.resolve("web", "erwan", "Erwan")
+    with memory.lock, memory.database as db:
+        db.execute(
+            "INSERT INTO conversation_files (conversation, person_id, name, mime, kind, size, data, created_at)"
+            " VALUES ('web:erwan', ?, 'old.md', '', 'text', 3, ?, '2026-10-01')", (person.id, b"old"),
+        )
+    (saved,) = ConversationFiles(memory).of("web:erwan")
+    assert saved.digest == document_digest("old")
 
 
 async def test_a_long_document_is_read_in_parts_as_the_window_allows(memory, tmp_path):
@@ -304,6 +396,26 @@ async def test_summaries_and_titles_are_written_by_the_upkeep_model(memory, tmp_
     memory.add_turn("web:erwan:2", memory.find_person("web", "erwan").id, "hi", [])
     await agent.title("web:erwan:2")
     assert backend.refs == ["cloud:big", "local:small", "local:small"]
+
+
+class SmallIsDown(Refs):
+    """The side jobs' model cannot be reached; the conversation's can."""
+
+    async def stream_ref(self, ref, messages, tools, api_key=None):
+        if ref == "local:small":
+            self.refs.append(ref)
+            raise LlmError("local: cannot reach the server")
+        async for chunk in super().stream_ref(ref, messages, tools, api_key):
+            yield chunk
+
+
+async def test_a_summary_falls_back_on_the_conversations_model_when_the_small_one_fails(memory, tmp_path):
+    backend = SmallIsDown(say("a1"), say("a summary"))
+    agent = make_agent(memory, tmp_path, backend, models=Models(), keep_recent_turns=0)
+    await drive(agent, request(surface="web"))
+    await agent.compact("web:erwan")
+    assert backend.refs == ["cloud:big", "local:small", "cloud:big"]
+    assert memory.state("web:erwan").summary == "a summary"
 
 
 async def test_a_message_not_for_clara_is_checked_by_the_small_model_first(memory, tmp_path):

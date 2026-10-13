@@ -109,6 +109,15 @@ def test_status_is_checked_against_the_type(vault):
     vault.create("Y", "idea", "x", status="growing")
 
 
+def test_a_status_or_a_type_among_the_properties_is_checked_too(vault, root):
+    with pytest.raises(VaultError, match="Status for a knowledge"):
+        vault.create("X", "knowledge", "x", properties={"status": "active"})
+    with pytest.raises(VaultError, match="Give the type"):
+        vault.create("Z", "knowledge", "x", properties={"type": "project"})
+    vault.create("Y", "knowledge", "x", properties={"status": "Evergreen"})
+    assert front(root, "5-knowledge/Y.md")["status"] == "evergreen"
+
+
 def test_a_source_needs_its_type_property(vault, root):
     with pytest.raises(VaultError, match="source_type"):
         vault.create("Deep Work", "source", "x")
@@ -349,6 +358,21 @@ def test_move_renames_and_rewrites_every_kind_of_link(vault, root):
     text = (root / "5-knowledge/Linker.md").read_text()
     assert "[[New name]] [[New name|shown]] [[New name#Part]] [[5-knowledge/New name]] [md](New%20name.md)" in text
     assert "`[[Old name]]`" in text and "[[Other]]" in text  # code and unrelated links untouched
+
+
+
+def test_move_keeps_the_escaped_bar_of_a_link_in_a_table(vault, root):
+    vault.create("Old name", "knowledge", "body")
+    vault.create("Table", "knowledge", "| a | [[Old name\\|shown]] |")
+    assert "No such note" not in vault.links("Table") and "Broken links" not in vault.links("Table")
+    vault.move("Old name", "New name")
+    assert "| a | [[New name\\|shown]] |" in (root / "5-knowledge/Table.md").read_text()
+
+
+def test_a_link_to_an_office_file_is_not_broken(vault, root):
+    vault.create("Course", "knowledge", "[[Essay.odt]] [[Sheet.xlsx]] [[Missing]]")
+    out = vault.health()
+    assert "[[Missing]]" in out and "Essay.odt" not in out and "Sheet.xlsx" not in out
 
 
 def test_move_to_a_folder_keeps_name_and_links(vault, root):
@@ -697,22 +721,24 @@ def test_the_shipped_vault_matches_the_schema_and_works(tmp_path):
         assert (copy / "_templates" / f"{note_type.template_name}.md").exists(), note_type.name
         if note_type.folder:
             assert (copy / note_type.folder).is_dir() and list((copy / note_type.folder).glob("* Index.md"))
-    # every kind of note can be made from the shipped templates, and the result is sound
-    vault.create("Seed", "idea", "x")
-    vault.create("Hub", "project", "x")
-    vault.create("Work", "note", "x", parent="Hub")
-    vault.create("Fit", "area", "x")
-    vault.create("Fact", "knowledge", "see [[Book]]")
-    vault.create("Book", "source", "x", properties={"source_type": "book"})
-    vault.create("Paul", "person", "x")
+    # every kind of note can be made from the shipped templates, and the result is sound (names no real note has:
+    # this is the person's own vault, with their notes in it)
+    made = {"idea": "Selftest Seed", "project": "Selftest Hub", "note": "Selftest Work", "area": "Selftest Fit",
+            "knowledge": "Selftest Fact", "source": "Selftest Book", "person": "Selftest Paul"}
+    vault.create(made["idea"], "idea", "x")
+    vault.create(made["project"], "project", "x")
+    vault.create(made["note"], "note", "x", parent=made["project"])
+    vault.create(made["area"], "area", "x")
+    vault.create(made["knowledge"], "knowledge", f"see [[{made['source']}]]")
+    vault.create(made["source"], "source", "x", properties={"source_type": "book"})
+    vault.create(made["person"], "person", "x")
     vault.capture("something")
     vault.daily_append("- hello")
-    for note_type in ("idea", "project", "note", "area", "knowledge", "source", "person"):
-        for path in vault.list_notes(type=note_type).splitlines()[1:]:
-            props = front(copy, path.split(" · ")[0].lstrip("- "))
-            assert props["type"] == note_type and props["author"] == "clara", path
+    for note_type, name in made.items():
+        props = front(copy, vault.resolve(name).path)
+        assert props["type"] == note_type and props["author"] == "clara", name
     vault.update_index("")
-    assert "[[Hub]]" in (copy / "Home.md").read_text()
+    assert f"[[{made['project']}]]" in (copy / "Home.md").read_text()
 
 
 def test_the_very_first_commit_of_an_empty_repository_is_pushed_to_an_empty_remote(tmp_path, remote):

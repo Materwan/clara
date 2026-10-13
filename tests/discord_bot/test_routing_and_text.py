@@ -77,7 +77,7 @@ def test_names_become_pings_longest_first_never_clara():
 def test_a_mention_clara_was_given_pings_only_a_member():
     members = [CLARA, PAUL, JEAN]
     assert add_pings("Hi <@2> and <@!3>", members, 1) == "Hi <@2> and <@3>"
-    assert add_pings("Hi <@99>, <@1>", members, 1) == "Hi @someone, @someone"  # not a member, and never herself
+    assert add_pings("Hi <@99>, <@1>", members, 1) == "Hi @someone, @Clara"  # not a member; herself: her name, no ping
     assert add_pings("<@&5> <@2>", members, 1) == "<@&5> <@2>"  # a role stays as it is (the client refuses it)
 
 
@@ -93,7 +93,7 @@ def test_pings_are_limited():
     members = [FakeUser(10 + i, f"u{i}") for i in range(5)]
     text = " ".join(f"@u{i}" for i in range(5))
     assert add_pings(text, members, 1, max_pings=2) == "<@10> <@11> @u2 @u3 @u4"
-    assert add_pings("<@10> <@11> <@12>", members, 1, max_pings=2) == "<@10> <@11> @someone"
+    assert add_pings("<@10> <@11> <@12>", members, 1, max_pings=2) == "<@10> <@11> @u2"  # the name, as text
 
 
 def test_long_answers_are_split_and_code_blocks_stay_closed():

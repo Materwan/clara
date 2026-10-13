@@ -195,7 +195,6 @@ def create_app(
         vault=vault,
         vault_allowed=owner_check(settings, users) if vault is not None else None,
         vault_in_groups=settings.vault_in_groups,
-        is_owner=lambda person_id: (owner := users.owner_user()) is not None and owner.person_id == person_id,
         music_ready=(lambda person_id: music_accounts.saved(person_id) is not None) if music is not None else None,
         chime_check=settings.chime_check,
     )
