@@ -1,6 +1,8 @@
 """What people send in a conversation, kept with it: a picture or a document that was sent in one message is still
-there in the later ones, where Clara can read it again (the `read_conversation_file` tool, see tools.py). The newest
-MAX_FILES of a conversation are kept; the older ones go. Erasing a conversation or a person erases them too (memory.py).
+there in the later ones, where Clara can read it again (the `read_conversation_file` tool, see tools.py). A document
+the client already turned into text (the web site writes it in the message) is kept as that text (kind "text"). The
+newest MAX_FILES of a conversation are kept; the older ones go. Erasing a conversation or a person erases them too
+(memory.py).
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ class SavedFile:
     id: int
     name: str
     mime: str  # a picture's MIME type ("" for a document)
-    kind: str  # "picture" or "document"
+    kind: str  # "picture", "document" (the file as sent) or "text" (a document's text, as the client wrote it)
     size: int  # bytes
     sender: str  # who sent it
     created_at: str
@@ -34,17 +36,26 @@ class ConversationFiles:
 
     def save(self, conversation: str, person_id: int, files: Sequence[Attached]) -> None:
         """Keep these files of a conversation (the older ones beyond the newest `max_files` go)."""
-        if not files:
+        rows = []
+        for file in files:
+            mime = image_type(file.data) or ""
+            rows.append((file.name, mime, "picture" if mime else "document", file.data))
+        self._insert(conversation, person_id, rows)
+
+    def save_texts(self, conversation: str, person_id: int, documents: Sequence[tuple[str, str]]) -> None:
+        """Keep the text of documents a client wrote in a message, by (name, text)."""
+        self._insert(conversation, person_id, [(name, "", "text", text.encode()) for name, text in documents])
+
+    def _insert(self, conversation: str, person_id: int, rows: Sequence[tuple[str, str, str, bytes]]) -> None:
+        if not rows:
             return
         now = datetime.now(UTC).isoformat(timespec="seconds")
         with self._memory.lock, self._memory.database as db:
-            for file in files:
-                mime = image_type(file.data) or ""
+            for name, mime, kind, data in rows:
                 db.execute(
                     "INSERT INTO conversation_files (conversation, person_id, name, mime, kind, size, data, created_at)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (conversation, person_id, file.name, mime, "picture" if mime else "document", len(file.data),
-                     file.data, now),
+                    (conversation, person_id, name, mime, kind, len(data), data, now),
                 )
             db.execute(
                 "DELETE FROM conversation_files WHERE conversation = ? AND id NOT IN ("

@@ -378,6 +378,7 @@ class OpenAIBackend:
 
     async def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]:
         calls: dict[int, dict[str, Any]] = {}  # tool calls come in pieces, by index
+        usage: dict = {}  # Gemini repeats its running count on every chunk: only the last one is the count
         request = self._http.get().stream("POST", f"{self._host}/chat/completions", json=self.body(messages, tools))
         async with request as response:
             if response.is_error:
@@ -401,12 +402,8 @@ class OpenAIBackend:
                         f"{self._label}: {error.get('message', error) if isinstance(error, dict) else error}",
                         code if isinstance(code, int) else None,
                     )
-                usage = part.get("usage") or {}
-                chunk = LlmChunk(
-                    prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                    completion_tokens=int(usage.get("completion_tokens") or 0),
-                    cached_tokens=cached_tokens(usage),
-                )
+                usage = part.get("usage") or usage
+                chunk = LlmChunk()
                 for choice in part.get("choices") or []:
                     delta = choice.get("delta") or {}
                     chunk.text += delta.get("content") or ""
@@ -420,8 +417,14 @@ class OpenAIBackend:
                         slot["arguments"] += arguments if isinstance(arguments, str) else json.dumps(arguments)
                         if piece.get("extra_content"):
                             slot["extra"] = piece["extra_content"]
-                if chunk.text or chunk.thinking or chunk.prompt_tokens or chunk.completion_tokens or chunk.cached_tokens:
+                if chunk.text or chunk.thinking:
                     yield chunk
+        if usage:  # counted once, from the last chunk, not added up chunk by chunk
+            yield LlmChunk(
+                prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                completion_tokens=int(usage.get("completion_tokens") or 0),
+                cached_tokens=cached_tokens(usage),
+            )
         if calls:
             yield LlmChunk(
                 tool_calls=[

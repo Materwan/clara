@@ -260,7 +260,8 @@ def test_an_observed_message_is_stored_without_the_model(make_client):
 
 
 def test_maybe_is_only_observed_where_chime_in_is_off(make_client):
-    client = make_client(say("<pass>"), say("Actually, it is 42."))
+    # each "maybe" message is first checked by the side jobs' model (yes: worth the whole prompt)
+    client = make_client(say("yes"), say("<pass>"), say("yes"), say("Actually, it is 42."))
     memory = client.app.state.memory
     register(client)
     memory.sync_spaces("discord", [(GUILD, "Guild")])
@@ -270,7 +271,7 @@ def test_maybe_is_only_observed_where_chime_in_is_off(make_client):
     memory.set_space_chime(GUILD, True)
     declined = chat(client, message="m2", conversation=CHANNEL, space=GUILD, mode="maybe").json()
     assert declined["reply"] == "" and declined["passed"] is True
-    assert "not addressed to you" in client.backend.calls[0][0][-1]["content"]
+    assert "not addressed to you" in client.backend.calls[1][0][-1]["content"]
     answered = chat(client, message="what is 6x7?", conversation=CHANNEL, space=GUILD, mode="maybe").json()
     assert answered["reply"] == "Actually, it is 42." and answered["passed"] is False
     assert [m.content for m in memory.history(CHANNEL, 10)] == ["m1", "m2", "what is 6x7?", "Actually, it is 42."]

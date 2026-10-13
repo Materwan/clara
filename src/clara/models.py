@@ -41,6 +41,8 @@ CACHE_SECONDS = 60.0  # how long what the providers offered is kept
 DISCORD = "discord"
 DISCORD_OPTION = "models.discord"
 FALLBACKS_OPTION = "models.fallbacks"  # JSON list of refs
+UPKEEP_OPTION = "models.upkeep"  # the model of the server's side jobs ('': the server's default)
+UPKEEP = "upkeep"  # the "surface" the side jobs are chosen for: nobody's choice, nobody's own key
 MAX_FALLBACKS = 10
 
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmbt])\b", re.IGNORECASE)
@@ -337,6 +339,26 @@ class ModelCatalog:
             config = self._providers.configs[split_ref(ref)[0]]
             raise ProviderError(f"{config.label} needs {config.key_name} in the server environment.")
         self._memory.set_option(DISCORD_OPTION, ref)
+
+    def upkeep_model(self) -> str | None:
+        """The model of the side jobs: summaries, titles, whether to join in on Discord (None: the server's own)."""
+        ref = self._memory.option(UPKEEP_OPTION)
+        return ref if ref and self._providers.usable_ref(ref) else None
+
+    def set_upkeep_model(self, ref: str | None) -> None:
+        if ref is None:
+            self._memory.set_option(UPKEEP_OPTION, "")
+            return
+        ref = self._checked(ref)
+        if not self._providers.usable_ref(ref):
+            config = self._providers.configs[split_ref(ref)[0]]
+            raise ProviderError(f"{config.label} needs {config.key_name} in the server environment.")
+        self._memory.set_option(UPKEEP_OPTION, ref)
+
+    def upkeep(self) -> Chosen:
+        """The model the side jobs run on (the one set with `/models upkeep`, else the server's default): a small,
+        cheap one is enough to summarise or title, whatever big model the conversation itself uses."""
+        return self.choose(UPKEEP, None, self.upkeep_model())
 
     # ------------------------------------------------------------------
     # What users see and choose

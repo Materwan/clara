@@ -15,7 +15,7 @@ from clara.settings import Settings
 from clara.tools import default_toolbox
 from clara.users import UserError, Users
 from clara.vault import Vault, owner_check
-from clara.vaulttools import VAULT_TOOLS, vault_tools
+from clara.vaulttools import CLOSED_BLOCK, OPEN_VAULT, VAULT_TOOLS, vault_tools
 
 
 def use(tool: str, **arguments) -> list[LlmChunk]:
@@ -42,21 +42,54 @@ async def run(agent: Agent, **fields) -> list[dict]:
     return [event async for event in agent.turn(request)]
 
 
-def offered(backend: FakeBackend) -> set[str]:
-    tools = backend.calls[0][1] or []
+def offered(backend: FakeBackend, round_number: int = 0) -> set[str]:
+    tools = backend.calls[round_number][1] or []
     return {schema["function"]["name"] for schema in tools}
 
 
-def system_prompt(backend: FakeBackend) -> str:
-    return backend.calls[0][0][0]["content"]
+def system_prompt(backend: FakeBackend, round_number: int = 0) -> str:
+    return backend.calls[round_number][0][0]["content"]
+
+
+def opened(memory) -> None:
+    """The conversation of `run` has already opened the second brain."""
+    memory.open_vault("web:erwan")
 
 
 async def test_the_owner_gets_the_tools_and_the_map_of_the_vault(memory, tmp_path, root):
     erwan = memory.resolve("web", "erwan", "Erwan")
+    opened(memory)
     backend = FakeBackend(say("ok"))
     await run(make_agent(memory, tmp_path, backend, root, allowed={erwan.id}))
-    assert VAULT_TOOLS <= offered(backend)
+    assert VAULT_TOOLS <= offered(backend) and OPEN_VAULT not in offered(backend)
     assert "Your second brain" in system_prompt(backend) and "2-ideas/" in system_prompt(backend)
+
+
+async def test_a_conversation_has_only_a_note_and_a_switch_until_it_opens_the_vault(memory, tmp_path, root):
+    erwan = memory.resolve("web", "erwan", "Erwan")
+    backend = FakeBackend(say("ok"))
+    await run(make_agent(memory, tmp_path, backend, root, allowed={erwan.id}))
+    assert offered(backend) & (VAULT_TOOLS | {OPEN_VAULT}) == {OPEN_VAULT}
+    assert CLOSED_BLOCK in system_prompt(backend) and "2-ideas/" not in system_prompt(backend)
+
+
+async def test_opening_the_vault_gives_its_tools_at_once_and_for_good(memory, tmp_path, root):
+    erwan = memory.resolve("web", "erwan", "Erwan")
+    backend = FakeBackend(use(OPEN_VAULT), use("vault_capture", text="Read Dune"), say("Kept."))
+    agent = make_agent(memory, tmp_path, backend, root, allowed={erwan.id})
+    events = await run(agent)
+    results = [e["result"] for e in events if e["type"] == "tool"]
+    assert "open" in results[0] and results[1].startswith("Created 0-inbox/")
+    assert VAULT_TOOLS <= offered(backend, 1) and OPEN_VAULT not in offered(backend, 1)
+    assert "2-ideas/" in system_prompt(backend, 1) and CLOSED_BLOCK not in system_prompt(backend, 1)
+    later = FakeBackend(say("ok"))
+    agent.backend = later
+    await run(agent)
+    assert VAULT_TOOLS <= offered(later) and "2-ideas/" in system_prompt(later)
+    other = FakeBackend(say("ok"))
+    agent.backend = other
+    await run(agent, conversation="web:erwan:other")
+    assert not VAULT_TOOLS & offered(other)  # another conversation opens it for itself
 
 
 async def test_somebody_else_gets_neither_the_tools_nor_a_word_about_the_vault(memory, tmp_path, root):
@@ -70,12 +103,13 @@ async def test_somebody_else_gets_neither_the_tools_nor_a_word_about_the_vault(m
 async def test_a_tool_called_anyway_by_someone_not_allowed_does_nothing(memory, tmp_path, root):
     backend = FakeBackend(use("vault_create_note", title="Sneaky", type="idea", content="x"), say("ok"))
     events = await run(make_agent(memory, tmp_path, backend, root, allowed=set()))
-    assert "not available" in next(e for e in events if e["type"] == "tool")["result"]
+    assert next(e for e in events if e["type"] == "tool")["result"] == "Unknown tool: vault_create_note."
     assert not list(root.rglob("Sneaky.md"))
 
 
 async def test_not_in_a_group_where_everybody_reads_the_answers(memory, tmp_path, root):
     erwan = memory.resolve("web", "erwan", "Erwan")
+    opened(memory)
     backend = FakeBackend(say("ok"))
     await run(make_agent(memory, tmp_path, backend, root, allowed={erwan.id}), space="discord:guild:1")
     assert not VAULT_TOOLS & offered(backend)
@@ -92,6 +126,7 @@ async def test_without_a_vault_there_are_no_vault_tools(memory, tmp_path):
 
 async def test_clara_files_a_thought_then_works_on_it(memory, tmp_path, root):
     erwan = memory.resolve("web", "erwan", "Erwan")
+    opened(memory)
     backend = FakeBackend(
         use("vault_capture", text="Idea: weekly review on Sunday evening", tags="routine, review"),
         use("vault_create_note", title="Weekly review", type="idea", content="Every Sunday: look at the week.", tags=["routine"]),
@@ -114,6 +149,7 @@ async def test_clara_files_a_thought_then_works_on_it(memory, tmp_path, root):
 
 async def test_a_mistake_comes_back_as_text_the_model_can_act_on(memory, tmp_path, root):
     erwan = memory.resolve("web", "erwan", "Erwan")
+    opened(memory)
     backend = FakeBackend(
         use("vault_read", note="Nothing here"),
         use("vault_create_note", title="X", type="bogus"),
@@ -134,6 +170,7 @@ async def test_a_mistake_comes_back_as_text_the_model_can_act_on(memory, tmp_pat
 
 async def test_loose_argument_types_from_the_model_are_accepted(memory, tmp_path, root):
     erwan = memory.resolve("web", "erwan", "Erwan")
+    opened(memory)
     backend = FakeBackend(
         use("vault_create_note", title="Loose", type="idea", content="x", tags="a, b", properties='{"priority": 2}'),
         use("vault_list", limit="5", recursive="false", folder="2-ideas"),
@@ -189,6 +226,7 @@ def test_the_server_opens_the_vault_and_the_operator_console_manages_it(settings
         assert "not a git repository" in run_command("/vault sync")
         assert "Semantic search is not set up" in run_command("/vault reindex")  # reported, not a crash
         assert "good shape" in run_command("/vault health")
+        assert "Updated the index Home.md" in run_command("/vault index")
         assert run_command("/vault bogus").startswith("!")
 
 

@@ -105,7 +105,8 @@ def discord_settings(settings):
 
 @pytest.fixture
 def app(discord_settings):
-    backend = FakeBackend(say("Hi Erwan!"), say("<pass>"), say("Chess is great."), say("ok"))
+    # the join-in check says no to the first "maybe" message, yes to the second
+    backend = FakeBackend(say("Hi Erwan!"), say("no"), say("yes"), say("Chess is great."), say("ok"))
     application = create_app(discord_settings, fake_providers(discord_settings, backend))
     application.state.fake_model = backend
     application.state.discord.bot_factory = FakeDiscord
@@ -157,6 +158,7 @@ async def test_the_local_backend_follows_the_same_rules_as_the_http_api(app):
     assert not observed.answered and len(app.state.fake_model.calls) == 1  # chime in is off: no model call
     memory.set_space_chime("discord:guild:5", True)
     assert not (await backend.chat(222, "Bob", "me maybe", mode="maybe", **common)).answered
+    assert len(app.state.fake_model.calls) == 2  # only the join-in check ran
     answered = await backend.chat(111, "Erwan", "what do you think?", mode="maybe", **common)
     assert answered.text == "Chess is great."
     assert "@Erwan, @Bob" in app.state.fake_model.calls[-1][0][0]["content"]

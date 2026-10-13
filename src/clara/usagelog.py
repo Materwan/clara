@@ -1,7 +1,8 @@
 """What each person's answers cost in tokens, for the owner's administration.
 
-One row per answer (all the model rounds of a turn added up), plus one per compaction and per title, with who asked,
-on which surface, which model answered and how many tokens went in and out. It is a record only: the daily credit
+One row per answer (all the model rounds of a turn added up), plus one per compaction, per title and per join-in
+check (a Discord message not addressed to Clara), with who asked, on which surface, which model answered and how
+many tokens went in and out. It is a record only: the daily credit
 limit (limits.py) is counted apart and does not read it. Rows are kept until their person is erased.
 
 Answers run on a person's own API key (userkeys.py) are rows with `own_key` set: they cost no credits, and the
@@ -23,7 +24,7 @@ from .memory import Memory
 log = logging.getLogger("clara.usage")
 
 DISCORD = "discord"
-KINDS = ("message", "scheduled", "compaction", "title")
+KINDS = ("message", "scheduled", "compaction", "title", "chime")  # chime: the join-in check of a "maybe" message
 ANSWER_KINDS = ("message", "scheduled")  # the rows that are an answer to somebody (the others are upkeep)
 MAX_PAGE = 200
 TOP_MODELS = 3

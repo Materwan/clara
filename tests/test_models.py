@@ -193,6 +193,17 @@ def test_discord_has_one_model_set_by_an_administrator_and_ignores_what_people_c
         catalog.set_discord_model("gemini:gemini-flash-latest")
 
 
+def test_the_side_jobs_run_on_the_upkeep_model_else_the_server_default(memory, catalog):
+    assert catalog.upkeep_model() is None and catalog.upkeep().ref == "local:fake"
+    catalog.set_upkeep_model("cloud:fake")  # it need not be one users may choose
+    assert catalog.upkeep_model() == "cloud:fake" and catalog.upkeep().ref == "cloud:fake"
+    assert catalog.upkeep().api_key is None  # nobody's own key
+    catalog.set_upkeep_model(None)
+    assert catalog.upkeep().ref == "local:fake"
+    with pytest.raises(ProviderError, match="GEMINI_API_KEY"):
+        catalog.set_upkeep_model("gemini:gemini-flash-latest")
+
+
 def test_a_choice_goes_to_the_person_who_remains_when_two_people_are_merged(memory, catalog):
     first, second = memory.resolve("web", "erwan", "Erwan"), memory.resolve("discord", "42", "Erwan")
     catalog.set_enabled(["local:other-model", "cloud:fake"], True)
@@ -410,6 +421,9 @@ async def test_the_console_command_selects_models_and_sets_weights_and_discord(s
     assert "Discord answers with cloud:fake-big" in await command("/models discord cloud:fake-big")
     assert catalog.discord_model() == "cloud:fake-big"
     assert "server default" in await command("/models discord default")
+    assert "run on cloud:fake" in await command("/models upkeep cloud:fake")
+    assert catalog.upkeep_model() == "cloud:fake" and "Side jobs: cloud:fake" in await command("/models")
+    assert "the server default (local:fake)" in await command("/models upkeep default")
     assert (await command("/models enable")).startswith("! Usage")
 
 

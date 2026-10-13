@@ -216,6 +216,9 @@ class Settings:
     facts_token_budget: int  # tokens of remembered facts shown to the model in each prompt
     purge_summarised: bool  # delete messages once a summary stands for them
     reminder_ai_timeout: int  # seconds Clara has to write the announcement of a reminder (0: announce the text)
+    # a "maybe" message (Discord, not addressed to Clara) is first shown to the side jobs' model (`/models upkeep`):
+    # only one it finds worth an answer gets the full prompt
+    chime_check: bool
     system_prompt_file: Path
     # Language model providers (see providers.py)
     default_provider: str
@@ -277,10 +280,12 @@ class Settings:
     api_providers: dict[str, ApiProvider] = field(default_factory=dict)
     deepseek_thinking: bool = True
     # Projects (projects.py): what one may hold, the share of the context window under which its files are all
-    # put in the prompt (beyond, Clara reads them with tools), and the token that reaches private GitHub repos
+    # put in the prompt (beyond, Clara reads them with tools) and the most tokens they may then weigh whatever the
+    # window (0: no limit), and the token that reaches private GitHub repos
     project_max_bytes: int = 20_000_000
     project_max_files: int = 5_000
     project_inline_percent: int = 40
+    project_inline_tokens: int = 20_000
     github_token: str | None = field(default=None, repr=False)
     # Whether every user's project downloads may use github_token (the operator's own access, private repositories
     # included). Off: only the owner; the others use their own GitHub account (Integrations page) or public repos.
@@ -416,7 +421,7 @@ class Settings:
             history_turns=_positive_int(env, "CLARA_HISTORY_TURNS", 20),
             max_concurrent_llm=_positive_int(env, "CLARA_MAX_CONCURRENT_LLM", 2),
             max_turns_per_user=_non_negative_int(env, "CLARA_MAX_TURNS_PER_USER", 2),
-            max_tool_rounds=_positive_int(env, "CLARA_MAX_TOOL_ROUNDS", 20),
+            max_tool_rounds=_positive_int(env, "CLARA_MAX_TOOL_ROUNDS", 10),
             tool_timeout=_positive_int(env, "CLARA_TOOL_TIMEOUT", 900),
             llm_first_token_timeout=_positive_int(env, "CLARA_LLM_FIRST_TOKEN_TIMEOUT", 300),
             llm_idle_timeout=_positive_int(env, "CLARA_LLM_IDLE_TIMEOUT", 120),
@@ -427,6 +432,7 @@ class Settings:
             facts_token_budget=_positive_int(env, "CLARA_FACTS_TOKEN_BUDGET", 2000),
             purge_summarised=_flag(env, "CLARA_PURGE_SUMMARISED"),
             reminder_ai_timeout=_non_negative_int(env, "CLARA_REMINDER_AI_TIMEOUT", 60),
+            chime_check=_flag(env, "CLARA_CHIME_CHECK", default=True),
             system_prompt_file=Path(text("CLARA_SYSTEM_PROMPT_FILE", "config/system_prompt.md")),
             default_provider=default_provider,
             local_host=text("OLLAMA_HOST", DEFAULT_LOCAL_HOST),
@@ -474,6 +480,7 @@ class Settings:
             project_max_bytes=_positive_int(env, "CLARA_PROJECT_MAX_MB", 20) * 1_000_000,
             project_max_files=_positive_int(env, "CLARA_PROJECT_MAX_FILES", 5_000),
             project_inline_percent=inline_percent,
+            project_inline_tokens=_non_negative_int(env, "CLARA_PROJECT_INLINE_TOKENS", 20_000),
             github_token=text("GITHUB_TOKEN") or None,
             github_token_shared=_flag(env, "CLARA_GITHUB_TOKEN_SHARED"),
             default_daily_tokens=_token_limit(env, "CLARA_DEFAULT_DAILY_TOKENS"),

@@ -315,7 +315,7 @@ async def model_command(ctx: CommandContext, args: str) -> str:
 
 MODELS_USAGE = (
     "Usage: /models [list | refresh | enable <model|provider|all> | disable <model|provider|all> | "
-    "weight <model> <credits|auto> | discord [<model>|default]]"
+    "weight <model> <credits|auto> | discord [<model>|default] | upkeep [<model>|default]]"
 )
 
 
@@ -330,10 +330,11 @@ def model_ref(ctx: CommandContext, text: str) -> str:
 @registry.command(
     "models",
     "[list | refresh | enable <model|provider|all> | disable <model|provider|all> | weight <model> <credits|auto> | "
-    "discord [<model>|default]]",
+    "discord [<model>|default] | upkeep [<model>|default]]",
     "The models of every provider: which ones users may choose (they only see those), what a token of each costs "
-    "in credits (from its size, or set by hand), and the model Discord answers with",
-    lambda ctx: ["list", "refresh", "enable", "disable", "weight", "discord"],
+    "in credits (from its size, or set by hand), the model Discord answers with, and the one of the side jobs "
+    "(summaries, titles, whether to join in on Discord: a small cheap model is enough)",
+    lambda ctx: ["list", "refresh", "enable", "disable", "weight", "discord", "upkeep"],
 )
 async def models_command(ctx: CommandContext, args: str) -> str:
     catalog = ctx.models
@@ -355,7 +356,8 @@ async def models_command(ctx: CommandContext, args: str) -> str:
                 for info in found
             ]
             head = [
-                f"Server default: {ctx.providers.default_ref}. Discord: {catalog.discord_model() or 'the server default'}.",
+                f"Server default: {ctx.providers.default_ref}. Discord: {catalog.discord_model() or 'the server default'}."
+                f" Side jobs: {catalog.upkeep_model() or 'the server default'}.",
                 "A * is a model users may choose; the weight is the credits a token costs.",
             ]
             head += [f"! {provider}: {why}" for provider, why in catalog.problems.items()]
@@ -386,6 +388,11 @@ async def models_command(ctx: CommandContext, args: str) -> str:
             if len(words) == 2:
                 catalog.set_discord_model(None if words[1].lower() in ("default", "off", "none") else model_ref(ctx, words[1]))
             return f"Discord answers with {catalog.discord_model() or 'the server default (' + ctx.providers.default_ref + ')'}."
+        if verb == "upkeep" and len(words) <= 2:
+            if len(words) == 2:
+                catalog.set_upkeep_model(None if words[1].lower() in ("default", "off", "none") else model_ref(ctx, words[1]))
+            current = catalog.upkeep_model() or f"the server default ({ctx.providers.default_ref})"
+            return f"Summaries, titles and the Discord join-in check run on {current}."
     except ProviderError as error:
         raise CommandError(str(error)) from None
     raise CommandError(MODELS_USAGE)
@@ -784,9 +791,10 @@ async def limit_command(ctx: CommandContext, args: str) -> str:
 
 @registry.command(
     "vault",
-    "[status|sync|health|reindex [full]|owners]",
-    "The second brain (Obsidian vault): its state, sync with git, check-up, semantic index, who may use it",
-    lambda ctx: ["status", "sync", "health", "reindex", "owners"],
+    "[status|sync|health|reindex [full]|index [folder]|owners]",
+    "The second brain (Obsidian vault): its state, sync with git, check-up, semantic index, the automatic list of "
+    "an index note (Home without a folder), who may use it",
+    lambda ctx: ["status", "sync", "health", "reindex", "index", "owners"],
 )
 async def vault_command(ctx: CommandContext, args: str) -> str:
     vault = ctx.agent.vault
@@ -803,6 +811,8 @@ async def vault_command(ctx: CommandContext, args: str) -> str:
             return await asyncio.to_thread(vault.health, 30)
         if word == "reindex":
             return await asyncio.to_thread(vault.reindex, rest.strip().lower() == "full", 3600.0)
+        if word == "index":
+            return await asyncio.to_thread(vault.update_index, rest.strip())
         if word == "owners":
             owners = sorted(ctx.settings.vault_owners)
             if owners:
@@ -810,4 +820,4 @@ async def vault_command(ctx: CommandContext, args: str) -> str:
             return f"CLARA_VAULT_OWNERS is empty: the owner may use the vault: {ctx.settings.owner}"
     except VaultError as error:
         raise CommandError(str(error)) from None
-    raise CommandError("Usage: /vault [status|sync|health|reindex [full]|owners]")
+    raise CommandError("Usage: /vault [status|sync|health|reindex [full]|index [folder]|owners]")

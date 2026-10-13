@@ -16,6 +16,7 @@ from clara.integrations.connectors.base import ConnectorError, Target
 from clara.integrations.connectors.serverfs import ServerFolders, relative
 from clara.integrations.vault import Vault, VaultError
 from clara.server import create_app
+from clara.tools import INTEGRATION_TOOLS
 
 AUTH = {"Authorization": "Bearer secret-cli"}
 ME = {"surface": "web", "user_id": "erwan"}
@@ -160,7 +161,9 @@ def backend():
 
 @pytest.fixture
 def app(settings, backend):
-    return create_app(settings, fake_providers(settings, backend))
+    app = create_app(settings, fake_providers(settings, backend))
+    app.state.agent.is_owner = lambda person_id: True  # the integrations here, not who may use them on the web
+    return app
 
 
 @pytest.fixture
@@ -506,3 +509,15 @@ def test_erasing_a_person_erases_what_they_connected_and_what_was_logged(app, fo
     memory.delete_person(person.id)
     assert store.account(account.id) is None and store.resource(folder["id"]) is None and store.approval(approval.id) is None
     assert store.log_entries() == [] and store.jobs_for(person.id, statuses=("queued", "sent")) == []
+
+
+def test_on_the_web_the_integrations_are_the_owners_alone(http, app, backend, folder):
+    app.state.agent.is_owner = lambda person_id: False  # erwan is not the owner here
+    backend.rounds.append(say("ok"))
+    chat(http)
+    offered = {schema["function"]["name"] for schema in backend.calls[-1][1] or []}
+    assert not offered & INTEGRATION_TOOLS and "Server folders: docs" not in backend.calls[-1][0][0]["content"]
+    app.state.agent.is_owner = lambda person_id: True
+    backend.rounds.append(say("ok"))
+    chat(http)
+    assert "Server folders: docs" in backend.calls[-1][0][0]["content"]

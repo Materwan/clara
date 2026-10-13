@@ -9,7 +9,7 @@ import { ago, avatar, clear, confirmDialog, dateTime, h, icon, pageHead, toast, 
 
 const PERIODS = [[0, "All time"], [1, "24 hours"], [7, "7 days"], [30, "30 days"], [90, "90 days"]];
 const GROUPS = [["", "Every surface"], ["discord", "Discord only"], ["other", "Everything but Discord"]];
-const KINDS = [["", "Every kind"], ["message", "Messages"], ["scheduled", "Scheduled by Clara"], ["compaction", "Compactions"], ["title", "Titles"]];
+const KINDS = [["", "Every kind"], ["message", "Messages"], ["scheduled", "Scheduled by Clara"], ["compaction", "Compactions"], ["title", "Titles"], ["chime", "Join-in checks"]];
 const KIND_LABEL = Object.fromEntries(KINDS.filter(([id]) => id));
 
 const fail = (error) => toast(error.detail || String(error), true);

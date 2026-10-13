@@ -61,7 +61,7 @@ Both consoles run the same commands (the `/` is optional):
 | --- | --- |
 | `/provider [local\|cloud\|gemini\|deepseek\|mistral]` | show the providers, or switch where the model runs |
 | `/model [name]` | list the active provider's models, or change its model (the server's own, see *Models*) |
-| `/models [list\|refresh\|enable\|disable\|weight\|discord …]` | the models users may choose, what a token of each costs, and Discord's model (see *Models*) |
+| `/models [list\|refresh\|enable\|disable\|weight\|discord\|upkeep …]` | the models users may choose, what a token of each costs, Discord's model and the side jobs' model (see *Models*) |
 | `/status` | provider, model, uptime, running turns, tokens, memory size |
 | `/people` | everybody Clara knows, with accounts and fact counts |
 | `/facts <person> [add <text>\|del <id>]` | read or edit what Clara knows (person = id, `surface:user` or name) |
@@ -71,7 +71,7 @@ Both consoles run the same commands (the `/` is optional):
 | `/relation [<person> [<0-100>\|+n\|-n\|reset]]` | Clara's relationship with each person (see *Relationship*) |
 | `/chime [default on\|off \| <space> on\|off\|default]` | where Clara may answer Discord messages that are not for her (see *Discord*) |
 | `/discord [status\|start\|stop\|restart]` | the Discord bot built into the server (see *Discord*) |
-| `/vault [status\|sync\|health\|reindex [full]\|owners]` | the second brain (Obsidian vault): state, git sync, check-up, semantic index, who may use it (see *The second brain*) |
+| `/vault [status\|sync\|health\|reindex [full]\|index [folder]\|owners]` | the second brain (Obsidian vault): state, git sync, check-up, semantic index, the list of an index note, who may use it (see *The second brain*) |
 | `/stop [now]` | stop the server: tell every client, refuse new questions, wait for running replies and agents, exit (`now`: do not wait); works from `clara-admin` too |
 | `/restart [now]` | pull, update, stop the careful way and start again (see *Restarting the server*); works from `clara-admin` too |
 | `/help [command]`, `/quit` | `/quit` stops the server like `/stop` from the embedded console, and only closes a remote one |
@@ -286,8 +286,26 @@ Token costs are mostly the prompt, sent again at every model round, so the serve
 system prompt puts what does not change first (so a provider's prompt cache keeps working when a fact is added or
 the relationship moves), a tool output the model has already read is cut to its first 2,000 characters in the
 prompt of the running answer, a surface is not sent the schemas of the tools it never needs
-(`CLARA_HIDDEN_TOOLS`), and an answer stops after `CLARA_MAX_TOOL_ROUNDS` (20) rounds. The usage log keeps
+(`CLARA_HIDDEN_TOOLS`), and an answer stops after `CLARA_MAX_TOOL_ROUNDS` (10) rounds. The usage log keeps
 `cached_tokens` (what the provider read from its cache, when it says so) next to the prompt tokens.
+
+The rest is sized in tokens, not only in shares of the window, so that a model with a huge window (Gemini, DeepSeek:
+1M) does not make every question cost hundreds of thousands of tokens:
+
+- A project's files go whole in the prompt only under `CLARA_PROJECT_INLINE_TOKENS` (20 000), whatever the window;
+  the list of a bigger one takes at most 4 000 tokens.
+- The tool outputs of earlier turns are replayed within 15% of the window **and** 8 000 tokens.
+- A document written in a message (the web site writes the documents people attach there) is replayed whole for
+  three turns: the one it came in and the next two. After that the prompt only names it, and Clara reads it again
+  with `read_conversation_file` when she needs it, in parts (`start_line`). The history keeps it whole.
+- One read of a file (`read_project_file`, `read_conversation_file`) gives up to 20% of the window, between 2 000
+  and 40 000 characters: fewer rounds for a long file, without filling a small window.
+- Tools are offered only to whoever can use them. On the web site, the integration tools (`github_*`, `res_*`) and
+  the connected resources in the prompt are the owner's alone. The `music_*` tools need a player of one's own
+  (Music page). The second brain's 20 tools (about 4 000 tokens) come with `open_second_brain`, see *The second
+  brain*. A tool that was not offered is not run even if the model calls it.
+- The side jobs (summaries, titles, the Discord join-in check) run on the model set with `/models upkeep`, else on
+  the server's default, never on the conversation's own (possibly much bigger) model.
 
 A prompt is never left to be truncated silently. Before each model round the server estimates its size
 (messages, tool calls and schemas, whatever the model reports): above 95% of the window it summarises the
@@ -411,7 +429,10 @@ In a group, every message reaches the model prefixed with its author's name. The
 `observe` unless **chime in** is allowed in that space: the owner switches it per space (`/chime`, or the
 web site's *Discord* page), with a default for the spaces nobody set (off). The client tells the server which
 spaces it is in (`PUT /v1/spaces`, when it starts, and when it joins or leaves one). Mind that with chime in, every
-message of a signed-in member costs a model call.
+message of a signed-in member costs a model call. To keep it small, a `maybe` message first goes to the side jobs'
+model (`/models upkeep`) with the last messages of the conversation, which only says yes or no: a no stores the
+message as context (`observed` and `passed: true`, no answer), a yes (or a failure) goes on to the whole prompt, where
+Clara may still pass. Those checks are logged as `chime` in the usage log; `CLARA_CHIME_CHECK=false` turns them off.
 
 **A personality per server.** The owner gives a space a list of short instructions (`instructions`: `{text,
 enabled}`, at most 30 of 500 characters; the web site's *Discord* page edits them). While at least one is enabled,
@@ -678,10 +699,11 @@ desktop app both manage them).
   (default 5 000) files per project; what would go beyond is left out.
 - **How Clara sees them**: the project's name, description and instructions are in the system prompt of its
   conversations. When all its files fit in `CLARA_PROJECT_INLINE_PERCENT` (default 40) percent of the context window
-  of the provider in use, they are put there whole, in the same order every time (so a model's cache is reused);
-  otherwise the prompt lists them and Clara gets three tools: `list_project_files`, `read_project_file` (with line
-  numbers, 400 lines at a time) and `search_project` (text or a regular expression, case ignored). The same project
-  can be read whole with Gemini's window and searched with a local model's.
+  of the provider in use, and in `CLARA_PROJECT_INLINE_TOKENS` (default 20 000; 0: no limit) whatever the window,
+  they are put there whole, in the same order every time (so a model's cache is reused); otherwise the prompt lists
+  them and Clara gets three tools: `list_project_files`, `read_project_file` (with line numbers, up to 1 000 lines
+  and 20% of the window at a time) and `search_project` (text or a regular expression, case ignored). A small
+  project can be read whole with Gemini's window and searched with a local model's.
 - **Conversations**: a conversation is put in a project by its first message (`project` in `POST /v1/chat`), and
   can be moved to another one or out of it (`PATCH /v1/conversations/{id}` with `project`, null for none); from its
   next message on, it uses the files of its new project. `GET /v1/conversations?project=<id>` lists those of a
@@ -797,7 +819,9 @@ provider that has its key works at the same time. A model is named `provider:mod
   the owner took away) gets the server's model.
 - **Discord has one model for everybody**, set by the owner (*Admin, Models*, or `/models discord <model>`);
   it need not be one of those users may choose. `/provider` and `/model` stay the default of everything else
-  (users who chose nothing, summaries and titles).
+  (users who chose nothing).
+- **The side jobs have their model** (`/models upkeep <model>`, default: the server's own): summaries, titles and
+  the Discord join-in check. A small, cheap model is enough for them, whatever big model a conversation uses.
 - **A token costs the weight of the model**, in credits (see *Usage limits*). The weight is 1 for a model of
   `CLARA_WEIGHT_REFERENCE_B` (default 8) billion parameters, proportional to the size above and below it (120B: 15,
   1B: 0.125; never below 0.01). The size is what the provider says (Ollama lists it), else what the name says
@@ -814,6 +838,7 @@ provider that has its key works at the same time. A model is named `provider:mod
 /models disable all
 /models weight cloud:gpt-oss:120b 20     credits per token by hand (auto: from the size)
 /models discord cloud:gpt-oss:120b       the model of Discord (default: the server's own)
+/models upkeep gemini:gemini-flash-lite-latest   the model of summaries, titles and the join-in check
 ```
 
 | | |
@@ -926,7 +951,7 @@ CLARA_VAULT_OWNERS=erwan                          # empty: the owner
   she pulls (rebase, autostash; at most every `CLARA_VAULT_PULL_SECONDS`), and a few seconds after the last change she
   pushes, so the Obsidian Git plugin on your computers sees it. She never force-pushes or discards: if a pull or push
   cannot be done cleanly it is aborted, her work stays committed locally, and the problem is reported in the next tool
-  answers, in `vault_sync` and in `/vault`. Pushing needs credentials on the server: an SSH key, a credential helper, or
+  answers and in `/vault`. Pushing needs credentials on the server: an SSH key, a credential helper, or
   `CLARA_VAULT_GIT_TOKEN` for an https remote. The server pushes what is still waiting when it stops.
 * **Safety.** Paths are checked (no `..`, no hidden folder, symbolic links are not followed); Clara only writes `.md`
   notes, never in `.obsidian/` or `_templates/`; names are unique in the vault; a deleted note goes to `.trash/` and
@@ -936,18 +961,23 @@ CLARA_VAULT_OWNERS=erwan                          # empty: the owner
   and is brought up to date when somebody searches (25 s at most per search: a first search over a big vault is partial;
   `/vault reindex` does all of it). When the model is not reachable, she falls back to keyword search and says so.
 
-Her tools (`vaulttools.py`, the logic is in `vault/`):
+Her tools (`vaulttools.py`, the logic is in `vault/`). They weigh about 4 000 tokens in every model round, and most
+conversations never touch the vault, so a conversation starts with a short note in the prompt and one tool,
+`open_second_brain`: Clara calls it when the vault is concerned, and from then on (the next round already, and every
+later turn of that conversation) she has the tools below and the whole description of the vault.
 
 | Group | Tools |
 | --- | --- |
-| Look around | `vault_overview`, `vault_list`, `vault_read`, `vault_templates` |
-| Find | `vault_search` (keywords, ranked, accents ignored), `vault_semantic_search`, `vault_query` (type, status, tags, properties and dates, like Dataview), `vault_tags`, `vault_properties`, `vault_tasks` |
-| Graph | `vault_links` (links out, broken, backlinks, unlinked mentions), `vault_related`, `vault_health` (broken links, orphans, untyped, misplaced, stale, duplicate names) |
+| Look around | `vault_info` (`overview`, `tags`, `properties` or `templates`), `vault_list`, `vault_read` |
+| Find | `vault_search` (keywords, ranked, accents ignored; `meaning=true`: semantic), `vault_query` (type, status, tags, properties and dates, like Dataview), `vault_tasks` |
+| Graph | `vault_links` (links out, broken, backlinks, unlinked mentions; `related=true`: the notes close to it) |
 | Write | `vault_capture` (inbox), `vault_create_note` (by type: folder, front matter, template), `vault_edit_note`, `vault_append_note` (also under a heading), `vault_rewrite_note`, `vault_set_properties` (properties and tags), `vault_set_task` |
-| Organise | `vault_move_note` (renames and moves, **updates every link**), `vault_delete_note` (to the trash), `vault_daily_append` / `vault_daily_read`, `vault_update_index` (the automatic list of an index / the Home note) |
-| History and sync | `vault_history`, `vault_restore_note`, `vault_sync`, `vault_reindex` |
+| Organise | `vault_move_note` (renames and moves, **updates every link**), `vault_delete_note` (to the trash), `vault_daily_append` / `vault_daily_read` |
+| History | `vault_history`, `vault_restore_note` |
 
-Operator console: `/vault [status|sync|health|reindex [full]|owners]`.
+The upkeep is the operator's, in the console: `/vault [status|sync|health|reindex [full]|index [folder]|owners]`
+(`health`: broken links, orphans, untyped, misplaced, stale, duplicate names; `index`: the automatic list of a
+folder's index note, or of Home).
 
 ## QCM
 

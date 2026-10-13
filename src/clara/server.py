@@ -147,7 +147,8 @@ def create_app(
     # the music_* tools and the Music page need Music Assistant's address; each person's player and token are theirs
     music = MusicAssistant(settings.music_assistant_url) if settings.music_assistant_url else None
     projects = Projects(
-        memory, settings.project_max_bytes, settings.project_max_files, settings.project_inline_percent
+        memory, settings.project_max_bytes, settings.project_max_files, settings.project_inline_percent,
+        settings.project_inline_tokens,
     )
     markdown = MarkdownFiles(memory)
     conversation_files = ConversationFiles(memory)  # what people sent in each conversation
@@ -194,6 +195,9 @@ def create_app(
         vault=vault,
         vault_allowed=owner_check(settings, users) if vault is not None else None,
         vault_in_groups=settings.vault_in_groups,
+        is_owner=lambda person_id: (owner := users.owner_user()) is not None and owner.person_id == person_id,
+        music_ready=(lambda person_id: music_accounts.saved(person_id) is not None) if music is not None else None,
+        chime_check=settings.chime_check,
     )
 
     async def integration_followup(approval, project_id, message):

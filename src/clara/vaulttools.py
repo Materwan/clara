@@ -1,7 +1,9 @@
 """The vault_* tools: how Clara reads and writes the second brain (see vault/vault.py).
 
 They are offered only to the people allowed to use the vault (settings `CLARA_VAULT_OWNERS`), and not in group
-conversations, where what a tool returns would be shown to everybody present. Git and embeddings can take seconds,
+conversations, where what a tool returns would be shown to everybody present. A conversation gets them once it needs
+them: until then it has only `open_second_brain` (and a short note in the prompt), which opens them for good there.
+Upkeep (sync, the semantic index, the check-up) is the console's `/vault`, not the model's. Git and embeddings can take seconds,
 so every tool runs in a thread and does not hold up the server.
 """
 
@@ -65,8 +67,18 @@ async def _in_thread(function, *args, **kwargs) -> str:
 # --- reading ----------------------------------------------------------------------------------------------
 
 
-async def _overview(context: ToolContext, conventions: Any = False) -> str:
-    return await _in_thread(_vault(context).overview, _flag(conventions))
+async def _info(context: ToolContext, what: str = "overview", name: str = "", conventions: Any = False, limit: Any = None) -> str:
+    vault = _vault(context)
+    what = str(what or "overview").strip().lower()
+    if what == "overview":
+        return await _in_thread(vault.overview, _flag(conventions))
+    if what == "tags":
+        return await _in_thread(vault.tags, str(name or ""), _count(limit, 60))
+    if what == "properties":
+        return await _in_thread(vault.properties, str(name or ""))
+    if what == "templates":
+        return await _in_thread(vault.templates)
+    raise ValueError("what is overview, tags, properties or templates.")
 
 
 async def _list(
@@ -84,16 +96,12 @@ async def _read(context: ToolContext, note: str, start_line: Any = 1) -> str:
 
 
 async def _search(
-    context: ToolContext, query: str, folder: str = "", type: str = "", status: str = "", tag: str = "",
-    limit: Any = None,
+    context: ToolContext, query: str, meaning: Any = False, folder: str = "", type: str = "", status: str = "",
+    tag: str = "", limit: Any = None,
 ) -> str:
+    if _flag(meaning):
+        return await _in_thread(_vault(context).semantic_search, query, folder, type, tag, _count(limit, 8))
     return await _in_thread(_vault(context).search, query, folder, type, status, tag, _count(limit, 10))
-
-
-async def _semantic(
-    context: ToolContext, query: str, folder: str = "", type: str = "", tag: str = "", limit: Any = None
-) -> str:
-    return await _in_thread(_vault(context).semantic_search, query, folder, type, tag, _count(limit, 8))
 
 
 async def _query(
@@ -107,24 +115,10 @@ async def _query(
     )
 
 
-async def _tags(context: ToolContext, tag: str = "", limit: Any = None) -> str:
-    return await _in_thread(_vault(context).tags, tag, _count(limit, 60))
-
-
-async def _properties(context: ToolContext, key: str = "") -> str:
-    return await _in_thread(_vault(context).properties, key)
-
-
-async def _links(context: ToolContext, note: str, unlinked: Any = False) -> str:
+async def _links(context: ToolContext, note: str, unlinked: Any = False, related: Any = False, limit: Any = None) -> str:
+    if _flag(related):
+        return await _in_thread(_vault(context).related, note, _count(limit, 10))
     return await _in_thread(_vault(context).links, note, _flag(unlinked))
-
-
-async def _related(context: ToolContext, note: str, limit: Any = None) -> str:
-    return await _in_thread(_vault(context).related, note, _count(limit, 10))
-
-
-async def _health(context: ToolContext, limit: Any = None) -> str:
-    return await _in_thread(_vault(context).health, _count(limit, 15))
 
 
 async def _tasks(
@@ -132,10 +126,6 @@ async def _tasks(
     text: str = "", limit: Any = None,
 ) -> str:
     return await _in_thread(_vault(context).tasks, status, folder, tag, due_before, text, _count(limit, 50))
-
-
-async def _templates(context: ToolContext) -> str:
-    return await _in_thread(_vault(context).templates)
 
 
 async def _history(context: ToolContext, note: str, limit: Any = None) -> str:
@@ -209,30 +199,36 @@ async def _set_task(context: ToolContext, note: str, task: Any, done: Any = True
     )
 
 
-async def _update_index(context: ToolContext, folder: str = "") -> str:
-    return await _in_thread(_vault(context).update_index, folder, context.timezone)
-
-
-async def _sync(context: ToolContext) -> str:
-    return await _in_thread(_vault(context).sync)
-
-
-async def _reindex(context: ToolContext, full: Any = False) -> str:
-    return await _in_thread(_vault(context).reindex, _flag(full), 120.0)
+def _open(context: ToolContext) -> str:
+    context.memory.open_vault(context.conversation)
+    return "The second brain is open: its vault_* tools are yours from now on, in this conversation."
 
 
 def vault_tools() -> list[Tool]:
-    """Offered, with a vault, to the people who may use it."""
+    """Offered, with a vault, to the people who may use it: open_second_brain, then the vault_* tools once the
+    conversation opened it (agent.py)."""
+    return [open_vault_tool()] + _note_tools()
+
+
+def _note_tools() -> list[Tool]:
     return [
         Tool(
-            name="vault_overview",
+            name="vault_info",
             description=(
-                "Your map of the second brain: number of notes per folder and type, inbox to sort, active projects, "
-                "top tags, recent changes, sync state. Call it first when you do not know the vault yet, or to orient "
-                "yourself before filing something."
+                "What the vault holds. overview: notes per folder and type, inbox to sort, active projects, top tags, "
+                "recent changes, sync state (start here when you do not know the vault). tags: the tags in use, or "
+                "the notes of tag `name`. properties: the front matter properties in use, or the values of property "
+                "`name` (look before inventing one). templates: each kind of note, its folder, statuses and sections "
+                "(read before creating a kind you have not made yet)."
             ),
-            function=_overview,
-            parameters={"conventions": {"type": "boolean", "description": "true: also give the written conventions."}},
+            function=_info,
+            parameters={
+                "what": {"type": "string", "enum": ["overview", "tags", "properties", "templates"]},
+                "name": {"type": "string", "description": "tags: a tag without #; properties: a property name."},
+                "conventions": {"type": "boolean", "description": "overview: also the written conventions."},
+                "limit": LIST_LIMIT,
+            },
+            required=("what",),
         ),
         Tool(
             name="vault_list",
@@ -251,8 +247,8 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_read",
             description=(
-                "Read a note, with line numbers (about 20,000 characters at once; read on with start_line). The "
-                "header gives its type, status, tags and how many notes link to it. Read a note before changing it."
+                "Read a note with line numbers (about 20,000 characters at once; read on with start_line), and its "
+                "type, status, tags and backlink count. Read a note before changing it."
             ),
             function=_read,
             parameters={"note": NOTE, "start_line": {"type": "integer", "description": "First line (default 1)."}},
@@ -261,33 +257,17 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_search",
             description=(
-                "Keyword search over all notes (accents and case ignored, titles and tags weigh most): ranked notes "
-                "with the matching lines. Search before creating a note, to extend an existing one instead of "
-                "duplicating it, and to find what the person wrote about a subject."
+                "Search the notes by words (accents and case ignored; titles and tags weigh most): ranked notes with "
+                "the matching lines. meaning=true searches by meaning instead, for a vague question or when words "
+                "find nothing. Search before creating a note, to extend one rather than duplicate it."
             ),
             function=_search,
             parameters={
-                "query": {"type": "string", "description": "Words to look for."},
+                "query": {"type": "string", "description": "Words, or with meaning=true a sentence or question."},
+                "meaning": {"type": "boolean"},
                 "folder": {"type": "string"},
                 "type": {"type": "string"},
-                "status": {"type": "string"},
-                "tag": {"type": "string"},
-                "limit": LIST_LIMIT,
-            },
-            required=("query",),
-        ),
-        Tool(
-            name="vault_semantic_search",
-            description=(
-                "Search by meaning rather than words ('what did I think about learning fast' finds notes that never "
-                "use those words). Use it when vault_search finds nothing, or for a vague question. It falls back to "
-                "keywords when the embedding model is not available."
-            ),
-            function=_semantic,
-            parameters={
-                "query": {"type": "string", "description": "A sentence or question."},
-                "folder": {"type": "string"},
-                "type": {"type": "string"},
+                "status": {"type": "string", "description": "Words search only."},
                 "tag": {"type": "string"},
                 "limit": LIST_LIMIT,
             },
@@ -296,10 +276,8 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_query",
             description=(
-                "Filter notes like a database (Dataview): by type, status, tags (all of them, or any), folder, "
-                "properties and dates. `where` maps a property to a value: 'active', '*' (is set), '!done' (not), "
-                "'>=2026-01-01', '<5', '~word' (contains); a list property matches if it holds the value. "
-                "Example: all open ideas tagged #ai updated since September."
+                "Filter notes like a database (Dataview) by type, status, tags, folder, properties and dates. `where` "
+                "maps a property to 'value', '*' (set), '!value' (not), '>=2026-01-01', '<5' or '~word' (contains)."
             ),
             function=_query,
             parameters={
@@ -320,57 +298,19 @@ def vault_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="vault_tags",
-            description="List the tags in use with their number of notes, or the notes that carry one tag.",
-            function=_tags,
-            parameters={"tag": {"type": "string", "description": "Omit to list the tags."}, "limit": LIST_LIMIT},
-        ),
-        Tool(
-            name="vault_properties",
-            description=(
-                "The front matter properties in use (with examples), or the values of one. Look at it before "
-                "inventing a property, so that names stay consistent."
-            ),
-            function=_properties,
-            parameters={"key": {"type": "string", "description": "A property name, to see its values."}},
-        ),
-        Tool(
             name="vault_links",
             description=(
-                "The links of a note: the notes it points to, the broken ones, and the notes that link to it "
-                "(backlinks, with the line). unlinked=true also finds notes that mention its name without linking: "
-                "candidates for a link."
+                "A note's links: those it points to, broken ones, and backlinks (with the line); unlinked=true adds "
+                "notes that mention its name without a link. related=true gives instead the notes close to it (links, "
+                "tags, words, meaning) with the reason: what a new note should link to."
             ),
             function=_links,
-            parameters={"note": NOTE, "unlinked": {"type": "boolean"}},
+            parameters={"note": NOTE, "unlinked": {"type": "boolean"}, "related": {"type": "boolean"}, "limit": LIST_LIMIT},
             required=("note",),
-        ),
-        Tool(
-            name="vault_related",
-            description=(
-                "Notes close to a given note (linked, sharing tags or links, similar words or meaning), with the "
-                "reason. Use it to find what a new note should link to."
-            ),
-            function=_related,
-            parameters={"note": NOTE, "limit": LIST_LIMIT},
-            required=("note",),
-        ),
-        Tool(
-            name="vault_health",
-            description=(
-                "A check-up of the vault: broken links, notes without type or in the wrong folder, isolated notes, "
-                "empty notes, old inbox items, stale projects, duplicate names. Use it for a review or when asked to "
-                "tidy; fix what is clearly yours to fix and ask about the rest."
-            ),
-            function=_health,
-            parameters={"limit": {"type": "integer", "description": "Items per problem (default 15)."}},
         ),
         Tool(
             name="vault_tasks",
-            description=(
-                "The checkbox tasks written in the notes ('- [ ] text 📅 2026-10-31'), by due date: open, done or "
-                "all, optionally of a folder or tag, due before a date, or containing words."
-            ),
+            description="The checkbox tasks of the notes ('- [ ] text 📅 2026-10-31') by due date, optionally filtered.",
             function=_tasks,
             parameters={
                 "status": {"type": "string", "enum": ["open", "done", "all"]},
@@ -380,15 +320,6 @@ def vault_tools() -> list[Tool]:
                 "text": {"type": "string"},
                 "limit": LIST_LIMIT,
             },
-        ),
-        Tool(
-            name="vault_templates",
-            description=(
-                "The kinds of note, where each lives, its statuses and its template (the sections to write). Read "
-                "it before creating a type of note you have not made yet."
-            ),
-            function=_templates,
-            parameters={},
         ),
         Tool(
             name="vault_history",
@@ -406,25 +337,23 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_create_note",
             description=(
-                "Create a note of a type, in the right folder with its front matter and template. Types: "
-                "idea (draft thoughts), project and area (a folder + hub note), knowledge (atomic evergreen note), "
-                "source (book, article, video: needs properties.source_type), person, note (a working note inside a "
-                "project or area: needs `parent`), map. The title is the file name and must be unique. `content` is "
-                "the markdown body: follow the template's sections (vault_templates), write in the person's "
-                "language, and link related notes with [[wikilinks]]. Search first: extend an existing note rather "
-                "than duplicate. Not sure where it belongs? Use vault_capture."
+                "Create a note of a type in its folder, with front matter and template. idea: draft thoughts; "
+                "project, area: a folder and a hub note; knowledge: an atomic evergreen note; source: a book, article "
+                "or video (properties.source_type); person; note: a working note in a project or area (`parent`); "
+                "map. The title is the unique file name. `content` follows the template's sections, in the person's "
+                "language, with [[wikilinks]] to related notes. Search first; unsure where it goes: vault_capture."
             ),
             function=_create,
             parameters={
-                "title": {"type": "string", "description": "The note's title (becomes its file name)."},
+                "title": {"type": "string", "description": "Becomes the file name."},
                 "type": {"type": "string", "enum": ["idea", "project", "area", "knowledge", "source", "person", "note", "map", "inbox"]},
                 "content": {"type": "string", "description": "The markdown body, without front matter."},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Without #; use a/b for sub tags."},
-                "status": {"type": "string", "description": "Default depends on the type (idea: seed, project: active...)."},
-                "summary": {"type": "string", "description": "One line that says what the note is (shown in lists)."},
-                "folder": {"type": "string", "description": "Optional sub folder of the type's folder (5-knowledge/programming)."},
-                "parent": {"type": "string", "description": "type note only: the project or area it belongs to."},
-                "properties": {"type": "object", "description": "More front matter, e.g. {\"source_type\": \"book\", \"author_name\": \"...\"}."},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Without #; a/b for sub tags."},
+                "status": {"type": "string", "description": "Default: the type's first."},
+                "summary": {"type": "string", "description": "One line shown in lists."},
+                "folder": {"type": "string", "description": "Optional sub folder of the type's folder."},
+                "parent": {"type": "string", "description": "type note: its project or area."},
+                "properties": {"type": "object", "description": "More front matter, e.g. {\"source_type\": \"book\"}."},
                 "aliases": {"type": "array", "items": {"type": "string"}, "description": "Other names for [[links]]."},
                 "overwrite": {"type": "boolean", "description": "Rarely: replace a note of the same path."},
             },
@@ -433,14 +362,13 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_capture",
             description=(
-                "Drop anything in the inbox, fast, without deciding where it goes: a thought, a link, a quote, a "
-                "to-do, something the person said they want to keep. It is sorted later. Prefer this to losing it "
-                "or to guessing a place."
+                "Drop anything in the inbox fast, without deciding where it goes (a thought, link, quote, to-do): "
+                "it is sorted later. Better than losing it or guessing a place."
             ),
             function=_capture,
             parameters={
                 "text": {"type": "string", "description": "What to keep, as the person said it."},
-                "title": {"type": "string", "description": "Optional short title (else the first line)."},
+                "title": {"type": "string", "description": "Optional (else the first line)."},
                 "source": {"type": "string", "description": "Optional: a URL or where it came from."},
                 "tags": {"type": "array", "items": {"type": "string"}},
             },
@@ -449,9 +377,8 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_edit_note",
             description=(
-                "Change a note: replace a passage by another (only that passage is sent). old_text must be in the "
-                "note exactly as written (without the line numbers vault_read shows) and appear once, unless replace_all. Empty new_text deletes the passage. "
-                "Read the note first. For adding at the end or in a section use vault_append_note."
+                "Replace a passage of a note. old_text is exactly as in the note (without vault_read's line numbers) "
+                "and appears once, unless replace_all; an empty new_text deletes it. Read the note first."
             ),
             function=_edit,
             parameters={
@@ -464,23 +391,20 @@ def vault_tools() -> list[Tool]:
         ),
         Tool(
             name="vault_append_note",
-            description=(
-                "Add text at the end of a note, or at the end of one of its sections (`heading`, created if missing). "
-                "Use it to log progress on a project, add an item to a list, extend an idea."
-            ),
+            description="Add text at the end of a note, or of its section `heading` (created if missing).",
             function=_append,
             parameters={
                 "note": NOTE,
                 "text": {"type": "string", "description": "Markdown to add."},
-                "heading": {"type": "string", "description": "Section to add it to, e.g. 'Next steps'."},
+                "heading": {"type": "string", "description": "e.g. 'Next steps'."},
             },
             required=("note", "text"),
         ),
         Tool(
             name="vault_rewrite_note",
             description=(
-                "Replace the whole text of a note (its front matter is kept; the old version stays in git). Only for "
-                "a deep restructure; otherwise vault_edit_note."
+                "Replace the whole text of a note (front matter kept, old version in git). Only for a deep "
+                "restructure; otherwise vault_edit_note."
             ),
             function=_rewrite,
             parameters={"note": NOTE, "content": {"type": "string", "description": "The new markdown body."}},
@@ -489,14 +413,13 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_set_properties",
             description=(
-                "Change a note's front matter without touching its text: set properties (status, summary, "
-                "priority, a link like \"[[Project]]\"...), remove some, add or remove tags. Statuses are checked "
-                "against the note's type. Use it to move an idea from seed to growing, close a project, tag a note."
+                "Change a note's front matter, not its text: set properties (status, summary, a link like "
+                "\"[[Project]]\"...), remove some, add or remove tags. Statuses are checked against the note's type."
             ),
             function=_set_properties,
             parameters={
                 "note": NOTE,
-                "set": {"type": "object", "description": "Properties to set, e.g. {\"status\": \"done\"}."},
+                "set": {"type": "object", "description": "e.g. {\"status\": \"done\"}."},
                 "remove": {"type": "array", "items": {"type": "string"}, "description": "Property names to remove."},
                 "add_tags": {"type": "array", "items": {"type": "string"}},
                 "remove_tags": {"type": "array", "items": {"type": "string"}},
@@ -506,9 +429,8 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_move_note",
             description=(
-                "Move and/or rename a note; every [[link]] to it in the vault is updated. `to` is a new name "
-                "('Better title'), a folder ending with / ('8-archive/'), or a full path. Use it to file an inbox "
-                "note, to archive something finished (and set its status), or to rename."
+                "Move and/or rename a note, updating every [[link]] to it. `to`: a new name, a folder ending with / "
+                "('8-archive/') or a full path. To file an inbox note, archive something finished, or rename."
             ),
             function=_move,
             parameters={"note": NOTE, "to": {"type": "string"}},
@@ -517,8 +439,8 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_delete_note",
             description=(
-                "Delete a note: it goes to the trash and stays in git history, and the answer says which notes still "
-                "link to it. Only when the person asked, or for a clear duplicate or empty capture you processed."
+                "Delete a note (to the trash, kept in git; says which notes still link to it). Only when asked, or "
+                "for a clear duplicate or an empty capture you processed."
             ),
             function=_delete,
             parameters={"note": NOTE},
@@ -526,10 +448,7 @@ def vault_tools() -> list[Tool]:
         ),
         Tool(
             name="vault_restore_note",
-            description=(
-                "Bring a note back as it was in an earlier commit (from vault_history), also a deleted one. The "
-                "current version stays in the history."
-            ),
+            description="Bring a note back as it was at a commit of vault_history, also a deleted one.",
             function=_restore,
             parameters={"note": NOTE, "commit": {"type": "string", "description": "A commit id from vault_history."}},
             required=("note", "commit"),
@@ -537,14 +456,13 @@ def vault_tools() -> list[Tool]:
         Tool(
             name="vault_daily_append",
             description=(
-                "Add to a daily note (today by default; created from the template if it does not exist) under a "
-                "section: Log (what happened, with the time), Tasks ('- [ ] ...'), Notes. Use it for the journal "
-                "side of the brain: what the person did, decided, felt, learned today."
+                "Add to a daily note (today by default, created if missing) under a section: Log (what happened), "
+                "Tasks ('- [ ] ...') or Notes. The journal: what the person did, decided, felt, learned."
             ),
             function=_daily_append,
             parameters={
-                "text": {"type": "string", "description": "Markdown to add; start list items with '- '."},
-                "section": {"type": "string", "description": "Heading to add under (default Log)."},
+                "text": {"type": "string", "description": "Markdown; list items start with '- '."},
+                "section": {"type": "string", "description": "Default Log."},
                 "date": {"type": "string", "description": "today, yesterday, tomorrow or YYYY-MM-DD."},
             },
             required=("text",),
@@ -560,36 +478,31 @@ def vault_tools() -> list[Tool]:
             },
             required=("note", "task"),
         ),
-        Tool(
-            name="vault_update_index",
-            description=(
-                "Refresh the automatic list of a folder's index note (a map of content: every note with its status "
-                "and summary), or of the Home note (folder empty). Text the person wrote in the index is kept. Do it "
-                "after filing several notes, or in a review."
-            ),
-            function=_update_index,
-            parameters={"folder": {"type": "string", "description": "e.g. 2-ideas; empty for Home."}},
-        ),
-        Tool(
-            name="vault_sync",
-            description=(
-                "Pull what the person changed in Obsidian, push your commits, and report the state of the sync (any "
-                "problem such as a conflict). Notes are synced automatically; call this when asked, or when a "
-                "warning about the sync appeared."
-            ),
-            function=_sync,
-            parameters={},
-        ),
-        Tool(
-            name="vault_reindex",
-            description=(
-                "Build or refresh the index of semantic search (embeddings). It is brought up to date by "
-                "vault_semantic_search too; use this after many notes were added, or full=true to start over."
-            ),
-            function=_reindex,
-            parameters={"full": {"type": "boolean"}},
-        ),
     ]
 
 
-VAULT_TOOLS = frozenset(tool.name for tool in vault_tools())
+OPEN_VAULT = "open_second_brain"
+
+
+def open_vault_tool() -> Tool:
+    """What a conversation is offered instead of the vault_* tools until it needs them: they weigh thousands of tokens
+    in every round, and most conversations never touch the vault."""
+    return Tool(
+        name=OPEN_VAULT,
+        description=(
+            "Load the tools of the second brain (the person's Obsidian vault) for this conversation. Call it before "
+            "anything with their notes: reading, searching, keeping or organising something there."
+        ),
+        function=_open,
+        parameters={},
+    )
+
+
+VAULT_TOOLS = frozenset(tool.name for tool in _note_tools())  # without open_second_brain
+
+CLOSED_BLOCK = (
+    "## Your second brain (the vault)\n"
+    "You share an Obsidian vault with the person: their notes, ideas, projects, sources and journal. Its tools are "
+    f"not loaded in this conversation: call {OPEN_VAULT} as soon as the vault is concerned (the person mentions it "
+    "or their notes, wants something kept, or asks about something they wrote down)."
+)

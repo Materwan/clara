@@ -123,6 +123,21 @@ async def test_streams_text_reasoning_tool_calls_and_usage():
     assert body["stream_options"] == {"include_usage": True}
 
 
+async def test_usage_repeated_on_every_chunk_is_counted_once():
+    # Gemini sends its running count on every chunk: adding them up multiplied the prompt by the number of chunks
+    usage = {"prompt_tokens": 40, "completion_tokens": 3, "prompt_tokens_details": {"cached_tokens": 30}}
+    recorder = Recorder(httpx.Response(200, content=sse(
+        {"choices": [{"delta": {"content": "a"}}], "usage": {**usage, "completion_tokens": 1}},
+        {"choices": [{"delta": {"content": "b"}}], "usage": {**usage, "completion_tokens": 2}},
+        {"choices": [{"delta": {"content": "c"}}], "usage": usage},
+    )))
+    chunks = await collect(backend(recorder).stream([{"role": "user", "content": "hi"}], None))
+    assert "".join(c.text for c in chunks) == "abc"
+    assert sum(c.prompt_tokens for c in chunks) == 40
+    assert sum(c.completion_tokens for c in chunks) == 3
+    assert sum(c.cached_tokens for c in chunks) == 30
+
+
 async def test_extra_fields_and_no_usage_request_when_the_flavor_says_so():
     recorder = Recorder(httpx.Response(200, content=sse({"choices": [{"delta": {"content": "ok"}}]})))
     flavor = OpenAIFlavor(stream_usage=False, extra_body=(("thinking", {"type": "disabled"}),))

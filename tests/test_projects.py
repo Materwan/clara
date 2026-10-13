@@ -158,6 +158,23 @@ def test_big_projects_are_listed_for_the_tools(projects, erwan):
     assert "a" * 400 not in context.text
 
 
+def test_a_big_window_never_takes_more_than_the_token_cap(memory, erwan):
+    capped = Projects(memory, max_bytes=100_000, inline_percent=40, inline_tokens=1_000)
+    project = capped.create(erwan.id, "Course")
+    capped.add(project.id, files(("notes.md", "word " * 2_000)))  # about 2,900 tokens
+    assert not capped.context(project.id, window=1_000_000).inline  # 40% of the window would take it whole
+    assert "notes.md" in capped.context(project.id, window=1_000_000).text
+    uncapped = Projects(memory, max_bytes=100_000, inline_percent=40, inline_tokens=0)
+    assert uncapped.inline(project.id, 1_000_000) and not uncapped.inline(project.id, 5_000)
+
+
+def test_a_read_gives_at_most_the_characters_it_is_allowed(projects, erwan):
+    project = projects.create(erwan.id, "Read")
+    projects.add(project.id, files(("a.md", "\n".join(f"line {n}" for n in range(60)))))
+    shown = projects.read(project.id, "a.md", max_chars=100)
+    assert shown.startswith("a.md, lines 1-") and "(read on with start_line=" in shown and len(shown) < 200
+
+
 def test_the_tools_list_read_and_search(projects, erwan):
     project = projects.create(erwan.id, "Tools")
     projects.add(project.id, files(("src/a.py", "import os\n\ndef Target():\n    return 1\n"), ("doc/b.md", "target practice\nÉté")))

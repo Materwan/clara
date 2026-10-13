@@ -345,7 +345,7 @@ CREATE TABLE IF NOT EXISTS conversation_files (  -- what people sent in a conver
     person_id    INTEGER NOT NULL REFERENCES people (id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     mime         TEXT NOT NULL,
-    kind         TEXT NOT NULL,  -- "picture" or "document"
+    kind         TEXT NOT NULL,  -- "picture", "document" or "text" (a document as the client wrote it)
     size         INTEGER NOT NULL,
     data         BLOB NOT NULL,
     created_at   TEXT NOT NULL
@@ -449,6 +449,9 @@ _ADDED_COLUMNS = {
     },
     "conversations": {
         "project_id": "INTEGER",  # the project it belongs to (projects.py), NULL: none
+    },
+    "conversation_state": {
+        "vault_open": "INTEGER NOT NULL DEFAULT 0",  # the second brain's tools are offered here (open_second_brain)
     },
     "usage_log": {
         "own_key": "INTEGER NOT NULL DEFAULT 0",  # answered with the person's own API key (userkeys.py): no credits
@@ -1927,6 +1930,22 @@ class Memory:
                 "INSERT INTO conversation_state (conversation, context_tokens) VALUES (?, ?)"
                 " ON CONFLICT (conversation) DO UPDATE SET context_tokens = excluded.context_tokens",
                 (conversation, tokens),
+            )
+
+    def vault_open(self, conversation: str) -> bool:
+        """Was the second brain opened in this conversation (its tools are offered there from then on)?"""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT vault_open FROM conversation_state WHERE conversation = ?", (conversation,)
+            ).fetchone()
+        return bool(row and row["vault_open"])
+
+    def open_vault(self, conversation: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO conversation_state (conversation, vault_open) VALUES (?, 1)"
+                " ON CONFLICT (conversation) DO UPDATE SET vault_open = 1",
+                (conversation,),
             )
 
     def set_summary(self, conversation: str, summary: str, upto_id: int, context_tokens: int) -> None:

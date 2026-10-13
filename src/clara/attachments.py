@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Sequence
+from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -69,7 +69,7 @@ def image_type(data: bytes) -> str | None:
     return None
 
 
-def _name(name: str) -> str:
+def shown_name(name: str) -> str:
     """A file's name as the message shows it: one line, short, no quotes (it sits in an attribute)."""
     return " ".join(name.split())[:MAX_NAME].replace('"', "'") or "file"
 
@@ -102,6 +102,31 @@ def picture_frames(data: bytes) -> tuple[list[tuple[str, bytes]], int]:
         return frames, count
 
 
+# A document written in a message (document_block, and the web site's documents.js write the same)
+DOCUMENT_BLOCK = re.compile(r'<document name="([^"\n]*)" type="([^"\n]*)">\n(.*?)\n</document>', re.DOTALL)
+
+
+def documents_in(text: str) -> list[tuple[str, str]]:
+    """The documents written in a message: the (name, text) of each `<document>` block."""
+    return [(match[1], match[3]) for match in DOCUMENT_BLOCK.finditer(text)]
+
+
+def without_documents(text: str, readable: Container[str]) -> str:
+    """A message whose documents named in `readable` are reduced to a note: read_conversation_file gives them
+    again. A document that cannot be read again stays whole."""
+
+    def note(match: re.Match) -> str:
+        name, kind, body = match.groups()
+        if name not in readable:
+            return match[0]
+        return (
+            f'<document name="{name}" type="{kind}">[{len(body):,} characters, not repeated here to save room: '
+            "read_conversation_file gives them again]</document>"
+        )
+
+    return DOCUMENT_BLOCK.sub(note, text)
+
+
 def document_block(file: ExtractedFile) -> str:
     """A document as the web site puts it in a message: its text in a `<document>` block (code in a fence)."""
     kind = file.kind or "text"
@@ -111,7 +136,7 @@ def document_block(file: ExtractedFile) -> str:
         longest = max((len(run) for run in re.findall(r"`+", file.text)), default=0)
         fence = "`" * max(3, longest + 1)  # longer than any run in the text: it cannot be closed early
         body = f"{fence}{file.kind}\n{file.text.rstrip()}\n{fence}"
-    return f'<document name="{_name(file.path)}" type="{kind}">\n{body}\n</document>'
+    return f'<document name="{shown_name(file.path)}" type="{kind}">\n{body}\n</document>'
 
 
 def prepare(message: str, files: Sequence[Attached]) -> Prepared:
@@ -123,7 +148,7 @@ def prepare(message: str, files: Sequence[Attached]) -> Prepared:
     labels: list[str] = []  # how the message names the pictures
     documents: list[ExtractedFile] = []
     for file in files:
-        shown = _name(file.name)
+        shown = shown_name(file.name)
         mime = image_type(file.data)
         if mime is not None:
             limit = MAX_ANIMATION_BYTES if mime in ANIMATED else MAX_PICTURE_BYTES
@@ -157,7 +182,7 @@ def prepare(message: str, files: Sequence[Attached]) -> Prepared:
     if text:
         parts.append(text)
     if documents:
-        names = ", ".join(_name(document.path) for document in documents)
+        names = ", ".join(shown_name(document.path) for document in documents)
         parts.append(f"(Attached: {names})" if text else f"Here {'is' if len(documents) == 1 else 'are'}: {names}.")
         parts.extend(blocks)
     return Prepared("\n\n".join(parts), tuple(images))

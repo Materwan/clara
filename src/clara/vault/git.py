@@ -3,7 +3,7 @@
 Clara pulls before she works (at most once per `pull_every` seconds for reads, always before a write), commits every
 change of hers as its own commit, and pushes a few seconds after the last one. Nothing here ever force-pushes, resets
 or discards: when a pull or a push cannot be done cleanly it is aborted, the problem is remembered, and the person is
-told (`vault_sync`, `/vault`).
+told (`/vault`).
 """
 
 from __future__ import annotations

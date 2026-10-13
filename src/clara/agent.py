@@ -28,8 +28,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .attachments import IMAGE_TOKENS, Attached, Image
+from .attachments import IMAGE_TOKENS, Attached, Image, documents_in, shown_name, without_documents
 from .compaction import (
+    CHARS_PER_TOKEN,
     build_transcript,
     chunk_messages,
     estimate_message_tokens,
@@ -45,7 +46,7 @@ from .markdownfiles import MarkdownFiles
 from .memory import ConversationState, Fact, Memory, Person, StoredMessage, TurnRow
 from .models import Chosen, ModelCatalog
 from .notifications import SERVER, SURFACE_RE, NotificationError, Notifier
-from .projects import Projects
+from .projects import READ_CHARS_LIMIT, Projects
 from .prompt import SystemPrompt
 from .qcm import SURFACES as QCM_SURFACES
 from .reminders import ReminderService
@@ -56,6 +57,7 @@ from .tools import (
     CONVERSATION_FILE_TOOLS,
     INTEGRATION_TOOLS,
     MARKDOWN_TOOLS,
+    MUSIC_TOOLS,
     PROJECT_TOOLS,
     QCM,
     Toolbox,
@@ -63,7 +65,7 @@ from .tools import (
     urls_in,
 )
 from .usagelog import UsageLog
-from .vaulttools import VAULT_TOOLS
+from .vaulttools import CLOSED_BLOCK, OPEN_VAULT, VAULT_TOOLS
 
 if TYPE_CHECKING:
     from .integrations.broker import Broker
@@ -71,11 +73,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 20
+MAX_TOOL_ROUNDS = 10
 MAX_FACTS_IN_PROMPT = 100
 DEFAULT_FACTS_TOKEN_BUDGET = 2_000
 RECENT_TOOL_RESULTS_KEPT = 5  # at most this many tool outputs of past turns are replayed...
-TOOL_HISTORY_SHARE = 0.15  # ...and only while they fit in this share of the window; older ones become a note
+TOOL_HISTORY_SHARE = 0.15  # ...and only while they fit in this share of the window...
+TOOL_HISTORY_MAX_TOKENS = 8_000  # ...and in this many tokens, however big the window; older ones become a note
 IN_TURN_RESULT_KEEP = 2_000  # characters kept of a tool output once the model has read it and gone on (this turn)
 OMITTED = "[output omitted to save context]"
 CUT_IN_TURN = "\n[… cut to save context: run the tool again for the rest]"
@@ -95,6 +98,19 @@ MAYBE_NOTE = (
     "[This message was not addressed to you. Answer only if you have something genuinely useful or welcome to "
     f"add, or if they clearly want you; otherwise reply exactly {PASS} and nothing else.]"
 )
+CHIME_TURNS = 8  # turns of the conversation the join-in check reads (a "maybe" message, see _worth_answering)...
+CHIME_EXCERPT = 300  # ...each message cut to this many characters
+CHIME_INSTRUCTIONS = (
+    "Clara is an AI assistant who follows a group chat. The last message was not addressed to her: should she "
+    "reply to it? Yes when someone asks something she can answer or help with, wants her opinion, talks to or about "
+    "her, or when she has something genuinely useful or welcome to add. No for talk between the others that needs "
+    "nothing from her. Answer with one word, yes or no; when unsure, yes."
+)
+DOCUMENT_TURNS = 3  # a document written in a message is given whole in its turn and the next ones, then as a note
+READ_SHARE = 0.2  # share of the window one read of a file may take (ToolContext.read_chars)
+# Surfaces where only the owner is offered the integration tools (github_*, res_*): everybody else's turns there
+# do without their schemas and the integrations part of the prompt
+OWNER_INTEGRATION_SURFACES = frozenset({"web"})
 MAX_FOCUS = 5  # people the message is about whose facts are shown
 FOCUS_FACTS = 15  # facts shown for each of them (the newest)
 TITLE_INSTRUCTIONS = (
@@ -315,8 +331,14 @@ class Agent:
         vault: Vault | None = None,
         vault_allowed: Callable[[int], bool] | None = None,
         vault_in_groups: bool = False,
+        is_owner: Callable[[int], bool] | None = None,
+        music_ready: Callable[[int], bool] | None = None,
+        chime_check: bool = False,
     ):
         self.memory = memory
+        self.is_owner = is_owner  # is this person the owner's (CLARA_OWNER)? None: everybody counts as the owner
+        self.music_ready = music_ready  # has this person set up their player (the music_* tools)? None: all have
+        self.chime_check = chime_check  # a "maybe" message is first shown to the side jobs' model (_worth_answering)
         self.vault = vault  # the second brain (vault/), for the people `vault_allowed` says yes to (None: for nobody)
         self.vault_allowed = vault_allowed
         self.vault_in_groups = vault_in_groups  # offered in group conversations too: what a tool returns is seen by all
@@ -515,8 +537,8 @@ class Agent:
 
     def _recent_tool_rows(self, stored: list[StoredMessage], window: int | None = None) -> set[int]:
         """The tool outputs replayed in full: the newest, at most RECENT_TOOL_RESULTS_KEPT of them and while
-        they fit in TOOL_HISTORY_SHARE of the window (the newest is always kept)."""
-        budget = TOOL_HISTORY_SHARE * (window or self.window)
+        they fit in TOOL_HISTORY_SHARE of the window and TOOL_HISTORY_MAX_TOKENS (the newest is always kept)."""
+        budget = min(TOOL_HISTORY_SHARE * (window or self.window), TOOL_HISTORY_MAX_TOKENS)
         kept: set[int] = set()
         used = 0
         for index in reversed([i for i, message in enumerate(stored) if message.role == "tool"]):
@@ -528,16 +550,21 @@ class Agent:
         return kept
 
     def _replay(
-        self, stored: list[StoredMessage], person: Person, group: bool = False, window: int | None = None
+        self, stored: list[StoredMessage], person: Person, group: bool = False, window: int | None = None,
+        readable: set[str] | frozenset[str] = frozenset(),
     ) -> list[dict]:
-        """Past messages as the model wants them. Old tool outputs are cut to save context. Messages of other
-        people carry their name; in a group, everybody's do."""
+        """Past messages as the model wants them. Old tool outputs are cut to save context, and so are the documents
+        of messages older than DOCUMENT_TURNS turns when they can be read again (`readable`: their names). Messages
+        of other people carry their name; in a group, everybody's do."""
         recent = self._recent_tool_rows(stored, window)
+        questions = [index for index, message in enumerate(stored) if message.role == "user"]
+        whole = set(questions[-(DOCUMENT_TURNS - 1):]) if DOCUMENT_TURNS > 1 else set()  # the last ones: whole
         messages: list[dict] = []
         for index, message in enumerate(stored):
             if message.role == "user":
                 other = (group or message.person_id != person.id) and message.author
-                content = self._user_content(message.content, message.prefix, message.author if other else "")
+                text = message.content if index in whole or not readable else without_documents(message.content, readable)
+                content = self._user_content(text, message.prefix, message.author if other else "")
                 messages.append({"role": "user", "content": content})
             elif message.role == "assistant":
                 entry: dict = {"role": "assistant", "content": message.content}
@@ -587,11 +614,12 @@ class Agent:
                 integrations=self._integrations_context(request, person),
                 personality=self.memory.space_personality(request.space),
                 files=self._files_context(request.conversation_id),
-                vault=self.vault.prompt_block() if self._vault_offered(request, person) else "",
+                vault=self._vault_block(request, person),
             )
             messages.append({"role": "system", "content": system})
             stored = self.memory.history(request.conversation_id, self.history_turns, state.upto_id)
-            messages.extend(self._replay(stored, person, request.group, window))
+            readable = self._readable_documents(request.conversation_id)
+            messages.extend(self._replay(stored, person, request.group, window, readable))
         content = self._user_content(request.message, request.prefix, person.name if request.group else "")
         if not request.ephemeral:
             # Only here, never stored: replayed history and system prompt stay identical between turns
@@ -608,6 +636,18 @@ class Agent:
             return None
         return self.projects.context(request.project, window or self.window)
 
+    def _readable_documents(self, conversation: str) -> set[str]:
+        """The names, as messages show them, of the documents read_conversation_file can give again here."""
+        if self.conversation_files is None:
+            return set()
+        return {shown_name(item.name) for item in self.conversation_files.of(conversation) if item.kind != "picture"}
+
+    def _vault_block(self, request: ChatRequest, person: Person) -> str:
+        """What the prompt says of the second brain: all of it once the conversation opened it, else a short note."""
+        if self.vault is None or not self._vault_offered(request, person):
+            return ""
+        return self.vault.prompt_block() if self.memory.vault_open(request.conversation_id) else CLOSED_BLOCK
+
     def _vault_offered(self, request: ChatRequest, person: Person) -> bool:
         """Does this person have the second brain in this conversation? Only the people the operator named, and
         not where others read the answers (a group space), unless the operator said so."""
@@ -617,15 +657,21 @@ class Agent:
             return False
         return self.vault_allowed is not None and self.vault_allowed(person.id)
 
+    def _integrations_allowed(self, request: ChatRequest, person: Person) -> bool:
+        """May this person's turn use the integrations here? On OWNER_INTEGRATION_SURFACES, only the owner's."""
+        return request.surface not in OWNER_INTEGRATION_SURFACES or self.is_owner is None or self.is_owner(person.id)
+
     def _integrations_context(self, request: ChatRequest, person: Person) -> str:
         if self.integrations is None or request.ephemeral or request.mode != "answer":
+            return ""
+        if not self._integrations_allowed(request, person):
             return ""
         return self.integrations.context(request.conversation_id, request.project, person.id)
 
     def _integrations_needed(self, request: ChatRequest, person: Person) -> bool:
         """Does this person have something connected to this conversation (or its project), so that Clara works on
         it with tools?"""
-        if self.integrations is None or request.ephemeral:
+        if self.integrations is None or request.ephemeral or not self._integrations_allowed(request, person):
             return False
         return bool(self.integrations.attached(request.conversation_id, request.project, person.id))
 
@@ -763,8 +809,17 @@ class Agent:
             async for event in self._observe(request, person, chosen):
                 yield event
             return
-        if request.files and not ephemeral and self.conversation_files is not None:
-            self.conversation_files.save(conversation, person.id, request.files)
+        if request.mode == "maybe" and self.chime_check and not await self._worth_answering(request):
+            async for event in self._observe(request, person, chosen, passed=True):
+                yield event
+            return
+        if not ephemeral and self.conversation_files is not None:
+            if request.files:
+                self.conversation_files.save(conversation, person.id, request.files)
+            # the documents the client wrote in the message itself (the web site does): kept to be read again
+            sent = {shown_name(file.name) for file in request.files}
+            written = [(name, text) for name, text in documents_in(request.message) if name not in sent]
+            self.conversation_files.save_texts(conversation, person.id, written)
         vault_on = self._vault_offered(request, person)
         context = ToolContext(
             person, self.memory, self.reminders, request.timezone, request.surface, request.user_id, conversation,
@@ -772,7 +827,7 @@ class Agent:
             projects=self.projects, project_id=request.project, markdown=self.markdown, tasks=self.tasks,
             integrations=self.integrations, vault=self.vault if vault_on else None,
             trusted_urls=None if self.web_fetch_any_url else self._trusted_urls(request, conversation),
-            conversation_files=self.conversation_files, pictures=[],
+            conversation_files=self.conversation_files, pictures=[], read_chars=self._read_chars(window),
         )
         client_tools = {schema["function"]["name"] for schema in request.tools}
         hidden = set() if context.roster else {ABOUT_PERSON}
@@ -785,12 +840,22 @@ class Agent:
         if self.markdown is None:
             hidden |= MARKDOWN_TOOLS
         if not vault_on:
-            hidden |= VAULT_TOOLS
+            hidden |= VAULT_TOOLS | {OPEN_VAULT}
+        elif self.memory.vault_open(conversation):
+            hidden.add(OPEN_VAULT)
+        else:
+            hidden |= VAULT_TOOLS  # until the conversation opens the second brain: thousands of tokens a round
+        if self.music_ready is not None and not self.music_ready(person.id):
+            hidden |= MUSIC_TOOLS  # no player of theirs to play on
         hidden |= self.hidden_tools.get(request.surface, frozenset())
         if ephemeral or self.conversation_files is None or not self.conversation_files.of(conversation):
             hidden |= CONVERSATION_FILE_TOOLS  # nothing was sent in this conversation to read
-        server_tools = [] if ephemeral or request.no_tools else self.toolbox.schemas_without(hidden)
-        schemas = server_tools + list(request.tools)
+
+        def offered() -> list[dict]:
+            server_tools = [] if ephemeral or request.no_tools else self.toolbox.schemas_without(hidden)
+            return server_tools + list(request.tools)
+
+        schemas = offered()
         turn_id = uuid.uuid4().hex
         yield {"type": "turn", "id": turn_id}
 
@@ -882,8 +947,9 @@ class Agent:
 
                     tools_used += [call.name for call in calls]
                     results: dict[str, str] = {}
+                    names = {schema["function"]["name"] for schema in tools or ()}
                     async with contextlib.aclosing(
-                        self._run_tools(list(zip(ids, calls)), context, client_tools, results, turn_id, owner)
+                        self._run_tools(list(zip(ids, calls)), context, client_tools, results, turn_id, owner, names)
                     ) as events:
                         async for event in events:
                             if event.get("type") == "markdown_file":
@@ -901,6 +967,11 @@ class Agent:
                     if context.pictures:  # pictures a tool read: the model sees them in its next round
                         messages.append(self._pictures_message(context.pictures, chosen))
                         context.pictures.clear()
+                    if vault_on and OPEN_VAULT in names and any(call.name == OPEN_VAULT for call in calls):
+                        # the second brain was opened: its tools from the next round on, and all the prompt says of it
+                        hidden = (hidden - VAULT_TOOLS) | {OPEN_VAULT}
+                        schemas = offered()
+                        messages[0]["content"] = messages[0]["content"].replace(CLOSED_BLOCK, self.vault.prompt_block())
                 finished = True
             except BaseException as error:
                 if not isinstance(error, (GeneratorExit, asyncio.CancelledError)):
@@ -1015,11 +1086,18 @@ class Agent:
 
     async def _run_tools(
         self, calls: list[tuple[str, ToolCall]], context: ToolContext, client_tools: set[str], results: dict[str, str],
-        turn_id: str, owner: str,
+        turn_id: str, owner: str, offered: set[str] | None = None,
     ) -> AsyncIterator[dict]:
         """Run the tool calls of a round, putting their outputs in `results` (by call id). The server's tools run
         here, in order, except that consecutive calls of tools that only read over the network run at the same time;
-        the client's are sent to it in one `tool_requests` event, and waited for."""
+        the client's are sent to it in one `tool_requests` event, and waited for. A tool that was not `offered` this
+        round (one hidden from this turn) is not run."""
+
+        async def run(call: ToolCall, call_context: ToolContext) -> str:
+            if offered is not None and call.name not in offered:
+                return f"Unknown tool: {call.name}."
+            return await self.toolbox.arun(call.name, call_context, call.arguments)
+
         remote = [(call_id, call) for call_id, call in calls if call.name in client_tools]
         local = [(call_id, call) for call_id, call in calls if call.name not in client_tools]
         for batch in self._batches(local):
@@ -1027,9 +1105,7 @@ class Agent:
             for _, call in batch:
                 yield {"type": "tool_start", "name": call.name, "arguments": call.arguments}
             own = [replace(context, events=[]) for _ in batch]  # each call's events (a QCM to show) apart
-            outputs = await asyncio.gather(
-                *(self.toolbox.arun(call.name, call_context, call.arguments) for (_, call), call_context in zip(batch, own))
-            )
+            outputs = await asyncio.gather(*(run(call, call_context) for (_, call), call_context in zip(batch, own)))
             for (call_id, call), output, call_context in zip(batch, outputs, own):
                 results[call_id] = output
                 yield {
@@ -1116,11 +1192,16 @@ class Agent:
             chosen.own_key, tally.cached_tokens,
         )
 
+    def _upkeep_chosen(self) -> Chosen:
+        """The model of the side jobs (`/models upkeep`, else the server's default), whatever the conversation's is."""
+        return self.models.upkeep() if self.models is not None else Chosen(None)
+
     async def _upkeep_model(
         self, kind: str, conversation: str, messages: list[dict], chosen: Chosen
     ) -> str:
-        """Run the model for work the server does on its own (a summary, a title): its text, and its tokens logged
-        to the person who wrote in the conversation (nobody, when several did). Not counted against any limit."""
+        """Run the model for work the server does on its own (a summary, a title, a join-in check): its text, and its
+        tokens logged to the person who wrote in the conversation (nobody, when several did). Not counted against any
+        limit."""
         parts: list[str] = []
         tally = _Tally()
         async with contextlib.aclosing(self._model(messages, None, chosen)) as model:
@@ -1164,8 +1245,37 @@ class Agent:
             return False
         return True
 
-    async def _observe(self, request: ChatRequest, person: Person, chosen: Chosen) -> AsyncIterator[dict]:
-        """A message that was not for Clara: stored in the conversation, so that she knows what was said."""
+    @staticmethod
+    def _read_chars(window: int) -> int:
+        """The most one read of a file gives: READ_SHARE of the window, within READ_CHARS_LIMIT."""
+        return max(2_000, min(READ_CHARS_LIMIT, int(window * CHARS_PER_TOKEN * READ_SHARE)))
+
+    async def _worth_answering(self, request: ChatRequest) -> bool:
+        """A "maybe" message (a group's, not addressed to Clara): is it worth the whole prompt? The side jobs' model
+        reads the last messages and says; a yes (or a failure) goes on to the full turn, which may still pass."""
+        conversation = request.conversation_id
+        stored = self.memory.history(conversation, CHIME_TURNS, self.memory.state(conversation).upto_id)
+        lines = [
+            f"{(message.author or '?') if message.role == 'user' else 'Clara'}: "
+            + _shorten(" ".join(message.content.split()), CHIME_EXCERPT)
+            for message in stored
+            if message.role in ("user", "assistant") and message.content.strip()
+        ]
+        lines.append(f"{request.user_name or request.user_id} (the last message): {_shorten(request.message, 4 * CHIME_EXCERPT)}")
+        messages = [{"role": "system", "content": CHIME_INSTRUCTIONS}, {"role": "user", "content": "\n".join(lines)}]
+        try:
+            answer = await self._upkeep_model("chime", conversation, messages, self._upkeep_chosen())
+        except Exception as error:
+            log.warning("the join-in check of %s failed, the full turn decides: %s", conversation, error)
+            return True
+        words = re.findall(r"[a-z]+", answer.lower())
+        return not words or words[0] not in ("no", "non")
+
+    async def _observe(
+        self, request: ChatRequest, person: Person, chosen: Chosen, passed: bool = False
+    ) -> AsyncIterator[dict]:
+        """A message that was not for Clara: stored in the conversation, so that she knows what was said. `passed`:
+        it was a "maybe" message the join-in check found nothing to answer in."""
         conversation = request.conversation_id
         yield {"type": "turn", "id": uuid.uuid4().hex}
         async with self._conversation_lock(conversation):
@@ -1180,6 +1290,7 @@ class Agent:
             "context": self._context_info(self.memory.state(conversation).context_tokens, chosen.window),
             **self._model_fields(chosen),
             "observed": True,
+            "passed": passed,
         }
 
     async def _model(self, messages: list[dict], tools: list[dict] | None, chosen: Chosen) -> AsyncIterator[LlmChunk]:
@@ -1359,7 +1470,7 @@ class Agent:
         messages = [{"role": "system", "content": TITLE_INSTRUCTIONS}, {"role": "user", "content": excerpt}]
         self._compactions += 1  # keeps the server from stopping under it, like a compaction
         try:
-            text = await self._upkeep_model("title", conversation, messages, Chosen(None))
+            text = await self._upkeep_model("title", conversation, messages, self._upkeep_chosen())
         finally:
             self._compactions -= 1
         title = clean_title(text)
@@ -1390,7 +1501,8 @@ class Agent:
         self, conversation: str, focus: str = "", keep_recent_turns: int | None = None, chosen: Chosen | None = None
     ) -> tuple[float, float]:
         chosen = chosen or Chosen(None)
-        window = chosen.window or self.window
+        window = chosen.window or self.window  # the conversation's: what the percentages are of
+        summariser = self._upkeep_chosen()  # a side job: the small model does it, whatever big one the conversation has
         keep = self.keep_recent_turns if keep_recent_turns is None else keep_recent_turns
         state = self.memory.state(conversation)
         rows = self.memory.messages_after(conversation, state.upto_id)
@@ -1401,10 +1513,10 @@ class Agent:
         # Summarise chunk by chunk. Each step is saved, so a failure halfway leaves a coherent
         # conversation (the summary so far, then the messages not yet summarised).
         summary = state.summary
-        for chunk in chunk_messages(old, self._transcript_chars or transcript_budget(window)):
+        for chunk in chunk_messages(old, self._transcript_chars or transcript_budget(summariser.window or self.window)):
             transcript = build_transcript(chunk)
             if transcript:
-                summary = await self._summarise(transcript, summary, focus, chosen, conversation)
+                summary = await self._summarise(transcript, summary, focus, summariser, conversation)
             self.memory.set_summary(conversation, summary, chunk[-1].id, state.context_tokens)
 
         # What remains in the context: the fixed part (system prompt, tools), the summary, and the
