@@ -8,6 +8,7 @@
     /alias      add | remove | list: the other names you go by, so Clara knows who is meant and can tag you
                 (the owner can give a `user` to do it for someone else)
     /tasks      your to-do list: each task with the reminders sent and the next one;  /task: one in full
+    /linkcheck  owner only: does a Discord member speak as a Clara user, and is it the same person
 
 Descriptions are in English, and in French for people whose Discord is in French (FrenchTranslator).
 """
@@ -55,6 +56,11 @@ FRENCH_DESCRIPTIONS = {
     "The name": "Le nom",
     "The name to remove": "Le nom à retirer",
     "Owner only: someone else": "Propriétaire seulement : quelqu'un d'autre",
+    "Owner only: does a Discord member speak as a Clara user": (
+        "Propriétaire seulement : ce membre Discord parle-t-il comme cet utilisateur Clara"
+    ),
+    "The Discord member": "Le membre Discord",
+    "The Clara user name": "Le nom de l'utilisateur Clara",
 }
 
 
@@ -193,6 +199,30 @@ class ForgetMenu(discord.ui.View):
 # /tasks, /task
 # ----------------------------------------------------------------------
 TASKS_SHOWN = 20
+
+
+def link_check_text(lang: str, member: str, found: dict) -> str:
+    """What the owner's `/linkcheck` says about a Discord member, from the server's answer (accountapi.check_link)."""
+    user = found["user"]["name"]
+    lines = [t(lang, "linkcheck_head", member=member, user=user)]
+    if found["signed_in_as"] == user:
+        lines.append(t(lang, "linkcheck_signed_in", user=user))
+    elif found["signed_in_as"]:
+        lines.append(t(lang, "linkcheck_signed_in_other", other=found["signed_in_as"], user=user))
+    else:
+        lines.append(t(lang, "linkcheck_not_signed_in"))
+    if not found["sign_in_required"]:
+        lines.append(t(lang, "linkcheck_no_sign_in"))
+    if found["same_person"]:
+        lines.append(t(lang, "linkcheck_same_person", user=user, accounts=", ".join(f"`{a}`" for a in found["accounts"])))
+    elif found["known"]:
+        lines.append(t(lang, "linkcheck_other_person", user=user))
+    else:
+        lines.append(t(lang, "linkcheck_unknown"))
+    if not found["user"]["enabled"]:
+        lines.append(t(lang, "linkcheck_disabled", user=user))
+    lines.append(t(lang, "linkcheck_answers" if found["answers"] else "linkcheck_refuses"))
+    return "\n".join(lines)
 
 
 def moment(text: str, style: str = "f") -> str:
@@ -408,6 +438,27 @@ def register_commands(tree: app_commands.CommandTree, bot: ClaraBot) -> None:
             await reply(interaction, t(lang, "alias_list_empty" + ("_other" if target else ""), who=who))
         else:
             await reply(interaction, t(lang, "alias_list" + ("_other" if target else ""), names=names, who=who))
+
+    @tree.command(name="linkcheck", description=describe("Owner only: does a Discord member speak as a Clara user"))
+    @app_commands.describe(member=describe("The Discord member"), clara=describe("The Clara user name"))
+    async def linkcheck_command(
+        interaction: discord.Interaction, member: discord.User | discord.Member, clara: app_commands.Range[str, 1, 32],
+    ) -> None:
+        lang = lang_of(bot, interaction)
+        try:
+            found = await bot.api.check_link(interaction.user.id, member.id, clara.strip().lower())
+        except ClaraError as error:
+            if error.not_signed_in:
+                text = t(lang, "need_account")
+            elif error.status == 403:
+                text = t(lang, "linkcheck_owner_only")
+            elif error.status == 404:
+                text = t(lang, "linkcheck_no_user", user=clara.strip().lower())
+            else:
+                text = describe_error(lang, error)
+            await reply(interaction, text)
+            return
+        await reply(interaction, link_check_text(lang, member.display_name, found))
 
     @tree.command(name="tasks", description=describe("Your to-do list"))
     @app_commands.describe(which=describe("Which ones"))

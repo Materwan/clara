@@ -375,7 +375,10 @@ On Discord, people make an account with `/register` (or `/login` to an existing 
 answers private messages, and on a server the messages that mention her or reply to her; she reads the other messages
 of signed-in members as context, and may answer them where chime in is allowed. Their slash commands are `/register`,
 `/login`, `/logout`, `/me`, `/remember`, `/forget`, `/alias` (the other names they go by, see *Aliases*), `/tasks` (their to-do list, each task with the reminders sent and the
-next one), `/task` (one in full), `/reset` and `/help`; they add or change tasks by asking Clara. **Reminders, task
+next one), `/task` (one in full), `/reset` and `/help`; they add or change tasks by asking Clara. The **owner** also has
+`/linkcheck member:<Discord member> clara:<user name>`: whether that Discord account is signed in as the Clara user (and is
+the same person as them, with the accounts listed), and whether Clara answers it. Nothing is sent to the model; it is
+the same check as `GET /v1/accounts/check`, which the standalone bot uses too. **Reminders, task
 reminders and notifications** reach them as **private messages** only, never in a server's channels.
 
 ### Aliases

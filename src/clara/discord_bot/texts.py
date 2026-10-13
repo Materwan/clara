@@ -68,6 +68,53 @@ TEXTS: dict[str, dict[str, str]] = {
         ENGLISH: "You are signed out. What I know about you stays with your account.",
     },
     "not_logged_in": {FRENCH: "Tu n'étais pas connecté.", ENGLISH: "You were not signed in."},
+    # -- /linkcheck (the owner) -----------------------------------------------------------------------
+    "linkcheck_head": {
+        FRENCH: "**{member}** sur Discord, et l'utilisateur Clara **{user}**",
+        ENGLISH: "**{member}** on Discord, and the Clara user **{user}**",
+    },
+    "linkcheck_signed_in": {FRENCH: "✅ Connecté en tant que **{user}**.", ENGLISH: "✅ Signed in as **{user}**."},
+    "linkcheck_signed_in_other": {
+        FRENCH: "❌ Connecté en tant que **{other}**, pas **{user}**.",
+        ENGLISH: "❌ Signed in as **{other}**, not **{user}**.",
+    },
+    "linkcheck_not_signed_in": {
+        FRENCH: "❌ Pas connecté à Clara sur Discord.",
+        ENGLISH: "❌ Not signed in to Clara on Discord.",
+    },
+    "linkcheck_no_sign_in": {
+        FRENCH: "ℹ️ La connexion n'est pas exigée sur Discord ici.",
+        ENGLISH: "ℹ️ Sign-in is not required on Discord here.",
+    },
+    "linkcheck_same_person": {
+        FRENCH: "✅ La même personne que **{user}** (comptes : {accounts}).",
+        ENGLISH: "✅ The same person as **{user}** (accounts: {accounts}).",
+    },
+    "linkcheck_other_person": {
+        FRENCH: "⚠️ Connu de Clara, mais pas comme la personne de **{user}**.",
+        ENGLISH: "⚠️ Known to Clara, but not as the person of **{user}**.",
+    },
+    "linkcheck_unknown": {
+        FRENCH: "ℹ️ Clara ne connaît pas encore ce compte.",
+        ENGLISH: "ℹ️ Clara does not know this account yet.",
+    },
+    "linkcheck_disabled": {
+        FRENCH: "❌ L'utilisateur **{user}** est désactivé : Clara ne répond pas.",
+        ENGLISH: "❌ The user **{user}** is disabled: Clara does not answer.",
+    },
+    "linkcheck_answers": {FRENCH: "✅ Clara répond à ce compte Discord.", ENGLISH: "✅ Clara answers this Discord account."},
+    "linkcheck_refuses": {
+        FRENCH: "❌ Clara ne répond pas à ce compte Discord.",
+        ENGLISH: "❌ Clara does not answer this Discord account.",
+    },
+    "linkcheck_owner_only": {
+        FRENCH: "Seul le propriétaire peut vérifier les liens.",
+        ENGLISH: "Only the owner can check links.",
+    },
+    "linkcheck_no_user": {
+        FRENCH: "Aucun utilisateur Clara nommé **{user}**.",
+        ENGLISH: "No Clara user named **{user}**.",
+    },
     # -- /me ------------------------------------------------------------------------------------------
     "me_title": {FRENCH: "Ton compte Clara", ENGLISH: "Your Clara account"},
     "me_user": {FRENCH: "Utilisateur", ENGLISH: "User"},

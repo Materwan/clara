@@ -97,6 +97,11 @@ class LocalBackend:
             for entry in found["accounts"] if entry["user_id"].isdigit() and entry["aliases"]
         }
 
+    async def check_link(self, user_id: int, for_user_id: int, clara_user: str) -> dict:
+        return await self._guard(accountapi.check_link(
+            self.client, self.request, SURFACE, str(user_id), str(for_user_id), clara_user
+        ))
+
     # -- memory --------------------------------------------------------------------------------------- #
 
     async def person_aliases(self, user_id: int, for_user_id: int | None = None) -> list[dict]:

@@ -11,6 +11,7 @@ same person.
     PATCH  /v1/settings                 before it notifies them when done; 0: never; null: the server's default)
     POST   /v1/accounts/link-code       a code proving control of an account
     POST   /v1/accounts/link            "this account is the same person as that one" (needs the code)
+    GET    /v1/accounts/check           the owner's check of an account against a Clara user (`/linkcheck`)
 """
 
 from __future__ import annotations
@@ -199,6 +200,38 @@ async def link_accounts(body: LinkBody, client: Client, request: Request) -> dic
         raise HTTPException(409, str(error)) from None
     accounts = [f"{surface}:{external}" for surface, external in memory.accounts_of(person.id)]
     return {"person": {"id": person.id, "name": person.name}, "accounts": accounts}
+
+
+# ----------------------------------------------------------------------
+# Checking a link (the owner's `/linkcheck` on Discord): does an account speak as this Clara user?
+# ----------------------------------------------------------------------
+@router.get("/v1/accounts/check")
+async def check_link(
+    client: Client, request: Request, surface: Surface, user_id: ExternalId, for_user_id: ExternalId, clara_user: str,
+) -> dict:
+    """Whether the account `surface:for_user_id` is signed in as the Clara user `clara_user`, is the same person as
+    that user, and so gets answers. `user_id` is the owner's own account, the one asking: only the owner may check."""
+    require_account(request, client, surface, user_id)
+    state = request.app.state
+    asker = getattr(client, "user", None) or state.users.account_user(surface, user_id)
+    if asker is None or not asker.is_owner or asker.disabled:
+        raise HTTPException(403, "Only the owner checks the links of an account")
+    user = state.users.get(clara_user)
+    if user is None:
+        raise HTTPException(404, f"No Clara user named {clara_user!r}")
+    signed_in = state.users.account_user(surface, for_user_id)  # None: not signed in (a disabled user signs them out)
+    person = state.memory.find_person(surface, for_user_id)
+    user_person = state.users.person_of(user)
+    sign_in_required = surface in state.settings.login_surfaces
+    return {
+        "user": {"name": user.name, "enabled": not user.disabled},
+        "signed_in_as": signed_in.name if signed_in else None,
+        "known": person is not None,
+        "same_person": person is not None and person.id == user_person.id,
+        "accounts": [f"{s}:{e}" for s, e in state.memory.accounts_of(user_person.id)],
+        "sign_in_required": sign_in_required,
+        "answers": not user.disabled and ((signed_in is not None and signed_in.name == user.name) or not sign_in_required),
+    }
 
 
 def install(app: FastAPI) -> None:

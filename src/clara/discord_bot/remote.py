@@ -85,10 +85,14 @@ class RemoteBackend:
             for entry in found["accounts"] if entry["user_id"].isdigit() and entry.get("aliases")
         }
 
+    async def check_link(self, user_id: int, for_user_id: int, clara_user: str) -> dict:
+        params = {**self._account(user_id), "for_user_id": str(for_user_id), "clara_user": clara_user}
+        return await self._call("GET", "/v1/accounts/check", params=params)
+
     # -- memory --------------------------------------------------------------------------------------- #
 
     async def person_aliases(self, user_id: int, for_user_id: int | None = None) -> list[dict]:
-        params = {**self._account(user_id), **({"for_user_id": str(for_user_id)} if for_user_id else {})}
+        params ={**self._account(user_id), **({"for_user_id": str(for_user_id)} if for_user_id else {})}
         return (await self._call("GET", "/v1/memory/aliases", params=params))["aliases"]
 
     async def add_alias(self, user_id: int, alias: str, for_user_id: int | None = None) -> dict:
