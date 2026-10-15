@@ -1,0 +1,37 @@
+# The DM-only Discord bot: a separate process, a separate Clara token, its own Discord token.
+#   sudo systemctl enable --now clara-discord
+[Unit]
+Description=Clara's Discord bot (direct messages only)
+After=clara.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clara
+Group=clara
+Environment=CLARA_URL=http://127.0.0.1:8765
+EnvironmentFile=-/etc/clara/discord.env
+StateDirectory=clara-discord
+Environment=CLARA_DISCORD_STATE=/var/lib/clara-discord/state.json
+LoadCredentialEncrypted=discord-token:/etc/clara/discord-token.cred
+LoadCredentialEncrypted=clara-token:/etc/clara/discord-clara-token.cred
+ExecStart=/opt/clara/current/.venv/bin/clara-discord
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

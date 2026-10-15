@@ -1,417 +1,441 @@
-"""Configuration, read once from the environment (and a `.env` file)."""
+"""Typed settings, read once at start, checked strictly.
+
+Settings come from the process environment and from one `.env` file (`CLARA_ENV_FILE`, default `.env` in the working
+directory); a value already in the environment wins. The file holds **non-secret settings only**: provider keys and
+tokens live in the encrypted secrets store (secrets/), and the key that opens it comes from a systemd credential.
+
+Things you change while Clara runs (the default model, fallbacks, the tainted-turn rule, the debug switch) are not
+settings: they live in the database's `settings` table and are changed from the console or the Admin page.
+
+Every problem found is reported at once (`SettingsError` lists them all), and the server refuses to start.
+"""
 
 from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
-from .limits import parse_limit
-from .tailscale import HTTPS_PORTS
-from .tailscale import MODES as TAILSCALE_MODES
+from .timeutil import ZoneError, system_zone_name, zone
 
-
-class SettingsError(Exception):
-    pass
-
-
-PLACEHOLDER_TOKEN = "change-me"  # what .env.example ships with
-MIN_PUBLIC_TOKEN_LENGTH = 32  # `secrets.token_urlsafe(32)` gives 43; a Funnel URL is open to the whole internet
-SURFACE_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+PROVIDER_ID = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
+HOSTED_PROVIDERS = ("cloud", "gemini", "deepseek", "mistral")
+RESERVED_PROVIDER_IDS = frozenset(HOSTED_PROVIDERS)
+TAILSCALE_PORTS = (443, 8443, 10000)
+_SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
 
 
-def parse_tokens(raw: str) -> dict[str, str]:
-    """`"terminal:abc,discord:def"` -> `{"abc": "terminal", "def": "discord"}`.
+class SettingsError(ValueError):
+    """One or more settings are wrong; the message lists each problem on its own line."""
 
-    A bare token (no `name:`) is accepted and named "client".
-    """
-    tokens: dict[str, str] = {}
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        name, separator, token = item.partition(":")
-        if not separator:
-            name, token = "client", item
-        name, token = name.strip(), token.strip()
-        if not token:
-            raise SettingsError(f"Empty token for client {name!r} in CLARA_TOKENS")
-        tokens[token] = name
-    return tokens
-
-
-def parse_client_surfaces(raw: str, clients: set[str]) -> dict[str, frozenset[str]]:
-    """`"terminal=cli|console,discord=discord"` -> the surfaces each client may speak for."""
-    allowed: dict[str, frozenset[str]] = {}
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        name, separator, surfaces = item.partition("=")
-        name = name.strip()
-        if not separator or not name:
-            raise SettingsError(f"CLARA_CLIENT_SURFACES: expected name=surface|surface, got {item!r}")
-        if name not in clients:
-            raise SettingsError(f"CLARA_CLIENT_SURFACES: {name!r} is not a client of CLARA_TOKENS")
-        names = frozenset(part.strip() for part in surfaces.split("|") if part.strip())
-        if not names:
-            raise SettingsError(f"CLARA_CLIENT_SURFACES: no surface for {name!r}")
-        for surface in names:
-            if not SURFACE_RE.match(surface):
-                raise SettingsError(f"CLARA_CLIENT_SURFACES: bad surface {surface!r} (a-z, 0-9, _ -)")
-        allowed[name] = names | allowed.get(name, frozenset())
-    return allowed
-
-
-def parse_user_surfaces(raw: str) -> frozenset[str]:
-    """`"web,app"` -> the surfaces a user may log in on."""
-    surfaces = frozenset(part.strip().lower() for part in raw.replace("|", ",").split(",") if part.strip())
-    if not surfaces:
-        raise SettingsError("CLARA_USER_SURFACES is empty: no user could log in anywhere")
-    for surface in surfaces:
-        if not SURFACE_RE.match(surface):
-            raise SettingsError(f"CLARA_USER_SURFACES: bad surface {surface!r} (a-z, 0-9, _ -)")
-    return surfaces
-
-
-def parse_login_surfaces(raw: str) -> frozenset[str]:
-    """`"discord"` -> the surfaces where an account must be signed in to talk; `none`: nowhere."""
-    if raw.strip().lower() == "none":
-        return frozenset()
-    surfaces = frozenset(part.strip().lower() for part in raw.replace("|", ",").split(",") if part.strip())
-    for surface in surfaces:
-        if not SURFACE_RE.match(surface):
-            raise SettingsError(f"CLARA_LOGIN_SURFACES: bad surface {surface!r} (a-z, 0-9, _ -)")
-    return surfaces
-
-
-def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:
-    raw = env.get(key, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        raise SettingsError(f"{key} must be an integer, got {raw!r}") from None
-    if value < 1:
-        raise SettingsError(f"{key} must be at least 1")
-    return value
-
-
-def _token_limit(env: Mapping[str, str], key: str) -> int:
-    """A number of tokens a day (`500000`, `500k`, `2m`); empty, 0 or `off`: no limit."""
-    raw = env.get(key, "").strip()
-    if not raw:
-        return 0
-    try:
-        return parse_limit(raw)
-    except ValueError as error:
-        raise SettingsError(f"{key}: {error}") from None
-
-
-DEFAULT_LOCAL_HOST = "http://localhost:11434"
-DEFAULT_CLOUD_HOST = "https://ollama.com"
-PROVIDER_IDS = ("local", "cloud", "gemini", "deepseek", "mistral")
-# The services reached through their OpenAI-compatible API: id -> (key variable, host, model, context window)
-API_PROVIDERS = {
-    "gemini": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash-latest", 1_048_576),
-    "deepseek": ("DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", 1_000_000),
-    "mistral": ("MISTRAL_API_KEY", "https://api.mistral.ai/v1", "mistral-large-latest", 131_072),
-}
+    def __init__(self, problems: list[str]):
+        super().__init__("Invalid settings:\n" + "\n".join(f"- {problem}" for problem in problems))
+        self.problems = problems
 
 
 @dataclass(frozen=True)
-class ApiProvider:
-    """One of API_PROVIDERS as configured: CLARA_<ID>_HOST, CLARA_<ID>_MODEL, CLARA_<ID>_CONTEXT_WINDOW."""
+class OllamaHost:
+    """An Ollama server on a machine you own: this one, or your PC over the tailnet. Always a *local* provider."""
 
-    key_name: str
-    host: str
-    model: str
-    context_window: int
-    api_key: str | None = field(default=None, repr=False)
-
-
-def _positive_number(env: Mapping[str, str], key: str, default: float) -> float:
-    raw = env.get(key, "").strip()
-    if not raw:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        raise SettingsError(f"{key} must be a number, got {raw!r}") from None
-    if not 0 < value < 1e6:
-        raise SettingsError(f"{key} must be greater than 0")
-    return value
-
-
-def _flag(env: Mapping[str, str], key: str, default: bool = False) -> bool:
-    raw = env.get(key, "").strip().lower()
-    if not raw:
-        return default
-    if raw in ("0", "false", "no", "off"):
-        return False
-    if raw in ("1", "true", "yes", "on"):
-        return True
-    raise SettingsError(f"{key} must be true or false, got {raw!r}")
-
-
-def _non_negative_int(env: Mapping[str, str], key: str, default: int) -> int:
-    raw = env.get(key, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        raise SettingsError(f"{key} must be an integer, got {raw!r}") from None
-    if value < 0:
-        raise SettingsError(f"{key} cannot be negative")
-    return value
+    id: str
+    url: str
 
 
 @dataclass(frozen=True)
 class Settings:
-    host: str
-    port: int
+    # --- core -----------------------------------------------------------------------------------------------
     data_dir: Path
-    tokens: dict[str, str] = field(repr=False)  # chat token -> client name
-    admin_tokens: dict[str, str] = field(repr=False)  # console token -> admin name
-    # client name -> surfaces it may speak for; a client with no entry may use any
-    client_surfaces: dict[str, frozenset[str]]
-    history_turns: int
-    max_concurrent_llm: int
-    max_tool_rounds: int
-    tool_timeout: int  # seconds a client may take to run its tools (it may ask the user first)
-    llm_first_token_timeout: int  # seconds the model may take to start answering
-    llm_idle_timeout: int  # seconds the model may pause between two pieces of its answer
-    llm_retries: int  # times a busy or unreachable model is asked again (0 = never)
-    llm_retry_delay: int  # seconds before the first new try; doubled each time
-    compact_percent: int  # summarise a conversation when its context is this full (0 = never)
-    keep_recent_turns: int  # turns a compaction leaves unsummarised
-    facts_token_budget: int  # tokens of remembered facts shown to the model in each prompt
-    purge_summarised: bool  # delete messages once a summary stands for them
-    reminder_ai_timeout: int  # seconds Clara has to write the announcement of a reminder (0: announce the text)
-    system_prompt_file: Path
-    # Language model providers (see providers.py)
-    default_provider: str
-    local_host: str
-    local_model: str
-    local_context_window: int
-    cloud_host: str
-    cloud_model: str
-    cloud_context_window: int
-    ollama_api_key: str | None = field(repr=False)
-    web_tools: bool = True  # web_search and web_fetch (they need ollama_api_key)
-    notify_long_turn: int = 120  # a turn this long (seconds) notifies its person when done (0: never)
-    # The traffic log (traffic.py): every request in and out, in data/logs
-    traffic_log: bool = True
-    traffic_log_days: int = 30  # files older than this are deleted
-    traffic_log_max_body: int = 100_000  # characters kept of each body
-    # Tailscale (tailscale.py): off | serve (your tailnet) | funnel (the internet), on an HTTPS port
-    tailscale: str = "off"
-    tailscale_port: int = 443
-    tailscale_bin: str = "tailscale"
-    # An address that sends this many bad tokens in a minute is refused for the next block (0: never)
-    auth_max_failures: int = 10
-    auth_block_seconds: int = 300
-    # Users who log in with a password (users.py): days a token lasts without being used (0: for ever), and
-    # the surfaces a login may be made on (a user token is bound to one of them)
-    session_days: int = 90
-    user_surfaces: frozenset[str] = frozenset({"web", "app", "cli", "console"})
-    # Whether anybody who reaches the web site may make their own user there (off: administrators make them)
-    web_signup: bool = False
-    # Surfaces where a client signs its people in (POST /v1/accounts/login or register): there, an account that
-    # is not signed in as a user cannot talk to Clara
-    login_surfaces: frozenset[str] = frozenset({"discord"})
-    # The Discord bot built into the server (discord_bot/service.py): its token, whether it starts with the server,
-    # and the invite link shown on the web site (empty: built from the token)
-    discord_token: str | None = field(default=None, repr=False)
-    discord_auto_start: bool = False
-    discord_invite_url: str = ""
-    # Gemini, DeepSeek and Mistral (providers.py), by id; and whether DeepSeek thinks before answering
-    api_providers: dict[str, ApiProvider] = field(default_factory=dict)
+    port: int = 8765
+    timezone: str = "UTC"
+    persona_file: Path | None = None
+    env_file: Path | None = None
+    debug: bool = False
+    secret_key_file: Path | None = None
+    secret_key: str | None = field(default=None, repr=False)  # development only: prefer the credential file
+    check_permissions: bool = True
+
+    # --- providers ------------------------------------------------------------------------------------------
+    ollama_hosts: tuple[OllamaHost, ...] = (OllamaHost("local", "http://127.0.0.1:11434"),)
+    ollama_context: int = 32_768
+    cloud_host: str = "https://ollama.com"
+    gemini_host: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    deepseek_host: str = "https://api.deepseek.com"
+    mistral_host: str = "https://api.mistral.ai/v1"
     deepseek_thinking: bool = True
-    # Projects (projects.py): what one may hold, the share of the context window under which its files are all
-    # put in the prompt (beyond, Clara reads them with tools), and the token that reaches private GitHub repos
-    project_max_bytes: int = 20_000_000
+    hosted_context: Mapping[str, int] = field(
+        default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072}
+    )
+
+    # --- conversation engine --------------------------------------------------------------------------------
+    history_turns: int = 20
+    max_tool_rounds: int = 20
+    chat_slots: int = 2
+    background_slots: int = 1
+    first_token_timeout: float = 300.0
+    idle_timeout: float = 120.0
+    answer_budget: float = 900.0
+    client_tool_timeout: float = 900.0
+    compact_percent: int = 80
+    compact_tokens: int = 40_000
+    keep_recent_turns: int = 2
+    purge_summarised: bool = False
+    facts_token_budget: int = 2_000
+    approval_wait: float = 600.0
+    approval_expire: int = 86_400
+    notify_long_turn: int = 120
+    reminder_ai_timeout: float = 60.0
+    task_max_reminders: int = 10
+    incognito_hours: int = 24
+
+    # --- workspace ------------------------------------------------------------------------------------------
+    workspace: Path | None = None
+    workspace_max_bytes: int = 5 * 1024**3
+    workspace_max_file_bytes: int = 100 * 1024**2
+    run: str = "auto"  # auto: on when rootless Podman works; off
+    podman: str = "podman"
+    sandbox_image: str = "localhost/clara-sandbox:latest"
+    run_timeout: int = 120
+    run_max_timeout: int = 900
+    run_memory: str = "1g"
+    run_cpus: float = 2.0
+    run_pids: int = 256
+    run_slots: int = 2
+    run_output_bytes: int = 64 * 1024
+
+    # --- knowledge ------------------------------------------------------------------------------------------
+    project_max_chars: int = 20_000_000
     project_max_files: int = 5_000
     project_inline_percent: int = 40
-    github_token: str | None = field(default=None, repr=False)
-    # Tokens a day a user may use when an administrator set no limit for them (limits.py); 0: no limit.
-    # Administrators have none. `/limit default` changes it while the server runs.
-    default_daily_tokens: int = 0
-    # Billions of parameters a model of weight 1 has: a bigger one costs proportionally more credits a token
-    # (models.py), a smaller one less
-    weight_reference_b: float = 8.0
-    # Reminders sent for one task before it is left alone (tasks.py): after that the person decides
-    task_max_reminders: int = 10
-    # Integrations (integrations/): the key that encrypts the accounts people connect (empty: one is made in the
-    # data directory), the Google OAuth client (Drive), the address the server is reached at (Google redirects
-    # there), and when a request for permission that nobody answered is pushed to other surfaces, and dropped
-    secret_key: str = field(default="", repr=False)
-    google_client_id: str = ""
-    google_client_secret: str = field(default="", repr=False)
+    project_inline_tokens: int = 20_000
+    vault_path: Path | None = None
+    vault_push: bool = True
+    vault_pull_seconds: int = 30
+
+    # --- connectors -----------------------------------------------------------------------------------------
+    searxng_url: str = "http://127.0.0.1:8888"
+    fetch_max_bytes: int = 2_000_000
     public_url: str = ""
-    approval_notify_after: int = 60
-    approval_expire_after: int = 86_400
+    google_client_id: str = ""
+    google_project_number: str = ""
+
+    # --- operations -----------------------------------------------------------------------------------------
+    tailscale: str = "serve"
+    tailscale_port: int = 443
+    tailscale_bin: str = "tailscale"
+    traffic_log_days: int = 7
+    backup_dir: Path | None = None
+    backup_time: str = "03:30"
+    backup_keep_daily: int = 14
+    backup_keep_weekly: int = 8
+    restic_repository: str = ""
+    restic_bin: str = "restic"
+    release_repo: str = ""
+    releases_dir: Path = Path("/opt/clara/releases")
+    release_pubkey: str = ""
+    drain_seconds: int = 120
+    disk_alert_percent: int = 85
+    late_alert_seconds: int = 300
+    discord_expected: bool = False
+    retention_days: int = 400
+    events_max_days: int = 90
+
+    # --- derived paths --------------------------------------------------------------------------------------
+    @property
+    def database(self) -> Path:
+        return self.data_dir / "clara.db"
 
     @property
-    def secret_key_file(self) -> Path:
-        return self.data_dir / "secret.key"
+    def workspace_dir(self) -> Path:
+        return self.workspace or self.data_dir / "workspace"
+
+    @property
+    def backups_dir(self) -> Path:
+        return self.backup_dir or self.data_dir / "backups"
 
     @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
     @property
-    def unrestricted_clients(self) -> list[str]:
-        """Clients allowed to speak for any surface (no CLARA_CLIENT_SURFACES entry)."""
-        return sorted(set(self.tokens.values()) - set(self.client_surfaces))
+    def run_dir(self) -> Path:
+        """Small runtime files: the instance lock, the boot record the launcher reads, pending updates."""
+        return self.data_dir / "run"
 
     @property
-    def db_path(self) -> Path:
-        return self.data_dir / "clara.sqlite"
+    def lock_file(self) -> Path:
+        return self.run_dir / "clara.lock"
 
-    @property
-    def runtime_state_file(self) -> Path:
-        return self.data_dir / "runtime.json"
+    def zone(self):
+        return zone(self.timezone)
 
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
-        if env is None:
-            load_dotenv()
-            env = os.environ
 
-        def text(key: str, default: str = "") -> str:
-            return env.get(key, "").strip() or default
+# ----------------------------------------------------------------------------------------------------------
+# Parsing
+# ----------------------------------------------------------------------------------------------------------
+class _Reader:
+    """Reads typed values out of the merged environment, collecting every problem instead of stopping at the first."""
 
-        tokens = parse_tokens(env.get("CLARA_TOKENS", ""))
-        if not tokens:
-            raise SettingsError(
-                "CLARA_TOKENS is empty: the API refuses to start without credentials.\n"
-                "Generate a token with:\n"
-                '  python -c "import secrets; print(secrets.token_urlsafe(32))"\n'
-                "and put it in .env as CLARA_TOKENS=terminal:<token>"
-            )
-        admin_tokens = parse_tokens(env.get("CLARA_ADMIN_TOKENS", ""))
-        for token in (*tokens, *admin_tokens):
-            if token.lower().startswith(PLACEHOLDER_TOKEN):
-                raise SettingsError(
-                    "A token still has the placeholder value of .env.example. Generate a real one with:\n"
-                    '  python -c "import secrets; print(secrets.token_urlsafe(32))"'
-                )
-        if set(tokens) & set(admin_tokens):
-            raise SettingsError("A token cannot be both a chat token and an admin token.")
+    def __init__(self, values: Mapping[str, str]):
+        self.values = values
+        self.problems: list[str] = []
 
-        tailscale = text("CLARA_TAILSCALE", "off").lower()
-        if tailscale not in TAILSCALE_MODES:
-            raise SettingsError(f"CLARA_TAILSCALE must be one of {', '.join(TAILSCALE_MODES)}")
-        tailscale_port = _positive_int(env, "CLARA_TAILSCALE_PORT", 443)
-        if tailscale_port not in HTTPS_PORTS:
-            raise SettingsError(
-                f"CLARA_TAILSCALE_PORT must be one of {', '.join(map(str, HTTPS_PORTS))} (Tailscale's HTTPS ports)"
-            )
-        if tailscale == "funnel":
-            weak = sorted(
-                {name for token, name in (*tokens.items(), *admin_tokens.items()) if len(token) < MIN_PUBLIC_TOKEN_LENGTH}
-            )
-            if weak:
-                raise SettingsError(
-                    f"CLARA_TAILSCALE=funnel puts the server on the public internet: the token(s) of {', '.join(weak)} "
-                    f"have fewer than {MIN_PUBLIC_TOKEN_LENGTH} characters. Generate real ones with:\n"
-                    '  python -c "import secrets; print(secrets.token_urlsafe(32))"'
-                )
+    def raw(self, name: str) -> str | None:
+        value = self.values.get(name)
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
-        client_surfaces = parse_client_surfaces(
-            env.get("CLARA_CLIENT_SURFACES", ""), set(tokens.values())
-        )
+    def text(self, name: str, default: str) -> str:
+        return self.raw(name) or default
 
-        api_key = text("OLLAMA_API_KEY") or None
-        default_provider = text("CLARA_PROVIDER", "local").lower()
-        if default_provider not in PROVIDER_IDS:
-            raise SettingsError(f"CLARA_PROVIDER must be one of {', '.join(PROVIDER_IDS)}")
-        if default_provider == "cloud" and not api_key:
-            raise SettingsError("CLARA_PROVIDER=cloud needs OLLAMA_API_KEY.")
-        api_providers = {
-            name: ApiProvider(
-                key_name,
-                text(f"CLARA_{name.upper()}_HOST", host).rstrip("/"),
-                text(f"CLARA_{name.upper()}_MODEL", model),
-                _positive_int(env, f"CLARA_{name.upper()}_CONTEXT_WINDOW", window),
-                text(key_name) or None,
-            )
-            for name, (key_name, host, model, window) in API_PROVIDERS.items()
-        }
-        if default_provider in api_providers and not api_providers[default_provider].api_key:
-            raise SettingsError(
-                f"CLARA_PROVIDER={default_provider} needs {api_providers[default_provider].key_name}."
-            )
-        inline_percent = _non_negative_int(env, "CLARA_PROJECT_INLINE_PERCENT", 40)
-        if inline_percent > 90:
-            raise SettingsError("CLARA_PROJECT_INLINE_PERCENT is a share of the context window: at most 90")
+    def integer(self, name: str, default: int, low: int | None = None, high: int | None = None) -> int:
+        raw = self.raw(name)
+        if raw is None:
+            return default
+        try:
+            value = int(raw.replace("_", ""))
+        except ValueError:
+            self.problems.append(f"{name}={raw!r} is not a whole number.")
+            return default
+        return self._bounded(name, value, low, high, default)
 
-        return cls(
-            host=text("CLARA_HOST", "127.0.0.1"),
-            port=_positive_int(env, "CLARA_PORT", 8765),
-            data_dir=Path(text("CLARA_DATA_DIR", "data")),
-            tokens=tokens,
-            admin_tokens=admin_tokens,
-            client_surfaces=client_surfaces,
-            history_turns=_positive_int(env, "CLARA_HISTORY_TURNS", 20),
-            max_concurrent_llm=_positive_int(env, "CLARA_MAX_CONCURRENT_LLM", 2),
-            max_tool_rounds=_positive_int(env, "CLARA_MAX_TOOL_ROUNDS", 40),
-            tool_timeout=_positive_int(env, "CLARA_TOOL_TIMEOUT", 900),
-            llm_first_token_timeout=_positive_int(env, "CLARA_LLM_FIRST_TOKEN_TIMEOUT", 300),
-            llm_idle_timeout=_positive_int(env, "CLARA_LLM_IDLE_TIMEOUT", 120),
-            llm_retries=_non_negative_int(env, "CLARA_LLM_RETRIES", 3),
-            llm_retry_delay=_positive_int(env, "CLARA_LLM_RETRY_DELAY", 2),
-            compact_percent=_non_negative_int(env, "CLARA_COMPACT_PERCENT", 80),
-            keep_recent_turns=_non_negative_int(env, "CLARA_KEEP_RECENT_TURNS", 2),
-            facts_token_budget=_positive_int(env, "CLARA_FACTS_TOKEN_BUDGET", 2000),
-            purge_summarised=_flag(env, "CLARA_PURGE_SUMMARISED"),
-            reminder_ai_timeout=_non_negative_int(env, "CLARA_REMINDER_AI_TIMEOUT", 60),
-            system_prompt_file=Path(text("CLARA_SYSTEM_PROMPT_FILE", "config/system_prompt.md")),
-            default_provider=default_provider,
-            local_host=text("OLLAMA_HOST", DEFAULT_LOCAL_HOST),
-            local_model=text("CLARA_LOCAL_MODEL", "llama3.2"),
-            local_context_window=_positive_int(env, "CLARA_LOCAL_CONTEXT_WINDOW", 32_768),
-            cloud_host=text("CLARA_CLOUD_HOST", DEFAULT_CLOUD_HOST),
-            cloud_model=text("CLARA_CLOUD_MODEL", "gpt-oss:120b"),
-            cloud_context_window=_positive_int(env, "CLARA_CLOUD_CONTEXT_WINDOW", 131_072),
-            ollama_api_key=api_key,
-            web_tools=_flag(env, "CLARA_WEB_TOOLS", default=True),
-            notify_long_turn=_non_negative_int(env, "CLARA_NOTIFY_LONG_TURN", 120),
-            traffic_log=_flag(env, "CLARA_TRAFFIC_LOG", default=True),
-            traffic_log_days=_positive_int(env, "CLARA_TRAFFIC_LOG_DAYS", 30),
-            traffic_log_max_body=_positive_int(env, "CLARA_TRAFFIC_LOG_MAX_BODY", 100_000),
-            tailscale=tailscale,
-            tailscale_port=tailscale_port,
-            tailscale_bin=text("CLARA_TAILSCALE_BIN", "tailscale"),
-            auth_max_failures=_non_negative_int(env, "CLARA_AUTH_MAX_FAILURES", 10),
-            auth_block_seconds=_positive_int(env, "CLARA_AUTH_BLOCK_SECONDS", 300),
-            session_days=_non_negative_int(env, "CLARA_SESSION_DAYS", 90),
-            user_surfaces=parse_user_surfaces(text("CLARA_USER_SURFACES", "web,app,cli,console")),
-            web_signup=_flag(env, "CLARA_WEB_SIGNUP"),
-            login_surfaces=parse_login_surfaces(text("CLARA_LOGIN_SURFACES", "discord")),
-            discord_token=text("DISCORD_BOT_TOKEN") or None,
-            discord_auto_start=_flag(env, "AUTO_START_DISCORD_BOT"),
-            discord_invite_url=text("DISCORD_BOT_INVIT_URL"),
-            api_providers=api_providers,
-            deepseek_thinking=_flag(env, "CLARA_DEEPSEEK_THINKING", default=True),
-            project_max_bytes=_positive_int(env, "CLARA_PROJECT_MAX_MB", 20) * 1_000_000,
-            project_max_files=_positive_int(env, "CLARA_PROJECT_MAX_FILES", 5_000),
-            project_inline_percent=inline_percent,
-            github_token=text("GITHUB_TOKEN") or None,
-            default_daily_tokens=_token_limit(env, "CLARA_DEFAULT_DAILY_TOKENS"),
-            weight_reference_b=_positive_number(env, "CLARA_WEIGHT_REFERENCE_B", 8.0),
-            task_max_reminders=_positive_int(env, "CLARA_TASK_MAX_REMINDERS", 10),
-            secret_key=text("CLARA_SECRET_KEY"),
-            google_client_id=text("GOOGLE_CLIENT_ID"),
-            google_client_secret=text("GOOGLE_CLIENT_SECRET"),
-            public_url=text("CLARA_PUBLIC_URL").rstrip("/"),
-            approval_notify_after=_non_negative_int(env, "CLARA_APPROVAL_NOTIFY_AFTER", 60),
-            approval_expire_after=_positive_int(env, "CLARA_APPROVAL_EXPIRE_AFTER", 86_400),
-        )
+    def number(self, name: str, default: float, low: float | None = None, high: float | None = None) -> float:
+        raw = self.raw(name)
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            self.problems.append(f"{name}={raw!r} is not a number.")
+            return default
+        return self._bounded(name, value, low, high, default)
+
+    def _bounded(self, name, value, low, high, default):
+        if (low is not None and value < low) or (high is not None and value > high):
+            bounds = f"between {low} and {high}" if high is not None else f"at least {low}"
+            self.problems.append(f"{name}={value} must be {bounds}.")
+            return default
+        return value
+
+    def flag(self, name: str, default: bool) -> bool:
+        raw = self.raw(name)
+        if raw is None:
+            return default
+        lowered = raw.lower()
+        if lowered in ("1", "true", "yes", "on"):
+            return True
+        if lowered in ("0", "false", "no", "off"):
+            return False
+        self.problems.append(f"{name}={raw!r} is not true or false.")
+        return default
+
+    def choice(self, name: str, default: str, choices: tuple[str, ...]) -> str:
+        raw = (self.raw(name) or default).lower()
+        if raw not in choices:
+            self.problems.append(f"{name}={raw!r} must be one of {', '.join(choices)}.")
+            return default
+        return raw
+
+    def path(self, name: str, default: Path | None = None) -> Path | None:
+        raw = self.raw(name)
+        return Path(raw).expanduser() if raw else default
+
+    def size(self, name: str, default: int) -> int:
+        """A size in bytes: `5g`, `100m`, `64k`, `1048576`."""
+        raw = self.raw(name)
+        if raw is None:
+            return default
+        match = _SIZE.match(raw)
+        if match is None:
+            self.problems.append(f"{name}={raw!r} is not a size like 100m or 5g.")
+            return default
+        return int(float(match.group(1)) * {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[match.group(2).lower()])
+
+    def url(self, name: str, default: str) -> str:
+        value = self.text(name, default).rstrip("/")
+        if value and not value.startswith(("http://", "https://")):
+            self.problems.append(f"{name}={value!r} must start with http:// or https://.")
+            return default
+        return value
+
+
+def _ollama_hosts(reader: _Reader) -> tuple[OllamaHost, ...]:
+    raw = reader.raw("CLARA_OLLAMA_HOSTS")
+    if raw is None:
+        return Settings.__dataclass_fields__["ollama_hosts"].default  # type: ignore[return-value]
+    if raw.lower() == "none":
+        return ()
+    hosts: list[OllamaHost] = []
+    for part in (piece.strip() for piece in raw.split(",")):
+        if not part:
+            continue
+        name, separator, url = part.partition("=")
+        name, url = name.strip().lower(), url.strip().rstrip("/")
+        if not separator or not PROVIDER_ID.match(name):
+            reader.problems.append(f"CLARA_OLLAMA_HOSTS: {part!r} must be id=url, the id in lower case (local=http://127.0.0.1:11434).")
+            continue
+        if name in RESERVED_PROVIDER_IDS:
+            reader.problems.append(f"CLARA_OLLAMA_HOSTS: {name!r} is the id of a hosted provider; choose another.")
+            continue
+        if not url.startswith(("http://", "https://")):
+            reader.problems.append(f"CLARA_OLLAMA_HOSTS: the address of {name!r} must start with http:// or https://.")
+            continue
+        if any(host.id == name for host in hosts):
+            reader.problems.append(f"CLARA_OLLAMA_HOSTS: {name!r} is given twice.")
+            continue
+        hosts.append(OllamaHost(name, url))
+    return tuple(hosts)
+
+
+def _credential(name: str, environ: Mapping[str, str]) -> Path | None:
+    """A file systemd hands the service with LoadCredential=/LoadCredentialEncrypted=."""
+    directory = environ.get("CREDENTIALS_DIRECTORY")
+    if directory:
+        candidate = Path(directory) / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def default_env_file(environ: Mapping[str, str] | None = None) -> Path:
+    environ = os.environ if environ is None else environ
+    return Path(environ.get("CLARA_ENV_FILE") or ".env").expanduser()
+
+
+def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | None = None, *, use_file: bool = True) -> Settings:
+    """Settings from the environment over the `.env` file. SettingsError lists every problem found."""
+    environ = dict(os.environ if environ is None else environ)
+    env_file = env_file or default_env_file(environ)
+    file_values: dict[str, str] = {}
+    if use_file and env_file.exists():
+        file_values = {key: value for key, value in dotenv_values(env_file).items() if value is not None}
+    merged = {**file_values, **environ}
+    r = _Reader(merged)
+
+    data_dir = r.path("CLARA_DATA_DIR") or (Path(environ["STATE_DIRECTORY"]) if environ.get("STATE_DIRECTORY") else Path("/var/lib/clara"))
+    timezone = r.text("CLARA_TIMEZONE", "") or system_zone_name()
+    try:
+        zone(timezone)
+    except ZoneError as error:
+        r.problems.append(f"CLARA_TIMEZONE: {error}")
+        timezone = "UTC"
+    for name, value in merged.items():
+        if (name.startswith("CLARA_") and any(word in name for word in ("_API_KEY", "_PASSWORD", "_SECRET"))
+                and name not in ("CLARA_SECRET_KEY", "CLARA_SECRET_KEY_FILE")):
+            if value.strip():
+                r.problems.append(f"{name}: secrets do not belong in the environment; store it with `clara secrets set`.")
+
+    hosted_context = dict(Settings.__dataclass_fields__["hosted_context"].default_factory())  # type: ignore[misc]
+    for provider in HOSTED_PROVIDERS:
+        hosted_context[provider] = r.integer(f"CLARA_{provider.upper()}_CONTEXT", hosted_context[provider], 1024)
+
+    backup_time = r.text("CLARA_BACKUP_TIME", "03:30")
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", backup_time):
+        r.problems.append(f"CLARA_BACKUP_TIME={backup_time!r} must be HH:MM.")
+        backup_time = "03:30"
+    release_repo = r.text("CLARA_RELEASE_REPO", "")
+    if release_repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", release_repo):
+        r.problems.append(f"CLARA_RELEASE_REPO={release_repo!r} must be owner/name.")
+        release_repo = ""
+    tailscale_port = r.integer("CLARA_TAILSCALE_PORT", 443)
+    if tailscale_port not in TAILSCALE_PORTS:
+        r.problems.append(f"CLARA_TAILSCALE_PORT must be one of {', '.join(map(str, TAILSCALE_PORTS))}.")
+        tailscale_port = 443
+    run_timeout = r.integer("CLARA_RUN_TIMEOUT", 120, 1)
+    run_max_timeout = r.integer("CLARA_RUN_MAX_TIMEOUT", 900, 1, 86_400)
+    if run_timeout > run_max_timeout:
+        r.problems.append("CLARA_RUN_TIMEOUT cannot be above CLARA_RUN_MAX_TIMEOUT.")
+    secret_key = environ.get("CLARA_SECRET_KEY") or file_values.get("CLARA_SECRET_KEY")
+    if secret_key and "CLARA_SECRET_KEY" in file_values:
+        r.problems.append("CLARA_SECRET_KEY must not be written in the .env file: use a systemd credential or CLARA_SECRET_KEY_FILE.")
+
+    settings = Settings(
+        data_dir=data_dir,
+        port=r.integer("CLARA_PORT", 8765, 1, 65_535),
+        timezone=timezone,
+        persona_file=r.path("CLARA_PERSONA_FILE"),
+        env_file=env_file if env_file.exists() else None,
+        debug=r.flag("CLARA_DEBUG", False),
+        secret_key_file=r.path("CLARA_SECRET_KEY_FILE") or _credential("clara-secret-key", environ),
+        secret_key=secret_key or None,
+        check_permissions=r.flag("CLARA_CHECK_PERMISSIONS", True),
+        ollama_hosts=_ollama_hosts(r),
+        ollama_context=r.integer("CLARA_OLLAMA_CONTEXT", 32_768, 2048),
+        cloud_host=r.url("CLARA_CLOUD_HOST", "https://ollama.com"),
+        gemini_host=r.url("CLARA_GEMINI_HOST", Settings.gemini_host),
+        deepseek_host=r.url("CLARA_DEEPSEEK_HOST", Settings.deepseek_host),
+        mistral_host=r.url("CLARA_MISTRAL_HOST", Settings.mistral_host),
+        deepseek_thinking=r.flag("CLARA_DEEPSEEK_THINKING", True),
+        hosted_context=hosted_context,
+        history_turns=r.integer("CLARA_HISTORY_TURNS", 20, 1, 500),
+        max_tool_rounds=r.integer("CLARA_MAX_TOOL_ROUNDS", 20, 1, 200),
+        chat_slots=r.integer("CLARA_CHAT_SLOTS", 2, 1, 64),
+        background_slots=r.integer("CLARA_BACKGROUND_SLOTS", 1, 1, 64),
+        first_token_timeout=r.number("CLARA_FIRST_TOKEN_TIMEOUT", 300.0, 1),
+        idle_timeout=r.number("CLARA_IDLE_TIMEOUT", 120.0, 1),
+        answer_budget=r.number("CLARA_ANSWER_BUDGET", 900.0, 10),
+        client_tool_timeout=r.number("CLARA_CLIENT_TOOL_TIMEOUT", 900.0, 1),
+        compact_percent=r.integer("CLARA_COMPACT_PERCENT", 80, 0, 95),
+        compact_tokens=r.integer("CLARA_COMPACT_TOKENS", 40_000, 0),
+        keep_recent_turns=r.integer("CLARA_KEEP_RECENT_TURNS", 2, 0, 50),
+        purge_summarised=r.flag("CLARA_PURGE_SUMMARISED", False),
+        facts_token_budget=r.integer("CLARA_FACTS_TOKEN_BUDGET", 2_000, 0),
+        approval_wait=r.number("CLARA_APPROVAL_WAIT", 600.0, 0),
+        approval_expire=r.integer("CLARA_APPROVAL_EXPIRE", 86_400, 60),
+        notify_long_turn=r.integer("CLARA_NOTIFY_LONG_TURN", 120, 0),
+        reminder_ai_timeout=r.number("CLARA_REMINDER_AI_TIMEOUT", 60.0, 0),
+        task_max_reminders=r.integer("CLARA_TASK_MAX_REMINDERS", 10, 1, 100),
+        incognito_hours=r.integer("CLARA_INCOGNITO_HOURS", 24, 1, 24 * 30),
+        workspace=r.path("CLARA_WORKSPACE"),
+        workspace_max_bytes=r.size("CLARA_WORKSPACE_MAX_SIZE", 5 * 1024**3),
+        workspace_max_file_bytes=r.size("CLARA_WORKSPACE_MAX_FILE", 100 * 1024**2),
+        run=r.choice("CLARA_RUN", "auto", ("auto", "off")),
+        podman=r.text("CLARA_PODMAN", "podman"),
+        sandbox_image=r.text("CLARA_SANDBOX_IMAGE", "localhost/clara-sandbox:latest"),
+        run_timeout=run_timeout,
+        run_max_timeout=run_max_timeout,
+        run_memory=r.text("CLARA_RUN_MEMORY", "1g"),
+        run_cpus=r.number("CLARA_RUN_CPUS", 2.0, 0.1, 256),
+        run_pids=r.integer("CLARA_RUN_PIDS", 256, 16, 65_536),
+        run_slots=r.integer("CLARA_RUN_SLOTS", 2, 1, 32),
+        run_output_bytes=r.size("CLARA_RUN_OUTPUT", 64 * 1024),
+        project_max_chars=r.integer("CLARA_PROJECT_MAX_CHARS", 20_000_000, 1000),
+        project_max_files=r.integer("CLARA_PROJECT_MAX_FILES", 5_000, 1),
+        project_inline_percent=r.integer("CLARA_PROJECT_INLINE_PERCENT", 40, 0, 90),
+        project_inline_tokens=r.integer("CLARA_PROJECT_INLINE_TOKENS", 20_000, 0),
+        vault_path=r.path("CLARA_VAULT_PATH"),
+        vault_push=r.flag("CLARA_VAULT_PUSH", True),
+        vault_pull_seconds=r.integer("CLARA_VAULT_PULL_SECONDS", 30, 0),
+        searxng_url=r.url("CLARA_SEARXNG_URL", "http://127.0.0.1:8888"),
+        fetch_max_bytes=r.size("CLARA_FETCH_MAX_SIZE", 2_000_000),
+        public_url=r.url("CLARA_PUBLIC_URL", ""),
+        google_client_id=r.text("CLARA_GOOGLE_CLIENT_ID", ""),
+        google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),
+        tailscale=r.choice("CLARA_TAILSCALE", "serve", ("serve", "off")),
+        tailscale_port=tailscale_port,
+        tailscale_bin=r.text("CLARA_TAILSCALE_BIN", "tailscale"),
+        traffic_log_days=r.integer("CLARA_TRAFFIC_LOG_DAYS", 7, 0, 365),
+        backup_dir=r.path("CLARA_BACKUP_DIR"),
+        backup_time=backup_time,
+        backup_keep_daily=r.integer("CLARA_BACKUP_KEEP_DAILY", 14, 1, 365),
+        backup_keep_weekly=r.integer("CLARA_BACKUP_KEEP_WEEKLY", 8, 0, 520),
+        restic_repository=r.text("CLARA_RESTIC_REPOSITORY", ""),
+        restic_bin=r.text("CLARA_RESTIC_BIN", "restic"),
+        release_repo=release_repo,
+        releases_dir=r.path("CLARA_RELEASES_DIR", Path("/opt/clara/releases")) or Path("/opt/clara/releases"),
+        release_pubkey=r.text("CLARA_RELEASE_PUBKEY", ""),
+        drain_seconds=r.integer("CLARA_DRAIN_SECONDS", 120, 1, 3600),
+        disk_alert_percent=r.integer("CLARA_DISK_ALERT_PERCENT", 85, 1, 100),
+        late_alert_seconds=r.integer("CLARA_LATE_ALERT_SECONDS", 300, 30),
+        discord_expected=r.flag("CLARA_DISCORD_EXPECTED", False),
+        retention_days=r.integer("CLARA_RETENTION_DAYS", 400, 1),
+        events_max_days=r.integer("CLARA_EVENTS_MAX_DAYS", 90, 1),
+    )
+    if r.problems:
+        raise SettingsError(r.problems)
+    return settings

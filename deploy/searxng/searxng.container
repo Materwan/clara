@@ -1,0 +1,25 @@
+# A rootless Podman quadlet for SearXNG, the self-hosted search Clara uses, run by the clara user (lingering is on).
+#   sudo -u clara mkdir -p /var/lib/clara-home/.config/containers/systemd /var/lib/clara-home/searxng
+#   sudo -u clara cp deploy/searxng/searxng.container /var/lib/clara-home/.config/containers/systemd/
+#   sudo -u clara cp deploy/searxng/settings.yml /var/lib/clara-home/searxng/   (then set a random secret_key in it:
+#       openssl rand -hex 32)
+#   sudo systemctl --user -M clara@ daemon-reload && sudo systemctl --user -M clara@ start searxng
+# It listens on 127.0.0.1:8888 only. Check it: curl -s '127.0.0.1:8888/search?q=test&format=json' | head -c 200
+[Unit]
+Description=SearXNG for Clara
+
+[Container]
+# pin a digest you checked: podman pull docker.io/searxng/searxng:latest; podman image inspect --format '{{.Digest}}'
+Image=docker.io/searxng/searxng:latest
+PublishPort=127.0.0.1:8888:8080
+Volume=%h/searxng:/etc/searxng:ro,Z
+DropCapability=ALL
+AddCapability=CHOWN SETGID SETUID
+NoNewPrivileges=true
+ReadOnly=false
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,9 +1,34 @@
+# Python
 .venv/
 __pycache__/
-*.egg-info/
+*.py[cod]
 .pytest_cache/
-.env
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+
+# Web build (built by scripts/build-web.sh, shipped in releases)
+node_modules/
+web/node_modules/
+src/clara/web/dist/
+
+# Local data and secrets: never committed
 data/
-.env.bak.*
-*.sh
-claude*
+.dev/
+.dist/
+.stfolder/
+discord-state.json
+.env
+.env.*
+!deploy/clara.env.example
+*.key
+*.sqlite3
+*.db
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

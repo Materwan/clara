@@ -1,8 +1,8 @@
-"""Clara: one AI, one memory, many clients."""
+"""Clara: a personal AI agent for one person, on one Linux machine, reachable only over Tailscale."""
 
-from importlib import metadata
+from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = metadata.version("clara-server")  # pyproject.toml is the one place the version is written
-except metadata.PackageNotFoundError:  # running from a plain checkout, not installed
-    __version__ = "0+unknown"
+    __version__ = version("clara")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0.0.0+source"
