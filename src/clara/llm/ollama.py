@@ -82,7 +82,8 @@ class OllamaBackend:
             body["options"] = {"num_ctx": self._num_ctx}  # Ollama's own default window is tiny
         return body
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None,
+                     session: str | None = None) -> AsyncIterator[LlmChunk]:
         async with self._http.stream("POST", "/api/chat", json=self.body(messages, tools)) as response:
             if response.is_error:
                 await response.aread()

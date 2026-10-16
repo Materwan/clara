@@ -5,6 +5,7 @@
     gemini    Google Gemini, OpenAI-compatible API, key `gemini_api_key`                             hosted
     deepseek  DeepSeek, OpenAI-compatible API, key `deepseek_api_key`                               hosted
     mistral   Mistral, OpenAI-compatible API, key `mistral_api_key`                                 hosted
+    opencode-go  OpenCode Go, OpenAI-compatible API (chat models only), key `opencode_go_api_key`  hosted
 
 A model is named `provider:model` (`local:qwen3:8b`, `gemini:gemini-2.5-flash`). A provider is *usable* when you
 enabled it (runtime setting `providers_enabled`; local hosts are enabled at first) and its key, if it needs one, is in
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .. import __version__
 from ..runtime import RuntimeSettings
 from ..secrets import SecretsStore
 from ..settings import Settings
@@ -28,6 +30,11 @@ from .types import Backend, Capabilities
 
 CHECK_TIMEOUT = 8.0
 CAPABILITIES_TIMEOUT = 30.0
+# OpenCode Go serves its models over four protocols and lists them all in one place; Clara speaks Chat Completions,
+# so it keeps the families that use it (the rest would fail when asked). Claude, GPT, Grok, Gemini, MiniMax and
+# Qwen are on the other protocols.
+OPENCODE_GO_CHAT = ("glm-", "kimi-", "longcat-", "deepseek-", "mimo-", "hy3", "hy4", "space-bunny", "step-",
+                    "cat-jam")
 
 
 class ProviderError(Exception):
@@ -79,6 +86,12 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
     )
     providers["mistral"] = Provider("mistral", "Mistral", "openai", settings.mistral_host, False, "mistral_api_key",
                                     context["mistral"], OpenAIFlavor(stream_usage=False, tool_names=True))
+    go = settings.opencode_go_host.rstrip("/")
+    providers["opencode-go"] = Provider(
+        "opencode-go", "OpenCode Go", "openai", f"{go}/openai/v1", False, "opencode_go_api_key", context["opencode-go"],
+        OpenAIFlavor(reasoning_back=True, models_url=f"{go}/v1/models", model_prefixes=OPENCODE_GO_CHAT,
+                     headers=(("User-Agent", f"clara/{__version__}"),), session_header="x-opencode-session"),
+    )
     return providers
 
 

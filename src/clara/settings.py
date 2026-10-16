@@ -23,7 +23,7 @@ from dotenv import dotenv_values
 from .timeutil import ZoneError, system_zone_name, zone
 
 PROVIDER_ID = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
-HOSTED_PROVIDERS = ("cloud", "gemini", "deepseek", "mistral")
+HOSTED_PROVIDERS = ("cloud", "gemini", "deepseek", "mistral", "opencode-go")
 RESERVED_PROVIDER_IDS = frozenset(HOSTED_PROVIDERS)
 TAILSCALE_PORTS = (443, 8443, 10000)
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
@@ -65,9 +65,11 @@ class Settings:
     gemini_host: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     deepseek_host: str = "https://api.deepseek.com"
     mistral_host: str = "https://api.mistral.ai/v1"
+    opencode_go_host: str = "https://opencode.ai/inference/go"  # chat is under /openai/v1, the model list under /v1
     deepseek_thinking: bool = True
     hosted_context: Mapping[str, int] = field(
-        default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072}
+        default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072,
+                                 "opencode-go": 131_072}
     )
 
     # --- conversation engine --------------------------------------------------------------------------------
@@ -333,7 +335,8 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
 
     hosted_context = dict(Settings.__dataclass_fields__["hosted_context"].default_factory())  # type: ignore[misc]
     for provider in HOSTED_PROVIDERS:
-        hosted_context[provider] = r.integer(f"CLARA_{provider.upper()}_CONTEXT", hosted_context[provider], 1024)
+        name = f"CLARA_{provider.upper().replace('-', '_')}_CONTEXT"
+        hosted_context[provider] = r.integer(name, hosted_context[provider], 1024)
 
     backup_time = r.text("CLARA_BACKUP_TIME", "03:30")
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", backup_time):
@@ -371,6 +374,7 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         gemini_host=r.url("CLARA_GEMINI_HOST", Settings.gemini_host),
         deepseek_host=r.url("CLARA_DEEPSEEK_HOST", Settings.deepseek_host),
         mistral_host=r.url("CLARA_MISTRAL_HOST", Settings.mistral_host),
+        opencode_go_host=r.url("CLARA_OPENCODE_GO_HOST", Settings.opencode_go_host),
         deepseek_thinking=r.flag("CLARA_DEEPSEEK_THINKING", True),
         hosted_context=hosted_context,
         history_turns=r.integer("CLARA_HISTORY_TURNS", 20, 1, 500),

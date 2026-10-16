@@ -439,7 +439,8 @@ and run on the client.
 ## 11. Models
 
 - **Providers:** local Ollama hosts (`CLARA_OLLAMA_HOSTS`: this machine, your PC over the tailnet, any number), Ollama
-  cloud (`cloud`), Google Gemini (`gemini`), DeepSeek (`deepseek`), Mistral (`mistral`). Local hosts are enabled at
+  cloud (`cloud`), Google Gemini (`gemini`), DeepSeek (`deepseek`), Mistral (`mistral`), OpenCode Go (`opencode-go`:
+  the models that speak Chat Completions, the others it lists are left out). Local hosts are enabled at
   first; a hosted provider is enabled from the console or the Models page once its key is stored. Their terms are in
   [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - **Catalogue:** models listed by each enabled provider, with context window and capabilities (tools, pictures,
@@ -579,7 +580,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_OLLAMA_CONTEXT` | 32768 | Context window asked of local models |
 | `CLARA_CLOUD_HOST` | `https://ollama.com` | Ollama cloud |
 | `CLARA_GEMINI_HOST`, `CLARA_DEEPSEEK_HOST`, `CLARA_MISTRAL_HOST` | the providers' API addresses | Hosted providers |
-| `CLARA_CLOUD_CONTEXT`, `CLARA_GEMINI_CONTEXT`, `CLARA_DEEPSEEK_CONTEXT`, `CLARA_MISTRAL_CONTEXT` | per provider | Context window assumed when the provider does not say |
+| `CLARA_OPENCODE_GO_HOST` | `https://opencode.ai/inference/go` | OpenCode Go (Clara adds `/openai/v1` for chat and `/v1/models` for the list) |
+| `CLARA_CLOUD_CONTEXT`, `CLARA_GEMINI_CONTEXT`, `CLARA_DEEPSEEK_CONTEXT`, `CLARA_MISTRAL_CONTEXT`, `CLARA_OPENCODE_GO_CONTEXT` | per provider | Context window assumed when the provider does not say |
 | `CLARA_DEEPSEEK_THINKING` | true | Use DeepSeek's thinking mode |
 | `CLARA_HISTORY_TURNS` | 20 | Turns of history sent at most |
 | `CLARA_MAX_TOOL_ROUNDS` | 20 | Tool rounds per answer |
@@ -670,6 +672,7 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `gemini_api_key` | Google Gemini API key |
 | `deepseek_api_key` | DeepSeek API key |
 | `mistral_api_key` | Mistral API key |
+| `opencode_go_api_key` | OpenCode Go API key |
 | `github_token` | GitHub fine-grained personal access token (set from the Connections page) |
 | `google_client_secret` | Google OAuth client secret |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |

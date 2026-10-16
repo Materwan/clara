@@ -46,6 +46,7 @@ KNOWN_SECRETS: dict[str, str] = {
     "gemini_api_key": "Google Gemini API key (provider `gemini`)",
     "deepseek_api_key": "DeepSeek API key (provider `deepseek`)",
     "mistral_api_key": "Mistral API key (provider `mistral`)",
+    "opencode_go_api_key": "OpenCode Go API key (provider `opencode-go`)",
     "github_token": "GitHub fine-grained personal access token",
     "google_client_secret": "Google OAuth client secret (Drive)",
     "google_refresh_token": "Google refresh token (set by the Drive connection, not by hand)",

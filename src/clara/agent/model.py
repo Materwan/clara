@@ -132,7 +132,7 @@ class ModelRunner:
                             if budget.left <= 0:
                                 raise ModelTimeout("This answer has used up its time budget (CLARA_ANSWER_BUDGET).")
                             first, idle = min(first, budget.left), min(idle, budget.left)
-                        async for chunk in with_idle_timeout(backend.stream(messages, tools), first, idle):
+                        async for chunk in with_idle_timeout(backend.stream(messages, tools, session=conversation_id), first, idle):
                             started = started or bool(chunk.text or chunk.thinking or chunk.tool_calls)
                             counts[0] += chunk.prompt_tokens
                             counts[1] += chunk.completion_tokens

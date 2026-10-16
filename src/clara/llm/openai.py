@@ -1,9 +1,11 @@
-"""Services that speak the OpenAI chat API: Gemini, DeepSeek, Mistral (`{host}/chat/completions`, `{host}/models`)."""
+"""Services that speak the OpenAI chat API: Gemini, DeepSeek, Mistral, OpenCode Go (`{host}/chat/completions`,
+`{host}/models`)."""
 
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -32,6 +34,10 @@ class OpenAIFlavor:
     tool_names: bool = False  # name the tool on a tool result (Mistral)
     extra_body: tuple[tuple[str, Any], ...] = ()
     native_models: str = ""  # the provider's own model list, when the OpenAI one has only names (Gemini)
+    models_url: str = ""  # where the models are listed, when it is not `{host}/models` (OpenCode Go)
+    model_prefixes: tuple[str, ...] = ()  # keep only the models named so: the rest speak another protocol
+    headers: tuple[tuple[str, str], ...] = ()  # sent with every request (OpenCode wants a User-Agent of its own)
+    session_header: str = ""  # the header naming the conversation, when the service insists on one (OpenCode)
 
 
 def google_record(model_id: str, model: dict) -> dict:
@@ -93,8 +99,9 @@ class OpenAIBackend:
         self._flavor = flavor or OpenAIFlavor()
         self.label = label
         self._transport = transport
+        self._session = uuid.uuid4().hex  # for a request that belongs to no conversation
         self._http = httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            headers={**dict(self._flavor.headers), **({"Authorization": f"Bearer {api_key}"} if api_key else {})},
             timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
             transport=transport,
         )
@@ -181,10 +188,13 @@ class OpenAIBackend:
         body.update(dict(self._flavor.extra_body))
         return body
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]:
+    async def stream(self, messages: list[dict], tools: list[dict] | None,
+                     session: str | None = None) -> AsyncIterator[LlmChunk]:
         calls: dict[int, dict[str, Any]] = {}
         counted = (0, 0, 0)
-        request = self._http.stream("POST", f"{self.host}/chat/completions", json=self.body(messages, tools))
+        named = {self._flavor.session_header: session or self._session} if self._flavor.session_header else None
+        request = self._http.stream("POST", f"{self.host}/chat/completions", json=self.body(messages, tools),
+                                    headers=named)
         async with request as response:
             if response.is_error:
                 raise await self._refused(response)
@@ -237,12 +247,13 @@ class OpenAIBackend:
             ])
 
     async def list_models(self) -> list[str]:
-        response = await self._http.get(f"{self.host}/models", timeout=CONNECT_TIMEOUT)
+        response = await self._http.get(self._flavor.models_url or f"{self.host}/models", timeout=CONNECT_TIMEOUT)
         if response.is_error:
             raise await self._refused(response)
         models = response.json().get("data") or []
         names = {str(model.get("id", "")).removeprefix("models/") for model in models if isinstance(model, dict)}
-        return sorted(name for name in names if name)
+        prefixes = self._flavor.model_prefixes
+        return sorted(name for name in names if name and (not prefixes or name.startswith(prefixes)))
 
     async def model_capabilities(self, names: list[str]) -> dict[str, Capabilities]:
         if not self._flavor.native_models or not self._api_key:

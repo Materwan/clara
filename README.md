@@ -64,7 +64,7 @@ from inside the server, through the same gate, as "unattended".
 - Rootless [Podman](https://podman.io) for scripts (cgroup v2; `clara doctor` checks it). Without it, scripts stay
   off; everything else works.
 - Models: [Ollama](https://ollama.com) on this machine or another of your tailnet, and/or keys for Ollama cloud,
-  Gemini, DeepSeek or Mistral.
+  Gemini, DeepSeek, Mistral or OpenCode Go.
 - Optional: a SearXNG instance (`deploy/searxng/`), [restic](https://restic.net) and another tailnet machine for remote
   backups, a Google Cloud OAuth client for Drive, a GitHub fine-grained token, a Discord bot.
 

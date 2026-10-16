@@ -84,7 +84,10 @@ class Backend(Protocol):
 
     model: str
 
-    def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]: ...
+    def stream(self, messages: list[dict], tools: list[dict] | None,
+               session: str | None = None) -> AsyncIterator[LlmChunk]:
+        """`session` names the conversation, for the providers that route on it (OpenCode)."""
+        ...
 
     async def list_models(self) -> list[str]: ...
 

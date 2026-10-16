@@ -13,6 +13,7 @@ earlier server: the new Clara starts empty.
   revocable token per client, a failure limiter, web cookie plus `X-Clara-Web` header, `/docs` only in debug.
 - **Secrets:** an AES-GCM store in the database; its key in a systemd credential, never in the data folder; scrypt
   (N=2^17, salted) for passphrases; `clara secrets rotate`.
+- **Models:** local Ollama hosts, Ollama cloud, Gemini, DeepSeek, Mistral and OpenCode Go (its Chat Completions models).
 - **Chat:** streaming, versions (edit, ask again), titles, compaction that never cuts silently, a time budget per
   answer, separate model slots for background work, fallbacks that never leave a local choice, incognito and
   local-only conversations, attachments (PDF, Word, text, pictures, animations), client-side tools.

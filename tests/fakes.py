@@ -32,8 +32,10 @@ class FakeBackend:
     owner: FakeLLM
     provider: str
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None) -> AsyncIterator[LlmChunk]:
-        self.owner.seen.append({"model": f"{self.provider}:{self.model}", "messages": messages, "tools": tools})
+    async def stream(self, messages: list[dict], tools: list[dict] | None,
+                     session: str | None = None) -> AsyncIterator[LlmChunk]:
+        self.owner.seen.append({"model": f"{self.provider}:{self.model}", "messages": messages, "tools": tools,
+                                "session": session})
         reply = self.owner.next_reply(f"{self.provider}:{self.model}")
         while callable(reply):
             reply = reply(messages, tools)

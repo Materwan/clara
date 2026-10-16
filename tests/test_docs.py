@@ -53,7 +53,8 @@ def test_every_setting_is_listed():
     names = set()
     for path in [SOURCE / "settings.py", ROOT / "src" / "clara_discord" / "settings.py"]:
         names |= set(re.findall(r'"(CLARA_[A-Z0-9_]+)"', path.read_text(encoding="utf-8")))
-    names |= {f"CLARA_{provider.upper()}_CONTEXT" for provider in ("cloud", "gemini", "deepseek", "mistral")}
+    names |= {f"CLARA_{provider.upper().replace('-', '_')}_CONTEXT"
+              for provider in ("cloud", "gemini", "deepseek", "mistral", "opencode-go")}
     assert not missing(names)
 
 
