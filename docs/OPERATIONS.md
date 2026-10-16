@@ -88,21 +88,56 @@ in the clone.
 
 ### Discord
 
-1. On the Discord developer portal: a new application and its bot. No privileged intent is needed (direct messages
-   carry their content without it). Invite nothing to any server: open a DM with the bot from your account (share a
-   server with it once, or use its install link for user DMs).
-2. A Clara token for it: `clara token create discord discord` (its approval scope is `safe`).
-3. Credentials and settings:
+The bot lives in a **private Discord server with you and the bot only**, in four text channels. It has no
+direct-message function.
+
+1. In Discord: create the server and four text channels, named as you like (the bot finds them by id, not by name):
+   `general` (your chat with Clara), `approval`, `notification`, `alerts`. In Discord's settings, Advanced, switch on
+   Developer Mode; then right-click your name and each channel, *Copy ID*.
+2. On the Discord developer portal: a new application and its bot. On the Bot page, turn **Public Bot** off (nobody
+   else can invite it) and turn on **Message Content Intent** (it lets the bot read what you write in `#general`;
+   no other privileged intent is needed). Invite it to your server with an OAuth2 URL of scopes `bot` and
+   `applications.commands` and the permissions View Channels, Send Messages, Attach Files and Read Message History.
+3. A Clara token for it: `clara token create discord discord` (its approval scope is `safe`).
+4. Two files that only the `clara` user can read, one with the bot's token, one with the Clara token:
 
    ```bash
-   printf '%s' '<discord bot token>' | systemd-creds encrypt --name=discord-token - /etc/clara/discord-token.cred
-   printf '%s' '<the clara token>' | systemd-creds encrypt --name=clara-token - /etc/clara/discord-clara-token.cred
-   echo 'CLARA_DISCORD_USER_ID=<your numeric Discord id>' > /etc/clara/discord.env
-   echo 'CLARA_TIMEZONE=Europe/Paris' >> /etc/clara/discord.env
-   systemctl enable --now clara-discord
+   printf '%s' '<discord bot token>' | sudo install -m 600 -o clara -g clara /dev/stdin /etc/clara/discord-token
+   printf '%s' '<the clara token>' | sudo install -m 600 -o clara -g clara /dev/stdin /etc/clara/discord-clara-token
    ```
 
-4. In `/etc/clara/clara.env`: `CLARA_DISCORD_EXPECTED=true`, so its silence raises an alert.
+5. Start it with the server (the usual way). In `/etc/clara/clara.env`, then restart Clara:
+
+   ```
+   CLARA_DISCORD_AUTOSTART=true
+   CLARA_DISCORD_USER_ID=<your numeric Discord id>
+   CLARA_DISCORD_CHANNEL_GENERAL=<id of #general>
+   CLARA_DISCORD_CHANNEL_NOTIFICATION=<id of #notification>
+   CLARA_DISCORD_CHANNEL_APPROVAL=<id of #approval>
+   CLARA_DISCORD_CHANNEL_ALERTS=<id of #alerts>
+   DISCORD_BOT_TOKEN_FILE=/etc/clara/discord-token
+   CLARA_TOKEN_FILE=/etc/clara/discord-clara-token
+   ```
+
+   Clara then starts the bot with herself, starts it again if it crashes, and stops it when she stops (the server's
+   log shows its lines). A wrong id, a refused token or a missing intent stops the retries and raises the `discord`
+   alert; the log says which. Its silence for 5 minutes raises the same alert.
+
+**Or as its own service**, with its own systemd credentials and hardening, instead of step 5 (never both: two bots
+would answer twice). Put the ids in `/etc/clara/discord.env` (`CLARA_DISCORD_USER_ID`, the four
+`CLARA_DISCORD_CHANNEL_*`, `CLARA_TIMEZONE=Europe/Paris`), then:
+
+```bash
+printf '%s' '<discord bot token>' | systemd-creds encrypt --name=discord-token - /etc/clara/discord-token.cred
+printf '%s' '<the clara token>' | systemd-creds encrypt --name=clara-token - /etc/clara/discord-clara-token.cred
+systemctl enable --now clara-discord
+```
+
+and `CLARA_DISCORD_EXPECTED=true` in `/etc/clara/clara.env`, so its silence raises an alert.
+
+What goes where: your chat and Clara's answers in `#general`; approval requests, with buttons, in `#approval`
+(`#general` says when one waits); reminders, task reminders, schedule summaries, notifications and update news in
+`#notification`; alerts in `#alerts`. Keep the server to yourself: anyone in it reads those channels.
 
 ### Remote backups (restic)
 
@@ -118,10 +153,12 @@ clara backup now
 ## 4. Every day
 
 - **Status:** `/status` in `clara-admin`, or the Admin page; `systemctl status clara`; `journalctl -u clara`.
-- **Alerts** arrive in every client and as Discord DMs; `/alerts` lists them, `/alerts clear <key>` clears one. The
+- **Logs:** the Admin page's **Logs** tab streams the server's log and the traffic records live (last 500 lines kept in
+  memory, filtered by source and level); `journalctl -u clara` keeps the full history.
+- **Alerts** arrive in every client and in Discord's `#alerts`; `/alerts` lists them, `/alerts clear <key>` clears one. The
   list is in [FEATURES.md](../FEATURES.md#13-operations).
 - **Approvals:** answer in the chat, on the Rules & approvals page, with `/approvals` and `/allow`… in a terminal, or
-  with the Discord buttons.
+  with the Discord buttons in `#approval`.
 - **Something odd in a conversation:** `/debug on` records full prompts and answers for one hour in
   `/var/lib/clara/logs/debug-content.jsonl` (deleted at the end).
 

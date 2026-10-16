@@ -1,8 +1,12 @@
 <script lang="ts">
+  import Checkbox from '../components/Checkbox.svelte';
+  import Icon from '../components/Icon.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, localInput, when } from '../lib/api';
+  import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { toast } from '../lib/state.svelte';
 
-  const STATES = ['live', 'unconfirmed', 'expired', 'superseded', 'all'];
+  const STATES = ['live', 'unconfirmed', 'expired', 'superseded', 'all'].map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }));
   let shown = $state('live');
   let query = $state('');
   let facts = $state<any[]>([]);
@@ -53,26 +57,32 @@
   }
 
   async function forget(fact: any): Promise<void> {
-    if (!confirm('Forget this fact? Clara will not save it again by herself.')) return;
+    if (!(await confirmDialog({ title: 'Forget a fact', message: 'Forget this fact? Clara will not save it again by herself.', confirm: 'Forget', danger: true }))) return;
     await api.del(`/v1/memory/facts/${fact.id}`);
     load();
+  }
+
+  async function expire(fact: any): Promise<void> {
+    const until = await promptDialog({
+      title: 'Hold until', message: 'This fact holds until:', label: 'Holds until', type: 'datetime-local', confirm: 'Set',
+      value: localInput(new Date(Date.now() + 7 * 864e5).toISOString()),
+    });
+    if (until) change(fact, { expires_at: until });
   }
 </script>
 
 <div class="page stack">
-  <h1>Memory <span class="muted small">{count} facts</span></h1>
   <form class="panel row" onsubmit={add}>
-    <input class="grow" placeholder="A fact about you (one short sentence)" bind:value={text} maxlength="300" required />
-    <input placeholder="category" bind:value={category} maxlength="32" />
+    <input class="grow" aria-label="Fact" placeholder="A fact about you (one short sentence)" bind:value={text} maxlength="300" required />
+    <input aria-label="Category" placeholder="category" bind:value={category} maxlength="32" />
     <label class="small row" title="until when it holds">until <input type="datetime-local" bind:value={expires} /></label>
-    <label class="small row"><input type="checkbox" bind:checked={pinned} /> pinned</label>
+    <label class="small row"><Checkbox bind:checked={pinned} /> pinned</label>
     <button class="primary">Add</button>
   </form>
   <div class="row">
-    <div class="tabs grow">
-      {#each STATES as name}<button class:active={shown === name} onclick={() => (shown = name)}>{name}</button>{/each}
-    </div>
-    <input placeholder="Search" bind:value={query} onchange={load} />
+    <Segmented label="Which facts" options={STATES} bind:value={shown} />
+    <span class="muted small push">{count} facts</span>
+    <input type="search" aria-label="Search facts" placeholder="Search" bind:value={query} onchange={load} />
   </div>
   <table>
     <thead><tr><th>Fact</th><th>Source</th><th>Since</th><th></th></tr></thead>
@@ -81,10 +91,11 @@
         <tr>
           <td>
             {#if editing === fact.id}
-              <input class="wide" bind:value={editText} />
+              <input class="fact-edit" aria-label="Fact" bind:value={editText} />
               <button class="small primary" onclick={() => change(fact, { text: editText })}>Save</button>
             {:else}
-              {fact.pinned ? '📌 ' : ''}{fact.text}
+              {#if fact.pinned}<Icon name="pin" size={16} label="Pinned" />{/if}
+              {fact.text}
               {#if fact.category}<span class="tag">{fact.category}</span>{/if}
               {#if !fact.confirmed}<span class="tag warn">unconfirmed</span>{/if}
               {#if fact.expires_at}<span class="tag">until {when(fact.expires_at)}</span>{/if}
@@ -100,7 +111,7 @@
             {#if fact.expires_at}
               <button class="small" onclick={() => change(fact, { expires_at: '' })}>Keep</button>
             {:else}
-              <button class="small" onclick={() => { const until = prompt('Holds until (YYYY-MM-DDTHH:MM)', localInput(new Date(Date.now() + 7 * 864e5).toISOString())); if (until) change(fact, { expires_at: until }); }}>Expire…</button>
+              <button class="small" onclick={() => expire(fact)}>Expire…</button>
             {/if}
             <button class="small danger" onclick={() => forget(fact)}>Forget</button>
           </td>
@@ -113,7 +124,7 @@
 </div>
 
 <style>
-  .wide {
+  .fact-edit {
     width: 70%;
   }
 </style>

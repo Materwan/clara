@@ -1,8 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import ConversationRail from './components/ConversationRail.svelte';
+  import Dialog from './components/Dialog.svelte';
+  import Icon from './components/Icon.svelte';
+  import Mark from './components/Mark.svelte';
+  import ThemeSwitch from './components/ThemeSwitch.svelte';
   import { api } from './lib/api';
   import { listen } from './lib/live';
-  import { live, readRoute, route, session, toasts } from './lib/state.svelte';
+  import { dismiss, go, holdToast, live, narrow, readRoute, releaseToast, route, session, toasts, ui, watchViewport } from './lib/state.svelte';
   import Login from './pages/Login.svelte';
   import Chat from './pages/Chat.svelte';
   import Memory from './pages/Memory.svelte';
@@ -17,24 +22,35 @@
   import Usage from './pages/Usage.svelte';
   import Admin from './pages/Admin.svelte';
 
-  const PAGES = [
-    { path: '/chat', label: 'Chat', page: Chat },
-    { path: '/memory', label: 'Memory', page: Memory },
-    { path: '/tasks', label: 'Tasks & reminders', page: Tasks },
-    { path: '/schedules', label: 'Schedules', page: Schedules },
-    { path: '/projects', label: 'Projects', page: Projects },
-    { path: '/workspace', label: 'Workspace', page: Workspace },
-    { path: '/vault', label: 'Vault', page: Vault },
-    { path: '/connections', label: 'Connections', page: Connections },
-    { path: '/rules', label: 'Rules & approvals', page: Rules },
-    { path: '/models', label: 'Models', page: Models },
-    { path: '/usage', label: 'Usage', page: Usage },
-    { path: '/admin', label: 'Admin', page: Admin },
+  // What you do with Clara: the links of the rail.
+  const WORK = [
+    { path: '/chat', label: 'Chat', icon: 'chat', page: Chat },
+    { path: '/projects', label: 'Projects', icon: 'folder', page: Projects },
+    { path: '/tasks', label: 'Tasks & reminders', icon: 'tasks', page: Tasks },
+    { path: '/schedules', label: 'Schedules', icon: 'clock', page: Schedules },
+    { path: '/workspace', label: 'Workspace', icon: 'file', page: Workspace },
+    { path: '/vault', label: 'Vault', icon: 'book', page: Vault },
   ];
+  // How Clara works: one "Settings" entry, these pages as its tabs.
+  const SETTINGS = [
+    { path: '/memory', label: 'Memory', icon: 'memory', page: Memory },
+    { path: '/connections', label: 'Connections', icon: 'plug', page: Connections },
+    { path: '/rules', label: 'Rules & approvals', icon: 'shield', page: Rules },
+    { path: '/models', label: 'Models', icon: 'chip', page: Models },
+    { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
+    { path: '/admin', label: 'Admin', icon: 'server', page: Admin },
+  ];
+  const PAGES = [...WORK, ...SETTINGS];
 
-  let menu = $state(false);
   let healthy = $state(true);
-  const current = $derived(PAGES.find((page) => page.path === route.path) ?? PAGES[0]);
+  let model = $state('');
+  let main = $state<HTMLElement>();
+  let rail = $state<HTMLElement>();
+  let railOpener: HTMLElement | null = null;
+  const current = $derived(PAGES.find((page) => page.path === route.path) ?? WORK[0]);
+  const inSettings = $derived(SETTINGS.includes(current));
+  const alerts = $derived(Object.keys(live.alerts).length);
+  const status = $derived(!healthy ? 'Clara is not reachable' : !live.connected ? 'Reconnecting…' : model || 'Connected');
 
   async function check(): Promise<void> {
     try {
@@ -43,6 +59,7 @@
       session.token = me.token;
       session.approvals = me.approvals;
       listen();
+      loadModel();
     } catch {
       session.signedIn = false;
     }
@@ -51,20 +68,17 @@
 
   async function ping(): Promise<void> {
     try {
-      healthy = (await fetch('/health')).ok;
+      healthy = (await fetch('/health', { cache: 'no-store' })).ok;
     } catch {
       healthy = false;
     }
   }
 
-  function theme(): void {
-    const root = document.documentElement;
-    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'light' : 'dark';
+  async function loadModel(): Promise<void> {
     try {
-      localStorage.setItem('clara-theme', root.dataset.theme);
+      model = (await api.get('/v1/models')).default ?? '';
     } catch {
-      /* not remembered */
+      model = '';
     }
   }
 
@@ -73,159 +87,142 @@
     session.signedIn = false;
   }
 
+  function moved(): void {
+    readRoute();
+    ui.rail = false;
+  }
+
+  function keydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') ui.rail = false;
+  }
+
+  function newChat(): void {
+    ui.rail = false; // already on a new chat, the hash does not change: close the drawer here
+    go('/chat');
+  }
+
   onMount(() => {
     readRoute();
-    addEventListener('hashchange', readRoute);
+    addEventListener('hashchange', moved);
+    const unwatch = watchViewport();
     check();
     ping();
     const timer = setInterval(ping, 20_000);
+    const models = setInterval(() => session.signedIn && loadModel(), 120_000);
     return () => {
-      removeEventListener('hashchange', readRoute);
+      removeEventListener('hashchange', moved);
+      unwatch();
       clearInterval(timer);
+      clearInterval(models);
     };
+  });
+
+  // The rail as a drawer: focus goes into it when it opens and back to what opened it when it closes.
+  $effect(() => {
+    if (ui.rail) {
+      railOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      tick().then(() => rail?.querySelector<HTMLElement>('.close-rail')?.focus());
+    } else if (railOpener) {
+      railOpener.focus();
+      railOpener = null;
+    }
   });
 
   $effect(() => {
     if (session.signedIn && session.checked) listen();
   });
+
+  $effect(() => {
+    document.title = current.path === '/chat' ? 'Clara' : `${current.label} – Clara`;
+  });
 </script>
+
+<svelte:window onkeydown={keydown} />
 
 {#if !session.checked}
   <div class="empty">Loading…</div>
 {:else if !session.signedIn}
   <Login onSignedIn={check} />
 {:else}
+  <button type="button" class="skip" onclick={() => main?.focus()}>Skip to content</button>
   <div class="shell">
-    <nav class:open={menu}>
-      <div class="brand row">
-        <span class="dot" class:down={!healthy || !live.connected} title={healthy ? (live.connected ? 'Connected' : 'Reconnecting…') : 'Clara is not reachable'}></span>
-        <strong>Clara</strong>
-        {#if live.server !== 'running'}<span class="tag warn">{live.server}</span>{/if}
+    <aside class="rail" class:open={ui.rail} aria-label="Navigation" bind:this={rail}>
+      <!-- the logo and New chat stay put; everything under them scrolls as one -->
+      <div class="rail-top">
+        <div class="rail-head">
+          <a class="brand" href="#/chat"><Mark size={26} />Clara</a>
+          {#if live.server !== 'running'}<span class="state">{live.server}</span>{/if}
+          <button class="ghost icon-btn close-rail" aria-label="Close navigation" onclick={() => (ui.rail = false)}><Icon name="close" /></button>
+        </div>
+        <button class="new-chat" onclick={newChat}><Icon name="plus" size={18} />New chat</button>
       </div>
-      {#each PAGES as page (page.path)}
-        <a href={'#' + page.path} class:active={page.path === current.path} onclick={() => (menu = false)}>
-          {page.label}
-          {#if page.path === '/rules' && live.approvals.length}<span class="badge">{live.approvals.length}</span>{/if}
-          {#if page.path === '/admin' && Object.keys(live.alerts).length}<span class="badge alert">{Object.keys(live.alerts).length}</span>{/if}
-        </a>
-      {/each}
-      <div class="foot row small">
-        <button class="small" onclick={theme}>Theme</button>
-        <button class="small" onclick={signOut}>Sign out</button>
+      <div class="rail-scroll">
+        <nav class="pages" aria-label="Pages">
+          {#each WORK as page (page.path)}
+            <a href={'#' + page.path} aria-current={page === current ? 'page' : undefined}>
+              <Icon name={page.icon} size={18} />{page.label}
+            </a>
+          {/each}
+        </nav>
+        <ConversationRail current={current.path === '/chat' ? (route.params.id ?? null) : null} />
+        <div class="rail-foot">
+          {#if live.approvals.length}
+            <a class="approvals-badge" href="#/rules"><Icon name="shield" size={18} /><span class="text">Waiting for you</span><span class="count">{live.approvals.length}</span></a>
+          {/if}
+          <nav class="pages" aria-label="Settings">
+            <a href="#/memory" aria-current={inSettings ? 'page' : undefined}>
+              <Icon name="admin" size={18} />Settings
+              {#if alerts}<span class="count danger" title={`${alerts} active alert${alerts > 1 ? 's' : ''}`}>{alerts}</span>{/if}
+            </a>
+          </nav>
+          <div class="status" title={healthy && live.connected && model ? `Connected. Default model: ${model}` : status}>
+            <span class="dot" class:ok={healthy && live.connected} class:danger={!healthy}></span><span class="text">{status}</span>
+            <button class="ghost icon-btn sign-out" onclick={signOut} title="Sign out" aria-label="Sign out"><Icon name="logout" size={18} /></button>
+          </div>
+          <div class="rail-tools"><ThemeSwitch /></div>
+        </div>
       </div>
-    </nav>
-    <main>
-      <button class="burger small" onclick={() => (menu = !menu)}>☰</button>
-      {#key current.path}
-        <current.page />
-      {/key}
+    </aside>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (Escape closes it too) -->
+    <div class="scrim" class:on={ui.rail} onclick={() => (ui.rail = false)} aria-hidden="true"></div>
+    <main class="content" id="main" tabindex="-1" bind:this={main} inert={ui.rail && narrow.rail}>
+      {#if current.path === '/chat'}
+        <Chat />
+      {:else}
+        <header class="page-head">
+          <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
+          <h1 class="title">{inSettings ? 'Settings' : current.label}</h1>
+        </header>
+        {#if inSettings}
+          <nav class="settings-bar" aria-label="Settings">
+            {#each SETTINGS as page (page.path)}
+              <a href={'#' + page.path} aria-current={page === current ? 'page' : undefined}>
+                <Icon name={page.icon} size={16} />{page.label}
+                {#if page.path === '/rules' && live.approvals.length}<span class="count">{live.approvals.length}</span>{/if}
+                {#if page.path === '/admin' && alerts}<span class="count danger">{alerts}</span>{/if}
+              </a>
+            {/each}
+          </nav>
+        {/if}
+        <div class="scroll">
+          {#key current.path}
+            <current.page />
+          {/key}
+        </div>
+      {/if}
     </main>
   </div>
 {/if}
 
-<div class="toasts">
+<Dialog />
+
+<div class="toasts" aria-live="polite">
   {#each toasts.list as item (item.id)}
-    <div class="toast {item.kind}">{item.text}</div>
+    <div class="toast {item.kind}" role={item.kind === 'error' ? 'alert' : 'status'}
+      onmouseenter={() => holdToast(item.id)} onmouseleave={() => releaseToast(item.id)}
+      onfocusin={() => holdToast(item.id)} onfocusout={() => releaseToast(item.id)}>
+      {#if item.icon}<Icon name={item.icon} size={18} />{/if}<span class="text">{item.text}</span>
+      <button type="button" aria-label="Dismiss" onclick={() => dismiss(item.id)}><Icon name="close" size={16} /></button>
+    </div>
   {/each}
 </div>
-
-<style>
-  .shell {
-    display: grid;
-    grid-template-columns: 210px 1fr;
-    min-height: 100vh;
-  }
-  nav {
-    background: var(--panel);
-    border-right: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-    padding: 0.8rem 0.5rem;
-    gap: 0.1rem;
-    position: sticky;
-    top: 0;
-    height: 100vh;
-  }
-  nav a {
-    color: var(--text);
-    text-decoration: none;
-    padding: 0.4rem 0.7rem;
-    border-radius: 8px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  nav a.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-  .brand {
-    padding: 0.2rem 0.7rem 0.8rem;
-  }
-  .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--ok);
-  }
-  .dot.down {
-    background: var(--bad);
-  }
-  .foot {
-    margin-top: auto;
-    padding: 0.5rem 0.7rem;
-  }
-  .badge.alert {
-    background: var(--bad);
-  }
-  main {
-    min-width: 0;
-  }
-  .burger {
-    display: none;
-  }
-  .toasts {
-    position: fixed;
-    right: 1rem;
-    bottom: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    z-index: 50;
-    max-width: min(420px, 90vw);
-  }
-  .toast {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-left: 4px solid var(--accent);
-    border-radius: 8px;
-    padding: 0.6rem 0.8rem;
-    box-shadow: var(--shadow);
-    white-space: pre-wrap;
-  }
-  .toast.error {
-    border-left-color: var(--bad);
-  }
-  .toast.ok {
-    border-left-color: var(--ok);
-  }
-  @media (max-width: 760px) {
-    .shell {
-      grid-template-columns: 1fr;
-    }
-    nav {
-      display: none;
-      position: fixed;
-      z-index: 40;
-      width: 230px;
-      box-shadow: var(--shadow);
-    }
-    nav.open {
-      display: flex;
-    }
-    .burger {
-      display: inline-block;
-      margin: 0.5rem;
-    }
-  }
-</style>

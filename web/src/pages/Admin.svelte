@@ -1,8 +1,15 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
+  import LogStream from '../components/LogStream.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, when } from '../lib/api';
+  import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
 
-  let tab = $state<'status' | 'tokens' | 'secrets' | 'settings' | 'backups' | 'updates' | 'console'>('status');
+  type Tab = 'status' | 'tokens' | 'secrets' | 'settings' | 'backups' | 'updates' | 'logs' | 'console';
+  const TABS: { value: Tab; label: string }[] = (['status', 'tokens', 'secrets', 'settings', 'backups', 'updates', 'logs', 'console'] as Tab[]).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }));
+
+  let tab = $state<Tab>('status');
   let status = $state<any>(null);
   let tokens = $state<any>({ tokens: [], you: '' });
   let secrets = $state<any[]>([]);
@@ -41,13 +48,14 @@
   }
 
   async function revoke(name: string): Promise<void> {
-    if (!confirm(`Revoke ${name}? It is refused at once.`)) return;
+    if (!(await confirmDialog({ title: 'Revoke token', message: `Revoke ${name}? It is refused at once.`, confirm: 'Revoke', danger: true }))) return;
     await api.del(`/v1/admin/tokens/${name}`);
     load();
   }
 
   async function setSecret(name: string): Promise<void> {
-    const value = prompt(`New value of ${name} (it is never shown again)`);
+    // type=password: what you type is not shown (the browser's prompt() would show it)
+    const value = await promptDialog({ title: `Set ${name}`, message: `New value of ${name} (it is never shown again)`, label: `Value of ${name}`, type: 'password', confirm: 'Set' });
     if (!value) return;
     try {
       await api.put(`/v1/admin/secrets/${name}`, { value });
@@ -59,13 +67,13 @@
   }
 
   async function unsetSecret(name: string): Promise<void> {
-    if (!confirm(`Remove ${name}?`)) return;
+    if (!(await confirmDialog({ title: 'Remove secret', message: `Remove ${name}?`, confirm: 'Remove', danger: true }))) return;
     await api.del(`/v1/admin/secrets/${name}`);
     load();
   }
 
   async function setSetting(item: any): Promise<void> {
-    const text = prompt(`${item.key} (JSON)`, JSON.stringify(item.value));
+    const text = await promptDialog({ title: `Change ${item.key}`, message: `${item.key} (JSON)`, label: `Value of ${item.key}, as JSON`, value: JSON.stringify(item.value) });
     if (text === null) return;
     try {
       await api.put(`/v1/admin/settings/${item.key}`, { value: JSON.parse(text) });
@@ -80,8 +88,8 @@
     load();
   }
 
-  async function act(path: string, body: any = {}, question = ''): Promise<void> {
-    if (question && !confirm(question)) return;
+  async function act(path: string, body: any = {}, ask?: { title: string; message: string; confirm: string; danger?: boolean }): Promise<void> {
+    if (ask && !(await confirmDialog(ask))) return;
     try {
       const done = await api.post(path, body);
       toast(done.message ?? 'Done.', 'ok');
@@ -102,12 +110,7 @@
 </script>
 
 <div class="page stack">
-  <h1>Admin</h1>
-  <div class="tabs">
-    {#each ['status', 'tokens', 'secrets', 'settings', 'backups', 'updates', 'console'] as name}
-      <button class:active={tab === name} onclick={() => (tab = name as typeof tab)}>{name}</button>
-    {/each}
-  </div>
+  <div><Segmented label="Section" options={TABS} bind:value={tab} /></div>
 
   {#if tab === 'status' && status}
     <div class="grid-2">
@@ -125,19 +128,19 @@
       </div>
       <div class="panel small stack">
         <h2>Alerts</h2>
-        {#each Object.entries(status.alerts) as [key, text]}<div class="bad">⚠ {text} <button class="small" onclick={() => act('/v1/admin/command', { line: `/alerts clear ${key}` })}>Clear</button></div>{:else}<div class="ok">No active alert.</div>{/each}
+        {#each Object.entries(status.alerts) as [key, text]}<div class="danger"><Icon name="warn" size={16} /> {text} <button class="small" onclick={() => act('/v1/admin/command', { line: `/alerts clear ${key}` })}>Clear</button></div>{:else}<div class="ok"><Icon name="check" size={16} /> No active alert.</div>{/each}
         <h2>Server</h2>
         <div class="row">
-          <button onclick={() => act('/v1/admin/restart', { now: false }, 'Restart Clara? Running answers finish first (bounded).')}>Restart</button>
-          <button class="danger" onclick={() => act('/v1/admin/stop', { now: false }, 'Stop Clara? systemd will not start it again by itself.')}>Stop</button>
+          <button onclick={() => act('/v1/admin/restart', { now: false }, { title: 'Restart Clara', message: 'Restart Clara? Running answers finish first (bounded).', confirm: 'Restart' })}>Restart</button>
+          <button class="danger" onclick={() => act('/v1/admin/stop', { now: false }, { title: 'Stop Clara', message: 'Stop Clara? systemd will not start it again by itself.', confirm: 'Stop', danger: true })}>Stop</button>
         </div>
       </div>
     </div>
   {:else if tab === 'tokens'}
     <form class="panel row" onsubmit={createToken}>
-      <input placeholder="name" bind:value={newToken.name} required />
-      <select bind:value={newToken.client}>{#each ['web', 'cli', 'console', 'discord', 'script'] as name}<option>{name}</option>{/each}</select>
-      <select bind:value={newToken.approvals}><option value="">approvals: default</option><option>all</option><option>safe</option><option>none</option></select>
+      <input aria-label="Token name" placeholder="name" bind:value={newToken.name} required />
+      <select aria-label="Client" bind:value={newToken.client}>{#each ['web', 'cli', 'console', 'discord', 'script'] as name}<option>{name}</option>{/each}</select>
+      <select aria-label="Approvals it may answer" bind:value={newToken.approvals}><option value="">approvals: default</option><option>all</option><option>safe</option><option>none</option></select>
       <button class="primary">Create token</button>
     </form>
     {#if madeToken}<div class="panel"><p>Shown once: copy it now.</p><code class="token">{madeToken}</code> <button class="small" onclick={() => (madeToken = '')}>Done</button></div>{/if}
@@ -182,37 +185,52 @@
     {/if}
   {:else if tab === 'updates'}
     {#if releases}
-      {#if releases.error}<p class="bad">{releases.error}</p>{/if}
+      {#if releases.error}<p class="danger">{releases.error}</p>{/if}
       {#if releases.state}<p class="small">Running {releases.state.current} · {releases.state.state}{releases.state.detail ? `: ${releases.state.detail}` : ''}
         {releases.state.signed ? '· signatures required' : '· unsigned releases accepted'}{releases.state.launched ? '' : ' · started without the launcher: updates are off'}</p>{/if}
       {#each releases.releases as release (release.tag)}
         <div class="panel stack">
           <div class="row"><strong class="grow">{release.name}</strong><span class="muted small">{when(release.published_at)}</span>
-            {#if release.current}<span class="tag ok">installed</span>{:else}<button class="primary small" onclick={() => act('/v1/admin/update', { tag: release.tag }, `Install ${release.tag}? Clara checks it, then restarts into it, and rolls back by herself if it fails.`)}>Install</button>{/if}</div>
+            {#if release.current}<span class="tag ok">installed</span>{:else}<button class="primary small" onclick={() => act('/v1/admin/update', { tag: release.tag }, { title: 'Install a release', message: `Install ${release.tag}? Clara checks it, then restarts into it, and rolls back by herself if it fails.`, confirm: 'Install' })}>Install</button>{/if}</div>
           <details><summary class="small">Notes</summary><pre class="notes">{release.notes}</pre></details>
         </div>
       {/each}
     {/if}
+  {:else if tab === 'logs'}
+    <LogStream />
   {:else if tab === 'console'}
-    <div class="panel console">
-      {#each output as item}<div class="muted">clara&gt; {item.line}</div><pre>{item.text}</pre>{/each}
-      <form class="row" onsubmit={run}><span>clara&gt;</span><input class="grow" bind:value={line} placeholder="/help" /></form>
+    <div class="panel console negative">
+      {#each output as item}<div class="echo">clara&gt; {item.line}</div><pre>{item.text}</pre>{/each}
+      <form class="row" onsubmit={run}><span aria-hidden="true">clara&gt;</span><input class="grow" aria-label="Command" bind:value={line} placeholder="/help" /></form>
     </div>
   {/if}
 </div>
 
 <style>
-  tr.off {
-    opacity: 0.5;
-  }
   .token {
     word-break: break-all;
   }
   .notes {
     white-space: pre-wrap;
   }
+  /* the console is drawn on the negative (the .negative class re-reads the tokens against Prussian blue) */
+  .console {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+  }
   .console pre {
-    margin: 0.2rem 0 0.8rem;
+    margin: var(--sp-4) 0 var(--sp-12);
     white-space: pre-wrap;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+  }
+  .console .echo {
+    color: var(--accent-text);
+  }
+  .console input {
+    background: transparent;
+    font-family: var(--font-mono);
   }
 </style>

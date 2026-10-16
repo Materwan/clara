@@ -1,7 +1,9 @@
-# The DM-only Discord bot: a separate process, a separate Clara token, its own Discord token.
+# The Discord bot of your private server: a separate process, a separate Clara token, its own Discord token.
 #   sudo systemctl enable --now clara-discord
+# Use this OR CLARA_DISCORD_AUTOSTART=true in clara.env (the server then starts the bot itself), never both.
+# /etc/clara/discord.env holds CLARA_DISCORD_USER_ID and the four CLARA_DISCORD_CHANNEL_* ids.
 [Unit]
-Description=Clara's Discord bot (direct messages only)
+Description=Clara's Discord bot (your private server)
 After=clara.service network-online.target
 Wants=network-online.target
 

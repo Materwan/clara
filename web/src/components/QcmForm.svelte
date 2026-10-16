@@ -7,6 +7,7 @@
   // A form is answered once: its answers start from what it carries and are then only the reader's.
   let answers = $state<(number[] | string)[]>(untrack(() => form.answers ?? form.questions.map((q) => (q.type === 'text' ? '' : []))));
   let sent = $state(untrack(() => !!form.answers));
+  const group = `qcm-${Math.random().toString(36).slice(2, 8)}`; // radio names, unique to this form
   const score = $derived(sent && form.graded ? grade(form, answers) : null);
 
   function toggle(question: number, option: number, single: boolean): void {
@@ -21,62 +22,35 @@
   }
 </script>
 
-<div class="qcm panel">
+<div class="qcm">
   {#if form.title}
     <!-- svelte-ignore a11y_missing_content (the action writes the title) -->
     <h3 use:inlineMath={form.title}></h3>
   {/if}
   {#each form.questions as question, q}
-    <fieldset>
+    <fieldset disabled={sent}>
       <legend use:inlineMath={`${q + 1}. ${question.text}`}></legend>
       {#if question.type === 'text'}
-        <textarea rows="2" disabled={sent} bind:value={answers[q] as string}></textarea>
-        {#if sent && question.answer}<div class="small muted">Expected: <span use:inlineMath={question.answer}></span></div>{/if}
+        <textarea rows="2" bind:value={answers[q] as string} aria-label={`Answer ${q + 1}`}></textarea>
+        {#if sent && question.answer}<p class="qcm-explain">Expected: <span use:inlineMath={question.answer}></span></p>{/if}
       {:else}
         {#each question.options as option, o}
           {@const chosen = (answers[q] as number[]).includes(o)}
           {@const right = sent && question.correct ? question.correct.includes(o) : null}
-          <label class="option" class:right={right === true} class:wrong={right === false && chosen}>
-            <input type={question.type === 'single' ? 'radio' : 'checkbox'} checked={chosen} disabled={sent}
+          <label class="qcm-option" class:right={right === true} class:wrong={right === false && chosen}>
+            <input type={question.type === 'single' ? 'radio' : 'checkbox'} name={`${group}-${q}`} checked={chosen}
               onchange={() => toggle(q, o, question.type === 'single')} />
-            <span>{letter(o)}.</span> <span use:inlineMath={option}></span>
+            <span class="letter">{letter(o)}</span><span use:inlineMath={option}></span>
           </label>
         {/each}
       {/if}
-      {#if sent && question.explanation}<div class="small muted" use:inlineMath={question.explanation}></div>{/if}
+      {#if sent && question.explanation}<p class="qcm-explain" use:inlineMath={question.explanation}></p>{/if}
     </fieldset>
   {/each}
-  {#if score}<p><strong>Score: {score.right} / {score.asked}</strong></p>{/if}
-  {#if !sent && onAnswer}<button class="primary" onclick={submit}>Send my answers</button>{/if}
+  {#if score || (!sent && onAnswer)}
+    <div class="qcm-foot">
+      {#if score}<p class="qcm-score">Score: <strong>{score.right} / {score.asked}</strong></p>{:else}<span class="muted small">Answer, then send: Clara reads your answers.</span>{/if}
+      {#if !sent && onAnswer}<button class="primary" onclick={submit}>Send my answers</button>{/if}
+    </div>
+  {/if}
 </div>
-
-<style>
-  .qcm {
-    margin: 0.5rem 0;
-  }
-  fieldset {
-    border: none;
-    padding: 0;
-    margin: 0 0 0.8rem;
-  }
-  legend {
-    font-weight: 600;
-    margin-bottom: 0.3rem;
-  }
-  .option {
-    display: flex;
-    gap: 0.4rem;
-    align-items: baseline;
-    padding: 0.15rem 0.3rem;
-    border-radius: 6px;
-  }
-  .option.right {
-    background: color-mix(in srgb, var(--ok) 15%, transparent);
-  }
-  .option.wrong {
-    background: color-mix(in srgb, var(--bad) 15%, transparent);
-  }
-  textarea {
-    width: 100%;
-  }
-</style>

@@ -6,7 +6,7 @@
   **unattended**: an action the rules say to ask about is stored and pushed to you, and the run goes on without it.
 * Each run is a row of `schedule_runs`: when it was due, when it ran, how it ended (ok, failed, missed, skipped,
   interrupted), a summary (the first paragraph of Clara's answer) and how many requests it left waiting. You get a
-  `schedule` event (the Discord bot sends it as a DM).
+  `schedule` event (the Discord bot posts it in #notification).
 * The next run is set before a run starts, so nothing runs twice. A run due more than an hour ago (the server was off)
   is skipped and you are told; a run due while the previous one still runs is skipped; a run cut by a stop is run
   again at the next start. A run more than CLARA_LATE_ALERT_SECONDS late raises an alert.

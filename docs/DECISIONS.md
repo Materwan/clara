@@ -14,6 +14,15 @@ made while building, to be confirmed or changed.
 | Service layout | A system unit and a dedicated `clara` user |
 | Python tooling | uv with a committed `uv.lock` |
 | Web site | Svelte 5 with TypeScript, built in a pinned Node image (no Node on the machine) |
+| Web site design | The first site's design (Cyanotype: Prussian-blue rail in both themes, Hanken Grotesk and Epilogue, Clara's portrait as the mark, the favicon and beside answers, line icons), on the 1.0 layout, with the conversation list moved into the rail |
+| Web site navigation | The pages you work in stay in the rail, the list of conversations under them on every page (the logo and New chat stay put, the rest of the rail scrolls as one); Memory, Connections, Rules & approvals, Models, Usage and Admin sit under one **Settings** entry with a tab bar; waiting approvals show as a button at the foot of the rail, alerts as a count on Settings |
+| Web site readability | Two steps under the first site's sizes (body 13 px, answers and what you write 14 px, small text 11.5 px; titles 16 px), muted text darker (lighter in dark theme): about 6:1 against the page instead of 5:1 |
+| Checkboxes | Drawn, not the browser's: a 16 px box with a 2 px border that fills violet with a white tick, the same in both themes |
+| Theme | Auto / Light / Dark switch in the rail, remembered in the browser; each colour is written once as `light-dark()` (browsers from 2024), so the two themes cannot drift apart |
+| Web site tokens | One scale each for type (9 steps, in rem), space (a 2px grid), shape, motion and stacking; no literal colour, size or space outside the token block ([WEB-DESIGN.md](WEB-DESIGN.md)) |
+| Web site questions | A dialog (a native `<dialog>`: inert page, Tab trapped, Escape cancels), never the browser's `confirm()` or `prompt()`: they ignore the theme, cannot mask a secret, and a browser may switch them off |
+| Web site accessibility | Every control named, state carried by ARIA attributes, text 4.5:1 and marks 3:1 in both themes, targets of 24 px at least (36 px on touch), a skip link, focus kept in drawers and dialogs |
+| Chat transcript | The first site's: tool calls folded into one line per run, line icons instead of emoji, the context ring |
 | Discord bot token | The bot's own systemd credential, never in Clara's database |
 | Licence | None: all rights reserved |
 | "Remember nothing" | Incognito conversations: no facts read or written, deleted 24 hours after their last message (`CLARA_INCOGNITO_HOURS`) |
@@ -30,6 +39,8 @@ made while building, to be confirmed or changed.
 | Conversations across clients | One shared list |
 | Local-only flag | Per conversation |
 | Discord bot features | Approval buttons, the event relay, files and pictures, slash commands |
+| Discord layout | A private server with you and the bot only; four text channels found by id: `#general` (chat), `#approval`, `#notification`, `#alerts`; no direct messages; plain messages in `#general` (the privileged Message Content intent); reminders, tasks, schedules and update news go to `#notification` |
+| Discord bot start | The server starts it as a child process when `CLARA_DISCORD_AUTOSTART=true` (the bot keeps its own process and token); `clara-discord.service` remains the other way, never both |
 
 ## Confirmed from the plan
 

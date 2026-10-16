@@ -33,3 +33,19 @@ def secret_kinds(text: str) -> list[str]:
 
 def looks_secret(text: str) -> bool:
     return bool(secret_kinds(text))
+
+
+HIDDEN = "[hidden]"
+
+
+def mask(text: str) -> str:
+    """The text with what looks like a secret replaced by `[hidden]` (a private key hides everything after its header,
+    for the key's body is on the lines that follow). For text that is shown, never for text that is kept."""
+    for name, pattern in PATTERNS:
+        if name == "private key":
+            found = pattern.search(text)
+            if found:
+                text = text[: found.start()] + HIDDEN
+        else:
+            text = pattern.sub(HIDDEN, text)
+    return text

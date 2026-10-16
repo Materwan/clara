@@ -27,7 +27,19 @@ earlier server: the new Clara starts empty.
   empty environment and resource limits.
 - **Connectors:** SearXNG search, SSRF-safe page fetching, GitHub with a fine-grained token and a repository list,
   Google Drive with `drive.file` and the Picker.
-- **Clients:** a Svelte web site, `clara-chat`, `clara-admin`, a DM-only Discord bot, the HTTP API.
+- **Clients:** a Svelte web site in the first site's design (the Prussian-blue rail, Clara's portrait, Hanken
+  Grotesk and Epilogue, with darker muted text for reading; the conversation list in the rail; Settings pages grouped under one tab bar; drawn checkboxes), `clara-chat`, `clara-admin`, a Discord bot for your own private server (chat in `#general`, approvals with buttons in `#approval`, reminders and other news in `#notification`, alerts in `#alerts`; no direct messages; it can start with the server: `CLARA_DISCORD_AUTOSTART`), the HTTP API.
+- **Web site design system:** every colour written once as `light-dark()` (no duplicated dark theme), one type scale,
+  a 2px space grid, shape, motion and stacking tokens, and a "negative" surface shared by the rail and the Admin console
+  ([docs/WEB-DESIGN.md](docs/WEB-DESIGN.md)). Questions (delete, revoke, a secret's value) are a dialog in the site's
+  own style instead of the browser's `confirm()` and `prompt()`, so a secret is typed in a masked field. Every control
+  has an accessible name; views are a segmented control with `aria-pressed`; a skip link and a `<main>` landmark;
+  drawers move focus and make the page behind inert; toasts wait while pointed at and can be dismissed; touch targets
+  of 36 px and up; a high-contrast fallback. Fixes: the rail overflowed by 7 px and pushed Sign out out of view, the
+  Settings alert count was dark red on blue in the light theme, and the Admin console's input border was too faint.
+- **Live log:** an Admin **Logs** tab streams the server's log and the traffic records as they happen (source and
+  level filters applied on the server, pause, follow, clear). Memory only: the last 500 lines, secrets masked, no
+  sign-in addresses, never the debug content. New route: `GET /v1/admin/logs/stream`.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log; `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).

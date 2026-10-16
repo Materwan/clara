@@ -1,10 +1,11 @@
-"""Adds the operations to a server: Tailscale publishing, backups, the updater."""
+"""Adds the operations to a server: Tailscale publishing, backups, the updater, the Discord bot."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from .backups import Backups
+from .discord_bot import DiscordBot
 from .tailscale import Tailscale
 from .updater import Updater
 
@@ -20,3 +21,5 @@ def install(s: Services) -> None:
     s.backups = Backups(s)
     s.updater = Updater(s)
     s.updater.report()
+    if settings.discord_autostart:
+        s.discord = DiscordBot(settings, s.alerts.raise_)

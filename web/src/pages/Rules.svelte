@@ -1,9 +1,21 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import ApprovalCard from '../components/ApprovalCard.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, when } from '../lib/api';
+  import { confirmDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
 
-  let tab = $state<'pending' | 'rules' | 'test' | 'audit'>('pending');
+  type Tab = 'pending' | 'rules' | 'test' | 'audit';
+  const tabs = $derived([
+    { value: 'pending' as Tab, label: 'Waiting', count: live.approvals.length },
+    { value: 'rules' as Tab, label: 'Rules' },
+    { value: 'test' as Tab, label: 'Test' },
+    { value: 'audit' as Tab, label: 'Audit log' },
+  ]);
+
+  let tab = $state<Tab>('pending');
   let data = $state<any>({ rules: [], defaults: [], tools: [], tainted_rule: true });
   let history = $state<any[]>([]);
   let audit = $state<any[]>([]);
@@ -47,7 +59,7 @@
   }
 
   async function remove(rule: any): Promise<void> {
-    if (!confirm(`Delete rule #${rule.id}?`)) return;
+    if (!(await confirmDialog({ title: 'Delete rule', message: `Delete rule #${rule.id}?`, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/rules/${rule.id}`);
     load();
   }
@@ -68,22 +80,16 @@
 </script>
 
 <div class="page stack">
-  <h1>Rules & approvals</h1>
-  <p class="muted small">Every action Clara takes resolves to allow, ask or refuse. The most specific matching rule wins (more
+  <p class="intro">Every action Clara takes resolves to allow, ask or refuse. The most specific matching rule wins (more
     fields set, then more literal characters in the target); on a tie the stricter one. Clara can neither read nor change
     these, nor answer a request.</p>
-  <div class="tabs">
-    <button class:active={tab === 'pending'} onclick={() => (tab = 'pending')}>Waiting {#if live.approvals.length}<span class="badge">{live.approvals.length}</span>{/if}</button>
-    <button class:active={tab === 'rules'} onclick={() => (tab = 'rules')}>Rules</button>
-    <button class:active={tab === 'test'} onclick={() => (tab = 'test')}>Test</button>
-    <button class:active={tab === 'audit'} onclick={() => (tab = 'audit')}>Audit log</button>
-  </div>
+  <div><Segmented label="Section" options={tabs} bind:value={tab} /></div>
 
   {#if tab === 'pending'}
     {#each live.approvals as approval (approval.id)}
       <div><ApprovalCard {approval} /><span class="muted small">{when(approval.created_at)} · expires {when(approval.expires_at)}
         {#if approval.conversation}· <a href={'#/chat/' + approval.conversation}>conversation</a>{/if}</span></div>
-    {:else}<div class="empty">Nothing waits for you.</div>{/each}
+    {:else}<div class="empty"><Icon name="check" size={18} /> Nothing waits for you.</div>{/each}
     <h2>Recent</h2>
     <table>
       <thead><tr><th>#</th><th>Action</th><th>Status</th><th>Answered by</th></tr></thead>
@@ -91,23 +97,23 @@
         {#each history.filter((item) => item.status !== 'pending') as item (item.id)}
           <tr><td>{item.id}</td><td>{item.summary}<div class="muted small">{item.tool} · {item.level} · {item.reason}</div></td>
             <td>{item.status}{item.answer ? ` (${item.answer})` : ''}</td><td class="small">{item.decided_by || '—'} {when(item.decided_at)}</td></tr>
-        {/each}
+        {:else}<tr><td colspan="4" class="empty">No request answered yet.</td></tr>{/each}
       </tbody>
     </table>
   {:else if tab === 'rules'}
-    <label class="row"><input type="checkbox" checked={data.tainted_rule} onchange={(event) => tainted((event.target as HTMLInputElement).checked)} />
+    <label class="row"><Checkbox checked={data.tainted_rule} onchange={(event) => tainted((event.target as HTMLInputElement).checked)} />
       Tainted-turn rule: after reading untrusted content (a web page, an issue, a fetched file), outside-world writes and
       networked scripts ask at least.</label>
     <form class="panel stack" onsubmit={save}>
       <div class="row">
-        <select bind:value={form.effect}><option>allow</option><option>ask</option><option>refuse</option></select>
-        <input list="tools" placeholder="tool or glob (github_*)" bind:value={form.tool} />
+        <select aria-label="Effect" bind:value={form.effect}><option>allow</option><option>ask</option><option>refuse</option></select>
+        <input list="tools" aria-label="Tool" placeholder="tool or glob (github_*)" bind:value={form.tool} />
         <datalist id="tools">{#each data.tools as tool}<option value={tool}></option>{/each}</datalist>
-        <input class="grow" placeholder="target: scratch/**, github:me/repo, domain:*.wikipedia.org, drive:<id>, vault:…, net" bind:value={form.target} />
-        <select bind:value={form.situation}><option value="">any situation</option><option>interactive</option><option>unattended</option><option>tainted</option></select>
-        <select bind:value={form.level}><option value="">any level</option><option>read</option><option>write</option><option>destructive</option></select>
+        <input class="grow" aria-label="Target" placeholder="target: scratch/**, github:me/repo, domain:*.wikipedia.org, drive:<id>, vault:…, net" bind:value={form.target} />
+        <select aria-label="Situation" bind:value={form.situation}><option value="">any situation</option><option>interactive</option><option>unattended</option><option>tainted</option></select>
+        <select aria-label="Level" bind:value={form.level}><option value="">any level</option><option>read</option><option>write</option><option>destructive</option></select>
       </div>
-      <div class="row"><input class="grow" placeholder="note" bind:value={form.note} /><button class="primary">{form.id ? 'Save rule' : 'Add rule'}</button>
+      <div class="row"><input class="grow" aria-label="Note" placeholder="note" bind:value={form.note} /><button class="primary">{form.id ? 'Save rule' : 'Add rule'}</button>
         {#if form.id}<button type="button" onclick={() => (form = empty())}>Cancel</button>{/if}</div>
     </form>
     <table>
@@ -132,12 +138,12 @@
   {:else if tab === 'test'}
     <form class="panel stack" onsubmit={runTest}>
       <div class="row">
-        <select bind:value={test.tool}>{#each data.tools as tool}<option>{tool}</option>{/each}</select>
-        <select bind:value={test.situation}><option>interactive</option><option>unattended</option></select>
-        <label class="row small"><input type="checkbox" bind:checked={test.tainted} /> tainted turn</label>
-        <label class="row small"><input type="checkbox" bind:checked={test.local_only} /> local-only conversation</label>
+        <select aria-label="Tool" bind:value={test.tool}>{#each data.tools as tool}<option>{tool}</option>{/each}</select>
+        <select aria-label="Situation" bind:value={test.situation}><option>interactive</option><option>unattended</option></select>
+        <label class="row small"><Checkbox bind:checked={test.tainted} /> tainted turn</label>
+        <label class="row small"><Checkbox bind:checked={test.local_only} /> local-only conversation</label>
       </div>
-      <textarea rows="3" bind:value={test.arguments}></textarea>
+      <textarea rows="3" aria-label="Arguments (JSON)" bind:value={test.arguments}></textarea>
       <button class="primary">Which rule decides?</button>
     </form>
     {#if result}
@@ -162,10 +168,8 @@
 </div>
 
 <style>
-  tr.off {
-    opacity: 0.5;
-  }
   .big {
-    font-size: 1.3em;
+    font-size: var(--fs-xl);
+    font-family: var(--font-display);
   }
 </style>

@@ -13,15 +13,16 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `<data>/backups/workspace.bundle` | A git bundle of the workspace, made for the remote copy | Replaced at each remote backup | Remote only |
 | `<data>/logs/traffic-<date>.jsonl` | One line per request: time, method, route (ids replaced), status, duration, client, token name, model, token counts, outcome; the address of failed sign-ins | `CLARA_TRAFFIC_LOG_DAYS` (7) | No |
 | `<data>/logs/debug-content.jsonl` | Full prompts and answers, only while `/debug on` | Deleted when the hour ends or `/debug off` | No |
+| *(memory only)* the live log | The last 500 lines of the server's log (INFO and up) and of the traffic records, shown in the Admin page's Logs tab; secret-looking text masked, no sign-in addresses, no debug content | Until the server restarts | No |
 | `<data>/run/` | The instance lock, the boot record, a pending update's plan and result | While needed | No |
 | `<data>/workspace/` | Clara's files and notes (`notes/`), script logs, and its git history | Until deleted; **the git history keeps deleted files** until you rewrite it | Remote copy (bundle) |
 | `CLARA_VAULT_PATH` | Your Obsidian vault (a git clone) | Yours; deleted notes go to `.trash/`, and stay in git history | No (it has its own remote) |
 | `/etc/clara/clara.env` | Non-secret settings | — | No |
 | `/etc/clara/secret-key.cred` | The secrets store's key, encrypted by systemd for this machine | — | **Never**: keep a copy elsewhere |
-| `/etc/clara/discord-token.cred`, `discord-clara-token.cred`, `discord.env` | The Discord bot's token, its Clara token, your Discord id | — | No |
+| `/etc/clara/discord-token.cred`, `discord-clara-token.cred`, `discord.env` (or the token files named in `clara.env` when the server starts the bot) | The Discord bot's token, its Clara token, your Discord id and the ids of your four channels | — | No |
 | `/opt/clara/releases/<tag>/`, `/opt/clara/current` | Installed releases and their virtualenvs | Until you remove old ones | No |
 | `/var/lib/clara-home/` | The `clara` user's home: rootless Podman's images and storage, SearXNG's settings | — | No |
-| `/var/lib/clara-discord/state.json` | The bot's current conversation id | — | No |
+| `/var/lib/clara-discord/state.json` (`<data>/discord-state.json` when the server starts the bot) | The bot's current conversation id | — | No |
 | `~/.config/clara/token` (on each device) | A client token (0600) | Until you delete it | No |
 
 ## In the database
@@ -58,7 +59,7 @@ keep what they held until they rotate out.
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |
 | Google | Requests for Drive files Clara may use; content Clara writes; the token at revocation | Drive tools (writes ask first) |
 | The vault's git remote | Your vault's changes | After vault changes, when `CLARA_VAULT_PUSH` |
-| Discord | Clara's answers, notifications, alerts and approval requests to your DMs | When the bot runs |
+| Discord | Clara's answers, notifications, alerts and approval requests, posted in the channels of your private server | When the bot runs |
 | The restic repository | The newest database backup and the workspace bundle, encrypted by restic | Nightly, when `CLARA_RESTIC_REPOSITORY` is set |
 | GitHub releases | Requests for the release list and assets | When you list or install releases |
 | Tailscale | Nothing of Clara's content: it carries the encrypted traffic between your devices | Always |

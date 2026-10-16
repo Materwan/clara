@@ -20,7 +20,7 @@ data/
 .dist/
 .stfolder/
 discord-state.json
-.env
+*.env
 .env.*
 !deploy/clara.env.example
 *.key
@@ -32,3 +32,4 @@ discord-state.json
 .vscode/
 *.swp
 .DS_Store
+*.sync-conflict-*

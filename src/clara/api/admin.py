@@ -3,7 +3,9 @@ console, usage statistics, stop and restart, backups and updates, client heartbe
 
 from __future__ import annotations
 
+import contextlib
 import time
+from collections.abc import AsyncIterator
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
@@ -12,10 +14,11 @@ from pydantic import BaseModel, Field
 from .. import console
 from ..auth import TokenError
 from ..ops.lifecycle import EXIT_RESTART
+from ..ops.logstream import LEVELS, RING, SOURCES
 from ..ops.status import set_debug, status
 from ..runtime import KNOBS
 from ..secrets import KNOWN_SECRETS, SecretError
-from .common import ApiError, caller, services
+from .common import ApiError, caller, event_stream, services, sse, with_keepalive
 
 router = APIRouter(prefix="/v1", tags=["admin"])
 
@@ -160,6 +163,31 @@ def usage(request: Request, period: Literal["24h", "7d", "30d", "90d", "365d", "
 @router.get("/admin/usage/history")
 def usage_history(request: Request, limit: int = Query(100, ge=1, le=1000), before: int | None = None) -> dict:
     return {"calls": services(request).usage.history(limit, before)}
+
+
+# ----------------------------------------------------------------------
+# The live log
+# ----------------------------------------------------------------------
+@router.get("/admin/logs/stream")
+async def logs_stream(request: Request, source: Literal["all", "app", "traffic"] = "all",
+                      level: Literal["INFO", "WARNING", "ERROR"] = "INFO"):
+    """The last lines of the server's log and traffic log, then each new one (server-sent events, `log` events; the
+    first event is `open`). Filtering is done here, so a line the page did not ask for is not sent."""
+    hub = services(request).logs
+    sources = frozenset(SOURCES if source == "all" else (source,))
+
+    async def events() -> AsyncIterator[dict]:
+        yield {"type": "open", "ring": RING}
+        async with contextlib.aclosing(hub.listen(sources, LEVELS[level])) as lines:
+            async for line in lines:
+                yield line.describe()
+
+    async def chunks() -> AsyncIterator[str]:
+        async with contextlib.aclosing(with_keepalive(events())) as items:
+            async for item in items:
+                yield ": keepalive\n\n" if item is None else sse(item, item.get("id"))
+
+    return event_stream(chunks())
 
 
 # ----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Alerts to you: an `alert` event, shown in every client and sent as a Discord DM by the bot.
+"""Alerts to you: an `alert` event, shown in every client and posted in #alerts by the Discord bot.
 
 The same alert (same key) is not repeated within its cool-down. What raises one:
 

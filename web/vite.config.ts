@@ -8,6 +8,7 @@ export default defineConfig({
     outDir: '../src/clara/web/dist',
     emptyOutDir: true,
     assetsDir: 'assets',
+    assetsInlineLimit: 0, // no data: URIs: the site's CSP allows fonts and images from itself only
     sourcemap: false,
     cssCodeSplit: true,
     rollupOptions: {

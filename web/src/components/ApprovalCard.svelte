@@ -2,6 +2,7 @@
   import { api } from '../lib/api';
   import { loadPending } from '../lib/live';
   import { session, toast } from '../lib/state.svelte';
+  import Icon from './Icon.svelte';
 
   let { approval }: { approval: any } = $props();
   let answered = $state<string | null>(null);
@@ -24,15 +25,14 @@
   const answerable = $derived(session.approvals === 'all' || (session.approvals === 'safe' && approval.level !== 'destructive'));
 </script>
 
-<div class="approval" class:done={status !== 'pending'}>
-  <div class="row">
-    <strong>🔐 Clara asks</strong>
-    <span class="tag">{approval.level}</span>
-    <span class="tag">#{approval.id}</span>
-    {#if status !== 'pending'}<span class="tag">{status}</span>{/if}
+<div class="approval" class:settled={status !== 'pending'}>
+  <div class="approval-head">
+    <Icon name="shield" size={18} /><span>Clara asks</span>
+    <span class="tags"><span class="tag" class:danger={approval.level === 'destructive'}>{approval.level}</span><span class="tag">#{approval.id}</span>
+      {#if status !== 'pending'}<span class="tag" class:ok={status === 'approved' || status === 'done'} class:danger={status === 'denied' || status === 'failed'}>{status}</span>{/if}</span>
   </div>
-  <div>{approval.summary}</div>
-  {#if approval.reason}<div class="muted small">Why it asks: {approval.reason}</div>{/if}
+  <p class="approval-summary">{approval.summary}</p>
+  {#if approval.reason}<p class="approval-reason">Why it asks: {approval.reason}</p>{/if}
   {#if status === 'pending'}
     {#if answerable}
       <div class="row">
@@ -42,24 +42,7 @@
         <button class="small danger" disabled={busy} onclick={() => answer('refuse_always')}>Refuse always</button>
       </div>
     {:else}
-      <div class="muted small">This token may not answer {approval.level} requests.</div>
+      <p class="muted small">This token may not answer {approval.level} requests.</p>
     {/if}
   {/if}
 </div>
-
-<style>
-  .approval {
-    border: 1px solid var(--accent);
-    background: var(--accent-soft);
-    border-radius: 8px;
-    padding: 0.6rem 0.8rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    margin: 0.4rem 0;
-  }
-  .approval.done {
-    border-color: var(--line);
-    background: var(--panel-2);
-  }
-</style>

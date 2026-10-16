@@ -2,6 +2,7 @@
   import { api, download, saveBlob, size } from '../lib/api';
   import { markdown } from '../lib/markdown';
   import { toast } from '../lib/state.svelte';
+  import Icon from './Icon.svelte';
 
   let { card }: { card: { path: string; action?: string; size?: number } } = $props();
   let open = $state(false);
@@ -32,32 +33,14 @@
   }
 </script>
 
-<div class="card">
-  <div class="row">
-    <span>📄</span>
-    <strong class="grow">{card.path}</strong>
-    {#if card.action}<span class="tag">{card.action}</span>{/if}
-    {#if card.size}<span class="muted small">{size(card.size)}</span>{/if}
-    <button class="small" onclick={show}>{open ? 'Close' : 'Open'}</button>
-    <button class="small" onclick={copy}>Copy</button>
-    <button class="small" onclick={save}>Download</button>
+<div class="file-card">
+  <div class="file-card-head">
+    <span class="glyph"><Icon name="file" size={18} /></span>
+    <span class="info"><strong title={card.path}>{card.path}</strong>
+      <span>{[card.action, card.size ? size(card.size) : ''].filter(Boolean).join(' · ') || 'a note'}</span></span>
+    <button class="ghost small" aria-expanded={open} onclick={show}>{open ? 'Close' : 'Open'}</button>
+    <button class="ghost icon-btn" title="Copy" aria-label="Copy" onclick={copy}><Icon name="copy" size={18} /></button>
+    <button class="ghost icon-btn" title="Download" aria-label="Download" onclick={save}><Icon name="download" size={18} /></button>
   </div>
-  {#if open}<div class="markdown body" use:markdown={content}></div>{/if}
+  {#if open}<div class="markdown file-body" use:markdown={content}></div>{/if}
 </div>
-
-<style>
-  .card {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.5rem 0.7rem;
-    margin: 0.4rem 0;
-    background: var(--panel);
-  }
-  .body {
-    margin-top: 0.6rem;
-    border-top: 1px solid var(--line);
-    padding-top: 0.6rem;
-    max-height: 60vh;
-    overflow: auto;
-  }
-</style>

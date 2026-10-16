@@ -1,5 +1,8 @@
 <script lang="ts">
+  import Checkbox from '../components/Checkbox.svelte';
+  import Icon from '../components/Icon.svelte';
   import { api, fileToBase64, when, zone } from '../lib/api';
+  import { confirmDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
 
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -66,7 +69,7 @@
   }
 
   async function remove(schedule: any): Promise<void> {
-    if (!confirm(`Delete “${schedule.name}”?`)) return;
+    if (!(await confirmDialog({ title: 'Delete schedule', message: `Delete “${schedule.name}”?`, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/schedules/${schedule.id}`);
     load();
   }
@@ -77,34 +80,33 @@
 </script>
 
 <div class="page stack">
-  <h1>Schedules</h1>
-  <p class="muted small">Prompts Clara runs by herself, unattended: an action your rules say to ask about is held and pushed
+  <p class="intro">Prompts Clara runs by herself, unattended: an action your rules say to ask about is held and pushed
     to you, and the run goes on without it.</p>
   <form class="panel stack" onsubmit={save}>
     <div class="grid-2">
-      <input placeholder="Name" bind:value={form.name} maxlength="100" required />
+      <input aria-label="Name" placeholder="Name" bind:value={form.name} maxlength="100" required />
       <label class="row small">first run <input class="grow" type="datetime-local" bind:value={form.at} required /></label>
     </div>
-    <textarea rows="4" placeholder="What Clara should do" bind:value={form.prompt}></textarea>
+    <textarea rows="4" aria-label="What Clara should do" placeholder="What Clara should do" bind:value={form.prompt}></textarea>
     <div class="row">
-      <select bind:value={form.repeat}>
+      <select aria-label="Repeat" bind:value={form.repeat}>
         <option value="">once</option><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option>
       </select>
       {#if form.repeat === 'weekly'}
         {#each DAYS as day, index}
-          <label class="small row"><input type="checkbox" checked={form.weekdays.includes(index)}
+          <label class="small row"><Checkbox checked={form.weekdays.includes(index)}
             onchange={() => (form.weekdays = form.weekdays.includes(index) ? form.weekdays.filter((d) => d !== index) : [...form.weekdays, index])} />{day}</label>
         {/each}
       {/if}
-      <select bind:value={form.project}>
+      <select aria-label="Project" bind:value={form.project}>
         <option value="">no project</option>
         {#each projects as project}<option value={String(project.id)}>{project.name}</option>{/each}
       </select>
-      <label class="small row"><input type="checkbox" bind:checked={form.local_only} /> local only</label>
+      <label class="small row"><Checkbox bind:checked={form.local_only} /> local only</label>
       <label class="small">documents <input type="file" multiple onchange={addDocuments} /></label>
     </div>
     {#if form.documents.length}
-      <div class="row small">{#each form.documents as doc, index}<span class="tag">{doc.name} <button class="small" onclick={() => form.documents.splice(index, 1)}>✕</button></span>{/each}</div>
+      <div class="chips">{#each form.documents as doc, index}<span class="chip"><Icon name="file" size={14} /><span class="name">{doc.name}</span><button type="button" aria-label={`Remove ${doc.name}`} onclick={() => form.documents.splice(index, 1)}><Icon name="close" size={14} /></button></span>{/each}</div>
     {/if}
     <div class="row">
       <button class="primary">{form.id ? 'Save' : 'Plan it'}</button>
@@ -118,9 +120,9 @@
         <tr>
           <td><strong>{schedule.name}</strong> <span class="tag">{schedule.repeat || 'once'}</span>
             {#if !schedule.enabled}<span class="tag">paused</span>{/if}{#if schedule.running}<span class="tag ok">running</span>{/if}
-            {#if schedule.local_only}<span class="tag">🏠</span>{/if}</td>
+            {#if schedule.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}</td>
           <td class="small">{schedule.next_local ?? '—'}</td>
-          <td class="small">{#if schedule.last}<span class:bad={schedule.last.status !== 'ok'}>{schedule.last.status}</span> {when(schedule.last.finished_at)}<br /><span class="muted">{schedule.last.summary}</span>{:else}—{/if}</td>
+          <td class="small">{#if schedule.last}<span class:danger={schedule.last.status !== 'ok'}>{schedule.last.status}</span> {when(schedule.last.finished_at)}<br /><span class="muted">{schedule.last.summary}</span>{:else}—{/if}</td>
           <td class="row">
             <button class="small" onclick={() => run(schedule)}>Run now</button>
             <button class="small" onclick={() => edit(schedule)}>Edit</button>

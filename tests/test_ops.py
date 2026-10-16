@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -24,8 +25,10 @@ from clara.cli.ops import main as ops_main
 from clara.db import backup_database
 from clara.gate import Action, Decision, Situation
 from clara.ops.backups import verify
+from clara.ops.discord_bot import DiscordBot, bot_environment
 from clara.ops.tailscale import FunnelOn, Output, Tailscale, check_funnel_now, funnel_ports
 from clara.ops.updater import UpdateError, check_signature, check_sums, safe_extract
+from clara.settings import load_settings
 from clara.timeutil import iso, utcnow
 from clara.tools.base import ToolContext, TurnState
 
@@ -245,3 +248,90 @@ def test_a_backup_restores_into_a_clean_data_folder(services, tmp_path, monkeypa
     assert restored.execute("SELECT text FROM facts").fetchall() == [("Alex keeps bees.",)]
     restored.close()
     assert oct((clean / "clara.db").stat().st_mode & 0o777) == "0o600"
+
+
+# ----------------------------------------------------------------------
+# The Discord bot, started with the server
+# ----------------------------------------------------------------------
+def test_the_bot_gets_its_settings_and_none_of_claras(environ, tmp_path):
+    env_file = tmp_path / "clara.env"
+    env_file.write_text("CLARA_DISCORD_USER_ID=42\nCLARA_DISCORD_CHANNEL_GENERAL=1\nCLARA_TOKEN_FILE=/x/clara-token\n"
+                        "CLARA_DISCORD_AUTOSTART=true\nCLARA_PORT=9999\n")
+    settings = load_settings({**environ, "CLARA_PORT": "9000"}, env_file=env_file)
+    env = bot_environment(settings, {"PATH": "/bin", "CLARA_SECRET_KEY": "ab" * 32, "CLARA_SECRET_KEY_FILE": "/k",
+                                     "CLARA_DISCORD_CHANNEL_GENERAL": "7", "CLARA_PORT": "9000"})
+    assert env["PATH"] == "/bin"
+    assert env["CLARA_DISCORD_USER_ID"] == "42" and env["CLARA_TOKEN_FILE"] == "/x/clara-token"
+    assert env["CLARA_DISCORD_CHANNEL_GENERAL"] == "7"  # the environment wins over the file, as for Clara
+    assert env["CLARA_URL"] == "http://127.0.0.1:9000" and env["CLARA_TIMEZONE"] == "Europe/Paris"
+    assert env["CLARA_DISCORD_STATE"] == str(settings.data_dir / "discord-state.json")
+    assert "CLARA_SECRET_KEY" not in env and "CLARA_SECRET_KEY_FILE" not in env and "CLARA_PORT" not in env
+
+
+def script(body: str) -> list[str]:
+    return [sys.executable, "-c", textwrap.dedent(body)]
+
+
+async def until(condition, seconds: float = 5.0) -> None:
+    for _ in range(int(seconds / 0.02)):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("it did not happen in time")
+
+
+async def test_a_bot_that_crashes_is_started_again_and_stopped_with_the_server(settings, tmp_path):
+    runs = tmp_path / "runs"
+    bot = DiscordBot(settings, lambda *alert: None, retry=(0.01,), command=script(f"""
+        import pathlib, sys, time
+        runs = pathlib.Path({str(runs)!r})
+        runs.open("a").write("x")
+        if len(runs.read_text()) < 3:
+            sys.exit(1)
+        time.sleep(60)
+        """))
+    bot.start()
+    await until(lambda: runs.exists() and len(runs.read_text()) == 3 and bot.process is not None)
+    process = bot.process
+    await bot.stop()
+    assert process.returncode is not None and bot.process is None
+    assert len(runs.read_text()) == 3  # not started a fourth time
+
+
+@pytest.mark.parametrize("code, alerted", [(0, False), (2, True), (3, False)])
+async def test_a_bot_that_is_stopped_or_refused_is_not_retried(settings, tmp_path, code, alerted):
+    runs = tmp_path / "runs"
+    alerts = []
+    bot = DiscordBot(settings, lambda *alert: alerts.append(alert), retry=(0.01,), command=script(f"""
+        import pathlib, sys
+        pathlib.Path({str(runs)!r}).open("a").write("x")
+        sys.exit({code})
+        """))
+    bot.start()
+    await until(lambda: bot._task.done())
+    await bot.stop()
+    assert runs.read_text() == "x"
+    assert [key for key, *_ in alerts] == (["discord"] if alerted else []) and bool(bot.problem) == alerted
+
+
+async def test_a_missing_discord_library_is_an_alert_not_a_crash(settings, monkeypatch):
+    alerts = []
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
+    bot = DiscordBot(settings, lambda *alert: alerts.append(alert))
+    bot.start()
+    await until(lambda: bot._task.done())
+    assert alerts and alerts[0][0] == "discord" and "discord.py is not installed" in alerts[0][2]
+
+
+def test_the_bot_is_only_started_when_asked(environ, tmp_path, llm):
+    from clara.app import build_services, extend, open_database
+
+    for autostart, expected in (("false", None), ("true", DiscordBot)):
+        data = tmp_path / autostart
+        settings = load_settings({**environ, "CLARA_DATA_DIR": str(data), "CLARA_DISCORD_AUTOSTART": autostart}, use_file=False)
+        db = open_database(settings)
+        s = build_services(settings, db, provider_factory=llm.factory)
+        extend(s)
+        assert (s.discord is None) if expected is None else isinstance(s.discord, expected)
+        s.traffic.close()
+        db.close()

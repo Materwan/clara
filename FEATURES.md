@@ -31,33 +31,47 @@ All clients speak the same HTTP API (section 15) with their own token, and share
 | Web site | Svelte single-page site served by Clara itself | `web` |
 | `clara-chat` | Terminal chat | `cli` |
 | `clara-admin` | Terminal admin console (the console commands below) | `console` |
-| `clara-discord` | Discord bot, direct messages only, answers your user id only (separate process) | `discord` |
+| `clara-discord` | Discord bot in your private server, answers your user id only, in #general (separate process) | `discord` |
 | Your scripts | The HTTP API and its event stream | `script` |
 
 ### Web site
 
 Sign in once by pasting a `web` token; the browser keeps an HttpOnly, Secure, SameSite=Strict cookie (30 days idle,
-90 days at most) and sends the `X-Clara-Web: 1` header with every call. Pages:
+90 days at most) and sends the `X-Clara-Web: 1` header with every call.
+
+The design is the first Clara site's ("Cyanotype"): a Prussian-blue navigation rail in both themes with Clara's
+portrait, the page in cool chalk (or deep blue in the dark theme), one violet signal for what is live or waits for you,
+Hanken Grotesk and Epilogue served by Clara herself (SIL Open Font Licence, the licences at `/fonts/`), line icons.
+The rail holds **New chat**, the pages you work in (Chat, Projects, Tasks & reminders, Schedules, Workspace, Vault),
+the list of conversations (on every page) and **Settings**, whose six pages share a tab bar (Memory, Connections, Rules
+& approvals, Models, Usage, Admin). The logo and **New chat** stay at the top; everything under them scrolls as one. At
+its foot: **Waiting for you** with a count when approval requests wait (it opens Rules & approvals), a red count on
+Settings and on the Admin tab while alerts are active, the connection state with the default model, an **Auto /
+Light / Dark** theme switch (remembered in this browser, applied before the page is drawn) and Sign out. On a phone
+the rail, with the list of conversations, slides in over the page (focus moves into it, and the page behind is inert until
+it closes). Checkboxes are drawn in the site's style (a box that fills violet, with a white tick). A question that needs an answer (delete, revoke, a secret's value, when a token or an account is attached)
+opens a dialog in the site's own style: Escape cancels, and a secret is typed in a masked field. Notifications wait while
+you point at them and can be dismissed. The first Tab stop is **Skip to content**. Pages:
 
 | Page | What you do there |
 | --- | --- |
-| Chat | Streamed answers with thinking, tool calls and results, Markdown with LaTeX (KaTeX) and code; attach files by button or drag and drop (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
-| Conversations rail | One list shared by every client, searchable, newest first; pin, rename, delete |
-| Memory | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
+| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; attach files by button or drag and drop (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable, pinned ones first, then newest first; pin, rename, delete |
+| Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
 | Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions |
 | Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs |
 | Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
-| Connections | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
-| Rules & approvals | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
-| Models | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order) |
-| Usage | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
-| Admin | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; debug switch; backups (list, back up now); releases (notes, install); the console |
+| Connections (Settings) | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
+| Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
+| Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order) |
+| Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
+| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; debug switch; backups (list, back up now); releases (notes, install); the console |
 
 The site is built at release time (`scripts/build-web.sh`): the machine needs no Node. Every page is served with a
-strict Content-Security-Policy (scripts, styles, fonts and connections from the site only); the Drive picker window is
-the one page allowed Google's picker script.
+strict Content-Security-Policy (scripts, styles, fonts and connections from the site only; nothing is inlined as a
+`data:` URI, so KaTeX's fonts load too); the Drive picker window is the one page allowed Google's picker script.
 
 ### `clara-chat`
 
@@ -117,23 +131,42 @@ the one page allowed Google's picker script.
 
 ### `clara-discord`
 
-A separate process (`clara-discord.service`) with its own Clara token (client `discord`) and its own Discord bot token,
-both systemd credentials; the Discord token is never in Clara's database.
+A separate process with its own Clara token (client `discord`) and its own Discord bot token, never in Clara's
+database. It lives in a **private Discord server of your own** (you and the bot, nobody else) and uses four text
+channels, each named by its id. It has **no direct-message function**: a DM to the bot gets no answer.
 
-- Connects with direct-message intents only: no server messages, no member list, no message content from servers.
-- Answers **only** `CLARA_DISCORD_USER_ID`; every other user id is ignored without a reply.
-- A DM is a chat message in the bot's current conversation; files and pictures you attach go with it (4 files, 25 MB
-  each, 34 MB in all); Clara's answer comes back as messages (split at 2,000 characters).
-- Approval requests arrive with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default
-  approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site
-  and the terminals.
-- Reminders, notifications, tasks, schedules, alerts and update news are relayed as DMs.
-- Slash commands (in DMs): `/new` (a new conversation), `/status`, `/tasks`, `/reminders`, `/approvals`.
-- Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` the server raises the `discord` alert after 5
-  minutes of silence.
+- **Start:** with `CLARA_DISCORD_AUTOSTART=true` the server starts the bot (`python -m clara_discord.bot`) when it
+  starts, starts it again after a crash (2, 5, 15, 30, then 60 s apart), and stops it when it stops; it also expects
+  its heartbeat (the `discord` alert). Otherwise run it as `clara-discord.service`. Use one of the two, never both.
+- Connects with the guild, guild-message and message-content intents (the last is privileged: switch it on in the
+  developer portal): no member list, no presences, no direct messages.
+- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general`; every other user, channel and server is ignored
+  without a reply. At start it finds the four channels: if one is missing, is not a text channel, or they are not all
+  in one server, it refuses to start and says which. Only one bot runs per state file.
+- What you write in `#general` is a chat message in the bot's current conversation; files and pictures you attach go
+  with it (4 files, 25 MB each, 34 MB in all); Clara's answer, and the notes she writes, come back there (split at
+  2,000 characters).
+- Where each kind of message goes:
 
-Bot settings: `CLARA_DISCORD_USER_ID`, `CLARA_URL`, `CLARA_TIMEZONE`, `CLARA_DISCORD_STATE`, and the credentials
-`discord-token` and `clara-token` (or the files named by `DISCORD_BOT_TOKEN_FILE` and `CLARA_TOKEN_FILE`).
+  | Channel | What |
+  | --- | --- |
+  | `#general` | Your conversation with Clara; a line saying where to answer when she waits for an approval |
+  | `#approval` | Approval requests, with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
+  | `#notification` | Reminders, notifications, task reminders, schedule summaries and update news |
+  | `#alerts` | Alerts |
+
+- Slash commands (in your server, for you only): `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
+  `/approvals`.
+- Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
+  raises the `discord` alert after 5 minutes of silence. A bot that stopped by itself (exit code 0) is not started
+  again until the server restarts; one that refused its settings (code 2) raises the alert at once.
+
+Bot settings: `CLARA_DISCORD_USER_ID`, `CLARA_DISCORD_CHANNEL_GENERAL`, `CLARA_DISCORD_CHANNEL_NOTIFICATION`,
+`CLARA_DISCORD_CHANNEL_APPROVAL`, `CLARA_DISCORD_CHANNEL_ALERTS`, `CLARA_URL`, `CLARA_TIMEZONE`, `CLARA_DISCORD_STATE`,
+and the credentials `discord-token` and `clara-token` (or the files named by `DISCORD_BOT_TOKEN_FILE` and
+`CLARA_TOKEN_FILE`). When the server starts the bot it hands it the `CLARA_DISCORD_*` settings, `DISCORD_BOT_TOKEN_FILE`
+and `CLARA_TOKEN_FILE` found in its environment or `.env`, its own address and time zone, and a state file in the data
+folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no other `CLARA_*` setting reaches it.
 
 ## 3. Conversations
 
@@ -461,7 +494,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 - **systemd:** `clara.service` runs `clara-launcher` as the `clara` system user, with `Restart=on-failure`, a
   watchdog fed only while every loop turns, and a stop timeout above the drain limit. `clara-discord.service` runs the
-  bot. `deploy/install.sh` sets everything up.
+  bot (or the server starts it: `CLARA_DISCORD_AUTOSTART`). `deploy/install.sh` sets everything up.
 - **Graceful stop:** new turns are refused, running answers get `CLARA_DRAIN_SECONDS` (120 s) to finish (progress is
   logged), then they are cut and saved as interrupted. `/stop now` cuts at once.
 - **Crash recovery** (after `kill -9` or a power cut): at start, a question whose answer never came is put back,
@@ -486,7 +519,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   a monthly notification reminds you to try it.
 - **Schema versions:** numbered migrations, the version in `PRAGMA user_version`, a backup before each migration, and
   a database newer than the code is refused.
-- **Alerts** (in every client's inbox and as Discord DMs; each repeats at most every 6 hours while it lasts; most clear
+- **Alerts** (in every client's inbox and in Discord's `#alerts`; each repeats at most every 6 hours while it lasts; most clear
   by themselves when the cause is gone, and `/alerts clear <key>` clears one):
 
   | Key | When |
@@ -495,7 +528,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `provider_payment:<id>` | A provider wants payment |
   | `late:<what>` | A reminder, task reminder or schedule fired more than 5 minutes late |
   | `disk` | The disk holding the data is above `CLARA_DISK_ALERT_PERCENT` (85%) |
-  | `discord` | The Discord bot has not checked in for 5 minutes (with `CLARA_DISCORD_EXPECTED`) |
+  | `discord` | The Discord bot has not checked in for 5 minutes (with `CLARA_DISCORD_EXPECTED` or `CLARA_DISCORD_AUTOSTART`), or the server cannot keep it running (a wrong setting, a refused token or intent, no discord.py) |
   | `vault` | `CLARA_VAULT_PATH` is not a folder |
   | `vault_push` | The vault could not be pulled or pushed |
   | `backup` | A backup, its check or its remote copy failed |
@@ -508,6 +541,11 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 - **Traffic log:** one line per request with metadata only (time, method, route with ids replaced, status, duration,
   client, token name, model, token counts, outcome), daily files kept `CLARA_TRAFFIC_LOG_DAYS` (7), mode 0600; failed
   sign-ins are recorded with the address. No message text, no headers, no bodies.
+- **Live log:** the Admin page's **Logs** tab (`GET /v1/admin/logs/stream`) shows the server's own log (INFO and up)
+  and the traffic records (requests, model calls, refused sign-ins) as they happen, filtered by source and level on
+  the server. It keeps the last 500 lines in memory only (a restart empties them; nothing is written for it, and it
+  works whatever `CLARA_TRAFFIC_LOG_DAYS` is). Anything that looks like a secret is masked, the address of a failed
+  sign-in is left out, and the debug content never reaches it.
 - **Debug switch:** `/debug on` writes full prompts and answers to `logs/debug-content.jsonl` (0600) for one hour,
   then switches itself off and deletes the file.
 - **`clara doctor`:** settings, permissions, the database, the secrets key, Podman (rootless, cgroups, subuid/subgid,
@@ -604,6 +642,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_DISK_ALERT_PERCENT` | 85 | Disk alert threshold |
 | `CLARA_LATE_ALERT_SECONDS` | 300 | Lateness that raises an alert |
 | `CLARA_DISCORD_EXPECTED` | false | Alert when the Discord bot stops checking in |
+| `CLARA_DISCORD_AUTOSTART` | false | Start the Discord bot with the server (and expect it) |
 | `CLARA_RETENTION_DAYS` | 400 | Usage rows and audit lines |
 | `CLARA_EVENTS_MAX_DAYS` | 90 | Longest an event is kept |
 | `CLARA_ENV_FILE` | `.env` | The settings file read at start |
@@ -732,6 +771,7 @@ keep-alive every 15 s.
 | `POST /v1/admin/command` | Run a console command |
 | `GET /v1/admin/usage` | Usage statistics |
 | `GET /v1/admin/usage/history` | The last model calls |
+| `GET /v1/admin/logs/stream` | The live log (server-sent events): the last lines, then each new one; `source` (`all`, `app`, `traffic`) and `level` (`INFO`, `WARNING`, `ERROR`, a minimum) |
 | `POST /v1/admin/stop` | Stop (graceful, or `now`) |
 | `POST /v1/admin/restart` | Restart through the launcher |
 | `GET /v1/admin/backups` | Backups |

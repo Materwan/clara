@@ -1,9 +1,15 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, download, fileToBase64, saveBlob, size, when } from '../lib/api';
+  import { confirmDialog } from '../lib/dialog.svelte';
   import { markdown } from '../lib/markdown';
   import { live, toast } from '../lib/state.svelte';
 
-  let tab = $state<'files' | 'history' | 'runs'>('files');
+  type Tab = 'files' | 'history' | 'runs';
+  const TABS: { value: Tab; label: string }[] = [{ value: 'files', label: 'Files' }, { value: 'history', label: 'History' }, { value: 'runs', label: 'Script runs' }];
+
+  let tab = $state<Tab>('files');
   let info = $state<any>(null);
   let entries = $state<any[]>([]);
   let open = $state<any>(null);
@@ -46,7 +52,7 @@
   }
 
   async function remove(path: string): Promise<void> {
-    if (!confirm(`Delete ${path}? It stays in the history and can be undone.`)) return;
+    if (!(await confirmDialog({ title: 'Delete a file', message: `Delete ${path}? It stays in the history and can be undone.`, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/workspace/file?path=${encodeURIComponent(path)}`);
     open = null;
     load();
@@ -64,7 +70,7 @@
   }
 
   async function undo(commit: string): Promise<void> {
-    if (!confirm(`Undo ${commit}? A new commit reverts it.`)) return;
+    if (!(await confirmDialog({ title: 'Undo a commit', message: `Undo ${commit}? A new commit reverts it.`, confirm: 'Undo' }))) return;
     try {
       toast((await api.post('/v1/workspace/undo', { commit })).message, 'ok');
       load();
@@ -79,25 +85,20 @@
 </script>
 
 <div class="page stack">
-  <h1>Workspace</h1>
   {#if info}
-    <p class="small muted">{size(info.size)} of {size(info.max_size)} · scripts:
+    <p class="intro">{size(info.size)} of {size(info.max_size)} used · scripts:
       {#if info.run_ready}<span class="ok">ready</span>{:else}<span class="warn">off ({info.run_problem})</span>{/if}</p>
   {/if}
-  <div class="tabs">
-    <button class:active={tab === 'files'} onclick={() => (tab = 'files')}>Files</button>
-    <button class:active={tab === 'history'} onclick={() => (tab = 'history')}>History</button>
-    <button class:active={tab === 'runs'} onclick={() => (tab = 'runs')}>Script runs</button>
-  </div>
+  <div><Segmented label="Section" options={TABS} bind:value={tab} /></div>
   {#if tab === 'files'}
-    <div class="row"><label class="small">Upload into uploads/ <input type="file" multiple onchange={upload} /></label></div>
+    <div class="row"><label class="button"><Icon name="upload" size={18} />Upload into uploads/<input type="file" multiple hidden onchange={upload} /></label></div>
     <div class="split">
       <div class="panel tree">
         {#each entries as entry (entry.path)}
-          <div class="entry" style:padding-left={`${entry.depth * 1}rem`}>
-            {#if entry.kind === 'dir'}📁 {entry.path.split('/').pop()}
-            {:else if entry.kind === 'link'}<span class="muted">🔗 {entry.path.split('/').pop()} (not followed)</span>
-            {:else}<button class="link" onclick={() => view(entry.path)}>📄 {entry.path.split('/').pop()}</button> <span class="muted small">{size(entry.size)}</span>{/if}
+          <div class="entry" style:padding-left={`calc(var(--sp-16) * ${entry.depth})`}>
+            {#if entry.kind === 'dir'}<span class="dir"><Icon name="folder" size={16} />{entry.path.split('/').pop()}</span>
+            {:else if entry.kind === 'link'}<span class="muted"><Icon name="link" size={16} />{entry.path.split('/').pop()} (not followed)</span>
+            {:else}<button class="link" aria-current={open?.path === entry.path ? 'true' : undefined} onclick={() => view(entry.path)}><Icon name="file" size={16} />{entry.path.split('/').pop()}</button> <span class="muted small">{size(entry.size)}</span>{/if}
           </div>
         {:else}<div class="empty">Empty.</div>{/each}
       </div>
@@ -108,7 +109,7 @@
             <button class="small" onclick={() => save(open.path)}>Download</button>
             <button class="small danger" onclick={() => remove(open.path)}>Delete</button></div>
           {#if draft !== null}
-            <textarea class="editor" rows="24" bind:value={draft}></textarea>
+            <textarea class="editor" rows="24" aria-label={`Content of ${open.path}`} bind:value={draft}></textarea>
             <div class="row"><button class="primary" onclick={write}>Save (a commit)</button><button onclick={() => (draft = null)}>Cancel</button></div>
           {:else if open.binary}<p class="muted">A binary file ({size(open.size)}).</p>
           {:else if open.path.endsWith('.md')}<div class="markdown" use:markdown={open.content}></div>
@@ -123,7 +124,7 @@
         {#each commits as commit (commit.commit)}
           <tr><td><button class="link" onclick={() => showCommit(commit.commit)}><code>{commit.commit}</code></button></td>
             <td class="small">{when(commit.at)}</td><td>{commit.message}</td>
-            <td><button class="small" onclick={() => undo(commit.commit)}>Undo</button></td></tr>
+            <td><button class="small" onclick={() => undo(commit.commit)}><Icon name="undo" size={16} />Undo</button></td></tr>
         {/each}
       </tbody>
     </table>
@@ -134,7 +135,7 @@
       <tbody>
         {#each runs as run (run.id)}
           <tr><td>{run.id}</td><td class="small">{when(run.started_at)}</td>
-            <td class:bad={run.exit_code !== 0}>{run.timed_out ? 'timed out' : run.exit_code ?? run.status}</td>
+            <td class:danger={run.exit_code !== 0}>{run.timed_out ? 'timed out' : run.exit_code ?? run.status}</td>
             <td>{run.network ? 'on' : 'off'}</td><td class="small">{(run.duration_ms / 1000).toFixed(1)} s</td>
             <td>{#if run.log_path}<button class="link" onclick={() => { tab = 'files'; view(run.log_path); }}>{run.log_path}</button>{/if}</td></tr>
         {:else}<tr><td colspan="6" class="empty">No run yet.</td></tr>{/each}
@@ -144,31 +145,27 @@
 </div>
 
 <style>
-  .split {
-    display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: 0.8rem;
-  }
-  .tree {
-    max-height: 75vh;
-    overflow: auto;
-  }
   .entry {
     white-space: nowrap;
+    padding: var(--sp-2) 0;
+  }
+  .entry :global(.icon) {
+    margin-right: var(--sp-6);
+    color: var(--muted);
+  }
+  .entry .dir {
+    color: var(--text-2);
+    font-weight: 600;
+  }
+  .entry .link {
+    color: var(--text);
+  }
+  .entry .link[aria-current='true'] {
+    color: var(--accent-text);
+    font-weight: 650;
   }
   .editor {
     width: 100%;
-    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  }
-  .link {
-    border: none;
-    background: none;
-    padding: 0;
-    color: var(--accent);
-  }
-  @media (max-width: 760px) {
-    .split {
-      grid-template-columns: 1fr;
-    }
+    font-family: var(--font-mono);
   }
 </style>

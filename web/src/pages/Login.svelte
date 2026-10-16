@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Mark from '../components/Mark.svelte';
+  import ThemeSwitch from '../components/ThemeSwitch.svelte';
   import { api } from '../lib/api';
 
   let { onSignedIn }: { onSignedIn: () => void } = $props();
@@ -8,6 +10,7 @@
 
   async function signIn(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     busy = true;
     problem = '';
     try {
@@ -22,29 +25,23 @@
   }
 </script>
 
-<div class="center">
-  <form class="panel stack" onsubmit={signIn}>
-    <h1>Clara</h1>
-    <p class="muted small">
-      Paste a client token once (make one with <code>clara token create web web</code>). The browser keeps a cookie that
-      stands for it; revoking the token signs this browser out.
-    </p>
-    <input type="password" bind:value={token} placeholder="clara_…" autocomplete="off" required />
-    {#if problem}<p class="bad small">{problem}</p>{/if}
-    <button class="primary" disabled={busy || !token.trim()}>Sign in</button>
-  </form>
+<div class="login-wrap">
+  <aside class="login-art">
+    <Mark size={36} />
+    <span class="wordmark">Clara</span>
+    <p class="tagline">Your conversations, your notes, and what she remembers about you, on your own machine.</p>
+  </aside>
+  <main class="login">
+    <h1>Sign in to Clara</h1>
+    <p class="lede">Paste a web token once. This browser then keeps a cookie that stands for it; revoking the token signs it out.</p>
+    <form onsubmit={signIn}>
+      <label class="field">Web token
+        <input type="password" bind:value={token} placeholder="clara_…" autocomplete="off" required />
+      </label>
+      {#if problem}<p class="danger small" role="alert">{problem}</p>{/if}
+      <button class="primary large" disabled={!token.trim()} aria-busy={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+    </form>
+    <p class="foot">No token? On the server: <code>clara token create web web</code>.</p>
+    <ThemeSwitch />
+  </main>
 </div>
-
-<style>
-  .center {
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 1rem;
-  }
-  form {
-    width: min(420px, 100%);
-    display: flex;
-    flex-direction: column;
-  }
-</style>

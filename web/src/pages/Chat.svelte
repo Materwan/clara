@@ -1,21 +1,30 @@
 <script lang="ts">
   import ApprovalCard from '../components/ApprovalCard.svelte';
-  import ConversationRail from '../components/ConversationRail.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import FileCard from '../components/FileCard.svelte';
+  import Icon from '../components/Icon.svelte';
+  import Mark from '../components/Mark.svelte';
   import QcmForm from '../components/QcmForm.svelte';
   import { api, fileToBase64, stream, zone } from '../lib/api';
   import { markdown } from '../lib/markdown';
-  import { go, route, toast } from '../lib/state.svelte';
+  import { conversations, go, route, toast, ui } from '../lib/state.svelte';
+  import { type Call, note, summary } from '../lib/tools';
 
-  type Tool = { name: string; arguments: any; result?: string; running?: boolean };
+  type Shown = Call & { open?: boolean };
+  // Clara's reply in the order she made it: text, runs of tool calls (calls with no text between them), requests, forms
+  type Part =
+    | { kind: 'text'; text: string }
+    | { kind: 'run'; calls: Shown[]; open: boolean }
+    | { kind: 'approval'; approval: any }
+    | { kind: 'form'; form: any };
   type Message = {
     id?: number;
     role: 'user' | 'assistant';
-    content: string;
+    content: string; // what you wrote (a reply's text is in its parts)
+    attachments: string[];
+    parts: Part[];
     thinking?: string;
-    tools: Tool[];
-    approvals: any[];
-    forms: any[];
+    thinkingOpen?: boolean;
     files: any[];
     notes: string[];
     versions?: number[];
@@ -24,7 +33,8 @@
     error?: string;
   };
 
-  const blank = (role: Message['role'], content = ''): Message => ({ role, content, tools: [], approvals: [], forms: [], files: [], notes: [] });
+  const blank = (role: Message['role'], content = ''): Message => ({ role, content, attachments: [], parts: [], files: [], notes: [] });
+  const SILENT = new Set(['qcm']); // the form is its own card
 
   let conversationId = $derived(route.params.id ?? null);
   let conversation = $state<any>(null);
@@ -32,14 +42,15 @@
   let draft = $state('');
   let attached = $state<File[]>([]);
   let busy = $state(false);
+  let dragging = $state(false);
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
   let fresh = $state({ incognito: false, local_only: false, model: '' });
   let editing = $state<number | null>(null);
   let editText = $state('');
-  let railRefresh = $state(0);
   let skipReload = '';
   let scroller: HTMLElement | undefined = $state();
+  let picker: HTMLInputElement | undefined = $state();
 
   $effect(() => {
     const id = conversationId;
@@ -63,6 +74,29 @@
     }
   }
 
+  function addText(message: Message, text: string): void {
+    const last = message.parts.at(-1);
+    if (last?.kind === 'text') last.text += text;
+    else message.parts.push({ kind: 'text', text });
+  }
+
+  function addCall(message: Message, call: Shown): void {
+    if (SILENT.has(call.name)) return;
+    const last = message.parts.at(-1);
+    if (last?.kind === 'run') last.calls.push(call);
+    else message.parts.push({ kind: 'run', calls: [call], open: false });
+  }
+
+  /** The first call of that name still waiting for its result (several calls of a round may run at once). */
+  function openCall(message: Message, name: string, running: boolean): Shown | undefined {
+    for (const part of message.parts) {
+      if (part.kind !== 'run') continue;
+      const call = part.calls.find((item) => item.name === name && (running ? item.running : item.result === undefined));
+      if (call) return call;
+    }
+    return undefined;
+  }
+
   function group(history: any[], waiting: any[]): Message[] {
     const shown: Message[] = [];
     let answer: Message | null = null;
@@ -79,15 +113,16 @@
         shown.push(answer);
       }
       if (item.role === 'assistant') {
-        if (item.content) answer.content += (answer.content ? '\n\n' : '') + item.content;
-        for (const call of item.tool_calls ?? []) answer.tools.push({ name: call.name, arguments: call.arguments });
-        if (item.forms) answer.forms.push(...item.forms);
+        if (item.thinking) answer.thinking = (answer.thinking ? `${answer.thinking}\n\n` : '') + item.thinking;
+        if (item.content) addText(answer, (answer.parts.at(-1)?.kind === 'text' ? '\n\n' : '') + item.content);
+        for (const call of item.tool_calls ?? []) addCall(answer, { name: call.name, arguments: call.arguments });
+        for (const form of item.forms ?? []) answer.parts.push({ kind: 'form', form });
       } else if (item.role === 'tool') {
-        const open = answer.tools.find((tool) => tool.result === undefined && tool.name === item.tool_name);
+        const open = openCall(answer, item.tool_name, false);
         if (open) open.result = item.content;
       }
     }
-    if (answer && waiting.length) answer.approvals.push(...waiting);
+    if (answer) for (const approval of waiting) answer.parts.push({ kind: 'approval', approval });
     return shown;
   }
 
@@ -114,7 +149,7 @@
         if (index >= 0) messages = messages.slice(0, index);
       }
       const user = blank('user', text);
-      if (files.length) user.notes.push('Attached: ' + files.map((file) => file.name).join(', '));
+      user.attachments = files.map((file) => file.name);
       const answer = blank('assistant');
       answer.streaming = true;
       messages.push(user, answer);
@@ -129,22 +164,22 @@
             current.thinking = (current.thinking ?? '') + event.text;
             break;
           case 'token':
-            current.content += event.text;
+            addText(current, event.text);
             break;
           case 'tool_start':
-            current.tools.push({ name: event.name, arguments: event.arguments, running: true });
+            addCall(current, { name: event.name, arguments: event.arguments, running: true });
             break;
           case 'tool': {
-            const tool = current.tools.find((item) => item.running && item.name === event.name);
-            if (tool) Object.assign(tool, { running: false, result: event.result });
-            else current.tools.push({ name: event.name, arguments: event.arguments, result: event.result });
+            const call = openCall(current, event.name, true);
+            if (call) Object.assign(call, { running: false, result: event.result });
+            else addCall(current, { name: event.name, arguments: event.arguments, result: event.result });
             break;
           }
           case 'approval':
-            current.approvals.push(event.approval);
+            current.parts.push({ kind: 'approval', approval: event.approval });
             break;
           case 'qcm':
-            current.forms.push(event.form);
+            current.parts.push({ kind: 'form', form: event.form });
             break;
           case 'file':
             current.files.push(event);
@@ -176,9 +211,11 @@
     } catch (error) {
       if ((error as Error).name !== 'AbortError') toast((error as Error).message, 'error');
     } finally {
+      const last = messages.at(-1);
+      if (last) last.streaming = false;
       busy = false;
       controller = null;
-      railRefresh++;
+      conversations.changed++;
       if (id) conversation = await api.get(`/v1/conversations/${id}`).catch(() => conversation);
     }
   }
@@ -256,6 +293,7 @@
 
   function drop(event: DragEvent): void {
     event.preventDefault();
+    dragging = false;
     addFiles([...(event.dataTransfer?.files ?? [])]);
   }
 
@@ -264,193 +302,200 @@
     if (files.length) addFiles(files);
   }
 
+  /** The box you write in grows with what you write, up to its CSS max-height. */
+  function autosize(node: HTMLTextAreaElement, _value: string) {
+    const fit = () => {
+      node.style.height = 'auto';
+      node.style.height = `${node.scrollHeight}px`;
+    };
+    fit();
+    return { update: () => queueMicrotask(fit) };
+  }
+
+  function greeting(): string {
+    const hour = new Date().getHours();
+    return hour < 5 ? 'Hello' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  }
+
   const percent = $derived(conversation?.context?.percent ?? 0);
 </script>
 
-<div class="chat">
-  <ConversationRail current={conversationId} refresh={railRefresh} />
-  <section class="main" ondragover={(event) => event.preventDefault()} ondrop={drop} aria-label="Conversation">
-    <header class="row">
-      <strong class="grow">{conversation?.title || (conversationId ? 'Conversation' : 'New conversation')}</strong>
-      {#if conversation?.incognito}<span class="tag">🕶 incognito</span>{/if}
-      {#if conversation?.local_only}<span class="tag">🏠 local only</span>{/if}
-      {#if !conversationId}
-        <label class="small row"><input type="checkbox" bind:checked={fresh.incognito} /> incognito</label>
-        <label class="small row"><input type="checkbox" bind:checked={fresh.local_only} /> local only</label>
-      {/if}
-      <select value={conversationId ? conversation?.model ?? '' : fresh.model} onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>
-        <option value="">Default ({models.default || 'none'})</option>
-        {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
-      </select>
-      {#if conversation?.context}
-        <span class="meter" title={`${conversation.context.tokens} of ${conversation.context.window} tokens`}>
-          <span class="fill" style:width={`${Math.min(100, percent)}%`}></span>
-        </span>
-        <span class="small muted">{percent}%</span>
-        <button class="small" onclick={summarise} disabled={busy}>Summarise</button>
-      {/if}
-    </header>
-    <div class="messages" bind:this={scroller}>
+{#snippet callDetail(call: Shown)}
+  <div class="call-detail">
+    <div><div class="call-key">Given</div><pre>{JSON.stringify(call.arguments, null, 2)}</pre></div>
+    <div><div class="call-key">Returned</div>
+      {#if call.result !== undefined}<pre>{call.result}</pre>{:else}<p class="small muted">{call.running ? 'Still running…' : 'Not kept.'}</p>{/if}</div>
+  </div>
+{/snippet}
+
+{#snippet callLine(call: Shown)}
+  {@const said = note(call)}
+  <span class="run-summary"><b>{said.label}</b>{said.detail ? ` ${said.detail}` : ''}</span>
+  {#if call.running}<span class="spin" aria-hidden="true"></span>{/if}
+{/snippet}
+
+<section class="chat" aria-label="Conversation">
+  <header class="page-head chat-head">
+    <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
+    <h1 class="title">{conversation?.title || (conversationId ? 'Conversation' : 'New conversation')}</h1>
+    {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
+    {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
+    {#if !conversationId}
+      <label class="flag" title="No facts read or written; deleted 24 hours after its last message"><Checkbox bind:checked={fresh.incognito} />Incognito</label>
+      <label class="flag" title="Local models only; nothing leaves your machines"><Checkbox bind:checked={fresh.local_only} />Local only</label>
+    {/if}
+    {#if conversation?.context}
+      <span class="context" class:hot={percent >= 80} title={`${conversation.context.tokens.toLocaleString()} of ${conversation.context.window.toLocaleString()} tokens`}>
+        <svg class="ring" viewBox="0 0 36 36" width="22" height="22" aria-hidden="true">
+          <circle class="track" cx="18" cy="18" r="15" pathLength="100" />
+          <circle class="fill" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray={`${Math.max(0, Math.min(100, percent))} 100`} />
+        </svg>
+        <span>{percent}%<span class="label">{' of the context'}</span></span>
+      </span>
+      <button class="ghost icon-btn" title="Summarise the conversation to free the context" aria-label="Summarise" onclick={summarise} disabled={busy}>
+        <Icon name="compress" size={18} />
+      </button>
+    {/if}
+  </header>
+
+  <div class="messages" bind:this={scroller}>
+    <div class="messages-inner">
       {#if !messages.length}
-        <div class="empty">Ask Clara anything. Notes she writes go to her workspace (notes/) and show here as cards.</div>
-      {/if}
-      {#each messages as message, index (index)}
-        <article class={message.role}>
-          {#if message.role === 'user'}
-            {#if editing === message.id}
-              <textarea rows="3" bind:value={editText}></textarea>
-              <div class="row">
-                <button class="primary small" onclick={() => { const id = editing; editing = null; send(editText, id); }}>Send edited</button>
-                <button class="small" onclick={() => (editing = null)}>Cancel</button>
-              </div>
-            {:else}
-              <div class="bubble markdown" use:markdown={message.content}></div>
-              {#each message.notes as note}<div class="muted small">{note}</div>{/each}
-              <div class="row tools-line small">
-                {#if message.versions}
-                  <button class="small" onclick={() => switchVersion(message, -1)} disabled={message.version === 1}>‹</button>
-                  <span>{message.version}/{message.versions.length}</span>
-                  <button class="small" onclick={() => switchVersion(message, 1)} disabled={message.version === message.versions.length}>›</button>
-                {/if}
-                {#if message.id && !busy}
-                  <button class="small" onclick={() => send(message.content, message.id!)}>Ask again</button>
-                  <button class="small" onclick={() => { editing = message.id!; editText = message.content; }}>Edit</button>
-                {/if}
-              </div>
-            {/if}
-          {:else}
-            {#if message.thinking}
-              <details class="thinking"><summary class="muted small">Thinking</summary><pre>{message.thinking}</pre></details>
-            {/if}
-            {#each message.tools as tool}
-              <details class="tool">
-                <summary class="small">{tool.running ? '⏳' : '🔧'} {tool.name}</summary>
-                <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
-                {#if tool.result !== undefined}<pre class="result">{tool.result}</pre>{/if}
-              </details>
-            {/each}
-            {#each message.approvals as approval (approval.id)}<ApprovalCard {approval} />{/each}
-            {#if message.content}<div class="markdown" use:markdown={message.content}></div>{/if}
-            {#if message.streaming && !message.content}<div class="muted">…</div>{/if}
-            {#each message.forms as form}<QcmForm {form} onAnswer={(text) => send(text)} />{/each}
-            {#each message.files as card}<FileCard {card} />{/each}
-            {#each message.notes as note}<div class="muted small">{note}</div>{/each}
-            {#if message.error}<div class="bad">⚠ {message.error}</div>{/if}
-          {/if}
-        </article>
-      {/each}
-    </div>
-    <footer>
-      {#if attached.length}
-        <div class="row small">
-          {#each attached as file, index}
-            <span class="tag">{file.name} <button class="small" onclick={() => attached.splice(index, 1)}>✕</button></span>
-          {/each}
+        <div class="welcome">
+          <Mark size={56} />
+          <h2 class="greeting">{greeting()}</h2>
+          <p>Ask Clara anything. The notes she writes go to her workspace (notes/) and show here as cards.</p>
         </div>
       {/if}
-      <div class="row composer">
-        <label class="attach" title="Attach files (PDF, Word, text, pictures)">📎<input type="file" multiple onchange={pick} hidden /></label>
-        <textarea class="grow" rows="2" placeholder="Message Clara (Enter to send, Shift+Enter for a new line)"
-          bind:value={draft} onkeydown={keydown} onpaste={paste}></textarea>
-        {#if busy}<button onclick={stop}>Stop</button>{:else}<button class="primary" onclick={() => send()}>Send</button>{/if}
-      </div>
-    </footer>
-  </section>
-</div>
+      {#each messages as message, index (index)}
+        {#if message.role === 'user'}
+          <div class="msg user">
+            <div class="body">
+              {#if editing === message.id}
+                <div class="edit">
+                  <textarea rows="3" bind:value={editText} aria-label="Your question"></textarea>
+                  <div class="row">
+                    <button class="small" onclick={() => (editing = null)}>Cancel</button>
+                    <button class="primary small" onclick={() => { const id = editing; editing = null; send(editText, id); }}>Send edited</button>
+                  </div>
+                </div>
+              {:else}
+                <div class="bubble markdown" use:markdown={message.content}></div>
+                {#if message.attachments.length}
+                  <div class="chips notes">{#each message.attachments as name}<span class="chip"><Icon name="clip" size={14} /><span class="name">{name}</span></span>{/each}</div>
+                {/if}
+                {#if message.versions || (message.id && !busy)}
+                  <div class="msg-actions">
+                    {#if message.versions}
+                      <button class="ghost" aria-label="Previous version" onclick={() => switchVersion(message, -1)} disabled={message.version === 1}><Icon name="left" size={16} /></button>
+                      <span>{message.version}/{message.versions.length}</span>
+                      <button class="ghost" aria-label="Next version" onclick={() => switchVersion(message, 1)} disabled={message.version === message.versions.length}><Icon name="chevron" size={16} /></button>
+                    {/if}
+                    {#if message.id && !busy}
+                      <button class="ghost" title="Ask again" aria-label="Ask again" onclick={() => send(message.content, message.id!)}><Icon name="refresh" size={16} /></button>
+                      <button class="ghost" title="Edit" aria-label="Edit" onclick={() => { editing = message.id!; editText = message.content; }}><Icon name="edit" size={16} /></button>
+                    {/if}
+                  </div>
+                {/if}
+              {/if}
+            </div>
+          </div>
+        {:else}
+          <div class="msg assistant" class:live={message.streaming}>
+            <div class="who"><Mark size={30} /></div>
+            <div class="body">
+              <div class="parts">
+                {#if message.thinking}
+                  <div class="run" class:open={message.thinkingOpen}>
+                    <button class="run-head" aria-expanded={!!message.thinkingOpen} onclick={() => (message.thinkingOpen = !message.thinkingOpen)}>
+                      <Icon name="chevron" size={14} /><span class="run-summary">{message.streaming && !message.parts.length ? 'Thinking…' : 'Thought it through'}</span>
+                    </button>
+                    {#if message.thinkingOpen}<div class="thinking-text">{message.thinking}</div>{/if}
+                  </div>
+                {/if}
+                {#each message.parts as part, p (p)}
+                  {#if part.kind === 'text'}
+                    <div class="markdown" use:markdown={part.text}></div>
+                  {:else if part.kind === 'run'}
+                    <div class="run" class:open={part.open}>
+                      <button class="run-head" aria-expanded={part.open} onclick={() => (part.open = !part.open)}>
+                        <Icon name="chevron" size={14} />
+                        {#if part.calls.length === 1}
+                          {@render callLine(part.calls[0])}
+                        {:else}
+                          <span class="run-summary">{summary(part.calls)}</span>
+                          {#if part.calls.some((call) => call.running)}<span class="spin" aria-hidden="true"></span>{/if}
+                        {/if}
+                      </button>
+                      {#if part.open}
+                        {#if part.calls.length === 1}
+                          {@render callDetail(part.calls[0])}
+                        {:else}
+                          <div class="run-list">
+                            {#each part.calls as call, c (c)}
+                              <div>
+                                <button class="run-head" aria-expanded={!!call.open} onclick={() => (call.open = !call.open)}>
+                                  <Icon name={note(call).icon} size={14} />{@render callLine(call)}
+                                </button>
+                                {#if call.open}{@render callDetail(call)}{/if}
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      {/if}
+                    </div>
+                  {:else if part.kind === 'approval'}
+                    <ApprovalCard approval={part.approval} />
+                  {:else}
+                    <QcmForm form={part.form} onAnswer={(text) => send(text)} />
+                  {/if}
+                {/each}
+                {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
+                {#each message.files as card}<FileCard {card} />{/each}
+              </div>
+              {#if message.notes.length}
+                <div class="reply-notes">{#each message.notes as line}<span>{line}</span>{/each}</div>
+              {/if}
+              {#if message.error}<div class="failed-note"><Icon name="warn" size={18} /><span>{message.error}</span></div>{/if}
+            </div>
+          </div>
+        {/if}
+      {/each}
+    </div>
+  </div>
 
-<style>
-  .chat {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    height: 100vh;
-  }
-  .main {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    height: 100vh;
-  }
-  header {
-    padding: 0.6rem 1rem;
-    border-bottom: 1px solid var(--line);
-    background: var(--panel);
-  }
-  .meter {
-    width: 80px;
-    height: 6px;
-    background: var(--panel-2);
-    border-radius: 3px;
-    overflow: hidden;
-    display: inline-block;
-  }
-  .fill {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-  }
-  .messages {
-    flex: 1;
-    overflow: auto;
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-  article {
-    max-width: 820px;
-    width: 100%;
-    margin: 0 auto;
-  }
-  article.user .bubble {
-    background: var(--accent-soft);
-    border-radius: 12px;
-    padding: 0.6rem 0.9rem;
-    margin-left: auto;
-    max-width: 85%;
-    width: fit-content;
-  }
-  article.user .tools-line {
-    justify-content: flex-end;
-    opacity: 0.6;
-  }
-  article.user:hover .tools-line {
-    opacity: 1;
-  }
-  article.user textarea {
-    width: 100%;
-  }
-  .tool,
-  .thinking {
-    border-left: 2px solid var(--line);
-    padding-left: 0.6rem;
-    margin: 0.2rem 0;
-  }
-  .tool pre {
-    max-height: 300px;
-    margin: 0.3rem 0;
-  }
-  .result {
-    white-space: pre-wrap;
-  }
-  footer {
-    border-top: 1px solid var(--line);
-    padding: 0.6rem 1rem;
-    background: var(--panel);
-  }
-  .composer {
-    align-items: flex-end;
-    flex-wrap: nowrap;
-  }
-  .attach {
-    cursor: pointer;
-    font-size: 1.2rem;
-  }
-  @media (max-width: 900px) {
-    .chat {
-      grid-template-columns: 1fr;
-    }
-    .chat :global(aside) {
-      display: none;
-    }
-  }
-</style>
+  <div class="composer" class:drop={dragging} role="group" aria-label="Write to Clara"
+    ondragover={(event) => { event.preventDefault(); dragging = true; }} ondragleave={() => (dragging = false)} ondrop={drop}>
+    <div class="composer-frame">
+      <div class="composer-inner">
+        {#if attached.length}
+          <div class="chips">
+            {#each attached as file, index}
+              <span class="chip"><Icon name="clip" size={14} /><span class="name">{file.name}</span>
+                <button aria-label={`Remove ${file.name}`} onclick={() => attached.splice(index, 1)}><Icon name="close" size={14} /></button></span>
+            {/each}
+          </div>
+        {/if}
+        <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
+          onkeydown={keydown} onpaste={paste}></textarea>
+        <div class="composer-bar">
+          <button class="ghost icon-btn attach" title="Attach files (PDF, Word, text, pictures)" aria-label="Attach files" onclick={() => picker?.click()}>
+            <Icon name="clip" />
+          </button>
+          <input type="file" multiple hidden bind:this={picker} onchange={pick} />
+          <select class="model-select" aria-label="Model" value={conversationId ? conversation?.model ?? '' : fresh.model}
+            onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>
+            <option value="">Default model ({models.default || 'none'})</option>
+            {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
+          </select>
+          {#if busy}
+            <button class="send stop" title="Stop" aria-label="Stop" onclick={stop}><Icon name="stop" /></button>
+          {:else}
+            <button class="send" title="Send" aria-label="Send" disabled={!draft.trim() && !attached.length} onclick={() => send()}><Icon name="send" /></button>
+          {/if}
+        </div>
+      </div>
+      <p class="composer-hint">Enter sends, Shift+Enter starts a new line. Drop or paste files to attach them (4 at most).</p>
+    </div>
+  </div>
+</section>

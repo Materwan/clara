@@ -1,12 +1,13 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { api } from '../lib/api';
+  import { confirmDialog } from '../lib/dialog.svelte';
   import { route, toast } from '../lib/state.svelte';
 
   let info = $state<any>(null);
   let githubToken = $state('');
   let repo = $state('');
   let branch = $state('');
-  let pending = $state<{ state: string; account: string } | null>(null);
 
   async function load(): Promise<void> {
     info = await api.get('/v1/connections');
@@ -29,7 +30,11 @@
     }
     try {
       const found = await api.post('/v1/connections/google/finish', { state, code });
-      pending = { state, account: found.account };
+      // Google has said which account it is: Clara attaches it only if you agree
+      const attach = await confirmDialog({
+        title: 'Attach a Google account', message: `Attach the Google account ${found.account || '(address not given)'} to Clara?`, confirm: 'Attach it',
+      });
+      if (attach) await confirmGoogle(state, found.account);
     } catch (problem) {
       toast((problem as Error).message, 'error');
     }
@@ -71,20 +76,15 @@
     }
   }
 
-  async function confirmGoogle(): Promise<void> {
-    if (!pending) return;
-    try {
-      await api.post('/v1/connections/google/confirm', { state: pending.state });
-      toast(`Google Drive connected (${pending.account}).`, 'ok');
-      pending = null;
-      load();
-    } catch (error) {
-      toast((error as Error).message, 'error');
-    }
+  async function confirmGoogle(state: string, account: string): Promise<void> {
+    await api.post('/v1/connections/google/confirm', { state });
+    toast(`Google Drive connected (${account}).`, 'ok');
+    load();
   }
 
   async function disconnect(kind: 'github' | 'google'): Promise<void> {
-    if (!confirm(kind === 'google' ? 'Disconnect Google Drive? The token is revoked at Google.' : 'Disconnect GitHub? The token is forgotten.')) return;
+    const message = kind === 'google' ? 'Disconnect Google Drive? The token is revoked at Google.' : 'Disconnect GitHub? The token is forgotten.';
+    if (!(await confirmDialog({ title: kind === 'google' ? 'Disconnect Google Drive' : 'Disconnect GitHub', message, confirm: 'Disconnect', danger: true }))) return;
     await api.del(`/v1/connections/${kind}`);
     load();
   }
@@ -95,23 +95,22 @@
   }
 </script>
 
-<div class="page stack">
-  <h1>Connections</h1>
-  <p class="muted small">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
+<div class="page narrow stack">
+  <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
     each GitHub and Drive change asks you first.</p>
   {#if info}
     <section class="panel stack">
-      <h2>GitHub {#if info.github.connected}<span class="tag ok">{info.github.account}</span>{/if}
-        {#if info.github.status === 'needs_reconnect'}<span class="tag bad">token refused</span>{/if}</h2>
+      <h2><Icon name="branch" size={18} /> GitHub {#if info.github.connected}<span class="tag ok">{info.github.account}</span>{/if}
+        {#if info.github.status === 'needs_reconnect'}<span class="tag danger">token refused</span>{/if}</h2>
       <form class="row" onsubmit={connectGitHub}>
-        <input class="grow" type="password" placeholder="A fine-grained personal access token (only the repositories and permissions Clara needs)" bind:value={githubToken} />
+        <input class="grow" type="password" aria-label="GitHub token" placeholder="A fine-grained personal access token (only the repositories and permissions Clara needs)" bind:value={githubToken} />
         <button class="primary" disabled={!githubToken.trim()}>{info.github.connected ? 'Replace token' : 'Connect'}</button>
         {#if info.github.connected}<button type="button" class="danger" onclick={() => disconnect('github')}>Disconnect</button>{/if}
       </form>
       {#if info.github.connected}
         <form class="row" onsubmit={addRepo}>
-          <input class="grow" placeholder="owner/name" bind:value={repo} required />
-          <input placeholder="branch (optional)" bind:value={branch} />
+          <input class="grow" aria-label="Repository" placeholder="owner/name" bind:value={repo} required />
+          <input aria-label="Branch" placeholder="branch (optional)" bind:value={branch} />
           <button>Add repository</button>
         </form>
         {#each info.github.repos as item (item.id)}
@@ -120,17 +119,12 @@
       {/if}
     </section>
     <section class="panel stack">
-      <h2>Google Drive {#if info.google.connected}<span class="tag ok">{info.google.account}</span>{/if}
-        {#if info.google.status === 'needs_reconnect'}<span class="tag bad">reconnect</span>{/if}</h2>
+      <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok">{info.google.account}</span>{/if}
+        {#if info.google.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.google.configured}
         <p class="muted small">Set CLARA_GOOGLE_CLIENT_ID and the secret google_client_secret (a Google Cloud OAuth client, "web
           application", with the redirect &lt;your Clara address&gt;/v1/connections/google/callback). Clara asks only for
           <code>drive.file</code>: the files she creates and those you open to her.</p>
-      {:else if pending}
-        <div class="confirm">
-          <p>Attach the Google account <strong>{pending.account || '(address not given)'}</strong> to Clara?</p>
-          <div class="row"><button class="primary" onclick={confirmGoogle}>Attach it</button><button onclick={() => (pending = null)}>Cancel</button></div>
-        </div>
       {:else}
         <div class="row">
           <button class="primary" onclick={startGoogle}>{info.google.connected ? 'Connect again' : 'Connect Google Drive'}</button>
@@ -141,18 +135,9 @@
         </div>
       {/if}
       {#each info.google.files as item (item.id)}
-        <div class="row"><span class="grow">{item.kind === 'drive_folder' ? '📁' : '📄'} {item.label}</span>
+        <div class="row"><span class="grow"><Icon name={item.kind === 'drive_folder' ? 'folder' : 'file'} size={16} /> {item.label}</span>
           {#if item.mime !== 'clara'}<button class="small danger" onclick={() => removeResource(item.id)}>Remove</button>{/if}</div>
       {/each}
     </section>
   {/if}
 </div>
-
-<style>
-  .confirm {
-    border: 1px solid var(--accent);
-    background: var(--accent-soft);
-    border-radius: 8px;
-    padding: 0.8rem;
-  }
-</style>

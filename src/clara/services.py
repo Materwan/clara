@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .memory.facts import Facts
     from .ops.alerts import Alerts
     from .ops.lifecycle import Lifecycle
+    from .ops.logstream import LogHub
     from .ops.traffic import TrafficLog
     from .ops.usage import UsageLog
     from .runtime import RuntimeSettings
@@ -42,6 +43,7 @@ class Services:
     events: Events
     alerts: Alerts
     traffic: TrafficLog
+    logs: LogHub
     usage: UsageLog
     facts: Facts
     conversations: Conversations
@@ -70,6 +72,7 @@ class Services:
     tailscale: Any = None
     backups: Any = None
     updater: Any = None
+    discord: Any = None
     monitors: Any = None
     clients: dict[str, float] = field(default_factory=dict)  # client heartbeats: name -> monotonic time
     boot_id: str = field(default_factory=lambda: uuid.uuid4().hex)

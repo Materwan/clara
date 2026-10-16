@@ -4,7 +4,7 @@
 import { api, stream } from './api';
 import { live, session, toast } from './state.svelte';
 
-const SHOWN: Record<string, string> = { reminder: '⏰', notification: '🔔', task: '📋', schedule: '🗓', alert: '⚠️', update: '⬆️' };
+const SHOWN: Record<string, string> = { reminder: 'bell', notification: 'bell', task: 'tasks', schedule: 'clock', alert: 'warn', update: 'download' };
 let running = false;
 
 export async function loadPending(): Promise<void> {
@@ -53,7 +53,7 @@ function handle(event: any): void {
   if (event.type === 'alert') loadPending();
   const icon = SHOWN[event.type];
   if (icon) {
-    toast(`${icon} ${event.title && event.type !== 'reminder' ? event.title + ': ' : ''}${event.text}`, event.type === 'alert' ? 'error' : 'info');
+    toast(`${event.title && event.type !== 'reminder' ? event.title + ': ' : ''}${event.text}`, event.type === 'alert' ? 'error' : 'info', icon);
     if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
       new Notification(event.title || 'Clara', { body: event.text });
     }

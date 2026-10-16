@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Checkbox from '../components/Checkbox.svelte';
+  import Icon from '../components/Icon.svelte';
   import { api } from '../lib/api';
   import { toast } from '../lib/state.svelte';
 
@@ -74,18 +76,17 @@
 </script>
 
 <div class="page stack">
-  <h1>Models</h1>
   <section class="panel">
     <h2>Providers</h2>
     <table>
       <thead><tr><th>Provider</th><th>Where</th><th>Key</th><th></th></tr></thead>
       <tbody>
         {#each providers as provider (provider.id)}
-          <tr><td><strong>{provider.label}</strong> <code class="small">{provider.id}</code></td><td class="small">{provider.local ? '🏠 local' : '☁ hosted'} · {provider.host}</td>
+          <tr><td><strong>{provider.label}</strong> <code class="small">{provider.id}</code></td><td class="small"><Icon name={provider.local ? 'home' : 'cloud'} size={16} /> {provider.local ? 'local' : 'hosted'} · {provider.host}</td>
             <td class="small">{provider.needs_key ? (provider.key_set ? 'set' : 'missing (clara secrets set …)') : '—'}</td>
             <td class="row"><button class="small" onclick={() => enable(provider)}>{provider.enabled ? 'Disable' : 'Enable'}</button>
               <button class="small" onclick={() => check(provider)}>Check</button>
-              {#if catalogue.problems[provider.id]}<span class="bad small">{catalogue.problems[provider.id]}</span>{/if}</td></tr>
+              {#if catalogue.problems[provider.id]}<span class="danger small">{catalogue.problems[provider.id]}</span>{/if}</td></tr>
         {/each}
       </tbody>
     </table>
@@ -97,22 +98,22 @@
       <strong>Fallbacks</strong> <span class="muted small">(asked in turn when a model fails before it said anything; a local model never falls back to a hosted one)</span>
       {#each catalogue.fallbacks as ref, index (ref)}
         <div class="row small">{index + 1}. {ref}
-          <button class="small" disabled={index === 0} onclick={() => move(index, -1)}>↑</button>
-          <button class="small" disabled={index === catalogue.fallbacks.length - 1} onclick={() => move(index, 1)}>↓</button>
-          <button class="small danger" onclick={() => setFallbacks(catalogue.fallbacks.filter((item: string) => item !== ref))}>✕</button></div>
+          <button class="ghost icon-btn" aria-label={`Move ${ref} up`} disabled={index === 0} onclick={() => move(index, -1)}><Icon name="up" size={16} /></button>
+          <button class="ghost icon-btn" aria-label={`Move ${ref} down`} disabled={index === catalogue.fallbacks.length - 1} onclick={() => move(index, 1)}><Icon name="down" size={16} /></button>
+          <button class="ghost icon-btn" aria-label={`Remove ${ref}`} onclick={() => setFallbacks(catalogue.fallbacks.filter((item: string) => item !== ref))}><Icon name="close" size={16} /></button></div>
       {:else}<div class="muted small">None.</div>{/each}
     </div>
   </section>
   <section class="panel">
-    <div class="row"><h2 class="grow">Catalogue</h2><input placeholder="Filter" bind:value={filter} /><button disabled={busy} onclick={() => load(true)}>Refresh</button></div>
+    <div class="row"><h2 class="grow">Catalogue</h2><input type="search" aria-label="Filter models" placeholder="Filter" bind:value={filter} /><button aria-busy={busy} onclick={() => !busy && load(true)}><Icon name="refresh" size={16} />Refresh</button></div>
     <table>
       <thead><tr><th>Model</th><th>Window</th><th>Can</th><th>In pickers</th><th></th></tr></thead>
       <tbody>
         {#each shown as model (model.ref)}
-          <tr><td>{model.ref === catalogue.default ? '⭐ ' : ''}{model.ref}{model.listed ? '' : ' (not listed now)'}</td>
+          <tr><td>{#if model.ref === catalogue.default}<Icon name="star" size={16} label="Default model" /> {/if}{model.ref}{model.listed ? '' : ' (not listed now)'}</td>
             <td class="small">{model.window.toLocaleString()}</td>
             <td class="small">{[model.capabilities.tools ? 'tools' : '', model.capabilities.vision ? 'pictures' : '', model.capabilities.thinking ? 'thinking' : ''].filter(Boolean).join(', ') || '?'}</td>
-            <td><input type="checkbox" checked={model.shown} onchange={() => show(model)} /></td>
+            <td><Checkbox aria-label={`Show ${model.ref} in pickers`} checked={model.shown} onchange={() => show(model)} /></td>
             <td class="row"><button class="small" onclick={() => setDefault(model.ref)}>Default</button>
               <button class="small" onclick={() => setUpkeep(model.ref)}>Side jobs</button>
               <button class="small" disabled={catalogue.fallbacks.includes(model.ref)} onclick={() => setFallbacks([...catalogue.fallbacks, model.ref])}>+ Fallback</button></td></tr>

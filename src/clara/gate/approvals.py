@@ -3,7 +3,7 @@
     asked        the action is frozen (tool and exact arguments) and stored as a pending request.
                  In a chat, the turn shows it and waits for your answer (CLARA_APPROVAL_WAIT, 10 minutes).
                  Unattended, the turn never waits: you are alerted and the run goes on without it.
-    pushed       a request still waiting after a minute is pushed to your other clients (a Discord DM with buttons…)
+    pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…)
     answered     allow once / allow always / refuse once / refuse always. The two "always" answers write a rule, so
                  the rule list only grows through your decisions. An allowed action runs exactly as it was frozen.
                  If no turn is waiting for it any more, a short follow-up turn tells Clara how it ended.

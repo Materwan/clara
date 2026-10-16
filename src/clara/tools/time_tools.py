@@ -163,7 +163,7 @@ def time_tools() -> list[Tool]:
         Tool(
             name="notify",
             description=(
-                "Notify the person now: it pops up on their clients even outside this conversation (a Discord DM too). "
+                "Notify the person now: it pops up on their clients even outside this conversation (Discord's #notification channel too). "
                 "Only when they asked to be told, or when long work of yours is done; never for an ordinary answer."
             ),
             function=_notify,

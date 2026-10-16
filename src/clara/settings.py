@@ -140,6 +140,7 @@ class Settings:
     disk_alert_percent: int = 85
     late_alert_seconds: int = 300
     discord_expected: bool = False
+    discord_autostart: bool = False
     retention_days: int = 400
     events_max_days: int = 90
 
@@ -433,6 +434,7 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         disk_alert_percent=r.integer("CLARA_DISK_ALERT_PERCENT", 85, 1, 100),
         late_alert_seconds=r.integer("CLARA_LATE_ALERT_SECONDS", 300, 30),
         discord_expected=r.flag("CLARA_DISCORD_EXPECTED", False),
+        discord_autostart=r.flag("CLARA_DISCORD_AUTOSTART", False),
         retention_days=r.integer("CLARA_RETENTION_DAYS", 400, 1),
         events_max_days=r.integer("CLARA_EVENTS_MAX_DAYS", 90, 1),
     )

@@ -2,8 +2,8 @@
 
 * every 10 s: approval requests (push after a minute, expire after 24 h);
 * every minute: the debug switch's hour; the disk (alert above CLARA_DISK_ALERT_PERCENT); the Discord bot's heartbeat
-  (alert after 5 minutes of silence, when CLARA_DISCORD_EXPECTED); the systemd watchdog, fed only while every loop
-  has turned within the last two minutes;
+  (alert after 5 minutes of silence, when CLARA_DISCORD_EXPECTED or CLARA_DISCORD_AUTOSTART); the systemd watchdog,
+  fed only while every loop has turned within the last two minutes;
 * every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted;
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
   sessions.
@@ -82,11 +82,11 @@ class Upkeep:
             s.alerts.raise_("disk", "The disk is nearly full", f"{percent}% of the disk holding {s.settings.data_dir} is used.")
         else:
             s.alerts.clear("disk")
-        if s.settings.discord_expected and time.monotonic() - s.started > DISCORD_SILENCE:
+        if (s.settings.discord_expected or s.settings.discord_autostart) and time.monotonic() - s.started > DISCORD_SILENCE:
             seen = s.clients.get("discord")
             if seen is None or time.monotonic() - seen > DISCORD_SILENCE:
                 s.alerts.raise_("discord", "The Discord bot is gone",
-                                "clara-discord has not checked in for 5 minutes (systemctl status clara-discord).")
+                                "clara-discord has not checked in for 5 minutes (the server's log, or systemctl status clara-discord).")
 
     def incognito(self) -> None:
         deleted = self.s.conversations.sweep_incognito(self.s.settings.incognito_hours)

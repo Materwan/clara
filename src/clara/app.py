@@ -58,6 +58,7 @@ from .memory.facts import Facts
 from .ops import setup as ops_setup
 from .ops.alerts import Alerts
 from .ops.lifecycle import Lifecycle
+from .ops.logstream import LogHub
 from .ops.private import check_private, harden_tree, private_dir
 from .ops.systemd import notify
 from .ops.tailscale import FunnelOn, check_funnel_now
@@ -116,6 +117,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     alerts = Alerts(events)
     debug_until = lambda: parse_iso(runtime.get("debug_until")) if runtime.get("debug_until") else None  # noqa: E731
     traffic = TrafficLog(settings.logs_dir, settings.traffic_log_days, debug_until)
+    logs = LogHub()
+    traffic.sink = logs.traffic
     providers = Providers(settings, secrets, runtime, provider_factory)
     catalog = Catalog(db, providers)
     rules = Rules(db)
@@ -123,7 +126,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     home = settings.timezone
     s = Services(
         settings=settings, db=db, runtime=runtime, secrets=secrets, tokens=tokens, web_sessions=WebSessions(db, tokens),
-        limiter=FailureLimiter(), events=events, alerts=alerts, traffic=traffic, usage=UsageLog(db), facts=Facts(db),
+        limiter=FailureLimiter(), events=events, alerts=alerts, traffic=traffic, logs=logs, usage=UsageLog(db), facts=Facts(db),
         conversations=Conversations(db), conversation_files=ConversationFiles(db),
         projects=Projects(db, settings.project_max_chars, settings.project_max_files, settings.project_inline_percent,
                           settings.project_inline_tokens),
@@ -215,7 +218,7 @@ def create_app(s: Services) -> FastAPI:
         upkeep = Upkeep(s)
         upkeep.start()
         s.monitors = upkeep
-        for part in (s.tailscale, s.backups, s.vault, s.sandbox):
+        for part in (s.tailscale, s.backups, s.vault, s.sandbox, s.discord):
             starter = getattr(part, "start", None)
             if starter is not None:
                 try:
@@ -234,7 +237,7 @@ def create_app(s: Services) -> FastAPI:
             for task in tasks:
                 task.cancel()
             await upkeep.stop()
-            for part in (s.tailscale, s.backups, s.vault, s.sandbox, s.updater):
+            for part in (s.discord, s.tailscale, s.backups, s.vault, s.sandbox, s.updater):
                 stopper = getattr(part, "stop", None)
                 if stopper is not None:
                     with contextlib.suppress(Exception):
@@ -375,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     extend(services)
     recover(services)
+    services.logs.attach()
     app = create_app(services)
     config = uvicorn.Config(app, host="127.0.0.1", port=settings.port, log_level="warning", proxy_headers=False,
                             timeout_graceful_shutdown=3, server_header=False)
@@ -389,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         server.run()
     finally:
+        services.logs.detach()
         services.traffic.close()
         db.close()
         lock.release()

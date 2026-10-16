@@ -88,7 +88,9 @@ Next:
   1. Edit /etc/clara/clara.env (zone, Ollama hosts, release repository).
   2. Build or pull the sandbox image as clara:  sudo -u clara podman pull <image>   (or podman build sandbox/)
   3. sudo systemctl enable --now clara
-  4. Discord (optional): put CLARA_DISCORD_USER_ID=<your id> in /etc/clara/discord.env, encrypt the two credentials
-     (discord-token, clara-token: a token made with 'clara token create discord discord'), then
-     sudo systemctl enable --now clara-discord
+  4. Discord (optional, your private server: docs/OPERATIONS.md): either set CLARA_DISCORD_AUTOSTART=true, the ids
+     (CLARA_DISCORD_USER_ID, CLARA_DISCORD_CHANNEL_GENERAL/_NOTIFICATION/_APPROVAL/_ALERTS) and the two token files
+     (DISCORD_BOT_TOKEN_FILE, CLARA_TOKEN_FILE) in /etc/clara/clara.env, so the server starts the bot; or put the ids
+     in /etc/clara/discord.env, encrypt the two credentials (discord-token, clara-token: a token made with
+     'clara token create discord discord'), then sudo systemctl enable --now clara-discord
 EOF

@@ -1,8 +1,8 @@
 # Clara
 
 Clara is a personal AI agent for **one person**, running on **one Linux machine**, reachable **only from that
-person's own devices over Tailscale**. She chats from a web site, a terminal, an admin console, Discord direct
-messages or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
+person's own devices over Tailscale**. She chats from a web site, a terminal, an admin console, a Discord server of
+your own or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
 writes files in her own workspace, runs scripts in isolated containers, and works with GitHub, Google Drive, your
 Obsidian vault and the web. Every action she takes goes through rules you set: allowed, asked, or refused.
 
@@ -17,6 +17,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
 - **Security:** [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md), [docs/DATA-MAP.md](docs/DATA-MAP.md),
   [SECURITY.md](SECURITY.md).
 - **Why it is built this way:** [docs/DECISIONS.md](docs/DECISIONS.md).
+- **How the web site is drawn:** [docs/WEB-DESIGN.md](docs/WEB-DESIGN.md) (tokens, components, accessibility rules).
 - **Model providers and their terms:** [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
@@ -24,7 +25,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
 
 ```text
   Web site        clara-chat       clara-admin      your scripts     clara-discord
-  (Svelte)        (terminal)       (console)        (HTTP API)       (DMs, own process)
+  (Svelte)        (terminal)       (console)        (HTTP API)       (Discord, own process)
        |               |                |                |                 |
        +---------------+--------- one token each --------+-----------------+
                                         |
@@ -98,8 +99,8 @@ clara-chat "what is on my list today?"   # one question, then exit
 clara-admin --save-token                 # the console token; then /status, /models, /rules, /approvals…
 ```
 
-On the web site: choose your default model on **Models**, look at **Rules & approvals** to see what Clara may do
-alone, connect GitHub and Drive on **Connections** if you want them.
+On the web site, under **Settings**: choose your default model on **Models**, look at **Rules & approvals** to see
+what Clara may do alone, connect GitHub and Drive on **Connections** if you want them.
 
 ## Development
 
@@ -130,7 +131,7 @@ uv run clara-server                      # http://127.0.0.1:8765
 | `deploy/` | Installer, systemd units, settings example, SearXNG |
 | `sandbox/` | The script container image |
 | `scripts/` | Web and release builds, release signing |
-| `docs/` | Decisions, review response, threat model, data map, non-goals, providers, operations |
+| `docs/` | Decisions, web design system, review response, threat model, data map, non-goals, providers, operations |
 
 ## Licence
 

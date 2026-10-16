@@ -1,5 +1,7 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
   import { api, fileToBase64, size, when } from '../lib/api';
+  import { confirmDialog } from '../lib/dialog.svelte';
   import { go, route, toast } from '../lib/state.svelte';
 
   let projects = $state<any[]>([]);
@@ -89,7 +91,7 @@
   }
 
   async function removeProject(): Promise<void> {
-    if (!confirm('Delete this project and its files? Its conversations stay.')) return;
+    if (!(await confirmDialog({ title: 'Delete a project', message: 'Delete this project and its files? Its conversations stay.', confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/projects/${id}`);
     go('/projects');
   }
@@ -102,15 +104,14 @@
 
 <div class="page stack">
   {#if !project}
-    <h1>Projects</h1>
-    <p class="muted small">Files given once (uploads, folders, zips, GitHub snapshots) that a project's conversations use: in
+    <p class="intro">Files given once (uploads, folders, zips, GitHub snapshots) that a project's conversations use: in
       the prompt when they fit, else read with search tools.</p>
-    <form class="row" onsubmit={create}><input placeholder="New project" bind:value={name} required /><button class="primary">Create</button></form>
+    <form class="row" onsubmit={create}><input class="grow" aria-label="New project's name" placeholder="A new project's name" bind:value={name} required /><button class="primary"><Icon name="plus" size={18} />Create</button></form>
     <div class="cards">
       {#each projects as item (item.id)}
         <div class="panel">
-          <div class="row"><a class="grow" href={'#/projects/' + item.id}><strong>{item.pinned ? '📌 ' : ''}{item.name}</strong></a>
-            <button class="small" onclick={() => pin(item)}>{item.pinned ? 'Unpin' : 'Pin'}</button></div>
+          <div class="row project-head"><span class="glyph"><Icon name="folder" size={18} /></span><a class="grow" href={'#/projects/' + item.id}><strong>{item.name}</strong></a>
+            <button class="ghost icon-btn" aria-pressed={!!item.pinned} title={item.pinned ? 'Unpin' : 'Pin'} aria-label={item.pinned ? 'Unpin' : 'Pin'} onclick={() => pin(item)}><Icon name="pin" size={18} /></button></div>
           <div class="muted small">{item.description}</div>
           <div class="small">{item.files} files · {size(item.size)} · {item.conversations} conversations · {item.context.inline ? 'in the prompt' : 'searched'}</div>
         </div>
@@ -119,8 +120,9 @@
       {/each}
     </div>
   {:else}
-    <div class="row"><a href="#/projects">← Projects</a><h1 class="grow">{project.name}</h1>
-      <button onclick={() => go('/chat')}>New conversation</button><button class="danger" onclick={removeProject}>Delete</button></div>
+    <a class="back" href="#/projects"><Icon name="left" size={18} />All projects</a>
+    <div class="row"><h2 class="grow">{project.name}</h2>
+      <button onclick={() => go('/chat')}><Icon name="plus" size={18} />New conversation</button><button class="danger" onclick={removeProject}>Delete</button></div>
     <div class="grid-2">
       <div class="panel stack">
         <label class="field">Name <input bind:value={project.name} /></label>
@@ -132,14 +134,14 @@
         <div class="small">{project.files} files · {size(project.size)} · {project.context.percent}% of the window ·
           <strong>{project.context.inline ? 'given whole in the prompt' : 'too big: Clara searches and reads them'}</strong></div>
         <div class="row">
-          <label class="button">Add files <input type="file" multiple hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
-          <label class="button">Add a folder <input type="file" webkitdirectory hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
+          <label class="button"><Icon name="upload" size={18} />Add files <input type="file" multiple hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
+          <label class="button"><Icon name="folder" size={18} />Add a folder <input type="file" webkitdirectory hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
           {#if busy}<span class="muted small">Working…</span>{/if}
         </div>
-        <form class="row" onsubmit={addRepo}><input class="grow" placeholder="GitHub owner/name or URL (@branch)" bind:value={repo} required /><button>Add repository</button></form>
+        <form class="row" onsubmit={addRepo}><input class="grow" aria-label="GitHub repository" placeholder="GitHub owner/name or URL (@branch)" bind:value={repo} required /><button>Add repository</button></form>
         {#each project.sources as source (source.id)}
           <div class="row small"><span class="grow">{source.repo}{source.ref ? '@' + source.ref : ''} ({source.files} files, synced {when(source.synced_at)})
-            {#if source.problem}<span class="bad">{source.problem}</span>{/if}</span>
+            {#if source.problem}<span class="danger">{source.problem}</span>{/if}</span>
             <button class="small" onclick={() => sync(source)} disabled={busy}>Sync</button>
             <button class="small danger" onclick={async () => { await api.del(`/v1/projects/${id}/sources/${source.id}`); load(); }}>Remove</button></div>
         {/each}
@@ -173,19 +175,36 @@
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 0.8rem;
+    gap: var(--sp-16);
   }
-  .button {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.35em 0.8em;
-    cursor: pointer;
-    background: var(--panel);
+  .cards .panel > * + * {
+    margin-top: var(--sp-8);
   }
-  .link {
-    border: none;
-    background: none;
-    color: var(--accent);
-    padding: 0;
+  .project-head strong {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-size: var(--fs-lg);
+  }
+  .project-head a {
+    color: var(--text);
+    text-decoration: none;
+  }
+  .project-head a:hover {
+    text-decoration: underline;
+  }
+  .project-head button[aria-pressed='true'] {
+    color: var(--accent-text);
+  }
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-6);
+    color: var(--muted);
+    text-decoration: none;
+    font-size: var(--fs-sm);
+  }
+  .back:hover {
+    color: var(--text);
   }
 </style>

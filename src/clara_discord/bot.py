@@ -1,15 +1,20 @@
-"""`clara-discord`: the Discord bot, a separate process and a client of Clara like any other.
+"""`clara-discord`: the Discord bot, a separate process and a client of Clara like any other. It lives in your private
+Discord server (you and the bot, nobody else) and uses four text channels, given by id; it has no direct-message
+function: DMs are ignored.
 
-* It connects with **direct-message intents only**: no server messages, no member list, no message content from
-  servers. It answers **one** Discord user id (yours) and ignores every other one, in DMs and in commands.
-* Your DMs go to Clara in the current conversation (`/new` starts another), with their files (PDF, Word, text,
-  pictures); notes Clara writes in `notes/` come back as attachments.
-* Approval requests come as DMs with buttons: allow once, allow always, refuse once, refuse always. The bot's token
-  may answer every level but *destructive* (deletions, overwrites, merges): those say to answer on the web or with
-  clara-admin. The server enforces it, whatever the bot shows.
-* Reminders, notifications, task reminders, schedule summaries and alerts arrive as DMs (the event stream; what was
-  missed while the bot was away arrives when it reconnects).
+* It connects with the guild and message-content intents, no member list. It answers **one** Discord user id
+  (yours), in **one** channel (#general) and in commands, and ignores every other user and channel.
+* What you write in #general goes to Clara in the current conversation (`/new` starts another), with its files (PDF,
+  Word, text, pictures); Clara's answer, and notes she writes in `notes/`, come back there.
+* Approval requests go to #approval with buttons: allow once, allow always, refuse once, refuse always (#general
+  says where to answer). The bot's token may answer every level but *destructive* (deletions, overwrites, merges):
+  those say to answer on the web or with clara-admin. The server enforces it, whatever the bot shows.
+* Alerts go to #alerts; reminders, notifications, task reminders, schedule summaries and update news go to
+  #notification (the event stream; what was missed while the bot was away arrives when it reconnects).
 * A heartbeat every minute lets the server alert you when the bot is gone.
+
+Exit codes: 0 stopped, 2 a setting, the token, the channels or an intent is wrong (starting again will not help),
+3 another bot already runs with the same state file.
 """
 
 from __future__ import annotations
@@ -17,10 +22,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import fcntl
 import io
 import json
 import logging
 import re
+import signal
 import sys
 
 import discord
@@ -37,9 +44,18 @@ MAX_FILE_BYTES = 25_000_000
 MAX_TOTAL_BYTES = 34_000_000  # what Clara takes for one message in all
 HEARTBEAT = 60.0
 RETRY = (2, 5, 15, 30, 60)
+EXIT_SETTINGS = 2
+EXIT_RUNNING = 3
 ANSWERS = (("allow_once", "Allow once", discord.ButtonStyle.success), ("allow_always", "Allow always", discord.ButtonStyle.primary),
            ("refuse_once", "Refuse once", discord.ButtonStyle.secondary), ("refuse_always", "Refuse always", discord.ButtonStyle.danger))
 ICONS = {"reminder": "⏰", "notification": "🔔", "task": "📋", "schedule": "🗓", "alert": "⚠️", "update": "⬆️"}
+# event kind -> channel (approvals have their own path: buttons in #approval; replies to you go to #general)
+ROUTES = {"reminder": "notification", "notification": "notification", "task": "notification",
+          "schedule": "notification", "update": "notification", "alert": "alerts"}
+
+
+class ChannelError(RuntimeError):
+    """A configured channel is missing, is not a text channel, or the four are not in one server."""
 
 
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
@@ -92,12 +108,16 @@ def approval_view(approval_id: int) -> discord.ui.View:
 class ClaraBot(discord.Client):
     def __init__(self, settings: Settings):
         intents = discord.Intents.none()
-        intents.dm_messages = True  # DMs only: no guilds, no members, no message content from servers
+        intents.guilds = True  # the channels of your server
+        intents.guild_messages = True
+        intents.message_content = True  # privileged: switched on in the developer portal; no members, no DMs
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.settings = settings
         self.clara = Clara(settings.clara_url, settings.clara_token)
         self.tree = app_commands.CommandTree(self)
-        self.asked: dict[int, discord.Message] = {}  # approval id -> its DM
+        self.channels: dict[str, discord.TextChannel] = {}  # general, notification, approval, alerts
+        self.guild_id: int | None = None
+        self.asked: dict[int, discord.Message] = {}  # approval id -> its message in #approval
         self._tasks: list[asyncio.Task] = []
         self._register_commands()
 
@@ -114,19 +134,54 @@ class ClaraBot(discord.Client):
         self.settings.state_file.parent.mkdir(parents=True, exist_ok=True)
         self.settings.state_file.write_text(json.dumps({"conversation": conversation}), encoding="utf-8")
 
-    async def owner(self) -> discord.User:
-        return self.get_user(self.settings.owner_id) or await self.fetch_user(self.settings.owner_id)
+    async def resolve_channels(self) -> None:
+        """Find the four channels by id. A missing one is refused: there is no direct-message fallback."""
+        wrong = []
+        for name, channel_id in self.settings.channels.items():
+            try:
+                channel = await self.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden):
+                wrong.append(f"#{name} ({channel_id}) does not exist, or the bot cannot see it")
+                continue
+            if not isinstance(channel, discord.TextChannel):
+                wrong.append(f"#{name} ({channel_id}) is not a text channel")
+                continue
+            self.channels[name] = channel
+        if wrong:
+            raise ChannelError("; ".join(wrong) + ". Check the CLARA_DISCORD_CHANNEL_* ids and that the bot is in the server.")
+        guilds = {channel.guild.id for channel in self.channels.values()}
+        if len(guilds) != 1:
+            raise ChannelError("The four channels must all be in one server.")
+        self.guild_id = guilds.pop()
+
+    def check_permissions(self) -> None:
+        guild = self.get_guild(self.guild_id) if self.guild_id else None
+        if guild is None:
+            return
+        for name, channel in self.channels.items():
+            live = self.get_channel(channel.id)
+            if live is None:
+                continue
+            allowed = live.permissions_for(guild.me)
+            lacking = [right for right in ("view_channel", "send_messages", "attach_files") if not getattr(allowed, right)]
+            if lacking:
+                log.warning("in #%s the bot lacks: %s", name, ", ".join(lacking))
 
     # ------------------------------------------------------------------
     # Life
     # ------------------------------------------------------------------
     async def setup_hook(self) -> None:
+        await self.resolve_channels()
+        with contextlib.suppress(NotImplementedError, RuntimeError):  # SIGTERM (the server stopping us) closes cleanly
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(self.close()))
         self.add_dynamic_items(ApprovalButton)
         await self.tree.sync()
         self._tasks.append(asyncio.create_task(self.relay(), name="relay"))
         self._tasks.append(asyncio.create_task(self.heartbeat(), name="heartbeat"))
 
     async def close(self) -> None:
+        if self.is_closed():  # discord.py and the SIGTERM handler may both close: the second one has nothing left to do
+            return
         for task in self._tasks:
             task.cancel()
         with contextlib.suppress(ClaraError):
@@ -135,7 +190,9 @@ class ClaraBot(discord.Client):
         await super().close()
 
     async def on_ready(self) -> None:
-        log.info("connected as %s; answering only Discord user %s", self.user, self.settings.owner_id)
+        log.info("connected as %s; answering only Discord user %s, in #general (%s) of server %s", self.user,
+                 self.settings.owner_id, self.settings.channels["general"], self.guild_id)
+        self.check_permissions()
 
     async def heartbeat(self) -> None:
         while True:
@@ -147,13 +204,13 @@ class ClaraBot(discord.Client):
             await asyncio.sleep(HEARTBEAT)
 
     # ------------------------------------------------------------------
-    # Your messages
+    # Your messages (#general only)
     # ------------------------------------------------------------------
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.author.id != self.settings.owner_id:
             return  # every other id is ignored, without a word
-        if not isinstance(message.channel, discord.DMChannel):
-            return
+        if message.channel.id != self.settings.channels["general"]:
+            return  # the other channels, other servers and DMs are not for chatting
         files = []
         if len(message.attachments) > MAX_FILES:
             await message.channel.send(f"{MAX_FILES} files at most per message: send the others in another one.")
@@ -183,7 +240,8 @@ class ClaraBot(discord.Client):
                     if kind == "turn" and event.get("conversation"):
                         self.set_conversation(event["conversation"])
                     elif kind == "approval":
-                        await self.show_approval(event["approval"])
+                        if await self.show_approval(event["approval"]):
+                            await channel.send(f"🔐 Waiting for your answer in <#{self.settings.channels['approval']}>.")
                     elif kind == "done":
                         done = event
                         reply = event.get("reply") or ""
@@ -202,17 +260,19 @@ class ClaraBot(discord.Client):
             except (ClaraError, discord.HTTPException) as error:
                 log.warning("cannot send %s: %s", card.get("path"), error)
 
-    async def show_approval(self, approval: dict) -> None:
+    async def show_approval(self, approval: dict) -> bool:
+        """Post a request in #approval, once. True when it was posted now."""
         if approval["id"] in self.asked or approval.get("status", "pending") != "pending":
-            return
+            return False
         text = f"🔐 Clara asks (#{approval['id']}, {approval['level']}): {approval['summary']}"
         if approval.get("reason"):
             text += f"\n_{approval['reason']}_"
-        user = await self.owner()
+        channel = self.channels["approval"]
         if approval["level"] == "destructive":
-            self.asked[approval["id"]] = await user.send(text + "\nThis one is answered on the web site or with clara-admin.")
+            self.asked[approval["id"]] = await channel.send(text + "\nThis one is answered on the web site or with clara-admin.")
         else:
-            self.asked[approval["id"]] = await user.send(text, view=approval_view(approval["id"]))
+            self.asked[approval["id"]] = await channel.send(text, view=approval_view(approval["id"]))
+        return True
 
     # ------------------------------------------------------------------
     # Events from Clara
@@ -252,37 +312,36 @@ class ClaraBot(discord.Client):
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=f"🔐 #{approval['id']} {approval['summary']}: **{approval['status']}**", view=None)
             return
-        icon = ICONS.get(str(kind))
-        if icon is None:
+        icon, route = ICONS.get(str(kind)), ROUTES.get(str(kind))
+        if icon is None or route is None:
             return
         title = event.get("title") or ""
         text = f"{icon} **{title}**\n{event.get('text', '')}" if title and kind != "reminder" else f"{icon} {event.get('text', '')}"
-        user = await self.owner()
         for part in split_message(text):
-            await user.send(part)
+            await self.channels[route].send(part)
 
     # ------------------------------------------------------------------
-    # Slash commands, in DMs only, for you only
+    # Slash commands, in your server only, for you only
     # ------------------------------------------------------------------
     def _register_commands(self) -> None:
         tree = self.tree
-        dms = app_commands.allowed_contexts(guilds=False, dms=True, private_channels=False)
+        here = app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 
         async def only_you(interaction: discord.Interaction) -> bool:
-            if interaction.user.id != self.settings.owner_id:
+            if interaction.user.id != self.settings.owner_id or interaction.guild_id != self.guild_id:
                 await interaction.response.send_message("Not for you.", ephemeral=True)
                 return False
             return True
 
         @tree.command(name="new", description="Start a new conversation with Clara")
-        @dms
+        @here
         async def new(interaction: discord.Interaction) -> None:
             if await only_you(interaction):
                 self.set_conversation(None)
-                await interaction.response.send_message("New conversation: your next message starts it.")
+                await interaction.response.send_message("New conversation: your next message starts it.", ephemeral=True)
 
         @tree.command(name="status", description="Clara's state")
-        @dms
+        @here
         async def status(interaction: discord.Interaction) -> None:
             if not await only_you(interaction):
                 return
@@ -291,12 +350,12 @@ class ClaraBot(discord.Client):
                 lines = [f"Clara {info['version']}, {info['state']}; model {info['models']['default'] or '(none)'}",
                          f"pending approvals: {info['approvals_pending']}"]
                 lines += [f"⚠️ {text}" for text in info["alerts"].values()]
-                await interaction.response.send_message("\n".join(lines))
+                await interaction.response.send_message("\n".join(lines), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 
         @tree.command(name="tasks", description="Your open tasks")
-        @dms
+        @here
         async def tasks(interaction: discord.Interaction) -> None:
             if not await only_you(interaction):
                 return
@@ -304,24 +363,24 @@ class ClaraBot(discord.Client):
                 found = (await self.clara.call("GET", "/v1/tasks"))["tasks"]
                 text = "\n".join(f"[{t['id']}] {t['title']}" + (f" — due {t['due_at'][:16]}" if t["due_at"] else "")
                                  for t in found) or "No open task."
-                await interaction.response.send_message(split_message(text)[0])
+                await interaction.response.send_message(split_message(text)[0], ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 
         @tree.command(name="reminders", description="Reminders to come")
-        @dms
+        @here
         async def reminders(interaction: discord.Interaction) -> None:
             if not await only_you(interaction):
                 return
             try:
                 found = (await self.clara.call("GET", "/v1/reminders"))["reminders"]
                 text = "\n".join(f"[{r['id']}] {r['local']} {r['text']}" for r in found if not r["system"]) or "None."
-                await interaction.response.send_message(split_message(text)[0])
+                await interaction.response.send_message(split_message(text)[0], ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 
         @tree.command(name="approvals", description="Requests waiting for your answer")
-        @dms
+        @here
         async def approvals(interaction: discord.Interaction) -> None:
             if not await only_you(interaction):
                 return
@@ -330,7 +389,7 @@ class ClaraBot(discord.Client):
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
                 return
-            await interaction.response.send_message(f"{len(found)} waiting." if found else "Nothing waits.")
+            await interaction.response.send_message(f"{len(found)} waiting." if found else "Nothing waits.", ephemeral=True)
             for approval in found:
                 self.asked.pop(approval["id"], None)
                 await self.show_approval(approval)
@@ -342,9 +401,26 @@ def main() -> int:
         settings = Settings.load()
     except (SettingsError, ValueError) as error:
         log.error("%s", error)
-        return 2
+        return EXIT_SETTINGS
+    settings.state_file.parent.mkdir(parents=True, exist_ok=True)
+    lock = open(settings.state_file.with_suffix(".lock"), "w")  # held until the process ends
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log.error("another clara-discord already runs with the state file %s: two bots would answer twice", settings.state_file)
+        return EXIT_RUNNING
     bot = ClaraBot(settings)
-    bot.run(settings.discord_token, log_handler=None)
+    try:
+        bot.run(settings.discord_token, log_handler=None)
+    except ChannelError as error:
+        log.error("%s", error)
+        return EXIT_SETTINGS
+    except discord.LoginFailure:
+        log.error("Discord refused the bot token (discord-token).")
+        return EXIT_SETTINGS
+    except discord.PrivilegedIntentsRequired:
+        log.error("Turn on 'Message Content Intent' for the bot in the Discord developer portal (Bot page).")
+        return EXIT_SETTINGS
     return 0
 
 

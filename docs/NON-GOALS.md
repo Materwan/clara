@@ -9,7 +9,7 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 | --- | --- | --- |
 | Accounts, users, passwords, roles, sign-up, account linking, aliases | One person: every one of them was attack surface and complexity for nobody | One token per client |
 | Credits, quotas, daily limits, per-user keys | Nothing to share, nothing to ration | Token statistics (Usage page) |
-| Discord servers, chime-in, observe mode, mentions, members | Reading other people is a privacy problem and a large product of its own | A DM-only bot for you |
+| Discord for other people: shared servers, chime-in, observe mode, mentions, members, direct messages | Reading other people is a privacy problem and a large product of its own | A bot in a private server of your own: it answers your id only, in one channel, and has no member list |
 | Music (Music Assistant tools and site) | A separate product | — |
 | The relationship score | A hidden mood that changed tone was surprising, not useful | A fixed persona file |
 | Server-folder access (`res_*`) and the desktop "computer folders" | Folders on the server could hold Clara's own secrets | The workspace, and `clara-chat --local-tools` for your own machine's files |
