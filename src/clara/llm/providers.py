@@ -5,7 +5,7 @@
     gemini    Google Gemini, OpenAI-compatible API, key `gemini_api_key`                             hosted
     deepseek  DeepSeek, OpenAI-compatible API, key `deepseek_api_key`                               hosted
     mistral   Mistral, OpenAI-compatible API, key `mistral_api_key`                                 hosted
-    opencode-go  OpenCode Go, OpenAI-compatible API (chat models only), key `opencode_go_api_key`  hosted
+    opencode-go  OpenCode Go and Zen's free models, OpenAI-compatible API, key `opencode_go_api_key`  hosted
 
 A model is named `provider:model` (`local:qwen3:8b`, `gemini:gemini-2.5-flash`). A provider is *usable* when you
 enabled it (runtime setting `providers_enabled`; local hosts are enabled at first) and its key, if it needs one, is in
@@ -25,27 +25,11 @@ from ..runtime import RuntimeSettings
 from ..secrets import SecretsStore
 from ..settings import Settings
 from .ollama import OllamaBackend
-from .openai import OpenAIBackend, OpenAIFlavor
+from .openai import OpenAIBackend, OpenAIFlavor, SecondList
 from .types import Backend, Capabilities
 
 CHECK_TIMEOUT = 8.0
 CAPABILITIES_TIMEOUT = 30.0
-# OpenCode Go serves its models over four protocols and lists them all in one place; Clara speaks Chat Completions,
-# so it keeps the families that use it (the rest would fail when asked). Claude, GPT, Grok, Gemini, MiniMax and
-# Qwen are on the other protocols.
-OPENCODE_GO_CHAT = (
-    "glm-",
-    "kimi-",
-    "longcat-",
-    "deepseek-",
-    "mimo-",
-    "hy3",
-    "hy4",
-    "space-bunny",
-    "step-",
-    "cat-jam",
-    "muse-",
-)
 
 
 class ProviderError(Exception):
@@ -150,6 +134,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
         OpenAIFlavor(stream_usage=False, tool_names=True),
     )
     go = settings.opencode_go_host.rstrip("/")
+    zen = settings.opencode_zen_host.rstrip("/")
     providers["opencode-go"] = Provider(
         "opencode-go",
         "OpenCode Go",
@@ -163,6 +148,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
             models_url=f"{go}/v1/models",
             headers=(("User-Agent", f"clara/{__version__}"),),
             session_header="x-opencode-session",
+            second=SecondList(f"{zen}/models", zen, "-free"),
         ),
     )
     return providers
@@ -339,7 +325,5 @@ class Providers:
         for backend in retired:
             try:
                 await backend.aclose()
-            except (
-                Exception
-            ):  # closing is best effort: the process is ending  # noqa: S110
+            except Exception:  # closing is best effort: the process is ending  # noqa: S110
                 pass

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -25,6 +26,15 @@ GEMINI_NOT_CHAT = ("tts", "image", "embedding", "transcribe", "audio", "live", "
 
 
 @dataclass(frozen=True)
+class SecondList:
+    """Models of another address, added to the provider's own: OpenCode Zen's free models next to those of Go."""
+
+    models_url: str  # read without the key
+    host: str  # where those models are asked (`{host}/chat/completions`)
+    suffix: str  # keep only the models named so
+
+
+@dataclass(frozen=True)
 class OpenAIFlavor:
     """What sets one OpenAI-compatible service apart from the others."""
 
@@ -35,9 +45,9 @@ class OpenAIFlavor:
     extra_body: tuple[tuple[str, Any], ...] = ()
     native_models: str = ""  # the provider's own model list, when the OpenAI one has only names (Gemini)
     models_url: str = ""  # where the models are listed, when it is not `{host}/models` (OpenCode Go)
-    model_prefixes: tuple[str, ...] = ()  # keep only the models named so: the rest speak another protocol
     headers: tuple[tuple[str, str], ...] = ()  # sent with every request (OpenCode wants a User-Agent of its own)
     session_header: str = ""  # the header naming the conversation, when the service insists on one (OpenCode)
+    second: SecondList | None = None
 
 
 def google_record(model_id: str, model: dict) -> dict:
@@ -100,6 +110,7 @@ class OpenAIBackend:
         self.label = label
         self._transport = transport
         self._session = uuid.uuid4().hex  # for a request that belongs to no conversation
+        self._own: set[str] | None = None  # the models of the main list, to tell which address a model belongs to
         self._http = httpx.AsyncClient(
             headers={**dict(self._flavor.headers), **({"Authorization": f"Bearer {api_key}"} if api_key else {})},
             timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
@@ -193,8 +204,8 @@ class OpenAIBackend:
         calls: dict[int, dict[str, Any]] = {}
         counted = (0, 0, 0)
         named = {self._flavor.session_header: session or self._session} if self._flavor.session_header else None
-        request = self._http.stream("POST", f"{self.host}/chat/completions", json=self.body(messages, tools),
-                                    headers=named)
+        request = self._http.stream("POST", f"{await self._host_of_model()}/chat/completions",
+                                    json=self.body(messages, tools), headers=named)
         async with request as response:
             if response.is_error:
                 raise await self._refused(response)
@@ -246,14 +257,45 @@ class OpenAIBackend:
                 for _, slot in sorted(calls.items()) if slot["name"]
             ])
 
-    async def list_models(self) -> list[str]:
-        response = await self._http.get(self._flavor.models_url or f"{self.host}/models", timeout=CONNECT_TIMEOUT)
+    async def _names(self, url: str, keyed: bool = True) -> set[str]:
+        request = self._http.build_request("GET", url, timeout=CONNECT_TIMEOUT)
+        if not keyed:
+            request.headers.pop("authorization", None)  # a list that is open to all does not get the key
+        response = await self._http.send(request)
         if response.is_error:
             raise await self._refused(response)
         models = response.json().get("data") or []
         names = {str(model.get("id", "")).removeprefix("models/") for model in models if isinstance(model, dict)}
-        prefixes = self._flavor.model_prefixes
-        return sorted(name for name in names if name and (not prefixes or name.startswith(prefixes)))
+        return {name for name in names if name}
+
+    async def list_models(self) -> list[str]:
+        second = self._flavor.second
+        own_url = self._flavor.models_url or f"{self.host}/models"
+        if second is None:
+            self._own = await self._names(own_url)
+            return sorted(self._own)
+        own, more = await asyncio.gather(self._names(own_url), self._names(second.models_url, keyed=False),
+                                         return_exceptions=True)
+        if isinstance(own, BaseException):
+            raise own
+        self._own = own
+        if isinstance(more, BaseException):  # the second list is a bonus: the provider works without it
+            log.warning("%s: its second model list could not be read (%s)", self.label, more)
+            more = set()
+        return sorted(own | {name for name in more if name.endswith(second.suffix)})
+
+    async def _host_of_model(self) -> str:
+        """The address to ask: the main one, unless the model is known only to the second list."""
+        second = self._flavor.second
+        if second is None:
+            return self.host
+        try:
+            if self._own is None:
+                self._own = await self._names(self._flavor.models_url or f"{self.host}/models")
+        except Exception as error:  # cannot tell: the main address is the one the key was made for
+            log.warning("%s: its model list could not be read (%s), asking the main address", self.label, error)
+            return self.host
+        return self.host if self.model in self._own else second.host.rstrip("/")
 
     async def model_capabilities(self, names: list[str]) -> dict[str, Capabilities]:
         if not self._flavor.native_models or not self._api_key:

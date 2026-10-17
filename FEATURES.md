@@ -440,7 +440,7 @@ and run on the client.
 
 - **Providers:** local Ollama hosts (`CLARA_OLLAMA_HOSTS`: this machine, your PC over the tailnet, any number), Ollama
   cloud (`cloud`), Google Gemini (`gemini`), DeepSeek (`deepseek`), Mistral (`mistral`), OpenCode Go (`opencode-go`:
-  the models that speak Chat Completions, the others it lists are left out). Local hosts are enabled at
+  every model of Go, plus the free models of OpenCode Zen, whose list needs no key). Local hosts are enabled at
   first; a hosted provider is enabled from the console or the Models page once its key is stored. Their terms are in
   [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - **Catalogue:** models listed by each enabled provider, with context window and capabilities (tools, pictures,
@@ -581,6 +581,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_CLOUD_HOST` | `https://ollama.com` | Ollama cloud |
 | `CLARA_GEMINI_HOST`, `CLARA_DEEPSEEK_HOST`, `CLARA_MISTRAL_HOST` | the providers' API addresses | Hosted providers |
 | `CLARA_OPENCODE_GO_HOST` | `https://opencode.ai/inference/go` | OpenCode Go (Clara adds `/openai/v1` for chat and `/v1/models` for the list) |
+| `CLARA_OPENCODE_ZEN_HOST` | `https://opencode.ai/zen/v1` | OpenCode Zen, where the free models are listed and asked |
 | `CLARA_CLOUD_CONTEXT`, `CLARA_GEMINI_CONTEXT`, `CLARA_DEEPSEEK_CONTEXT`, `CLARA_MISTRAL_CONTEXT`, `CLARA_OPENCODE_GO_CONTEXT` | per provider | Context window assumed when the provider does not say |
 | `CLARA_DEEPSEEK_THINKING` | true | Use DeepSeek's thinking mode |
 | `CLARA_HISTORY_TURNS` | 20 | Turns of history sent at most |

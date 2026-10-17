@@ -66,6 +66,7 @@ class Settings:
     deepseek_host: str = "https://api.deepseek.com"
     mistral_host: str = "https://api.mistral.ai/v1"
     opencode_go_host: str = "https://opencode.ai/inference/go"  # chat is under /openai/v1, the model list under /v1
+    opencode_zen_host: str = "https://opencode.ai/zen/v1"  # its free models are added to those of Go
     deepseek_thinking: bool = True
     hosted_context: Mapping[str, int] = field(
         default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072,
@@ -375,6 +376,7 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         deepseek_host=r.url("CLARA_DEEPSEEK_HOST", Settings.deepseek_host),
         mistral_host=r.url("CLARA_MISTRAL_HOST", Settings.mistral_host),
         opencode_go_host=r.url("CLARA_OPENCODE_GO_HOST", Settings.opencode_go_host),
+        opencode_zen_host=r.url("CLARA_OPENCODE_ZEN_HOST", Settings.opencode_zen_host),
         deepseek_thinking=r.flag("CLARA_DEEPSEEK_THINKING", True),
         hosted_context=hosted_context,
         history_turns=r.integer("CLARA_HISTORY_TURNS", 20, 1, 500),
