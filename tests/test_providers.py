@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import httpx
 import pytest
 
 from clara import __version__
+from clara.db import migrate
+from clara.db.migrate import migrations
 from clara.llm.providers import ProviderError, Providers, build_providers, default_factory
 from clara.settings import load_settings
 
@@ -162,3 +165,69 @@ async def test_a_chat_passes_its_conversation_to_the_backend_as_the_session(clie
     response = await client.post("/v1/chat", json={"message": "hi"})
     conversation = response.json()["conversation"]
     assert [call["session"] for call in llm.seen if call["tools"]][-1] == conversation
+
+
+FREE = "opencode-go:glm-5.3-flash-free"
+PAID = "opencode-go:kimi-k3"
+
+
+async def opencode_catalogue(services, llm, names=("glm-5.3-flash-free", "kimi-k3")):
+    llm.models["opencode-go"] = list(names)
+    services.secrets.set("opencode_go_api_key", "go-key")
+    services.providers.set_enabled("opencode-go", True)
+    await services.catalog.listing(force=True)
+    return [info.ref for info in services.catalog.shown() if info.provider == "opencode-go"]
+
+
+async def test_the_free_models_of_opencode_are_in_the_pickers_without_being_chosen(services, llm):
+    assert await opencode_catalogue(services, llm) == [FREE]  # kimi-k3 stays out until you show it
+    info = next(i for i in await services.catalog.listing() if i.ref == FREE)
+    assert info.shown
+
+
+async def test_hiding_a_free_model_is_kept_and_showing_another_is_too(services, llm):
+    await opencode_catalogue(services, llm)
+    services.catalog.set_shown([FREE], False)
+    services.catalog.set_shown([PAID], True)
+    await services.catalog.listing(force=True)
+    assert [i.ref for i in services.catalog.shown() if i.provider == "opencode-go"] == [PAID]
+    services.catalog.set_shown([FREE], True)  # and back
+    assert sorted(i.ref for i in services.catalog.shown() if i.provider == "opencode-go") == sorted([FREE, PAID])
+
+
+async def test_a_free_model_that_is_no_longer_listed_leaves_the_pickers(services, llm):
+    await opencode_catalogue(services, llm)
+    llm.models["opencode-go"] = ["kimi-k3"]
+    await services.catalog.listing(force=True)
+    assert [i.ref for i in services.catalog.shown() if i.provider == "opencode-go"] == []
+
+
+async def test_other_providers_show_nothing_by_default(services, llm):
+    services.runtime.set("providers_enabled", ["local", "pc"])
+    llm.models["pc"] = ["thing-free", "other"]
+    await services.catalog.listing(force=True)
+    assert not [i for i in services.catalog.shown() if i.provider == "pc"]
+
+
+def test_the_models_already_shown_count_as_chosen_after_the_migration(tmp_path):
+    path = tmp_path / "clara.db"
+    with sqlite3.connect(path) as old:
+        old.executescript(migrations()[0].sql)
+        old.execute("PRAGMA user_version = 1")
+        old.execute("INSERT INTO models (ref, shown) VALUES ('local:a', 1), ('opencode-go:b-free', 0)")
+    migrate(path, tmp_path / "backups")
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT ref, shown, chosen FROM models ORDER BY ref").fetchall() == [
+            ("local:a", 1, 1), ("opencode-go:b-free", 0, 0)]
+
+
+async def test_the_free_models_come_last_in_the_pickers(services, llm):
+    llm.models["opencode-go"] = ["glm-5.3-flash-free", "kimi-k3", "beam-free", "glm-5.3"]
+    services.secrets.set("opencode_go_api_key", "go-key")
+    services.providers.set_enabled("opencode-go", True)
+    await services.catalog.listing(force=True)
+    services.catalog.set_shown(["opencode-go:kimi-k3", "opencode-go:glm-5.3", "local:fake"], True)
+    assert [info.ref for info in services.catalog.shown()] == [
+        "local:fake", "opencode-go:glm-5.3", "opencode-go:kimi-k3",  # as before, by name
+        "opencode-go:beam-free", "opencode-go:glm-5.3-flash-free",  # then the free ones, by name
+    ]

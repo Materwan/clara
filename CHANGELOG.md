@@ -44,4 +44,4 @@ earlier server: the new Clara starts empty.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log; `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 1.
+- **Migrations:** schema version 2 (0002: a model you showed or hid yourself is told from one you never decided about).

@@ -52,6 +52,10 @@ random one for side jobs). Go's model list is public: **`/provider check` proves
 accepted**; a wrong key shows at the first answer. The window assumed for its models is `CLARA_OPENCODE_GO_CONTEXT`
 (131,072) as the lists do not say.
 
+The models of `opencode-go` whose names end in `-free` are offered in the pickers without being chosen, as long as the
+lists show them, and come last in them. `/models hide opencode-go:<model>` removes one for good (and `show` brings it back); other models of
+the provider appear only once you `show` them.
+
 ## Google Drive (not a model provider)
 
 A Google Cloud OAuth client whose consent screen is in **Testing** publishing status gets refresh tokens that expire

@@ -1,8 +1,13 @@
-"""The model catalogue: what each usable provider offers, what each model can do, and which ones the pickers show.
+"""The model catalogue: what each usable provider offers, what each model can do, and which ones the pickers show
+(free models last).
 
 Provider answers are cached for a minute. Sizes and capabilities are kept in the `models` table, so they are known
 when a provider is down. The window of a model is what its provider says (capped, for a local host, at
 CLARA_OLLAMA_CONTEXT, which is also what Clara asks Ollama to use), else the provider's default.
+
+A model is shown in the pickers when you showed it (`/models show`), or, if you never chose either way, when it is
+free (OpenCode's `-free` models) and its provider lists it now. Hiding such a model is a choice too. The pickers list
+the free models after the others.
 """
 
 from __future__ import annotations
@@ -123,11 +128,22 @@ class Catalog:
             return min(said, provider.context) if said else provider.context
         return said or provider.context
 
+    def _is_free(self, provider_id: str, name: str) -> bool:
+        provider = self.providers.all.get(provider_id)
+        return bool(provider and provider.free_suffix and name.endswith(provider.free_suffix))
+
+    def _is_shown(self, ref: str, listed: bool) -> bool:
+        row = self._row(ref)
+        if row is not None and (row["shown"] or row["chosen"]):
+            return bool(row["shown"])
+        provider_id, name = split_ref(ref)
+        return listed and self._is_free(provider_id, name)
+
     def info(self, ref: str, listed: bool = True) -> ModelInfo:
         provider_id, name = split_ref(ref)
         row = self._row(ref)
         provider = self.providers.get(provider_id)
-        return ModelInfo(ref, provider_id, name, provider.local, bool(row["shown"]) if row else False, listed,
+        return ModelInfo(ref, provider_id, name, provider.local, self._is_shown(ref, listed), listed,
                          row["size_b"] if row else None,
                          Capabilities.from_json(row["capabilities"]) if row else Capabilities(), self.window(ref))
 
@@ -148,17 +164,20 @@ class Catalog:
 
     def shown(self) -> list[ModelInfo]:
         """The models the pickers offer (shown, of a usable provider)."""
+        refs = {row["ref"] for row in self.db.all("SELECT ref FROM models WHERE shown = 1")}
+        refs |= {make_ref(p, n) for p, names in self._listed.items() for n in names
+                 if self._is_free(p, n) and self._is_shown(make_ref(p, n), True)}
         found = []
-        for row in self.db.all("SELECT ref FROM models WHERE shown = 1 ORDER BY ref"):
+        for ref in refs:
             try:
-                if self.providers.usable(split_ref(row["ref"])[0]):
-                    found.append(self.info(row["ref"]))
+                if self.providers.usable(split_ref(ref)[0]):
+                    found.append(self.info(ref))
             except ProviderError:
                 continue
-        return found
+        return sorted(found, key=lambda info: (self._is_free(info.provider, info.name), info.ref))  # free ones last
 
     def set_shown(self, refs: list[str], shown: bool) -> None:
         for ref in refs:
             provider_id, name = split_ref(ref)
             self.providers.get(provider_id)
-            self._upsert(make_ref(provider_id, name), shown=int(shown))
+            self._upsert(make_ref(provider_id, name), shown=int(shown), chosen=1)

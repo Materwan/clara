@@ -444,7 +444,8 @@ and run on the client.
   first; a hosted provider is enabled from the console or the Models page once its key is stored. Their terms are in
   [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - **Catalogue:** models listed by each enabled provider, with context window and capabilities (tools, pictures,
-  thinking), refreshed every minute at most; you choose which appear in the pickers.
+  thinking), refreshed every minute at most; you choose which appear in the pickers (`/models show|hide`). The free models of
+  OpenCode (`opencode-go`, names ending in `-free`) appear there until you hide them, after the other models.
 - **Default model:** set by you; at first start with none set, Clara picks a local model and says so.
 - **Side-jobs model** (`upkeep_model`): titles, summaries, reminder wording; the default model when unset.
 - **Fallbacks:** an ordered list, of enabled providers only. When a model fails **before it has said anything**, the

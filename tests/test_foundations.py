@@ -32,16 +32,17 @@ def test_an_old_build_refuses_a_newer_database(tmp_path):
 def test_a_migration_takes_a_backup_first(tmp_path, monkeypatch):
     path = tmp_path / "clara.db"
     migrate(path, tmp_path / "backups")
-    extra = migrate_module.Migration(2, "0002_test.sql", "CREATE TABLE added (x INTEGER);")
     real = migrate_module.migrations()
+    latest = real[-1].version
+    extra = migrate_module.Migration(latest + 1, f"{latest + 1:04d}_test.sql", "CREATE TABLE added (x INTEGER);")
     monkeypatch.setattr(migrate_module, "migrations", lambda: [*real, extra])
-    monkeypatch.setattr(migrate_module, "LATEST_VERSION", 2)
+    monkeypatch.setattr(migrate_module, "LATEST_VERSION", latest + 1)
     before, after, backup = migrate(path, tmp_path / "backups")
-    assert (before, after) == (1, 2)
+    assert (before, after) == (latest, latest + 1)
     assert backup is not None and backup.exists()
     assert oct(backup.stat().st_mode & 0o777) == "0o600"
     with sqlite3.connect(backup) as old:
-        assert old.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert old.execute("PRAGMA user_version").fetchone()[0] == latest
 
 
 def test_two_servers_cannot_share_a_data_folder(tmp_path):

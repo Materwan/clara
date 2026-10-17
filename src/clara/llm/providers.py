@@ -46,6 +46,7 @@ class Provider:
     key_secret: str | None  # the secret holding its key (None: needs none)
     context: int  # the window of a model that does not say its own
     flavor: OpenAIFlavor | None = None
+    free_suffix: str = ""  # the models named so are free: offered in the pickers until you hide them, listed last
 
     def describe(self) -> dict:
         return {
@@ -150,6 +151,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
             session_header="x-opencode-session",
             second=SecondList(f"{zen}/models", zen, "-free"),
         ),
+        free_suffix="-free",
     )
     return providers
 
