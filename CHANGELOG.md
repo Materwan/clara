@@ -13,7 +13,10 @@ earlier server: the new Clara starts empty.
   revocable token per client, a failure limiter, web cookie plus `X-Clara-Web` header, `/docs` only in debug.
 - **Secrets:** an AES-GCM store in the database; its key in a systemd credential, never in the data folder; scrypt
   (N=2^17, salted) for passphrases; `clara secrets rotate`.
-- **Models:** local Ollama hosts, Ollama cloud, Gemini, DeepSeek, Mistral and OpenCode Go (with the free models of OpenCode Zen).
+- **Models:** local Ollama hosts, Ollama cloud, Gemini, DeepSeek, Mistral and OpenCode Go (its own models, the `-free` ones it lists included; OpenCode Zen's free models are not offered, as OpenCode keeps them for its own app).
+  OpenCode's models of APIs Clara does not speak are told apart from the rest (a table made from models.dev), kept out of
+  the pickers and behind a selector on the Models page, with the reason; so are the pictures it cannot give to a text-only
+  model. A 403 that is not about the key (OpenCode's free tier) is no longer reported as a refused key.
 - **Chat:** streaming, versions (edit, ask again), titles, compaction that never cuts silently, a time budget per
   answer, separate model slots for background work, fallbacks that never leave a local choice, incognito and
   local-only conversations, attachments (PDF, Word, text, pictures, animations), client-side tools.
@@ -41,7 +44,20 @@ earlier server: the new Clara starts empty.
 - **Live log:** an Admin **Logs** tab streams the server's log and the traffic records as they happen (source and
   level filters applied on the server, pause, follow, clear). Memory only: the last 500 lines, secrets masked, no
   sign-in addresses, never the debug content. New route: `GET /v1/admin/logs/stream`.
+- **Daily recap:** at the end of each day (`CLARA_RECAP`, 23:59, or at the next start) Clara opens a French check-in
+  conversation with a digest of the day made in code (conversations with their earlier context, tasks, reminders,
+  scheduled runs, vault changes from git, her own actions), announces it on the web site and in a Discord thread under
+  the question in `#general`, **waits for your answer**, then writes the recap into one replaceable block of the
+  vault's daily note, with `[[links]]` to notes that exist, and marks the tasks you confirmed. Unanswered, it is
+  reminded the next morning and closed from the digest alone when the next check-in comes. New: the `write_daily_recap`
+  tool, the `checkin` event, `/recap`, the `recap` alert, `CLARA_RECAP`, `CLARA_RECAP_AT`, `CLARA_RECAP_REMIND_AT`,
+  `CLARA_RECAP_DIGEST_CHARS`. The vault's daily note now follows the Clara vault's own layout
+  (`types.daily.folder` with `daily_format`, such as `1-daily/2026/2026-10-18.md`), is made from `_templates/daily.md`,
+  and `vault_daily` adds its lines under `## Log`. The Discord bot needs *Create Public Threads*, *Send Messages in
+  Threads* and *Manage Threads* in `#general`: it deletes the check-in's thread once the recap is written (a line in
+  `#general` gives the note's path).
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
-  automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log; `clara doctor`.
+  automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
+  its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 2 (0002: a model you showed or hid yourself is told from one you never decided about).
+- **Migrations:** schema version 3 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days).

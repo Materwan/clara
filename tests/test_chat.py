@@ -26,6 +26,21 @@ async def test_streamed_chat_creates_a_conversation_and_stores_the_turn(client, 
     assert usage["totals"]["calls"] >= 1
 
 
+async def test_a_conversation_started_from_a_project_stays_in_it(client, llm):
+    """What the site does from a project's page: create the conversation in the project, then chat in it."""
+    llm.replies = ["Hello."]
+    project = (await client.post("/v1/projects", json={"name": "Thesis"})).json()
+    made = (await client.post("/v1/conversations", json={"project": project["id"]})).json()
+    assert made["project"] == project["id"]
+    response = await client.post("/v1/chat/stream", json={"message": "hi", "conversation": made["id"]})
+    assert response.status_code == 200
+    listed = (await client.get("/v1/conversations", params={"project": str(project["id"])})).json()["conversations"]
+    assert [item["id"] for item in listed] == [made["id"]]
+    assert (await client.get(f"/v1/projects/{project['id']}")).json()["conversations"] == 1
+    outside = (await client.get("/v1/conversations", params={"project": "none"})).json()["conversations"]
+    assert outside == []
+
+
 async def test_plain_chat_and_remember_tool(client, services, llm):
     llm.replies = [calls(("remember", {"fact": "Alex lives in Paris."})), "Noted."]
     response = await client.post("/v1/chat", json={"message": "I live in Paris"})

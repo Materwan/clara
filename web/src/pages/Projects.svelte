@@ -122,7 +122,7 @@
   {:else}
     <a class="back" href="#/projects"><Icon name="left" size={18} />All projects</a>
     <div class="row"><h2 class="grow">{project.name}</h2>
-      <button onclick={() => go('/chat')}><Icon name="plus" size={18} />New conversation</button><button class="danger" onclick={removeProject}>Delete</button></div>
+      <button onclick={() => go('/chat?project=' + id)}><Icon name="plus" size={18} />New conversation</button><button class="danger" onclick={removeProject}>Delete</button></div>
     <div class="grid-2">
       <div class="panel stack">
         <label class="field">Name <input bind:value={project.name} /></label>
@@ -166,7 +166,7 @@
     <div class="panel">
       <h2>Conversations</h2>
       {#each conversations as conversation}<div><a href={'#/chat/' + conversation.id}>{conversation.title || conversation.preview}</a> <span class="muted small">{when(conversation.updated_at)}</span></div>
-      {:else}<div class="muted small">None yet: a conversation joins the project from the chat's project menu, or with its first message.</div>{/each}
+      {:else}<div class="muted small">None yet: start one with “New conversation” above.</div>{/each}
     </div>
   {/if}
 </div>

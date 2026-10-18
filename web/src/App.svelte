@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import AccountMenu from './components/AccountMenu.svelte';
   import ConversationRail from './components/ConversationRail.svelte';
   import Dialog from './components/Dialog.svelte';
   import Icon from './components/Icon.svelte';
   import Mark from './components/Mark.svelte';
-  import ThemeSwitch from './components/ThemeSwitch.svelte';
   import { api } from './lib/api';
   import { listen } from './lib/live';
   import { dismiss, go, holdToast, live, narrow, readRoute, releaseToast, route, session, toasts, ui, watchViewport } from './lib/state.svelte';
@@ -43,14 +43,15 @@
   const PAGES = [...WORK, ...SETTINGS];
 
   let healthy = $state(true);
-  let model = $state('');
   let main = $state<HTMLElement>();
   let rail = $state<HTMLElement>();
   let railOpener: HTMLElement | null = null;
   const current = $derived(PAGES.find((page) => page.path === route.path) ?? WORK[0]);
   const inSettings = $derived(SETTINGS.includes(current));
   const alerts = $derived(Object.keys(live.alerts).length);
-  const status = $derived(!healthy ? 'Clara is not reachable' : !live.connected ? 'Reconnecting…' : model || 'Connected');
+  // The lamp on Clara's portrait: green when connected, amber while the live stream reconnects, red when the server does not answer.
+  const light = $derived(!healthy ? 'danger' : !live.connected ? 'warn' : 'ok');
+  const status = $derived(!healthy ? 'Clara is not reachable' : !live.connected ? 'Reconnecting…' : 'Connected');
 
   async function check(): Promise<void> {
     try {
@@ -59,7 +60,6 @@
       session.token = me.token;
       session.approvals = me.approvals;
       listen();
-      loadModel();
     } catch {
       session.signedIn = false;
     }
@@ -71,14 +71,6 @@
       healthy = (await fetch('/health', { cache: 'no-store' })).ok;
     } catch {
       healthy = false;
-    }
-  }
-
-  async function loadModel(): Promise<void> {
-    try {
-      model = (await api.get('/v1/models')).default ?? '';
-    } catch {
-      model = '';
     }
   }
 
@@ -108,12 +100,10 @@
     check();
     ping();
     const timer = setInterval(ping, 20_000);
-    const models = setInterval(() => session.signedIn && loadModel(), 120_000);
     return () => {
       removeEventListener('hashchange', moved);
       unwatch();
       clearInterval(timer);
-      clearInterval(models);
     };
   });
 
@@ -147,10 +137,11 @@
   <button type="button" class="skip" onclick={() => main?.focus()}>Skip to content</button>
   <div class="shell">
     <aside class="rail" class:open={ui.rail} aria-label="Navigation" bind:this={rail}>
-      <!-- the logo and New chat stay put; everything under them scrolls as one -->
+      <!-- the logo and New chat stay put at the top, the account tab at the foot; the pages and conversations scroll between them -->
       <div class="rail-top">
         <div class="rail-head">
-          <a class="brand" href="#/chat"><Mark size={26} />Clara</a>
+          <a class="brand" href="#/chat"><span class="portrait"><Mark size={26} /><span class="dot {light}" aria-hidden="true"></span></span>Clara</a>
+          <span class="sr-only" role="status">{status}</span>
           {#if live.server !== 'running'}<span class="state">{live.server}</span>{/if}
           <button class="ghost icon-btn close-rail" aria-label="Close navigation" onclick={() => (ui.rail = false)}><Icon name="close" /></button>
         </div>
@@ -165,22 +156,13 @@
           {/each}
         </nav>
         <ConversationRail current={current.path === '/chat' ? (route.params.id ?? null) : null} />
-        <div class="rail-foot">
-          {#if live.approvals.length}
-            <a class="approvals-badge" href="#/rules"><Icon name="shield" size={18} /><span class="text">Waiting for you</span><span class="count">{live.approvals.length}</span></a>
-          {/if}
-          <nav class="pages" aria-label="Settings">
-            <a href="#/memory" aria-current={inSettings ? 'page' : undefined}>
-              <Icon name="admin" size={18} />Settings
-              {#if alerts}<span class="count danger" title={`${alerts} active alert${alerts > 1 ? 's' : ''}`}>{alerts}</span>{/if}
-            </a>
-          </nav>
-          <div class="status" title={healthy && live.connected && model ? `Connected. Default model: ${model}` : status}>
-            <span class="dot" class:ok={healthy && live.connected} class:danger={!healthy}></span><span class="text">{status}</span>
-            <button class="ghost icon-btn sign-out" onclick={signOut} title="Sign out" aria-label="Sign out"><Icon name="logout" size={18} /></button>
-          </div>
-          <div class="rail-tools"><ThemeSwitch /></div>
-        </div>
+      </div>
+      <!-- pinned: the approvals waiting for you, and the account tab -->
+      <div class="rail-foot">
+        {#if live.approvals.length}
+          <a class="approvals-badge" href="#/rules"><Icon name="shield" size={18} /><span class="text">Waiting for you</span><span class="count">{live.approvals.length}</span></a>
+        {/if}
+        <AccountMenu name={session.token} {alerts} {inSettings} onSignOut={signOut} />
       </div>
     </aside>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (Escape closes it too) -->

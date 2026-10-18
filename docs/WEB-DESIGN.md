@@ -56,9 +56,14 @@ The rail is Prussian blue whatever the theme. `.rail` and `.negative` re-read th
 `--accent-text`, `--danger` …) against that blue, so any component dropped inside — a button, a count, an input — needs no
 variant of its own. Use `class="negative"` for another dark surface (the Admin console and the Logs tab are two); never hard-code its colours.
 
-The rail has two parts: `.rail-top` (the logo and **New chat**) stays put, and `.rail-scroll` holds the pages, the
-conversation list (`ConversationRail.svelte`) and the foot (Settings, the status line, the theme switch), which scroll as
-one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`) so its buttons can fade over its title.
+The rail has three parts: `.rail-top` (the logo and **New chat**) and `.rail-foot` (the approvals waiting for you, and the
+account tab) stay put; `.rail-scroll` between them holds the pages and the conversation list (`ConversationRail.svelte`),
+which scroll as one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`) so its buttons can fade over its title.
+
+The state of the connection is a lamp on the rim of Clara's portrait (`.portrait > .dot`, ringed in the rail's blue so it
+sits in the picture: `ok` connected, `warn` reconnecting, `danger` Clara not reachable). It has no visible text; a
+visually hidden `role="status"` beside it says the same in words. Settings, the colour theme and Sign out are in the
+account tab below.
 
 ## Components
 
@@ -69,6 +74,7 @@ one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`)
 | Checkbox | `Checkbox.svelte` | Never a bare `<input type="checkbox">`. The input is the box (`appearance: none`, 16 px, 2 px `--line-strong` border); ticked, it fills `--check` and a tick drawn like the line icons unrolls over it. Takes every input attribute; `bind:checked` works. It is a line high, so beside text it sits on the first line. Radios share the look, round, with a violet dot |
 | Frame | `.frame`, `.panel`, `table`, `.approval`, `.qcm`, `.cal` | The ruled box: a 2px rule on top, a hairline around. Knobs: `--frame-rule`, `--frame-edge`. `.frame.signal` marks a step that waits for you |
 | Segmented control | `Segmented.svelte` | A few choices, one on: a group of toggle buttons (`aria-pressed`) named by `label`; `count` shows a badge; `quiet` is the small variant (the theme switch). Not a tab list: it does not own a panel |
+| Account tab | `AccountMenu.svelte` | The foot of the rail: the signed-in token's name, the alert count and a chevron. It opens upward onto a `.frame` panel (violet rule) with Settings, the theme switch and Sign out. A disclosure (`aria-expanded`), not a menu role. Escape (heard in the capture phase, so it shuts the panel before the drawer), a click or focus outside, and the drawer closing all close it; picking a theme keeps it open |
 | Settings bar | `.settings-bar` | Page-level navigation: links with `aria-current="page"` |
 | Tag, count, dot | `.tag`, `.count`, `.dot` | A state, a number, a connection; each takes `ok` / `warn` / `danger` |
 | Chip | `.chip` | A file or a kind; its remove button is 24 px |

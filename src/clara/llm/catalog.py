@@ -7,7 +7,8 @@ CLARA_OLLAMA_CONTEXT, which is also what Clara asks Ollama to use), else the pro
 
 A model is shown in the pickers when you showed it (`/models show`), or, if you never chose either way, when it is
 free (OpenCode's `-free` models) and its provider lists it now. Hiding such a model is a choice too. The pickers list
-the free models after the others.
+the free models after the others. A model that does not work (OpenCode lists models of APIs Clara does not speak, see
+`opencode.py`) is never shown, and cannot be: its `fit` says why.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from ..db import Database
 from ..timeutil import now_iso
 from .providers import ProviderError, Providers, make_ref, split_ref
-from .types import Capabilities
+from .types import Capabilities, Fit
 
 CACHE_SECONDS = 60.0
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmbt])\b", re.IGNORECASE)
@@ -47,11 +48,12 @@ class ModelInfo:
     size_b: float | None
     capabilities: Capabilities
     window: int
+    fit: Fit = Fit()  # whether Clara can use it: a model that does not work is never shown in the pickers
 
     def describe(self) -> dict:
         return {"ref": self.ref, "provider": self.provider, "name": self.name, "local": self.local,
                 "shown": self.shown, "listed": self.listed, "size_b": self.size_b,
-                "capabilities": self.capabilities.describe(), "window": self.window}
+                "capabilities": self.capabilities.describe(), "window": self.window, "fit": self.fit.describe()}
 
 
 class Catalog:
@@ -132,7 +134,14 @@ class Catalog:
         provider = self.providers.all.get(provider_id)
         return bool(provider and provider.free_suffix and name.endswith(provider.free_suffix))
 
+    def fit(self, ref: str) -> Fit:
+        provider_id, name = split_ref(ref)
+        provider = self.providers.all.get(provider_id)
+        return provider.fit(name) if provider else Fit()
+
     def _is_shown(self, ref: str, listed: bool) -> bool:
+        if self.fit(ref).works is False:
+            return False
         row = self._row(ref)
         if row is not None and (row["shown"] or row["chosen"]):
             return bool(row["shown"])
@@ -145,7 +154,8 @@ class Catalog:
         provider = self.providers.get(provider_id)
         return ModelInfo(ref, provider_id, name, provider.local, self._is_shown(ref, listed), listed,
                          row["size_b"] if row else None,
-                         Capabilities.from_json(row["capabilities"]) if row else Capabilities(), self.window(ref))
+                         Capabilities.from_json(row["capabilities"]) if row else Capabilities(), self.window(ref),
+                         provider.fit(name))
 
     async def listing(self, force: bool = False) -> list[ModelInfo]:
         """Every model of every usable provider, plus the shown ones whose provider did not answer."""
@@ -170,14 +180,17 @@ class Catalog:
         found = []
         for ref in refs:
             try:
-                if self.providers.usable(split_ref(ref)[0]):
-                    found.append(self.info(ref))
+                if self.providers.usable(split_ref(ref)[0]) and (info := self.info(ref)).shown:
+                    found.append(info)
             except ProviderError:
                 continue
         return sorted(found, key=lambda info: (self._is_free(info.provider, info.name), info.ref))  # free ones last
 
     def set_shown(self, refs: list[str], shown: bool) -> None:
         for ref in refs:
+            self.providers.get(split_ref(ref)[0])
+            if shown and (fit := self.fit(ref)).works is False:
+                raise ProviderError(f"{ref} cannot be shown in the pickers: {fit.why}.")
+        for ref in refs:
             provider_id, name = split_ref(ref)
-            self.providers.get(provider_id)
             self._upsert(make_ref(provider_id, name), shown=int(shown), chosen=1)

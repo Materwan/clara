@@ -281,6 +281,42 @@ class GitSync:
                 rows.append((parts[0], parts[1], parts[2], parts[3]))
         return rows
 
+    def changes(self, since: str, until: str) -> list[dict]:
+        """The files touched by commits made from `since` to `until` (ISO instants), one row each, newest commit first:
+        `{"path", "status" (created, changed, deleted), "authors", "subject"}`. A file added and changed in the span is
+        `created`; one added and deleted is left out."""
+        out = self.git(
+            "log", f"--since={since}", f"--until={until}", "--no-merges", "--name-status", "--format=%x01%an%x09%s",
+            check=False,
+        )
+        found: dict[str, dict] = {}
+        author = subject = ""
+        for line in out.splitlines():
+            if line.startswith("\x01"):
+                author, _, subject = line[1:].partition("\t")
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2 or not parts[0]:
+                continue
+            code, path = parts[0][0], parts[-1]
+            row = found.setdefault(path, {"path": path, "status": "", "authors": [], "subject": subject, "added": False,
+                                          "last": code})
+            if code == "A":
+                row["added"] = True
+            if author not in row["authors"]:
+                row["authors"].append(author)
+        rows = []
+        for row in found.values():
+            if row["last"] == "D":
+                if row["added"]:
+                    continue
+                row["status"] = "deleted"
+            else:
+                row["status"] = "created" if row["added"] else "changed"
+            rows.append({"path": row["path"], "status": row["status"], "authors": tuple(row["authors"]),
+                         "subject": row["subject"]})
+        return rows
+
     def deleted_path(self, name: str) -> str:
         """The path a note called `name` had when it was deleted (the latest), or ''."""
         out = self.git("log", "--diff-filter=D", "--name-only", "--pretty=format:", "-n", "300", check=False)

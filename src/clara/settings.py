@@ -66,7 +66,6 @@ class Settings:
     deepseek_host: str = "https://api.deepseek.com"
     mistral_host: str = "https://api.mistral.ai/v1"
     opencode_go_host: str = "https://opencode.ai/inference/go"  # chat is under /openai/v1, the model list under /v1
-    opencode_zen_host: str = "https://opencode.ai/zen/v1"  # its free models are added to those of Go
     deepseek_thinking: bool = True
     hosted_context: Mapping[str, int] = field(
         default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072,
@@ -117,6 +116,10 @@ class Settings:
     vault_path: Path | None = None
     vault_push: bool = True
     vault_pull_seconds: int = 30
+    recap: bool = False
+    recap_at: str = "23:59"
+    recap_remind_at: str = "09:00"
+    recap_digest_chars: int = 60_000
 
     # --- connectors -----------------------------------------------------------------------------------------
     searxng_url: str = "http://127.0.0.1:8888"
@@ -343,6 +346,14 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", backup_time):
         r.problems.append(f"CLARA_BACKUP_TIME={backup_time!r} must be HH:MM.")
         backup_time = "03:30"
+    recap_at = r.text("CLARA_RECAP_AT", "23:59")
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", recap_at):
+        r.problems.append(f"CLARA_RECAP_AT={recap_at!r} must be HH:MM.")
+        recap_at = "23:59"
+    recap_remind_at = r.text("CLARA_RECAP_REMIND_AT", "09:00")
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", recap_remind_at):
+        r.problems.append(f"CLARA_RECAP_REMIND_AT={recap_remind_at!r} must be HH:MM.")
+        recap_remind_at = "09:00"
     release_repo = r.text("CLARA_RELEASE_REPO", "")
     if release_repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", release_repo):
         r.problems.append(f"CLARA_RELEASE_REPO={release_repo!r} must be owner/name.")
@@ -376,7 +387,6 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         deepseek_host=r.url("CLARA_DEEPSEEK_HOST", Settings.deepseek_host),
         mistral_host=r.url("CLARA_MISTRAL_HOST", Settings.mistral_host),
         opencode_go_host=r.url("CLARA_OPENCODE_GO_HOST", Settings.opencode_go_host),
-        opencode_zen_host=r.url("CLARA_OPENCODE_ZEN_HOST", Settings.opencode_zen_host),
         deepseek_thinking=r.flag("CLARA_DEEPSEEK_THINKING", True),
         hosted_context=hosted_context,
         history_turns=r.integer("CLARA_HISTORY_TURNS", 20, 1, 500),
@@ -418,6 +428,10 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         vault_path=r.path("CLARA_VAULT_PATH"),
         vault_push=r.flag("CLARA_VAULT_PUSH", True),
         vault_pull_seconds=r.integer("CLARA_VAULT_PULL_SECONDS", 30, 0),
+        recap=r.flag("CLARA_RECAP", False),
+        recap_at=recap_at,
+        recap_remind_at=recap_remind_at,
+        recap_digest_chars=r.integer("CLARA_RECAP_DIGEST_CHARS", 60_000, 5_000, 400_000),
         searxng_url=r.url("CLARA_SEARXNG_URL", "http://127.0.0.1:8888"),
         fetch_max_bytes=r.size("CLARA_FETCH_MAX_SIZE", 2_000_000),
         public_url=r.url("CLARA_PUBLIC_URL", ""),

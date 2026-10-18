@@ -5,7 +5,7 @@
     gemini    Google Gemini, OpenAI-compatible API, key `gemini_api_key`                             hosted
     deepseek  DeepSeek, OpenAI-compatible API, key `deepseek_api_key`                               hosted
     mistral   Mistral, OpenAI-compatible API, key `mistral_api_key`                                 hosted
-    opencode-go  OpenCode Go and Zen's free models, OpenAI-compatible API, key `opencode_go_api_key`  hosted
+    opencode-go  OpenCode Go, OpenAI-compatible API, key `opencode_go_api_key`                      hosted
 
 A model is named `provider:model` (`local:qwen3:8b`, `gemini:gemini-2.5-flash`). A provider is *usable* when you
 enabled it (runtime setting `providers_enabled`; local hosts are enabled at first) and its key, if it needs one, is in
@@ -24,9 +24,10 @@ from .. import __version__
 from ..runtime import RuntimeSettings
 from ..secrets import SecretsStore
 from ..settings import Settings
+from . import opencode
 from .ollama import OllamaBackend
-from .openai import OpenAIBackend, OpenAIFlavor, SecondList
-from .types import Backend, Capabilities
+from .openai import OpenAIBackend, OpenAIFlavor
+from .types import Backend, Capabilities, Fit
 
 CHECK_TIMEOUT = 8.0
 CAPABILITIES_TIMEOUT = 30.0
@@ -57,6 +58,17 @@ class Provider:
             "local": self.local,
             "needs_key": self.key_secret is not None,
         }
+
+    def fit(self, model: str) -> Fit:
+        """Whether Clara can use the model. Only OpenCode's lists mix in models of other APIs; what any other provider
+        lists works."""
+        known = self.flavor.known if self.flavor else None
+        if known is None:
+            return Fit(True)
+        found = known(model)
+        if found is None:
+            return Fit(None, "OpenCode does not say which API this model speaks, and Clara has no record of it")
+        return found.fit()
 
 
 def make_ref(provider: str, model: str) -> str:
@@ -135,7 +147,6 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
         OpenAIFlavor(stream_usage=False, tool_names=True),
     )
     go = settings.opencode_go_host.rstrip("/")
-    zen = settings.opencode_zen_host.rstrip("/")
     providers["opencode-go"] = Provider(
         "opencode-go",
         "OpenCode Go",
@@ -149,7 +160,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
             models_url=f"{go}/v1/models",
             headers=(("User-Agent", f"clara/{__version__}"),),
             session_header="x-opencode-session",
-            second=SecondList(f"{zen}/models", zen, "-free"),
+            known=opencode.known,
         ),
         free_suffix="-free",
     )

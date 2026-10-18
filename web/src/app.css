@@ -310,7 +310,7 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 /* ---- the shell: a rail on the left, the page beside it --------------------------------------------------- */
 .shell { height: 100dvh; display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); }
 .rail { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-/* the logo and New chat stay put; the pages, the conversations and the foot scroll under them as one */
+/* the logo and New chat stay put at the top, the foot (approvals, the account tab) at the bottom; the pages and the conversations scroll between them */
 .rail-top { flex: none; padding: var(--sp-14) var(--sp-12) var(--sp-12); border-bottom: 1px solid var(--line); }
 .rail-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 0 var(--sp-12); }
 .rail-head { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-4) var(--sp-6) var(--sp-14); }
@@ -331,8 +331,10 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .pages a[aria-current='page']::before { content: ''; position: absolute; left: calc(var(--sp-12) * -1); top: var(--sp-6); bottom: var(--sp-6); width: 3px; border-radius: 0 3px 3px 0; background: var(--rail-signal); }
 .pages a[aria-current='page'] .icon { color: var(--rail-signal); }
 .pages a .count { margin-left: auto; }
-.rail-foot { margin: auto calc(var(--sp-12) * -1) 0; flex: none; border-top: 1px solid var(--line); padding: var(--sp-12) var(--sp-12) calc(var(--sp-12) + var(--safe-b)); display: flex; flex-direction: column; gap: var(--sp-8); }
-.rail-foot .pages { margin: 0; }
+/* Clara's portrait with the lamp of the connection on its rim: a cut-out in the rail's blue, so it sits in the picture rather than glowing over it */
+.portrait { position: relative; display: flex; flex: none; }
+.brand .portrait > .dot { position: absolute; right: -3px; bottom: -3px; width: .75rem; height: .75rem; border: 2px solid var(--rail-bg); box-shadow: none; }
+.rail-foot { flex: none; border-top: 1px solid var(--line); padding: var(--sp-10) var(--sp-12) calc(var(--sp-10) + var(--safe-b)); display: flex; flex-direction: column; gap: var(--sp-8); }
 .approvals-badge {
   display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-12); border: 1px solid var(--rail-signal); border-radius: var(--r-md);
   color: var(--rail-text); text-decoration: none; font-weight: 650;
@@ -341,14 +343,39 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .approvals-badge .icon { color: var(--rail-signal); }
 .approvals-badge .text { flex: 1; }
 .approvals-badge .count { background: var(--rail-signal); color: var(--rail-bg); }
-.status { display: flex; align-items: center; gap: var(--sp-8); color: var(--muted); font-size: var(--fs-xs); min-width: 0; padding: 0 var(--sp-2) 0 var(--sp-8); }
-.status .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status .sign-out:hover:not(:disabled) { color: var(--text); }
 .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); }
 .dot.danger { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 25%, transparent); }
-.rail-tools .segmented { display: flex; } /* the theme switch takes the rail's width, in three equal parts */
-.rail-tools .segmented button { flex: 1; }
+
+/* the account tab (AccountMenu.svelte): pinned in the foot of the rail, opening upward onto a ruled panel */
+.account { position: relative; }
+.account-tab { width: 100%; justify-content: flex-start; gap: var(--sp-10); padding: var(--sp-6) var(--sp-8); border-color: transparent; font-weight: 550; text-align: left; }
+.account-tab:hover:not(:disabled), .account-tab[aria-expanded='true'] { background: var(--hover); }
+.account-tab .avatar { display: grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--raised); color: var(--text-2); }
+.account-tab .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-tab > .icon { color: var(--muted); transition: transform var(--dur-fast); }
+.account-tab[aria-expanded='true'] > .icon { transform: rotate(180deg); }
+.account-menu {
+  --frame-rule: var(--rail-signal); --frame-edge: var(--line-strong);
+  position: absolute; z-index: 1; left: 0; right: 0; bottom: calc(100% + var(--sp-8)); padding: var(--sp-6);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  background: color-mix(in srgb, var(--rail-text) 12%, var(--rail-bg)); /* opaque: the conversations scroll behind it */
+  animation: account-in var(--dur-fast) var(--ease-out);
+}
+@keyframes account-in { from { opacity: 0; transform: translateY(var(--sp-4)); } }
+.account-item {
+  display: flex; align-items: center; justify-content: flex-start; gap: var(--sp-10); width: 100%; padding: var(--sp-6) var(--sp-8); border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-2); font-weight: 550; text-align: left; text-decoration: none;
+}
+.account-item:hover:not(:disabled) { background: var(--hover); color: var(--text); text-decoration: none; }
+.account-item[aria-current='page'] { color: var(--text); background: var(--hover); font-weight: 650; }
+.account-item .icon { color: var(--muted); }
+.account-item[aria-current='page'] .icon { color: var(--rail-signal); }
+.account-item .count { margin-left: auto; }
+.account-theme { padding: var(--sp-2) 0; }
+.account-theme .segmented { display: flex; } /* the theme switch takes the panel's width, in three equal parts */
+.account-theme .segmented button { flex: 1; }
 
 .content { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .scrim { display: none; }

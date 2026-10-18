@@ -65,6 +65,7 @@ class Services:
     workspace: Any = None
     sandbox: Any = None
     vault: Any = None
+    recaps: Any = None
     web: Any = None
     connectors: Any = None
     connections: Any = None
@@ -79,7 +80,7 @@ class Services:
     started: float = field(default_factory=time.monotonic)
 
     def due_loops(self) -> list:
-        return [self.reminders, self.tasks, self.schedules]
+        return [self.reminders, self.tasks, self.schedules, *([self.recaps] if self.recaps is not None else [])]
 
     def reminders_firing(self) -> bool:
         return self.reminders.busy_firing or self.tasks.busy_firing

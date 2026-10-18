@@ -46,6 +46,9 @@
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
   let fresh = $state({ incognito: false, local_only: false, model: '' });
+  /** The project a conversation belongs to: its own, or for a new one the project it was started from (#/chat?project=). */
+  let projectId = $derived(conversationId ? (conversation?.project ?? null) : Number(route.query.get('project')) || null);
+  let projectName = $state('');
   let editing = $state<number | null>(null);
   let editText = $state('');
   let skipReload = '';
@@ -56,6 +59,12 @@
     const id = conversationId;
     if (id && id === skipReload) return;
     load(id);
+  });
+
+  $effect(() => {
+    const id = projectId;
+    projectName = '';
+    if (id) api.get(`/v1/projects/${id}`).then((project) => { if (projectId === id) projectName = project.name; }).catch(() => {});
   });
 
   async function load(id: string | null): Promise<void> {
@@ -138,7 +147,7 @@
     let id = conversationId;
     try {
       if (!id) {
-        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model });
+        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined });
         id = made.id as string;
         skipReload = id;
         go('/chat/' + id);
@@ -338,6 +347,7 @@
   <header class="page-head chat-head">
     <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
     <h1 class="title">{conversation?.title || (conversationId ? 'Conversation' : 'New conversation')}</h1>
+    {#if projectName}<a class="flag" href={'#/projects/' + projectId} title="Open the project"><Icon name="folder" size={16} />{projectName}</a>{/if}
     {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
     {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
     {#if !conversationId}

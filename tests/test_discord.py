@@ -110,7 +110,7 @@ async def test_guild_intents_only_and_no_direct_messages(bot):
 async def test_only_you_in_general_are_answered(bot, monkeypatch):
     asked = []
 
-    async def ask(channel, body):
+    async def ask(channel, body, remember=True):
         asked.append((channel, body))
 
     monkeypatch.setattr(bot, "ask", ask)
@@ -320,3 +320,222 @@ def test_wrong_settings_exit_with_the_code_that_is_not_retried(tmp_path, monkeyp
     for key in env_for(tmp_path):
         monkeypatch.delenv(key, raising=False)
     assert bot_module.main() == bot_module.EXIT_SETTINGS
+
+
+# ----------------------------------------------------------------------
+# The end-of-day check-in: a thread under the question
+# ----------------------------------------------------------------------
+class FakeThread(discord.Thread):
+    def __init__(self, thread_id: int, parent_id: int, log: list | None = None, may_delete: bool = True):
+        self.id = thread_id  # no Discord connection in a test
+        self.parent_id = parent_id
+        self.sent: list[tuple[str, object]] = []
+        self.deleted = self.archived = False
+        self.may_delete = may_delete
+        self.log = log if log is not None else []
+
+    async def send(self, content=None, view=None, file=None):
+        self.sent.append((content, view))
+        self.log.append(("thread", content))
+
+    async def delete(self):
+        if not self.may_delete:
+            raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+        self.deleted = True
+        self.log.append(("deleted", self.id))
+
+    async def edit(self, **fields):
+        self.archived = bool(fields.get("archived"))
+
+    def typing(self):
+        return FakeChannel(self.id).typing()
+
+
+class ThreadingChannel(FakeChannel):
+    """#general, where a message can start a thread (or the bot may not)."""
+
+    def __init__(self, channel_id: int, forbidden: bool = False):
+        super().__init__(channel_id)
+        self.forbidden = forbidden
+        self.threads: list[tuple[str, FakeThread]] = []
+
+    async def send(self, content=None, view=None, file=None):
+        message = await super().send(content, view, file)
+
+        async def create_thread(name, auto_archive_duration):
+            if self.forbidden:
+                raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+            thread = FakeThread(777, self.id)
+            self.threads.append((name, thread))
+            return thread
+
+        message.create_thread = create_thread
+        return message
+
+
+CHECKIN = {"type": "checkin", "title": "Bilan du dimanche 18 octobre 2026", "text": "Voici ta journée… Et le reste ?",
+           "payload": {"day": "2026-10-18", "conversation": "c-checkin", "stage": "asked"}, "conversation": "c-checkin"}
+
+
+async def test_a_check_in_is_posted_in_general_with_a_thread_that_carries_your_answer(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    bot.set_conversation("c-current")
+    await bot.deliver(CHECKIN)
+    assert texts(general) == ["📓 **Bilan du dimanche 18 octobre 2026**\nVoici ta journée… Et le reste ?"]
+    assert general.threads[0][0] == "Bilan du dimanche 18 octobre 2026"
+    assert bot.threads() == {"777": "c-checkin"} and bot.conversation() == "c-current"  # yours is left alone
+    assert not bot.channels["notification"].sent
+
+
+async def test_what_you_write_in_the_thread_goes_to_the_check_in_not_to_the_current_chat(bot, monkeypatch):
+    asked = []
+
+    async def ask(channel, body, remember=True):
+        asked.append((channel, body, remember))
+
+    monkeypatch.setattr(bot, "ask", ask)
+    bot.set_conversation("c-current")
+    bot.remember_thread(777, "c-checkin")
+
+    def message(channel, author_id=42):
+        return SimpleNamespace(author=SimpleNamespace(id=author_id, bot=False), channel=channel, attachments=[], content="j'ai couru")
+
+    await bot.on_message(message(FakeThread(777, GENERAL), author_id=7))  # a stranger
+    await bot.on_message(message(FakeThread(888, GENERAL)))  # a thread that is not a check-in
+    await bot.on_message(message(FakeThread(777, NOTIFICATION)))  # the same id under another channel
+    assert asked == []
+    thread = FakeThread(777, GENERAL)
+    await bot.on_message(message(thread))
+    assert asked[0][0] is thread and asked[0][1]["conversation"] == "c-checkin" and asked[0][2] is False
+    await bot.on_message(message(FakeChannel(GENERAL)))
+    assert asked[1][1]["conversation"] == "c-current" and asked[1][2] is True
+
+
+async def test_an_answer_in_the_thread_does_not_make_it_the_current_conversation(bot, monkeypatch):
+    class Clara:
+        async def stream(self, method, path, body=None, read=0):
+            yield {"type": "turn", "conversation": "c-checkin"}
+            yield {"type": "done", "reply": "Noté.", "files": []}
+
+    monkeypatch.setattr(bot, "clara", Clara())
+    bot.set_conversation("c-current")
+    thread = FakeThread(777, GENERAL)
+    await bot.ask(thread, {"message": "j'ai couru", "conversation": "c-checkin"}, remember=False)
+    assert bot.conversation() == "c-current" and thread.sent[0][0] == "Noté."
+
+
+async def test_without_the_right_to_open_threads_the_check_in_becomes_the_current_conversation(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL, forbidden=True)
+    await bot.deliver(CHECKIN)
+    assert bot.conversation() == "c-checkin" and bot.threads() == {}
+    assert len(general.sent) == 2 and "Réponds ici" in general.sent[1][0]
+
+
+async def test_the_reminder_and_the_closing_notice_go_in_the_thread(bot):
+    thread = FakeThread(777, GENERAL)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    await bot.deliver({**CHECKIN, "title": "Bilan en attente", "text": "Toujours en attente.",
+                       "payload": {"conversation": "c-checkin", "stage": "reminder"}})
+    assert thread.sent[0][0] == "📓 **Bilan en attente**\nToujours en attente." and not bot.channels["general"].sent
+
+
+def test_the_threads_are_kept_next_to_the_current_conversation_and_are_limited(bot):
+    bot.set_conversation("c-current")
+    for number in range(40):
+        bot.remember_thread(1000 + number, f"c-{number}")
+    bot.set_conversation("c-other")
+    threads = bot.threads()
+    assert len(threads) == 30 and "1039" in threads and "1000" not in threads and bot.conversation() == "c-other"
+    bot.remember_thread(1039, "c-new")  # a conversation has one thread
+    assert bot.threads()["1039"] == "c-new" and len(bot.threads()) == 30
+
+
+# ----------------------------------------------------------------------
+# The thread goes once the recap is written
+# ----------------------------------------------------------------------
+WRITTEN = {"type": "checkin", "title": "Récap écrit", "text": "Le récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md.",
+           "payload": {"day": "2026-10-18", "conversation": "c-checkin", "stage": "written", "path": "1-daily/2026/2026-10-18.md"},
+           "conversation": "c-checkin"}
+
+
+def with_thread(bot, may_delete: bool = True) -> tuple[FakeThread, list]:
+    order: list = []
+    thread = FakeThread(777, GENERAL, order, may_delete)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    return thread, order
+
+
+async def test_the_thread_is_deleted_and_general_says_where_the_recap_is(bot):
+    thread, _ = with_thread(bot)
+    bot.set_conversation("c-current")
+    await bot.deliver(WRITTEN)
+    assert texts(bot.channels["general"]) == ["📓 **Récap écrit**\nLe récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md."]
+    assert thread.deleted and bot.threads() == {} and bot.conversation() == "c-current"  # yours is left alone
+
+
+async def test_when_the_recap_is_written_during_your_answer_the_answer_is_posted_before_the_thread_goes(bot, monkeypatch):
+    thread, order = with_thread(bot)
+    real_send = bot.channels["general"].send
+
+    async def general_send(content=None, view=None, file=None):
+        order.append(("general", content))
+        return await real_send(content, view, file)
+
+    bot.channels["general"].send = general_send
+
+    class Clara:
+        async def stream(self, method, path, body=None, read=0):
+            yield {"type": "turn", "conversation": "c-checkin"}
+            await bot.deliver(WRITTEN)  # the event arrives while the answer is still being written
+            assert not thread.deleted
+            yield {"type": "done", "reply": "C'est écrit dans la note.", "files": []}
+
+    monkeypatch.setattr(bot, "clara", Clara())
+    await bot.ask(thread, {"message": "voilà", "conversation": "c-checkin"}, remember=False)
+    assert [kind for kind, _ in order] == ["thread", "general", "deleted"]
+    assert order[0][1] == "C'est écrit dans la note." and bot.threads() == {} and not bot.finished and not bot.answering
+
+
+async def test_a_thread_the_bot_may_not_delete_is_archived_and_still_answers(bot):
+    thread, _ = with_thread(bot, may_delete=False)
+    await bot.deliver(WRITTEN)
+    assert thread.archived and not thread.deleted and bot.threads() == {"777": "c-checkin"}  # a late answer still goes in
+    assert len(bot.channels["general"].sent) == 1
+
+
+async def test_a_check_in_closed_without_your_answer_also_removes_its_thread(bot):
+    thread, _ = with_thread(bot)
+    await bot.deliver({**WRITTEN, "title": "Bilan clos sans réponse", "text": "Tu n'as pas répondu…",
+                       "payload": {"conversation": "c-checkin", "stage": "closed"}})
+    assert thread.deleted and texts(bot.channels["general"])[0].startswith("📓 **Bilan clos sans réponse**")
+
+
+async def test_a_thread_already_gone_is_not_an_error(bot):
+    async def fetch_channel(channel_id):
+        raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Channel")
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    await bot.deliver(WRITTEN)
+    assert bot.threads() == {} and len(bot.channels["general"].sent) == 1
+
+
+async def test_a_check_in_that_became_the_current_chat_stops_being_it_once_written(bot):
+    bot.set_conversation("c-checkin")  # the bot could not open a thread
+    await bot.deliver(WRITTEN)
+    assert bot.conversation() is None and len(bot.channels["general"].sent) == 1
+
+
+async def test_a_correction_after_the_thread_is_gone_only_says_where_the_recap_is(bot):
+    await bot.deliver(WRITTEN)  # no thread known any more (the correction was asked on the web site)
+    assert len(bot.channels["general"].sent) == 1 and bot.threads() == {}

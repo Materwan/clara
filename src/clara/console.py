@@ -112,7 +112,8 @@ async def _models(s: Services, args: list[str], token: TokenInfo) -> str:
         return f"{'Shown' if args[0] == 'show' else 'Hidden'} in the pickers: {', '.join(args[1:])}"
     found = await s.catalog.listing(force=bool(args and args[0] == "refresh"))
     lines = [f"{'*' if info.shown else ' '} {info.ref:<50} {'local' if info.local else 'hosted':<6} window {info.window:,}"
-             + ("" if info.listed else " (not listed now)") for info in found]
+             + ("" if info.listed else " (not listed now)")
+             + (f" (does not work: {info.fit.why})" if info.fit.works is False else "") for info in found]
     lines += [f"! {provider}: {problem}" for provider, problem in s.catalog.problems.items()]
     return "\n".join(lines) or "No model found: is a provider enabled and reachable?"
 
@@ -319,6 +320,31 @@ async def _vault(s: Services, args: list[str], token: TokenInfo) -> str:
     return json.dumps(s.vault.status(), indent=2)
 
 
+async def _recap(s: Services, args: list[str], token: TokenInfo) -> str:
+    from datetime import datetime
+
+    from .recap import RecapError, read_day
+    from .timeutil import zone
+
+    if s.recaps is None:
+        return "No daily recap: it needs the vault (CLARA_VAULT_PATH)."
+    action = args[0] if args else "status"
+    if action == "status":
+        return s.recaps.describe()
+    if action not in ("now", "close", "skip"):
+        return "Usage: /recap [status] | now [day] | close [day] | skip [day]   (day: YYYY-MM-DD, today or yesterday)"
+    try:
+        today = datetime.now(zone(s.settings.timezone)).date()
+        day = read_day(args[1] if len(args) > 1 else ("yesterday" if action != "now" else "today"), today)
+        if action == "now":
+            return s.recaps.ask_now(day)
+        if action == "close":
+            return await s.recaps.close_now(day)
+        return s.recaps.skip(day)
+    except RecapError as error:
+        return str(error)
+
+
 def _audit(s: Services, args: list[str], token: TokenInfo) -> str:
     limit = int(args[0]) if args and args[0].isdigit() else 20
     return "\n".join(f"{e['at']} {e['tool']:<16} {e['effect']:<6} {e['outcome']:<8} {e['target'][:60]}" for e in s.audit.recent(limit)) or "Empty."
@@ -342,6 +368,7 @@ COMMANDS: list[Command] = [
     Command("audit", "/audit [n]", "The last gate decisions.", _audit),
     Command("undo", "/undo [commit]", "Revert the last workspace change (or a given commit).", _undo),
     Command("vault", "/vault [status|sync|reindex]", "The Obsidian vault.", _vault),
+    Command("recap", "/recap [status] | now [day] | close [day] | skip [day]", "The end-of-day check-in and daily-note recap.", _recap),
     Command("backup", "/backup [now]", "Local backups (and the remote copy).", _backup),
     Command("update", "/update [list | <tag>]", "Tagged releases: list, or install one (preflight, then restart).", _update),
     Command("restart", "/restart [now]", "Stop and start again (the same release).", _restart),

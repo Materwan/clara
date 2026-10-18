@@ -130,7 +130,7 @@ uv run clara-server                      # http://127.0.0.1:8765
 | `tests/` | The test suite (a fake model provider in `fakes.py`) |
 | `deploy/` | Installer, systemd units, settings example, SearXNG |
 | `sandbox/` | The script container image |
-| `scripts/` | Web and release builds, release signing |
+| `scripts/` | Web and release builds, release signing, the refresh of the OpenCode model table |
 | `docs/` | Decisions, web design system, review response, threat model, data map, non-goals, providers, operations |
 
 ## Licence

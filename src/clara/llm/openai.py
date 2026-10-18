@@ -3,17 +3,18 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
-from .types import Capabilities, LlmChunk, LlmError, ToolCall
+from .retry import KEY_STATUSES, NOT_THE_KEY
+from .types import Capabilities, Known, LlmChunk, LlmError, ToolCall
 
 log = logging.getLogger(__name__)
 
@@ -23,15 +24,8 @@ SKIP_SIGNATURE = "skip_thought_signature_validator"
 CONNECT_TIMEOUT = 15.0
 READ_TIMEOUT = 600.0
 GEMINI_NOT_CHAT = ("tts", "image", "embedding", "transcribe", "audio", "live", "bidi")
-
-
-@dataclass(frozen=True)
-class SecondList:
-    """Models of another address, added to the provider's own: OpenCode Zen's free models next to those of Go."""
-
-    models_url: str  # read without the key
-    host: str  # where those models are asked (`{host}/chat/completions`)
-    suffix: str  # keep only the models named so
+CODE = re.compile(r"[A-Za-z0-9][\w.-]{0,63}")  # what may pass for an error's name: a token, never a sentence
+UPSTREAM_CODE = re.compile(r"Upstream request failed:\s*\[([A-Za-z0-9][\w.-]{0,63})\]")  # OpenCode: "...: [invalid_value] ..."
 
 
 @dataclass(frozen=True)
@@ -47,7 +41,7 @@ class OpenAIFlavor:
     models_url: str = ""  # where the models are listed, when it is not `{host}/models` (OpenCode Go)
     headers: tuple[tuple[str, str], ...] = ()  # sent with every request (OpenCode wants a User-Agent of its own)
     session_header: str = ""  # the header naming the conversation, when the service insists on one (OpenCode)
-    second: SecondList | None = None
+    known: Callable[[str], Known | None] | None = None  # what the service's lists say of a model: no question asked (OpenCode)
 
 
 def google_record(model_id: str, model: dict) -> dict:
@@ -86,18 +80,43 @@ def _arguments(text: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _error_detail(response: httpx.Response) -> str:
-    try:
-        error: Any = response.json()
-    except ValueError:
-        return " ".join(response.text.split())[:300] or response.reason_phrase
+def _error_body(response: httpx.Response) -> Any:
+    """The error of an answer, out of its wrappers (a list of one, an `error` key); ValueError when it is not JSON."""
+    error: Any = response.json()
     if isinstance(error, list) and error:
         error = error[0]
     if isinstance(error, dict):
         error = error.get("error", error)
+    return error
+
+
+def _error_detail(response: httpx.Response) -> str:
+    try:
+        error = _error_body(response)
+    except ValueError:
+        return " ".join(response.text.split())[:300] or response.reason_phrase
     if isinstance(error, dict):
         error = error.get("message") or error.get("detail") or error
     return " ".join(str(error).split())[:300]
+
+
+def _error_name(error: Any) -> str | None:
+    """The provider's short name for a failure: its `code`, the `[code]` OpenCode puts in front of a message, Google's
+    `status`, or its `type`. Only a plain token counts, so the name is safe to log where the message is not."""
+    if not isinstance(error, dict):
+        return None
+    found = UPSTREAM_CODE.match(str(error.get("message") or ""))
+    for candidate in (error.get("code"), found.group(1) if found else None, error.get("status"), error.get("type")):
+        if isinstance(candidate, str) and CODE.fullmatch(candidate):
+            return candidate
+    return None
+
+
+def _error_code(response: httpx.Response) -> str | None:
+    try:
+        return _error_name(_error_body(response))
+    except ValueError:
+        return None
 
 
 class OpenAIBackend:
@@ -110,7 +129,6 @@ class OpenAIBackend:
         self.label = label
         self._transport = transport
         self._session = uuid.uuid4().hex  # for a request that belongs to no conversation
-        self._own: set[str] | None = None  # the models of the main list, to tell which address a model belongs to
         self._http = httpx.AsyncClient(
             headers={**dict(self._flavor.headers), **({"Authorization": f"Bearer {api_key}"} if api_key else {})},
             timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
@@ -124,13 +142,14 @@ class OpenAIBackend:
         await response.aread()
         detail = _error_detail(response)
         status = response.status_code
-        if status in (401, 403):
-            return LlmError(f"{self.label} refused the API key (HTTP {status}): {detail}", status)
+        code = _error_code(response)
+        if status in KEY_STATUSES and code not in NOT_THE_KEY:
+            return LlmError(f"{self.label} refused the API key (HTTP {status}): {detail}", status, code=code)
         try:
             retry_after = float(response.headers.get("retry-after", ""))
         except ValueError:
             retry_after = None
-        return LlmError(f"{self.label} answered HTTP {status}: {detail}", status, retry_after)
+        return LlmError(f"{self.label} answered HTTP {status}: {detail}", status, retry_after, code)
 
     def convert(self, messages: list[dict]) -> list[dict]:
         """The messages as the OpenAI API takes them: tool calls get ids, each result the id of its call."""
@@ -204,7 +223,7 @@ class OpenAIBackend:
         calls: dict[int, dict[str, Any]] = {}
         counted = (0, 0, 0)
         named = {self._flavor.session_header: session or self._session} if self._flavor.session_header else None
-        request = self._http.stream("POST", f"{await self._host_of_model()}/chat/completions",
+        request = self._http.stream("POST", f"{self.host}/chat/completions",
                                     json=self.body(messages, tools), headers=named)
         async with request as response:
             if response.is_error:
@@ -225,7 +244,8 @@ class OpenAIBackend:
                     error = part["error"]
                     code = error.get("code") if isinstance(error, dict) else None
                     message = error.get("message", error) if isinstance(error, dict) else error
-                    raise LlmError(f"{self.label}: {message}", code if isinstance(code, int) else None)
+                    raise LlmError(f"{self.label}: {message}", code if isinstance(code, int) else None,
+                                   code=_error_name(error))
                 if usage := part.get("usage"):
                     # Gemini repeats its running count on every chunk, others give it once: pass on the increase
                     said = (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0),
@@ -257,47 +277,17 @@ class OpenAIBackend:
                 for _, slot in sorted(calls.items()) if slot["name"]
             ])
 
-    async def _names(self, url: str, keyed: bool = True) -> set[str]:
-        request = self._http.build_request("GET", url, timeout=CONNECT_TIMEOUT)
-        if not keyed:
-            request.headers.pop("authorization", None)  # a list that is open to all does not get the key
-        response = await self._http.send(request)
+    async def list_models(self) -> list[str]:
+        response = await self._http.get(self._flavor.models_url or f"{self.host}/models", timeout=CONNECT_TIMEOUT)
         if response.is_error:
             raise await self._refused(response)
         models = response.json().get("data") or []
         names = {str(model.get("id", "")).removeprefix("models/") for model in models if isinstance(model, dict)}
-        return {name for name in names if name}
-
-    async def list_models(self) -> list[str]:
-        second = self._flavor.second
-        own_url = self._flavor.models_url or f"{self.host}/models"
-        if second is None:
-            self._own = await self._names(own_url)
-            return sorted(self._own)
-        own, more = await asyncio.gather(self._names(own_url), self._names(second.models_url, keyed=False),
-                                         return_exceptions=True)
-        if isinstance(own, BaseException):
-            raise own
-        self._own = own
-        if isinstance(more, BaseException):  # the second list is a bonus: the provider works without it
-            log.warning("%s: its second model list could not be read (%s)", self.label, more)
-            more = set()
-        return sorted(own | {name for name in more if name.endswith(second.suffix)})
-
-    async def _host_of_model(self) -> str:
-        """The address to ask: the main one, unless the model is known only to the second list."""
-        second = self._flavor.second
-        if second is None:
-            return self.host
-        try:
-            if self._own is None:
-                self._own = await self._names(self._flavor.models_url or f"{self.host}/models")
-        except Exception as error:  # cannot tell: the main address is the one the key was made for
-            log.warning("%s: its model list could not be read (%s), asking the main address", self.label, error)
-            return self.host
-        return self.host if self.model in self._own else second.host.rstrip("/")
+        return sorted(name for name in names if name)
 
     async def model_capabilities(self, names: list[str]) -> dict[str, Capabilities]:
+        if self._flavor.known is not None:
+            return {name: found.capabilities for name in names if (found := self._flavor.known(name))}
         if not self._flavor.native_models or not self._api_key:
             return {}
         found: dict[str, Capabilities] = {}

@@ -1,12 +1,14 @@
 """The traffic log: metadata only, one JSON Lines file per UTC day in `logs/traffic-YYYY-MM-DD.jsonl`.
 
 What it records: time, route (the path, never the query string), status, duration, the name of the client token,
-model, token counts, outcome. What it never records by default: what you say, what Clara answers, tool arguments,
-provider error texts, addresses (except the address of a failed sign-in, which the failure limiter needs).
+model, token counts, outcome; for a failed model call also the kind of failure, the HTTP status and the provider's
+short code for it (`400 invalid_value`), a plain token. What it never records by default: what you say, what Clara
+answers, tool arguments, provider error texts, addresses (except the address of a failed sign-in, which the failure
+limiter needs).
 
 **The debug switch** (console `/debug on`, Admin page) turns on a second log, `logs/debug-content.jsonl`, written
 private (0600), with the full prompts sent to the models and their answers. It switches itself off after one hour
-(or `/debug off`), and the file is deleted when it does.
+(or `/debug off`), and the file is deleted when it does. The text of a failed model call goes there too.
 
 Files older than CLARA_TRAFFIC_LOG_DAYS are deleted. Writing happens on a background thread: a request never waits
 for the disk.

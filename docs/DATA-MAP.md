@@ -11,8 +11,8 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `<data>/clara.db` (with `-wal`, `-shm`) | The database, below | See each table | Yes |
 | `<data>/backups/daily/`, `weekly/`, `manual/`, `pre-update/` | Copies of the database | 14 daily, 8 weekly; manual and pre-update until you delete them | — |
 | `<data>/backups/workspace.bundle` | A git bundle of the workspace, made for the remote copy | Replaced at each remote backup | Remote only |
-| `<data>/logs/traffic-<date>.jsonl` | One line per request: time, method, route (ids replaced), status, duration, client, token name, model, token counts, outcome; the address of failed sign-ins | `CLARA_TRAFFIC_LOG_DAYS` (7) | No |
-| `<data>/logs/debug-content.jsonl` | Full prompts and answers, only while `/debug on` | Deleted when the hour ends or `/debug off` | No |
+| `<data>/logs/traffic-<date>.jsonl` | One line per request: time, method, route (ids replaced), status, duration, client, token name, model, token counts, outcome (for a failed model call also its HTTP status and the provider's error code, never its text); the address of failed sign-ins | `CLARA_TRAFFIC_LOG_DAYS` (7) | No |
+| `<data>/logs/debug-content.jsonl` | Full prompts and answers, and the text of failed model calls, only while `/debug on` | Deleted when the hour ends or `/debug off` | No |
 | *(memory only)* the live log | The last 500 lines of the server's log (INFO and up) and of the traffic records, shown in the Admin page's Logs tab; secret-looking text masked, no sign-in addresses, no debug content | Until the server restarts | No |
 | `<data>/run/` | The instance lock, the boot record, a pending update's plan and result | While needed | No |
 | `<data>/workspace/` | Clara's files and notes (`notes/`), script logs, and its git history | Until deleted; **the git history keeps deleted files** until you rewrite it | Remote copy (bundle) |
@@ -22,7 +22,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `/etc/clara/discord-token.cred`, `discord-clara-token.cred`, `discord.env` (or the token files named in `clara.env` when the server starts the bot) | The Discord bot's token, its Clara token, your Discord id and the ids of your four channels | — | No |
 | `/opt/clara/releases/<tag>/`, `/opt/clara/current` | Installed releases and their virtualenvs | Until you remove old ones | No |
 | `/var/lib/clara-home/` | The `clara` user's home: rootless Podman's images and storage, SearXNG's settings | — | No |
-| `/var/lib/clara-discord/state.json` (`<data>/discord-state.json` when the server starts the bot) | The bot's current conversation id | — | No |
+| `/var/lib/clara-discord/state.json` (`<data>/discord-state.json` when the server starts the bot) | The bot's current conversation id, and the open check-in threads, at most 30 (thread id → conversation; removed once the recap is written) | — | No |
 | `~/.config/clara/token` (on each device) | A client token (0600) | Until you delete it | No |
 
 ## In the database
@@ -33,6 +33,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `conversation_files` | Files sent in a conversation (their bytes) and their text | With the conversation |
 | `facts`, `facts_fts`, `forgotten` | Facts with source, dates, pin, expiry, supersede; tombstones of forgotten facts (their folded text) | Until you delete them; superseded and expired facts stay visible on the Memory page |
 | `projects`, `project_sources`, `project_files` | Project settings, GitHub sources, file contents | Until you delete the project |
+| `recaps` | One row per day of the daily recap: its status, the check-in conversation, the daily note it went into, attempts, an error text | Until deleted (a few hundred bytes a day) |
 | `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features, run history and summaries | Until deleted; a once-only reminder goes when it fires |
 | `events`, `event_cursors` | Reminders fired, notifications, approval news, alerts, server and update news; each token's read position | Until every active client read them (a day at least), 90 days at most |
 | `approvals` | Requests with their frozen action and arguments, answer, result | 30 days after they finish |
@@ -54,6 +55,7 @@ keep what they held until they rotate out.
 | To | What | When |
 | --- | --- | --- |
 | The model provider of the conversation | The prompt: persona, your facts (not in incognito), the conversation or its summary, project content, tool results, attached files and pictures | Every model call. Local Ollama hosts keep it on your machines; hosted providers are listed with their terms in [PROVIDERS.md](PROVIDERS.md). A local-only conversation never reaches a hosted provider |
+| The model provider of the check-in conversation | The digest of the day: your conversations of that day (normal, project and scheduled ones; never incognito or local-only ones), with their earlier summary and last exchanges, tasks, reminders, vault changes and Clara's actions; a long conversation first goes to the side-jobs model for a summary | At each end-of-day check-in, when `CLARA_RECAP` is on |
 | SearXNG, then the search engines it asks | The search query | `web_search` |
 | The web site fetched | A request for that address | `web_fetch` |
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |

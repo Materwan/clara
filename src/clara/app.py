@@ -65,6 +65,7 @@ from .ops.tailscale import FunnelOn, check_funnel_now
 from .ops.traffic import TrafficLog
 from .ops.upkeep import Upkeep, late_alert
 from .ops.usage import UsageLog
+from .recap import install as recap_install
 from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
@@ -198,6 +199,8 @@ def recover(s: Services) -> None:
     healed = s.conversations.heal_versions()
     failed = s.approvals.recover()
     interrupted = s.schedules.recover()
+    if s.recaps is not None:
+        s.recaps.recover()
     if healed or failed or interrupted:
         log.warning("after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
                     "%d scheduled run(s) to run again", healed, failed, interrupted)
@@ -406,6 +409,7 @@ def extend(s: Services) -> None:
     workspace_setup.install(s)
     connectors_setup.install(s)
     vault_setup.install(s)
+    recap_install(s)
     ops_setup.install(s)
 
 

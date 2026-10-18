@@ -6,8 +6,12 @@
   before each search.
 * Every change is a git commit by Clara (git.py); a deleted note goes to `.trash/` and stays in the history.
 * Moving a note updates every `[[link]]` to it.
-* Daily notes live where the vault's `_clara/schema.json` says (`{"daily": {"folder": "Daily", "format": "%Y-%m-%d"}}`),
+* Daily notes live where the vault's `_clara/schema.json` says: `{"daily": {"folder": "Daily", "format": "%Y-%m-%d"}}`,
+  or the layout of the Clara vault (`"daily_format": "YYYY/YYYY-MM-DD"` and `"types": {"daily": {"folder": "1-daily"}}`),
   else in `Daily/`.
+* The day's recap is one block of the daily note (between two comments): writing it again replaces that block and
+  nothing else, so what the person wrote in the note is never touched. Its `[[links]]` are kept only when the note
+  exists.
 """
 
 from __future__ import annotations
@@ -16,12 +20,13 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from ...db import Database
 from ...memory.facts import fts_query
-from ...timeutil import zone
+from ...timeutil import iso, resolve_local, zone
 from ..projects import read_lines
 from .git import GitError, GitSync
 
@@ -29,12 +34,54 @@ HIDDEN = ("_templates",)
 MAX_NOTE = 400_000
 SEARCH_LIMIT = 20
 LINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]")
+MOMENT = re.compile(r"\[[^\]]*\]|YYYY|YY|MM|M|DD|D|dddd|ddd")  # the tokens of Obsidian's date format
+RECAP_HEADING = "## Récap (Clara)"
+RECAP_START = "<!-- clara:recap -->"
+RECAP_END = "<!-- /clara:recap -->"
 CLOSED_BLOCK = ("## Second brain\nThe person's Obsidian vault (their notes, projects, ideas, knowledge) is available: "
                 "call open_second_brain when it matters, then use the vault_* tools.")
 
 
 class VaultError(ValueError):
     pass
+
+
+def moment_format(day: date, pattern: str) -> str:
+    """A date as Obsidian's `YYYY/YYYY-MM-DD`-style formats write it (`[text]` stays as is)."""
+    def part(match: re.Match) -> str:
+        token = match.group(0)
+        if token.startswith("["):
+            return token[1:-1]
+        return {"YYYY": f"{day.year:04d}", "YY": f"{day.year % 100:02d}", "MM": f"{day.month:02d}", "M": str(day.month),
+                "DD": f"{day.day:02d}", "D": str(day.day), "dddd": day.strftime("%A"), "ddd": day.strftime("%a")}[token]
+
+    return MOMENT.sub(part, pattern)
+
+
+class NoteIndex:
+    """The notes of the vault by name, to resolve links without walking the folders for each one."""
+
+    def __init__(self, paths: list[str]):
+        self.paths = paths
+        self.by_path = {path[:-3].lower(): path for path in paths}
+        self.by_name: dict[str, list[str]] = defaultdict(list)
+        for path in paths:
+            self.by_name[Path(path).stem.lower()].append(path)
+
+    def resolve(self, name: str) -> str | None:
+        """The path of the one note a path or a name stands for; None when there is none or several."""
+        text = LINK.fullmatch(name.strip())
+        key = (text.group(1) if text else name).strip().replace("\\", "/")
+        key = key[:-3] if key.lower().endswith(".md") else key
+        if "/" in key and key.lower() in self.by_path:
+            return self.by_path[key.lower()]
+        matches = self.by_name.get(key.rsplit("/", 1)[-1].lower(), [])
+        return matches[0] if len(matches) == 1 else None
+
+    def link(self, path: str) -> str:
+        """How to write a link to this note: its bare name when that is unique in the vault, else its path."""
+        stem = Path(path).stem
+        return stem if len(self.by_name[stem.lower()]) == 1 else path[:-3]
 
 
 class Vault:
@@ -242,20 +289,131 @@ class Vault:
             await self._commit([path], f"Clara: {what}")
         return f"Done: {what}."
 
-    def daily_path(self, day: datetime) -> str:
-        folder, pattern = "Daily", "%Y-%m-%d"
+    def daily_path(self, day: date | datetime) -> str:
+        day = day.date() if isinstance(day, datetime) else day
+        folder, pattern, moment = "Daily", "%Y-%m-%d", False
         schema = self.root / "_clara" / "schema.json"
         if schema.is_file():
             try:
-                daily = json.loads(schema.read_text(encoding="utf-8")).get("daily") or {}
-                folder = str(daily.get("folder") or folder)
-                pattern = str(daily.get("format") or pattern)
-            except ValueError:
+                data = json.loads(schema.read_text(encoding="utf-8"))
+                daily = data.get("daily") or {}
+                if daily.get("folder") or daily.get("format"):
+                    folder = str(daily.get("folder") or folder)
+                    pattern = str(daily.get("format") or pattern)
+                else:  # the layout of the Clara vault: types.daily.folder and a top-level daily_format
+                    typed = (data.get("types") or {}).get("daily") or {}
+                    folder = str(typed.get("folder") or folder)
+                    if data.get("daily_format"):
+                        pattern, moment = str(data["daily_format"]), True
+            except (ValueError, AttributeError):
                 pass
-        return self.clean(f"{folder}/{day.strftime(pattern)}.md")
+        name = moment_format(day, pattern) if moment else day.strftime(pattern)
+        return self.clean(f"{folder}/{name}.md")
+
+    def _daily_template(self, day: date) -> str:
+        """A new daily note: the vault's `_templates/daily.md` with its date fields filled, else a title alone."""
+        template = self.root / "_templates" / "daily.md"
+        if template.is_file():
+            text = template.read_text(encoding="utf-8", errors="replace")
+            text = re.sub(r"\{\{date:([^}]*)\}\}", lambda m: moment_format(day, m.group(1)), text)
+            return text.replace("{{date}}", day.isoformat()).replace("{{title}}", day.isoformat())
+        return f"# {day.isoformat()}\n\n"
+
+    def index(self) -> NoteIndex:
+        return NoteIndex(self.notes())
+
+    def clean_links(self, text: str) -> tuple[str, list[str]]:
+        """`[[links]]` of a text written by the model: each is rewritten to the real note's bare name (or path when the
+        name is not unique); one that points to no note, or to several, becomes plain text. Returns the text and the
+        links given up."""
+        index = self.index()
+        dropped: list[str] = []
+
+        def fix(match: re.Match) -> str:
+            target, heading, alias = match.group(1).strip(), match.group(2) or "", match.group(3) or ""
+            path = index.resolve(target)
+            if path is None:
+                dropped.append(target)
+                return alias[1:] if alias else target.rsplit("/", 1)[-1]
+            return f"[[{index.link(path)}{heading}{alias}]]"
+
+        return LINK.sub(fix, text), dropped
+
+    @staticmethod
+    def _touch_updated(text: str, today: date) -> str:
+        """Set the front matter's `updated:` to today, when the note has one."""
+        if not text.startswith("---\n"):
+            return text
+        end = text.find("\n---", 4)
+        if end < 0:
+            return text
+        head = re.sub(r"(?m)^(updated:\s*).*$", lambda m: m.group(1) + today.isoformat(), text[:end], count=1)
+        return head + text[end:]
+
+    async def write_recap(self, day: date, body: str) -> tuple[str, list[str]]:
+        """Put the recap of a day in that day's daily note (made from the template when there is none): the block
+        between the two comments is replaced, or added at the end under a heading. Returns the note's path and the
+        links given up."""
+        body = body.replace(RECAP_START, "").replace(RECAP_END, "").strip()
+        if not body:
+            raise VaultError("The recap is empty.")
+        if len(body) > MAX_NOTE:
+            raise VaultError("The recap is too long.")
+        async with self._lock:
+            await asyncio.to_thread(self.git.pull, True)
+            path = self.daily_path(day)
+            file = self.root / path
+            body, dropped = self.clean_links(body)
+            text = file.read_text(encoding="utf-8") if file.exists() else self._daily_template(day)
+            block = f"{RECAP_START}\n{body}\n{RECAP_END}"
+            if RECAP_START in text and RECAP_END in text:
+                before, _, rest = text.partition(RECAP_START)
+                _, _, after = rest.partition(RECAP_END)
+                text = before + block + after
+            else:
+                text = text.rstrip("\n") + f"\n\n{RECAP_HEADING}\n{block}\n"
+            text = self._touch_updated(text, datetime.now(zone(self.zone)).date())
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_text(text, encoding="utf-8")
+            await self._commit([path], f"Clara: daily recap {path}")
+        return path, dropped
+
+    def changes_on(self, day: date) -> list[dict]:
+        """The notes changed by commits made on that local day (yours through Obsidian's git sync, and Clara's)."""
+        tz = zone(self.zone)
+        start = resolve_local(datetime.combine(day, datetime.min.time()), tz)
+        end = resolve_local(datetime.combine(day + timedelta(days=1), datetime.min.time()), tz) - timedelta(seconds=1)
+        rows = []
+        for row in self.git.changes(iso(start), iso(end)):
+            path = row["path"]
+            parts = path.split("/")
+            if not path.lower().endswith(".md") or any(part.startswith(".") for part in parts) or parts[0] in HIDDEN:
+                continue
+            rows.append({**row, "mine": all(author == self.git.author for author in row["authors"])})
+        return rows
+
+    @staticmethod
+    def _under_heading(text: str, heading: str, line: str) -> str | None:
+        """`line` added after the last line of the section under `heading` (None: no such heading)."""
+        lines = text.splitlines(keepends=True)
+        wanted = heading.strip().lstrip("#").strip().lower()
+        at = next((i for i, each in enumerate(lines) if each.startswith("#")
+                   and each.strip().lstrip("#").strip().lower() == wanted), None)
+        if at is None:
+            return None
+        level = len(lines[at]) - len(lines[at].lstrip("#"))
+        end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("#")
+                    and len(lines[i]) - len(lines[i].lstrip("#")) <= level), len(lines))
+        while end - 1 > at and not lines[end - 1].strip():
+            end -= 1
+        if not lines[end - 1].endswith("\n"):
+            lines[end - 1] += "\n"
+        lines.insert(end, line if line.endswith("\n") else line + "\n")
+        return "".join(lines)
 
     async def daily(self, action: str, text: str = "") -> str:
-        path = self.daily_path(datetime.now(zone(self.zone)))
+        today = datetime.now(zone(self.zone))
+        path = self.daily_path(today)
         file = self.root / path
         if action == "read":
             await asyncio.to_thread(self.git.pull)
@@ -265,10 +423,11 @@ class Vault:
         async with self._lock:
             await asyncio.to_thread(self.git.pull, True)
             file.parent.mkdir(parents=True, exist_ok=True)
-            existing = file.read_text(encoding="utf-8") if file.exists() else f"# {Path(path).stem}\n\n"
-            stamp = datetime.now(zone(self.zone)).strftime("%H:%M")
-            file.write_text(existing + ("" if existing.endswith("\n") else "\n") + f"- {stamp} {text.strip()}\n",
-                            encoding="utf-8")
+            existing = file.read_text(encoding="utf-8") if file.exists() else self._daily_template(today.date())
+            line = f"- {today.strftime('%H:%M')} {text.strip()}\n"
+            under_log = self._under_heading(existing, "Log", line)  # the daily template's section for what happened
+            file.write_text(under_log if under_log is not None
+                            else existing + ("" if existing.endswith("\n") else "\n") + line, encoding="utf-8")
             await self._commit([path], f"Clara: daily note {path}")
         return f"Added to {path}."
 

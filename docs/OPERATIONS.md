@@ -97,7 +97,7 @@ direct-message function.
 2. On the Discord developer portal: a new application and its bot. On the Bot page, turn **Public Bot** off (nobody
    else can invite it) and turn on **Message Content Intent** (it lets the bot read what you write in `#general`;
    no other privileged intent is needed). Invite it to your server with an OAuth2 URL of scopes `bot` and
-   `applications.commands` and the permissions View Channels, Send Messages, Attach Files and Read Message History.
+   `applications.commands` and the permissions View Channels, Send Messages, Attach Files, Read Message History, Create Public Threads, Send Messages in Threads and Manage Threads (the last three are for the end-of-day check-in, see *The daily recap*).
 3. A Clara token for it: `clara token create discord discord` (its approval scope is `safe`).
 4. Two files that only the `clara` user can read, one with the bot's token, one with the Clara token:
 
@@ -135,9 +135,28 @@ systemctl enable --now clara-discord
 
 and `CLARA_DISCORD_EXPECTED=true` in `/etc/clara/clara.env`, so its silence raises an alert.
 
-What goes where: your chat and Clara's answers in `#general`; approval requests, with buttons, in `#approval`
+What goes where: your chat and Clara's answers in `#general` (the end-of-day check-in too, with a thread for your answer); approval requests, with buttons, in `#approval`
 (`#general` says when one waits); reminders, task reminders, schedule summaries, notifications and update news in
 `#notification`; alerts in `#alerts`. Keep the server to yourself: anyone in it reads those channels.
+
+### The daily recap
+
+At the end of each day Clara asks what you did and writes it into the vault's daily note. It needs the vault (above);
+it works best with the web site and Discord, which are where the question is announced.
+
+1. In `/etc/clara/clara.env`: `CLARA_RECAP=true` (and, if you like, `CLARA_RECAP_AT=23:59`, `CLARA_RECAP_REMIND_AT=09:00`).
+   Restart. The vault's `_clara/schema.json` says where daily notes go (`types.daily.folder` and `daily_format`, or
+   `daily.folder` and `daily.format`); a missing note is made from `_templates/daily.md`.
+2. In Discord, give the bot *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general` (the
+   bot logs what it lacks at start). The last one lets it delete the thread once the recap is written; without it the
+   thread is archived instead. Without the first two the check-in becomes the current conversation instead of a thread.
+3. Try it without waiting for midnight: `/recap now` in the Admin console (or `clara-admin`) asks for today. Answer in
+   the thread (Discord) or in the conversation « Bilan du <date> » (web). Clara shows the recap and writes it; open the
+   daily note to see the « Récap (Clara) » block. `/recap` lists the last days; `/recap skip <day>` drops one;
+   `/recap close <day>` writes an unanswered one from its digest.
+
+The first start with the recap on asks about yesterday; after a stop, the next start asks about the day that ended.
+If the model is down, the check-in is tried three times, ten minutes apart, then the `recap` alert is raised.
 
 ### Remote backups (restic)
 

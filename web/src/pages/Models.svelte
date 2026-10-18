@@ -1,12 +1,14 @@
 <script lang="ts">
   import Checkbox from '../components/Checkbox.svelte';
   import Icon from '../components/Icon.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api } from '../lib/api';
   import { toast } from '../lib/state.svelte';
 
   let providers = $state<any[]>([]);
   let catalogue = $state<any>({ models: [], problems: {}, default: '', upkeep: '', fallbacks: [] });
   let filter = $state('');
+  let view = $state<'works' | 'all' | 'broken'>('works');
   let busy = $state(false);
 
   async function load(refresh = false): Promise<void> {
@@ -38,8 +40,13 @@
   }
 
   async function show(model: any): Promise<void> {
-    await api.patch('/v1/admin/models', { refs: [model.ref], shown: !model.shown });
-    model.shown = !model.shown;
+    try {
+      await api.patch('/v1/admin/models', { refs: [model.ref], shown: !model.shown });
+      model.shown = !model.shown;
+    } catch (error) {
+      toast((error as Error).message, 'error');
+      load();
+    }
   }
 
   async function setDefault(ref: string): Promise<void> {
@@ -72,7 +79,17 @@
     setFallbacks(refs);
   }
 
-  const shown = $derived(catalogue.models.filter((model: any) => !filter || model.ref.toLowerCase().includes(filter.toLowerCase())));
+  // A model that does not work (OpenCode lists models of APIs Clara does not speak) is left out of the default view.
+  const broken = (model: any): boolean => model.fit?.works === false;
+  const brokenCount = $derived(catalogue.models.filter(broken).length);
+  const inView = (model: any): boolean => view === 'all' || (view === 'broken') === broken(model);
+  const shown = $derived(catalogue.models.filter((model: any) => inView(model)
+    && (!filter || model.ref.toLowerCase().includes(filter.toLowerCase()))));
+
+  function can(model: any): string {
+    const caps = model.capabilities;
+    return [caps.tools ? 'tools' : '', caps.vision ? 'pictures' : '', caps.thinking ? 'thinking' : ''].filter(Boolean).join(', ') || '?';
+  }
 </script>
 
 <div class="page stack">
@@ -105,19 +122,25 @@
     </div>
   </section>
   <section class="panel">
-    <div class="row"><h2 class="grow">Catalogue</h2><input type="search" aria-label="Filter models" placeholder="Filter" bind:value={filter} /><button aria-busy={busy} onclick={() => !busy && load(true)}><Icon name="refresh" size={16} />Refresh</button></div>
+    <div class="row"><h2 class="grow">Catalogue</h2>
+      <Segmented label="Show models that" bind:value={view} options={[
+        { value: 'works', label: 'Work with Clara', title: 'Hides the models Clara cannot use (they speak an API it does not)' },
+        { value: 'all', label: 'All' },
+        { value: 'broken', label: "Don't work", count: brokenCount },
+      ]} />
+      <input type="search" aria-label="Filter models" placeholder="Filter" bind:value={filter} /><button aria-busy={busy} onclick={() => !busy && load(true)}><Icon name="refresh" size={16} />Refresh</button></div>
     <table>
       <thead><tr><th>Model</th><th>Window</th><th>Can</th><th>In pickers</th><th></th></tr></thead>
       <tbody>
         {#each shown as model (model.ref)}
           <tr><td>{#if model.ref === catalogue.default}<Icon name="star" size={16} label="Default model" /> {/if}{model.ref}{model.listed ? '' : ' (not listed now)'}</td>
             <td class="small">{model.window.toLocaleString()}</td>
-            <td class="small">{[model.capabilities.tools ? 'tools' : '', model.capabilities.vision ? 'pictures' : '', model.capabilities.thinking ? 'thinking' : ''].filter(Boolean).join(', ') || '?'}</td>
-            <td><Checkbox aria-label={`Show ${model.ref} in pickers`} checked={model.shown} onchange={() => show(model)} /></td>
-            <td class="row"><button class="small" onclick={() => setDefault(model.ref)}>Default</button>
-              <button class="small" onclick={() => setUpkeep(model.ref)}>Side jobs</button>
-              <button class="small" disabled={catalogue.fallbacks.includes(model.ref)} onclick={() => setFallbacks([...catalogue.fallbacks, model.ref])}>+ Fallback</button></td></tr>
-        {:else}<tr><td colspan="5" class="empty">No model: enable a provider and refresh.</td></tr>{/each}
+            <td class="small">{#if broken(model)}<span class="tag danger">doesn't work</span> {model.fit.why}{:else}{can(model)}{#if model.fit?.works === null} <span class="tag warn" title={model.fit.why}>unverified</span>{/if}{/if}</td>
+            <td><Checkbox aria-label={`Show ${model.ref} in pickers`} checked={model.shown} disabled={broken(model)} onchange={() => show(model)} /></td>
+            <td class="row"><button class="small" disabled={broken(model)} onclick={() => setDefault(model.ref)}>Default</button>
+              <button class="small" disabled={broken(model)} onclick={() => setUpkeep(model.ref)}>Side jobs</button>
+              <button class="small" disabled={broken(model) || catalogue.fallbacks.includes(model.ref)} onclick={() => setFallbacks([...catalogue.fallbacks, model.ref])}>+ Fallback</button></td></tr>
+        {:else}<tr><td colspan="5" class="empty">{catalogue.models.length ? 'No model matches: try another view or filter.' : 'No model: enable a provider and refresh.'}</td></tr>{/each}
       </tbody>
     </table>
   </section>

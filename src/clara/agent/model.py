@@ -8,7 +8,9 @@
   slow fallbacks cannot run for an hour.
 * **Fallbacks.** A model that fails *before it said anything* (busy, unreachable, gone, silent past the first-token
   timeout, key refused, payment required) hands over to the next of the choice's fallbacks; a refused key or a 402 also raises an alert.
-* **Usage.** Every call, failed ones too, is a `usage_log` row (tokens only) and a metadata line of the traffic log.
+* **Usage.** Every call, failed ones too, is a `usage_log` row (tokens only) and a metadata line of the traffic log. A
+  failed call's line adds the HTTP status and the provider's short code for the failure (`400 invalid_value`), never
+  its text: that goes to the debug log, while the debug switch is on.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from ..llm import Choice, LlmChunk, Providers
-from ..llm.retry import KEY_STATUSES, PAYMENT_STATUS, moves_on, status_of
+from ..llm.retry import PAYMENT_STATUS, key_refused, moves_on, status_of
+from ..llm.types import LlmError
 from ..ops.alerts import Alerts
 from ..ops.traffic import TrafficLog
 from ..ops.usage import UsageLog
@@ -121,6 +124,7 @@ class ModelRunner:
                 counts = [0, 0, 0]
                 text_size = 0
                 outcome = "ok"
+                failure: Exception | None = None
                 try:
                     async with semaphore:
                         backend = self.providers.backend(option.ref, option.window)
@@ -149,7 +153,10 @@ class ModelRunner:
                     raise
                 except Exception as error:
                     outcome = "error"
+                    failure = error
                     self._alert_for(option, error)
+                    self.traffic.content("llm_error", provider=option.provider.id, model=option.model,
+                                         status=status_of(error), error=str(error))
                     hand_over = moves_on(error, fallback=index > 0) or isinstance(error, ModelSilent)
                     if started or index + 1 == len(options) or not hand_over:
                         queue.put_nowait(error)
@@ -170,7 +177,8 @@ class ModelRunner:
                                       duration_ms=int(seconds * 1000), outcome=outcome, estimated=estimated and outcome == "ok")
                     self.traffic.record("model", provider=option.provider.id, model=option.model, use=kind,
                                         client=client, prompt_tokens=prompt, completion_tokens=completion,
-                                        cached_tokens=counts[2], ms=int(seconds * 1000), outcome=outcome)
+                                        cached_tokens=counts[2], ms=int(seconds * 1000), outcome=outcome,
+                                        **_failure_fields(failure))
 
         async def guarded() -> None:
             """Whatever goes wrong in the producer reaches the consumer: it must never wait for ever."""
@@ -201,7 +209,7 @@ class ModelRunner:
 
     def _alert_for(self, option: Choice, error: BaseException) -> None:
         status = status_of(error)
-        if status in KEY_STATUSES:
+        if key_refused(error):
             self.alerts.raise_(f"provider_key:{option.provider.id}", f"{option.provider.label} refused its key",
                                f"HTTP {status} while calling {option.ref}. Check the key: clara secrets set "
                                f"{option.provider.key_secret}.")
@@ -218,6 +226,19 @@ class ModelRunner:
             async for chunk in chunks:
                 parts.append(chunk.text)
         return "".join(parts)
+
+
+def _failure_fields(error: Exception | None) -> dict:
+    """What the traffic log keeps of a failed call: what kind of failure, the HTTP status and the provider's short
+    code for it. Never the message, which can quote what you wrote."""
+    if error is None:
+        return {}
+    fields: dict = {"error": type(error).__name__}
+    if (status := status_of(error)) is not None:
+        fields["status"] = status
+    if isinstance(error, LlmError) and error.code:
+        fields["code"] = error.code
+    return fields
 
 
 def _without_pictures(messages: list[dict]) -> list[dict]:

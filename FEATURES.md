@@ -44,9 +44,11 @@ portrait, the page in cool chalk (or deep blue in the dark theme), one violet si
 Hanken Grotesk and Epilogue served by Clara herself (SIL Open Font Licence, the licences at `/fonts/`), line icons.
 The rail holds **New chat**, the pages you work in (Chat, Projects, Tasks & reminders, Schedules, Workspace, Vault),
 the list of conversations (on every page) and **Settings**, whose six pages share a tab bar (Memory, Connections, Rules
-& approvals, Models, Usage, Admin). The logo and **New chat** stay at the top; everything under them scrolls as one. At
-its foot: **Waiting for you** with a count when approval requests wait (it opens Rules & approvals), a red count on
-Settings and on the Admin tab while alerts are active, the connection state with the default model, an **Auto /
+& approvals, Models, Usage, Admin). The logo and **New chat** stay at the top, the account tab at the foot; the pages and
+conversations scroll between them. The connection is a lamp on Clara's portrait: green when connected, amber while
+it reconnects, red when Clara is not reachable. Pinned at the foot: **Waiting for you** with a count when approval
+requests wait (it opens Rules & approvals), and the account tab, which shows the name of the token you are signed in
+with and a red count while alerts are active (also on the Admin tab). It opens onto **Settings**, an **Auto /
 Light / Dark** theme switch (remembered in this browser, applied before the page is drawn) and Sign out. On a phone
 the rail, with the list of conversations, slides in over the page (focus moves into it, and the page behind is inert until
 it closes). Checkboxes are drawn in the site's style (a box that fills violet, with a white tick). A question that needs an answer (delete, revoke, a secret's value, when a token or an account is attached)
@@ -65,7 +67,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
 | Connections (Settings) | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
-| Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order) |
+| Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
 | Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; debug switch; backups (list, back up now); releases (notes, install); the console |
 
@@ -108,7 +110,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/status` | Version, state, models, storage, Tailscale, backups, alerts |
 | `/provider [list] \| enable\|disable\|check <id>` | Model providers |
 | `/model [provider:model]` | Show or set the default model |
-| `/models [refresh] \| show\|hide <ref>...` | The catalogue; `*` marks models shown in pickers |
+| `/models [refresh] \| show\|hide <ref>...` | The catalogue; `*` marks models shown in pickers; a model that does not work says why |
 | `/fallbacks [<ref>... \| clear]` | Models asked in turn when one fails |
 | `/upkeep [<ref> \| none]` | The model of titles and summaries |
 | `/tokens [list] \| create \| revoke \| approvals` | Client tokens (revoking works at once) |
@@ -122,6 +124,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/audit [n]` | The last gate decisions |
 | `/undo [commit]` | Revert the last workspace change (or a given commit) |
 | `/vault [status\|sync\|reindex]` | The Obsidian vault |
+| `/recap [status] \| now [day] \| close [day] \| skip [day]` | The end-of-day check-in and the daily-note recap (section 6): its state; ask a day now (`day`: `YYYY-MM-DD`, `today`, `yesterday`); close an unanswered one from its digest; skip a day |
 | `/backup [now]` | Local backups (and the remote copy) |
 | `/update [list \| <tag>]` | Tagged releases: list, or install one (preflight, then restart) |
 | `/restart [now]` | Stop and start again (the same release) |
@@ -140,7 +143,7 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   its heartbeat (the `discord` alert). Otherwise run it as `clara-discord.service`. Use one of the two, never both.
 - Connects with the guild, guild-message and message-content intents (the last is privileged: switch it on in the
   developer portal): no member list, no presences, no direct messages.
-- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general`; every other user, channel and server is ignored
+- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general` (and in a check-in thread under it); every other user, channel and server is ignored
   without a reply. At start it finds the four channels: if one is missing, is not a text channel, or they are not all
   in one server, it refuses to start and says which. Only one bot runs per state file.
 - What you write in `#general` is a chat message in the bot's current conversation; files and pictures you attach go
@@ -155,6 +158,7 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | `#notification` | Reminders, notifications, task reminders, schedule summaries and update news |
   | `#alerts` | Alerts |
 
+- The end-of-day check-in (a `checkin` event, section 6) is posted in `#general` with a **thread** under it: what you write in that thread goes to the check-in's conversation, whatever the current conversation is, and the reminder is posted in it. **Once the recap is written** (or the check-in closed without your answer) the bot says so in `#general` (« Récap écrit » with the note's path, after the answer that wrote it was posted) and **deletes the thread**; the conversation stays in Clara, and a correction is made there (the web site), which only says again where the recap is. The bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general` (it logs what it lacks at start); without *Manage Threads* it archives the thread instead, and without the right to open threads the check-in becomes the current conversation (until its recap is written).
 - Slash commands (in your server, for you only): `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
   `/approvals`.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
@@ -244,7 +248,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
   back (`GET /v1/events`, or the live stream `GET /v1/events/stream`). Event kinds: `reminder`, `notification`,
-  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`.
+  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `checkin` (the end-of-day check-in: asked, reminded and closed for the web site and Discord, and written for Discord alone).
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
@@ -261,10 +265,33 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Second brain (Obsidian vault):** a git clone of your vault (`CLARA_VAULT_PATH`). It is closed by default: the model
   sees a one-line mention and calls `open_second_brain` when your notes matter, which opens seven tools for that
   conversation. Search is FTS5 over titles and text. Moving a note updates every `[[link]]` to it (bare links stay
-  bare). Deleted notes go to `.trash/`. The daily note follows the vault's own settings (`_clara/schema.json`).
+  bare). Deleted notes go to `.trash/`. The daily note follows the vault's own settings (`_clara/schema.json`: `daily.folder` and `daily.format`, or the Clara vault's `types.daily.folder` with `daily_format` such as `YYYY/YYYY-MM-DD`); a new one is made from `_templates/daily.md`, and a line added to today's note goes under its `## Log`.
   Changes are committed and pushed (`CLARA_VAULT_PUSH`) a few seconds after the last one (never force-pushed; the
   token travels as an HTTP header, never in the URL); the vault is pulled every `CLARA_VAULT_PULL_SECONDS` (30). A
   failed push raises the `vault_push` alert.
+- **Daily recap (check-in):** with `CLARA_RECAP` and a vault, at the end of each local day (`CLARA_RECAP_AT`, 23:59 in
+  `CLARA_TIMEZONE`; at the next start if the server was off then, for yesterday only) Clara opens a conversation
+  "Bilan du 2026-10-18", **in French**, and **waits for your answer before writing anything**:
+  - The conversation's first message carries a **digest of the day**, made in code: the conversations with a message
+    that day (normal, project and scheduled ones, with the stored summary and last exchanges for those begun earlier;
+    never incognito or local-only ones, nor earlier check-ins), the tasks done and the open ones that may be done,
+    reminders that fired, scheduled runs, the notes of the vault changed that day (read from git, yours and Clara's),
+    the notes used in each conversation, and what Clara did through the gate (writes, commits, pull requests…). A day
+    over `CLARA_RECAP_DIGEST_CHARS` (60,000, and at most 35% of the model's window) is shortened: the longest
+    conversations are summarised by the side-jobs model, or their excerpts cut shorter if it fails.
+  - Clara's opening message (what she saw, tasks that may be done, "what else did you do?") is announced by a
+    `checkin` event on the web site (a notification; the conversation is in the list) and on Discord (a thread in
+    `#general`). You answer there, from either surface, like in any chat.
+  - When she has enough, Clara shows a preview and writes the recap with `write_daily_recap`: one block of the day's
+    daily note, between `<!-- clara:recap -->` and `<!-- /clara:recap -->` under `## Récap (Clara)`, replaced at each call
+    (what you wrote in the note is never touched). `[[Links]]` are kept only for notes that exist (rewritten to the
+    note's name). A task you confirm is marked done with `update_task`; nothing else is marked.
+  - Unanswered, the check-in is reminded at `CLARA_RECAP_REMIND_AT` (09:00) the next morning. When the next day's
+    check-in comes while it is still unanswered, Clara first writes its recap from the digest alone, the uncertain
+    points under « À confirmer » (the conversation stays open: a late answer updates the note).
+  - Once the recap is written, the Discord thread is deleted (a line in `#general` says where the note is); see the Discord section.
+  - A failed attempt is tried again twice, ten minutes apart, then raises the `recap` alert. `/recap` shows the days.
+  - Without `CLARA_RECAP` nothing runs by itself, but `/recap now` works with a vault.
 - **Forms:** the `qcm` tool shows a form (single choice, multiple choice, free text; 20 questions, 10 options each,
   LaTeX allowed) that you answer in the web chat; an optional key grades it.
 
@@ -380,7 +407,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-47 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+48 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub or Drive connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -431,6 +458,7 @@ vault, no GitHub or Drive connection, a local-only conversation) are not offered
 | `vault_write` | Create a note, replace one, or delete one (to `.trash/`) | vault_write / write; vault_destroy / destructive to replace or delete |
 | `vault_edit` | Replace a passage, or append (at the end or under a heading) | vault_write / write |
 | `vault_daily` | Read today's daily note, or append a timestamped line | read; vault_write / write to append |
+| `write_daily_recap` | Write the recap of the day being checked in into that day's daily note (offered only in a check-in conversation) | vault_write / write |
 | `vault_move` | Rename or move a note, updating every link | vault_destroy / destructive |
 
 Client-side tools (`clara-chat --local-tools`: `local_list`, `local_read`) are declared by the client per request
@@ -440,18 +468,25 @@ and run on the client.
 
 - **Providers:** local Ollama hosts (`CLARA_OLLAMA_HOSTS`: this machine, your PC over the tailnet, any number), Ollama
   cloud (`cloud`), Google Gemini (`gemini`), DeepSeek (`deepseek`), Mistral (`mistral`), OpenCode Go (`opencode-go`:
-  every model of Go, plus the free models of OpenCode Zen, whose list needs no key). Local hosts are enabled at
+  every model of Go's own list, its `-free` ones included; not OpenCode Zen). Local hosts are enabled at
   first; a hosted provider is enabled from the console or the Models page once its key is stored. Their terms are in
   [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - **Catalogue:** models listed by each enabled provider, with context window and capabilities (tools, pictures,
   thinking), refreshed every minute at most; you choose which appear in the pickers (`/models show|hide`). The free models of
   OpenCode (`opencode-go`, names ending in `-free`) appear there until you hide them, after the other models.
+- **Models that do not work:** OpenCode lists models of APIs Clara does not speak (Claude, GPT, Grok, Gemini, Muse
+  Spark, MiniMax and Qwen models; it answers them with an error). A table made from models.dev
+  (`scripts/refresh_opencode_models.py`) says which: those models are never in the pickers, `/models show` and the Models
+  page refuse them with the reason, and the Models page leaves them out unless you pick **All** or **Don't work**. The
+  same table says which models read pictures: a picture sent to one that reads text only is refused before it is sent.
+  A model the table does not have is offered and marked *unverified*; the service answers for it.
 - **Default model:** set by you; at first start with none set, Clara picks a local model and says so.
 - **Side-jobs model** (`upkeep_model`): titles, summaries, reminder wording; the default model when unset.
 - **Fallbacks:** an ordered list, of enabled providers only. When a model fails **before it has said anything**, the
   next is asked: the service is busy or unreachable (408, 409, 425, 429, 500, 502, 503, 504, 529, connection
   errors), the model is gone (404), it stayed silent past `CLARA_FIRST_TOKEN_TIMEOUT`, its key was refused (401, 403)
-  or payment is required (402); the last two also raise an alert (`provider_key:<id>`, `provider_payment:<id>`). A
+  or payment is required (402); a key really refused (a 403 that names another reason, such as OpenCode's `FreeTierError`
+  for its free models, is not) and payment also raise an alert (`provider_key:<id>`, `provider_payment:<id>`). A
   model of the fallback list that fails for any other reason is skipped too. Once a model has started answering, or
   when the answer's time budget is spent, nothing is asked again. A local model never falls back to a hosted one.
 - **Per conversation:** each conversation may have its own model.
@@ -533,6 +568,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `discord` | The Discord bot has not checked in for 5 minutes (with `CLARA_DISCORD_EXPECTED` or `CLARA_DISCORD_AUTOSTART`), or the server cannot keep it running (a wrong setting, a refused token or intent, no discord.py) |
   | `vault` | `CLARA_VAULT_PATH` is not a folder |
   | `vault_push` | The vault could not be pulled or pushed |
+  | `recap` | The daily check-in could not be started after three attempts |
   | `backup` | A backup, its check or its remote copy failed |
   | `github` | GitHub refused the token |
   | `google` | Google refused the refresh token (reconnect Drive) |
@@ -542,14 +578,16 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 - **Traffic log:** one line per request with metadata only (time, method, route with ids replaced, status, duration,
   client, token name, model, token counts, outcome), daily files kept `CLARA_TRAFFIC_LOG_DAYS` (7), mode 0600; failed
-  sign-ins are recorded with the address. No message text, no headers, no bodies.
+  sign-ins are recorded with the address. A failed model call adds the kind of failure, the HTTP status and the
+  provider's own short code for it (`400 invalid_value`, `403 FreeTierError`): a plain token, never the provider's
+  message, which can quote what you wrote. No message text, no headers, no bodies.
 - **Live log:** the Admin page's **Logs** tab (`GET /v1/admin/logs/stream`) shows the server's own log (INFO and up)
   and the traffic records (requests, model calls, refused sign-ins) as they happen, filtered by source and level on
   the server. It keeps the last 500 lines in memory only (a restart empties them; nothing is written for it, and it
   works whatever `CLARA_TRAFFIC_LOG_DAYS` is). Anything that looks like a secret is masked, the address of a failed
   sign-in is left out, and the debug content never reaches it.
-- **Debug switch:** `/debug on` writes full prompts and answers to `logs/debug-content.jsonl` (0600) for one hour,
-  then switches itself off and deletes the file.
+- **Debug switch:** `/debug on` writes full prompts and answers, and the text of failed model calls, to
+  `logs/debug-content.jsonl` (0600) for one hour, then switches itself off and deletes the file.
 - **`clara doctor`:** settings, permissions, the database, the secrets key, Podman (rootless, cgroups, subuid/subgid,
   the image, isolation; `--pull` pulls the image first), Funnel, Tailscale, each Ollama host, SearXNG, restic, the disk.
 - **Status:** `/status`, the Admin page and `GET /v1/admin/status`: version and release, state, uptime, turns, models,
@@ -582,7 +620,6 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_CLOUD_HOST` | `https://ollama.com` | Ollama cloud |
 | `CLARA_GEMINI_HOST`, `CLARA_DEEPSEEK_HOST`, `CLARA_MISTRAL_HOST` | the providers' API addresses | Hosted providers |
 | `CLARA_OPENCODE_GO_HOST` | `https://opencode.ai/inference/go` | OpenCode Go (Clara adds `/openai/v1` for chat and `/v1/models` for the list) |
-| `CLARA_OPENCODE_ZEN_HOST` | `https://opencode.ai/zen/v1` | OpenCode Zen, where the free models are listed and asked |
 | `CLARA_CLOUD_CONTEXT`, `CLARA_GEMINI_CONTEXT`, `CLARA_DEEPSEEK_CONTEXT`, `CLARA_MISTRAL_CONTEXT`, `CLARA_OPENCODE_GO_CONTEXT` | per provider | Context window assumed when the provider does not say |
 | `CLARA_DEEPSEEK_THINKING` | true | Use DeepSeek's thinking mode |
 | `CLARA_HISTORY_TURNS` | 20 | Turns of history sent at most |
@@ -624,6 +661,10 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_VAULT_PATH` | — | Your Obsidian vault (a git clone) |
 | `CLARA_VAULT_PUSH` | true | Push the vault after changes |
 | `CLARA_VAULT_PULL_SECONDS` | 30 | Pull interval (0: never) |
+| `CLARA_RECAP` | false | Open the end-of-day check-in by itself (needs the vault) |
+| `CLARA_RECAP_AT` | 23:59 | When the day's check-in is opened (HH:MM, in `CLARA_TIMEZONE`) |
+| `CLARA_RECAP_REMIND_AT` | 09:00 | When an unanswered check-in is reminded, the next morning |
+| `CLARA_RECAP_DIGEST_CHARS` | 60000 | Most characters of a day's digest (and at most 35% of the model's window) |
 | `CLARA_SEARXNG_URL` | `http://127.0.0.1:8888` | SearXNG |
 | `CLARA_FETCH_MAX_SIZE` | 2m | Largest page fetched |
 | `CLARA_PUBLIC_URL` | the Tailscale address | Your `https://` address, for Google's redirect |
@@ -756,7 +797,7 @@ keep-alive every 15 s.
 | `GET /v1/admin/providers` | Providers |
 | `PUT /v1/admin/providers/{provider_id}` | Enable or disable one |
 | `POST /v1/admin/providers/{provider_id}/check` | Check one |
-| `GET /v1/admin/models` | The catalogue (`refresh=true` to list again) |
+| `GET /v1/admin/models` | The catalogue (`refresh=true` to list again); each model has a `fit` (`works`: true, false, or null when unknown; `why`) |
 | `PATCH /v1/admin/models` | Show or hide models in pickers |
 | `PUT /v1/admin/models/default` | The default model |
 | `PUT /v1/admin/models/upkeep` | The side-jobs model |
@@ -834,6 +875,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Projects | 90 MB and 1,000 files per upload; `CLARA_PROJECT_MAX_CHARS`, `CLARA_PROJECT_MAX_FILES`; a file over 30 MB in an archive is skipped; 600 MB unpacked per archive; GitHub archives 300 MB |
 | Workspace | `CLARA_WORKSPACE_MAX_SIZE`, `CLARA_WORKSPACE_MAX_FILE`; reads 1,000 lines at once; 80 search matches |
 | Vault note | 400,000 characters; 20 search results |
+| Daily recap | one check-in a day; digest `CLARA_RECAP_DIGEST_CHARS`; 3 attempts; the opening message 2,000 characters in its event |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

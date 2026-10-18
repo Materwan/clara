@@ -236,7 +236,7 @@ def describe_event(event: dict) -> str | None:
     kind = event.get("type")
     if kind == "reminder":
         return f"\a⏰ {event['text']}"
-    if kind in ("notification", "task", "schedule"):
+    if kind in ("notification", "task", "schedule", "checkin"):
         return f"\a🔔 {event.get('title') + ': ' if event.get('title') else ''}{event['text']}"
     if kind == "alert":
         return f"\a⚠ {event.get('title')}: {event['text']}"

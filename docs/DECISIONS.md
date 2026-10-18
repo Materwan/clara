@@ -19,6 +19,15 @@ made while building, to be confirmed or changed.
 | Web site readability | Two steps under the first site's sizes (body 13 px, answers and what you write 14 px, small text 11.5 px; titles 16 px), muted text darker (lighter in dark theme): about 6:1 against the page instead of 5:1 |
 | Checkboxes | Drawn, not the browser's: a 16 px box with a 2 px border that fills violet with a white tick, the same in both themes |
 | Theme | Auto / Light / Dark switch in the rail, remembered in the browser; each colour is written once as `light-dark()` (browsers from 2024), so the two themes cannot drift apart |
+| Daily recap: how Clara gets the day | A digest made in code and joined to the check-in's first message (no tools for the model to call, no tainted turn, the day cut in the server's zone) |
+| Daily recap: which conversations | Normal, project, scheduled and reminder ones, with the earlier context of those begun before; never incognito or local-only ones |
+| Daily recap: which other sources | Tasks, reminders and scheduled runs; the vault's changes of the day (git); what Clara did through the gate. Not GitHub or Drive |
+| Daily recap: asking | At 23:59 if the server runs, else at the next start; on the web site and in a Discord thread under the question in `#general`. Clara writes nothing before you answer |
+| Daily recap: finishing | Clara judges when she has enough, shows a preview and writes; a correction rewrites the block. Unanswered: a reminder the next morning, and the next check-in first closes it from the digest alone (the uncertain points under « À confirmer ») |
+| Daily recap: the Discord thread | Deleted by the bot once the recap is written (a line in `#general` says where the note is); the conversation stays in Clara for corrections. Archived instead when the bot may not delete |
+| Daily recap: the note | One block « Récap (Clara) » between two comments, replaced on each write; what you wrote is never touched; French, whatever the day's language |
+| Daily recap: a long day | Hybrid: short excerpts, and the longest conversations summarised by the side-jobs model when the day does not fit |
+| Daily recap: tasks | Marked done only after you confirm them in the check-in |
 | Web site tokens | One scale each for type (9 steps, in rem), space (a 2px grid), shape, motion and stacking; no literal colour, size or space outside the token block ([WEB-DESIGN.md](WEB-DESIGN.md)) |
 | Web site questions | A dialog (a native `<dialog>`: inert page, Tab trapped, Escape cancels), never the browser's `confirm()` or `prompt()`: they ignore the theme, cannot mask a secret, and a browser may switch them off |
 | Web site accessibility | Every control named, state carried by ARIA attributes, text 4.5:1 and marks 3:1 in both themes, targets of 24 px at least (36 px on touch), a skip link, focus kept in drawers and dialogs |
@@ -53,6 +62,11 @@ made while building, to be confirmed or changed.
 
 | Choice | Why | To change |
 | --- | --- | --- |
+| The daily check-in is a normal chat conversation, tracked in the `recaps` table (not a new conversation kind) | It shows in the list on every client and can be answered anywhere; a new kind would mean rebuilding the `conversations` table (its `CHECK`) | — |
+| The daily recap is off until `CLARA_RECAP=true`; `/recap now` works whenever there is a vault | A daily message you did not ask for would surprise an installation that never heard of it | The setting |
+| The catch-up after a server that was off asks for yesterday only, and the first start with the recap on asks for yesterday too | Older days would arrive all at once; a day with no conversation can still be recapped (« what did you do? ») | `/recap skip <day>` |
+| `write_daily_recap` is bound to the check-in's day and takes only the text | The model cannot write another day's note by mistake | — |
+| The opening message is written by the model with no tools, from the digest | Fast, cheap, and it cannot change anything before you answered | — |
 | A streamed chat waits 10 minutes (`CLARA_APPROVAL_WAIT`) for an approval, then goes on without the action; the request stays valid 24 h, and a later answer runs it and starts a short follow-up turn | You often answer within a minute; a turn should not hang for a day | The setting |
 | `POST /v1/chat` (not streamed) never waits: the request is pushed to your clients | A script calling the API cannot answer an approval itself | — |
 | A chat request not answered in 60 s is pushed to your other clients too | You may have walked away from the screen | — |

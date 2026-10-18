@@ -37,12 +37,16 @@ class LlmChunk:
 
 
 class LlmError(Exception):
-    """The provider refused the request. `status` is the HTTP status when there is one."""
+    """The provider refused the request. `status` is the HTTP status when there is one; `code` is the provider's own
+    short name for the failure (`FreeTierError`, `invalid_value`), a plain token that cannot carry what you wrote, which
+    is why it may be logged where the message may not."""
 
-    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None):
+    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None,
+                 code: str | None = None):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,35 @@ class Capabilities:
 
     def describe(self) -> dict:
         return asdict(self)
+
+
+CHAT = "chat"  # OpenAI's Chat Completions: the only protocol of a hosted model that Clara speaks
+PROTOCOLS = {CHAT: "Chat Completions", "responses": "OpenAI Responses", "messages": "Anthropic Messages",
+             "google": "Google Gemini"}
+
+
+@dataclass(frozen=True)
+class Fit:
+    """Whether Clara can use a model (`works`: None when nothing is known of it) and, if not, why."""
+
+    works: bool | None = True
+    why: str = ""
+
+    def describe(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Known:
+    """What a service's own lists say of a model, before it is asked: the API it speaks and what it can do."""
+
+    protocol: str
+    capabilities: Capabilities
+
+    def fit(self) -> Fit:
+        if self.protocol == CHAT:
+            return Fit(True)
+        return Fit(False, f"it speaks {PROTOCOLS.get(self.protocol, self.protocol)}, which Clara does not")
 
 
 class Backend(Protocol):
