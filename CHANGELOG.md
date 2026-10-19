@@ -66,8 +66,14 @@ earlier server: the new Clara starts empty.
   and `vault_daily` adds its lines under `## Log`. New: `ask` event, `discord` action class, `CLARA_DAY_DIGEST_CHARS`,
   `CLARA_WAITING_REMIND_AT`. The Discord bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads*
   in `#general`.
+- **Conversation history of the web site:** the rail groups the conversations of each project and each schedule under
+  its name (the latest 5, then "Show more"), above the loose ones; the **Chat** link is gone (the logo and **New chat**
+  lead to the same page). Each project and schedule has a **Show in history** button, off at first: a conversation is
+  listed only when its schedule (else its project) is on, a search finds them all, a pinned one always stays. New:
+  `in_history` on `PATCH /v1/projects/{id}` and `PATCH /v1/schedules/{id}`; `kind=any`, `history` and `group` on
+  `GET /v1/conversations`.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 4 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs).
+- **Migrations:** schema version 5 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first).

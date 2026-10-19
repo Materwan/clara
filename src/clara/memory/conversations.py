@@ -152,10 +152,26 @@ class Conversations:
             raise ConversationError(f"No conversation {conversation_id}.")
         return conversation
 
-    def listing(self, q: str = "", project: str = ANY, kind: str = "chat", limit: int = 50, offset: int = 0) -> list[dict]:
-        """Pinned first, then the most recently active. `q` searches titles, summaries and messages."""
-        where = ["c.kind = ?"]
-        params: list = [kind]
+    # The schedule a conversation belongs to: the one that owns it, or the one whose run made it (one per run).
+    _SCHEDULE = ("COALESCE((SELECT s.id FROM schedules s WHERE s.conversation_id = c.id),"
+                 " (SELECT r.schedule_id FROM schedule_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))")
+    # Whether the group of a conversation shows it in the history: its schedule's say, else its project's, else yes. A
+    # schedule's own conversation whose schedule is gone has no group to switch on, so it stays out.
+    _SHOWN = (f"COALESCE((SELECT s.in_history FROM schedules s WHERE s.id = {_SCHEDULE}),"
+              " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)")
+
+    def listing(self, q: str = "", project: str = ANY, kind: str = "chat", limit: int = 50, offset: int = 0,
+                history: bool = False) -> list[dict]:
+        """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
+        `group` (its schedule, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
+        leaves out those whose group is not shown in the history, the pinned ones apart."""
+        where = []
+        params: list = []
+        if kind != ANY:
+            where.append("c.kind = ?")
+            params.append(kind)
+        if history:
+            where.append(f"(c.pinned = 1 OR {self._SHOWN} = 1)")
         if project == NONE:
             where.append("c.project_id IS NULL")
         elif project != ANY:
@@ -172,11 +188,21 @@ class Conversations:
             params += [like, like] + ([match] if match else [])
         rows = self.db.all(
             "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
-            " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview"
-            f" FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
+            " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
+            f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
+            " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
+            f" FROM conversations c WHERE {' AND '.join(where) or '1'} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
         )
-        return [{**_conversation(row).describe(), "preview": row["preview"] or ""} for row in rows]
+        return [{**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)} for row in rows]
+
+    @staticmethod
+    def _group(row) -> dict | None:
+        if row["schedule_id"] is not None:
+            return {"kind": "schedule", "id": row["schedule_id"], "name": row["schedule_name"]}
+        if row["project_id"] is not None:
+            return {"kind": "project", "id": row["project_id"], "name": row["project_name"]}
+        return None
 
     def update(self, conversation_id: str, **fields) -> Conversation:
         allowed = {"title", "pinned", "project_id", "model", "local_only", "incognito", "vault_open", "packs"}

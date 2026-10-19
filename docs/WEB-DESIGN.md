@@ -59,6 +59,9 @@ variant of its own. Use `class="negative"` for another dark surface (the Admin c
 The rail has three parts: `.rail-top` (the logo and **New chat**) and `.rail-foot` (the approvals waiting for you, and the
 account tab) stay put; `.rail-scroll` between them holds the pages and the conversation list (`ConversationRail.svelte`),
 which scroll as one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`) so its buttons can fade over its title.
+The list is in sections: Pinned, **Projects**, **Schedules**, then the loose conversations. A project or a schedule is a
+`.group-head` disclosure (`aria-expanded`, the chevron turns) over its rows (`.convo.nested`); `.more` lists the rest of a
+group. The button that switches a group on for the list is a `button.toggle` (`aria-pressed`) on the Projects and Schedules pages.
 
 The state of the connection is a lamp on the rim of Clara's portrait (`.portrait > .dot`, ringed in the rail's blue so it
 sits in the picture: `ok` connected, `warn` reconnecting, `danger` Clara not reachable). It has no visible text; a

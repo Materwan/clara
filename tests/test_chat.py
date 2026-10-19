@@ -98,3 +98,40 @@ def test_attachment_limits_fit_the_request_limit():
     with pytest.raises(FileError, match="in all"):
         prepare("hi", [Attached(f"notes{n}.txt", b"x" * 9_000_000) for n in range(MAX_ATTACHMENTS)])
     assert prepare("hi", [Attached("notes.txt", b"hello")])
+
+
+async def test_the_history_lists_the_groups_you_switched_on(client, services):
+    """Projects and schedules start hidden; a conversation follows its schedule's switch, else its project's."""
+    project = (await client.post("/v1/projects", json={"name": "Thesis"})).json()
+    daily = services.schedules.create("Morning brief", "Brief me", "2030-01-01T08:00", repeat="daily",
+                                      project_id=project["id"], per_run=True)
+    weekly = services.schedules.create("Weekly review", "Review", "2030-01-01T08:00", repeat="weekly", weekdays=[0])
+    conversations = services.conversations
+    loose = conversations.create("web", title="Loose").id
+    chapter = conversations.create("web", title="Chapter", project_id=project["id"]).id
+    run = conversations.create("server", title="Morning brief — 2030-01-01", project_id=project["id"]).id
+    services.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id) VALUES (?, ?, 'ok', ?)",
+                        (daily.id, "2030-01-01T07:00:00+00:00", run))
+    review = conversations.create("server", kind="schedule", title="Weekly review").id
+    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (review, weekly.id))
+    orphan = conversations.create("server", kind="schedule", title="Gone").id
+
+    async def listed(**params) -> dict[str, dict]:
+        found = (await client.get("/v1/conversations", params={"kind": "any", **params})).json()["conversations"]
+        return {item["id"]: item for item in found}
+
+    assert set(await listed()) == {loose, chapter, run, review, orphan}
+    assert set(await listed(history="true")) == {loose}
+    assert (await client.patch(f"/v1/projects/{project['id']}", json={"in_history": True})).json()["in_history"] is True
+    assert set(await listed(history="true")) == {loose, chapter}  # the run answers to its schedule, not to the project
+    assert (await client.patch(f"/v1/schedules/{daily.id}", json={"in_history": True})).json()["in_history"] is True
+    shown = await listed(history="true")
+    assert set(shown) == {loose, chapter, run}
+    assert shown[run]["group"] == {"kind": "schedule", "id": daily.id, "name": "Morning brief"}
+    assert shown[chapter]["group"] == {"kind": "project", "id": project["id"], "name": "Thesis"}
+    assert shown[loose]["group"] is None
+    conversations.update(review, pinned=True)  # pinned ones stay, whatever their group
+    assert review in await listed(history="true")
+    assert (await client.patch(f"/v1/projects/{project['id']}", json={"in_history": False})).json()["in_history"] is False
+    assert chapter not in await listed(history="true")
+    assert (await client.get("/v1/schedules")).json()["schedules"][1]["in_history"] is False

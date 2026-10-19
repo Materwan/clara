@@ -209,6 +209,7 @@ class ScheduleChange(BaseModel):
     missed: Literal["skip", "latest", "all"] | None = None
     overlap: Literal["skip", "replace", "queue"] | None = None
     model: str | None = Field(default=None, max_length=200)
+    in_history: bool | None = None
 
 
 @router.patch("/schedules/{schedule_id}")

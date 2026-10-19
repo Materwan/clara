@@ -267,6 +267,8 @@ button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--dan
 button.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 button.ghost { border-color: transparent; }
 button.ghost:hover:not(:disabled) { background: var(--hover); border-color: transparent; }
+/* a button that is on or off: aria-pressed says which */
+button.toggle[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-text); }
 button.icon-btn { padding: var(--sp-6); color: var(--muted); }
 button.icon-btn:hover:not(:disabled) { color: var(--text); }
 button.small, label.button.small { padding: var(--sp-4) var(--sp-10); font-size: var(--fs-xs); border-radius: var(--r-sm); }
@@ -500,6 +502,14 @@ tr.off td { opacity: .5; }
 .search-field input { width: 100%; padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-32); font-size: var(--fs-sm); }
 .convo-list { list-style: none; margin: 0; padding: 0; }
 .group-title { font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); padding: var(--sp-12) var(--sp-12) var(--sp-4); }
+/* a project or a schedule: a disclosure over its conversations, which sit a step in */
+.group-head button { width: 100%; justify-content: flex-start; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8); color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; text-align: left; }
+.group-head button .icon { flex: none; color: var(--muted); }
+.group-head button[aria-expanded='true'] > .icon:first-child { transform: rotate(90deg); }
+.group-head .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.group-head .n { font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); font-variant-numeric: tabular-nums; }
+.convo.nested > a { padding-left: var(--sp-32); }
+.more button { margin-left: var(--sp-32); color: var(--muted); }
 .convo { --row: var(--rail-bg); position: relative; display: flex; align-items: center; border-radius: var(--r-md); min-height: 34px; background: var(--row); }
 .convo:hover { --row: color-mix(in srgb, var(--rail-text) 8%, var(--rail-bg)); }
 .convo.active { --row: color-mix(in srgb, var(--rail-text) 12%, var(--rail-bg)); }
@@ -768,7 +778,7 @@ tr.off td { opacity: .5; }
   button.icon-btn, .msg-actions button, .convo .actions button { min-width: 36px; min-height: 36px; }
   button.small, label.button.small, select.small { min-height: 36px; }
   .chip button { min-width: 32px; min-height: 32px; }
-  .convo { min-height: 44px; }
+  .convo, .group-head button { min-height: 44px; }
 }
 @supports (-webkit-touch-callout: none) {
   /* Safari on iPhone and iPad zooms into any field whose text is under 16px, and stays zoomed: there, fields are 16px */
@@ -782,7 +792,7 @@ tr.off td { opacity: .5; }
 /* Windows high contrast and the like: backgrounds are dropped, so what they drew must be drawn another way */
 @media (forced-colors: active) {
   select { appearance: auto; background-image: none; }
-  .segmented button[aria-pressed='true'], .pages a[aria-current='page'], .convo.active, button.primary { outline: 2px solid Highlight; outline-offset: -2px; }
+  .segmented button[aria-pressed='true'], .pages a[aria-current='page'], .convo.active, button.primary, button.toggle[aria-pressed='true'] { outline: 2px solid Highlight; outline-offset: -2px; }
   .settings-bar a[aria-current='page'] { border-bottom-color: Highlight; }
   .dot { border: 1px solid CanvasText; }
   .check svg { stroke: CanvasText; }

@@ -100,6 +100,7 @@ class Schedule:
     missed: str = "skip"
     overlap: str = "skip"
     model: str = ""
+    in_history: bool = False  # its conversations are listed in the web site's history
 
     @property
     def asks(self) -> bool:
@@ -120,7 +121,7 @@ def _schedule(row) -> Schedule:
                     datetime.fromisoformat(row["local_at"]), row["timezone"],
                     parse_iso(row["next_at"]) if row["next_at"] else None, bool(row["enabled"]), bool(row["local_only"]),
                     row["created_at"], tuple(json.loads(row["packs"] or "[]")), bool(row["per_run"]), row["missed"],
-                    row["overlap"], row["model"])
+                    row["overlap"], row["model"], bool(row["in_history"]))
 
 
 def _document(doc: dict) -> str:
@@ -309,6 +310,8 @@ class Schedules(DueLoop):
             columns["overlap"] = self._policy(fields["overlap"], OVERLAPS, "overlap")
         if "model" in fields:
             columns["model"] = str(fields["model"] or "").strip()
+        if "in_history" in fields:
+            columns["in_history"] = int(bool(fields["in_history"]))
         enabled = bool(fields.get("enabled", old.enabled))
         if {"at", "timezone", "repeat", "weekdays"} & fields.keys() or enabled != old.enabled:
             at = fields.get("at") or old.local_at.isoformat(timespec="minutes")
@@ -355,7 +358,7 @@ class Schedules(DueLoop):
             "next_local": local_text(schedule.next_at, tz) if schedule.next_at else None,
             "enabled": schedule.enabled, "local_only": schedule.local_only, "running": schedule.id in self._running,
             "packs": list(schedule.packs), "per_run": schedule.per_run, "missed": schedule.missed,
-            "overlap": schedule.overlap, "model": schedule.model,
+            "overlap": schedule.overlap, "model": schedule.model, "in_history": schedule.in_history,
             "waiting_run": {"id": waiting["id"], "conversation": waiting["conversation_id"], "since": waiting["waiting_since"]}
             if waiting else None,
             "queued": int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'",

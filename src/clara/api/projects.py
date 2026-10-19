@@ -3,7 +3,7 @@
     GET    /v1/projects                         the projects
     POST   /v1/projects                         {name, description?, instructions?}
     GET    /v1/projects/{id}                    one project, its repositories and its files (paths and sizes)
-    PATCH  /v1/projects/{id}                    {name?, description?, instructions?, pinned?}
+    PATCH  /v1/projects/{id}                    {name?, description?, instructions?, pinned?, in_history?}
     DELETE /v1/projects/{id}                    its files go; its conversations stay, in no project
     POST   /v1/projects/{id}/files              {files: [{path, data (base64)}]}: text, code, PDF, .docx, .zip
     GET    /v1/projects/{id}/file?path=         a file's text
@@ -56,7 +56,7 @@ def describe(project: Project, projects: Projects, window: int) -> dict:
     return {
         "id": project.id, "name": project.name, "description": project.description,
         "instructions": project.instructions, "created_at": project.created_at, "updated_at": project.updated_at,
-        "pinned": project.pinned, "files": project.files, "size": project.size, "conversations": project.conversations,
+        "pinned": project.pinned, "in_history": project.in_history, "files": project.files, "size": project.size, "conversations": project.conversations,
         "context": {"tokens": tokens, "window": window, "percent": round(100 * tokens / window, 1) if window else 0,
                     "inline": tokens <= projects.inline_budget(window)},
         "limits": {"size": projects.max_bytes, "files": projects.max_files},
@@ -125,6 +125,7 @@ class ProjectChange(BaseModel):
     description: str | None = Field(default=None, max_length=MAX_DESCRIPTION)
     instructions: str | None = Field(default=None, max_length=MAX_INSTRUCTIONS)
     pinned: bool | None = None
+    in_history: bool | None = None
 
 
 @router.patch("/{project_id}")
@@ -136,6 +137,8 @@ def change(project_id: int, body: ProjectChange, request: Request) -> dict:
             projects.update(project_id, body.name, body.description, body.instructions)
         if body.pinned is not None:
             projects.pin(project_id, body.pinned)
+        if body.in_history is not None:
+            projects.show_in_history(project_id, body.in_history)
     except ProjectError as error:
         raise ApiError(422, str(error)) from None
     return _details(request, project_id)

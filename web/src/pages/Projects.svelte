@@ -2,7 +2,7 @@
   import Icon from '../components/Icon.svelte';
   import { api, fileToBase64, size, when } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
-  import { go, route, toast } from '../lib/state.svelte';
+  import { conversations as history, go, route, toast } from '../lib/state.svelte';
 
   let projects = $state<any[]>([]);
   let project = $state<any>(null);
@@ -96,6 +96,16 @@
     go('/projects');
   }
 
+  async function inHistory(item: any): Promise<void> {
+    try {
+      await api.patch(`/v1/projects/${item.id}`, { in_history: !item.in_history });
+      history.changed++;
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
   async function pin(item: any): Promise<void> {
     await api.patch(`/v1/projects/${item.id}`, { pinned: !item.pinned });
     load();
@@ -114,6 +124,8 @@
             <button class="ghost icon-btn" aria-pressed={!!item.pinned} title={item.pinned ? 'Unpin' : 'Pin'} aria-label={item.pinned ? 'Unpin' : 'Pin'} onclick={() => pin(item)}><Icon name="pin" size={18} /></button></div>
           <div class="muted small">{item.description}</div>
           <div class="small">{item.files} files · {size(item.size)} · {item.conversations} conversations · {item.context.inline ? 'in the prompt' : 'searched'}</div>
+          <button class="small toggle" aria-pressed={item.in_history} title="List this project's conversations in the history of the rail"
+            onclick={() => inHistory(item)}><Icon name="eye" size={14} />Show in history</button>
         </div>
       {:else}
         <div class="empty">No project yet.</div>
@@ -122,6 +134,8 @@
   {:else}
     <a class="back" href="#/projects"><Icon name="left" size={18} />All projects</a>
     <div class="row"><h2 class="grow">{project.name}</h2>
+      <button class="toggle" aria-pressed={project.in_history} title="List this project's conversations in the history of the rail"
+        onclick={() => inHistory(project)}><Icon name="eye" size={18} />Show in history</button>
       <button onclick={() => go('/chat?project=' + id)}><Icon name="plus" size={18} />New conversation</button><button class="danger" onclick={removeProject}>Delete</button></div>
     <div class="grid-2">
       <div class="panel stack">

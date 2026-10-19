@@ -42,7 +42,7 @@ Sign in once by pasting a `web` token; the browser keeps an HttpOnly, Secure, Sa
 The design is the first Clara site's ("Cyanotype"): a Prussian-blue navigation rail in both themes with Clara's
 portrait, the page in cool chalk (or deep blue in the dark theme), one violet signal for what is live or waits for you,
 Hanken Grotesk and Epilogue served by Clara herself (SIL Open Font Licence, the licences at `/fonts/`), line icons.
-The rail holds **New chat**, the pages you work in (Chat, Projects, Tasks & reminders, Schedules, Workspace, Vault),
+The rail holds **New chat** (the logo leads to the same place: the chat has no link of its own), the pages you work in (Projects, Tasks & reminders, Schedules, Workspace, Vault),
 the list of conversations (on every page) and **Settings**, whose six pages share a tab bar (Memory, Connections, Rules
 & approvals, Models, Usage, Admin). The logo and **New chat** stay at the top, the account tab at the foot; the pages and
 conversations scroll between them. The connection is a lamp on Clara's portrait: green when connected, amber while
@@ -58,11 +58,11 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Page | What you do there |
 | --- | --- |
 | Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
-| Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable, pinned ones first, then newest first; pin, rename, delete |
+| Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects** and the **schedules** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project or a schedule shows its conversations here only when its **Show in history** button is on (both start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A conversation made by a schedule's run belongs to the schedule even when the schedule has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own; answer or close a run that waits for you |
-| Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions |
+| Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own; answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
+| Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
 | Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs |
 | Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
 | Connections (Settings) | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
@@ -772,7 +772,7 @@ keep-alive every 15 s.
 | `POST /v1/chat` | Chat, the whole answer at once |
 | `POST /v1/turns/{turn_id}/tool-results` | Results of client-side tools |
 | `POST /v1/documents/extract` | The text of a document (as the chat would see it) |
-| `GET /v1/conversations` | List and search conversations |
+| `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any; `history=true` leaves out those of a project or schedule not shown in the history; each names its `group`) |
 | `POST /v1/conversations` | Create one (incognito, local only, model, project) |
 | `GET /v1/conversations/{conversation_id}` | One conversation |
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
@@ -799,7 +799,7 @@ keep-alive every 15 s.
 | `GET /v1/schedules` | Schedules |
 | `POST /v1/schedules` | Add one |
 | `GET /v1/schedules/{schedule_id}` | One schedule with its runs |
-| `PATCH /v1/schedules/{schedule_id}` | Change, pause or resume one |
+| `PATCH /v1/schedules/{schedule_id}` | Change, pause or resume one; `in_history` lists its conversations in the web history |
 | `POST /v1/schedules/{schedule_id}/run` | Run it now |
 | `POST /v1/schedules/{schedule_id}/close` | Close the run that waits for your answer, from what Clara has |
 | `DELETE /v1/schedules/{schedule_id}` | Delete one |
@@ -810,7 +810,7 @@ keep-alive every 15 s.
 | `GET /v1/projects` | Projects |
 | `POST /v1/projects` | Create one |
 | `GET /v1/projects/{project_id}` | One, with its files and sources |
-| `PATCH /v1/projects/{project_id}` | Change name, description, instructions |
+| `PATCH /v1/projects/{project_id}` | Change name, description, instructions, pin; `in_history` lists its conversations in the web history |
 | `DELETE /v1/projects/{project_id}` | Delete one |
 | `POST /v1/projects/{project_id}/files` | Upload files or archives (multipart) |
 | `DELETE /v1/projects/{project_id}/files` | Remove files |

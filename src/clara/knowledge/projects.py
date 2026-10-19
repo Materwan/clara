@@ -56,6 +56,7 @@ class Project:
     size: int = 0  # characters of text, in all
     conversations: int = 0
     pinned: bool = False
+    in_history: bool = False  # its conversations are listed in the web site's history
 
 
 @dataclass(frozen=True)
@@ -201,7 +202,7 @@ class Projects:
     def _project(row) -> Project:
         return Project(
             row["id"], row["name"], row["description"], row["instructions"], row["created_at"],
-            row["updated_at"], row["files"], row["size"], row["conversations"], bool(row["pinned"]),
+            row["updated_at"], row["files"], row["size"], row["conversations"], bool(row["pinned"]), bool(row["in_history"]),
         )
 
     @staticmethod
@@ -260,6 +261,11 @@ class Projects:
         """Pin or unpin a project (it is not a change of its content: `updated_at` stays)."""
         with self.db.transaction():
             self._db.execute("UPDATE projects SET pinned = ? WHERE id = ?", (int(pinned), project_id))
+
+    def show_in_history(self, project_id: int, shown: bool) -> None:
+        """List its conversations in the web site's history, or not (like a pin, it leaves `updated_at` alone)."""
+        with self.db.transaction():
+            self._db.execute("UPDATE projects SET in_history = ? WHERE id = ?", (int(shown), project_id))
 
     def delete(self, project_id: int) -> int:
         """Delete a project and its files. Its conversations stay, in no project. Returns how many there were."""

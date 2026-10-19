@@ -3,7 +3,7 @@
   import Icon from '../components/Icon.svelte';
   import { api, fileToBase64, when, zone } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
-  import { live, toast } from '../lib/state.svelte';
+  import { conversations, live, toast } from '../lib/state.svelte';
 
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const empty = () => ({
@@ -90,6 +90,16 @@
   async function toggle(schedule: any): Promise<void> {
     await api.patch(`/v1/schedules/${schedule.id}`, { enabled: !schedule.enabled });
     load();
+  }
+
+  async function inHistory(schedule: any): Promise<void> {
+    try {
+      await api.patch(`/v1/schedules/${schedule.id}`, { in_history: !schedule.in_history });
+      conversations.changed++;
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
   }
 
   async function remove(schedule: any): Promise<void> {
@@ -188,6 +198,8 @@
             <button class="small" onclick={() => edit(schedule)}>Edit</button>
             <button class="small" onclick={() => toggle(schedule)}>{schedule.enabled ? 'Pause' : 'Resume'}</button>
             <button class="small" onclick={() => showHistory(schedule)}>Runs</button>
+            <button class="small toggle" aria-pressed={schedule.in_history} title="List this schedule's conversations in the history of the rail"
+              onclick={() => inHistory(schedule)}><Icon name="eye" size={14} />Show in history</button>
             {#if schedule.waiting_run}
               <a class="small" href={'#/chat/' + schedule.waiting_run.conversation}>Answer</a>
               <button class="small" onclick={() => close(schedule)}>Close it</button>

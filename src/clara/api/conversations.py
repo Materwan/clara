@@ -25,9 +25,9 @@ def _get(request: Request, conversation_id: str):
 
 @router.get("")
 def listing(request: Request, q: str = Query("", max_length=200), project: str = Query(ANY, pattern=r"^(any|none|\d+)$"),
-            kind: Literal["chat", "schedule"] = "chat", limit: int = Query(50, ge=1, le=500),
-            offset: int = Query(0, ge=0)) -> dict:
-    return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset)}
+            kind: Literal["chat", "schedule", "any"] = "chat", history: bool = False,
+            limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict:
+    return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset, history)}
 
 
 class NewConversation(BaseModel):

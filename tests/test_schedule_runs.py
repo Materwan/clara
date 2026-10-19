@@ -462,7 +462,7 @@ def test_a_version_3_database_upgrades_and_keeps_its_runs_and_recap_days(tmp_pat
     connection.commit()
     connection.close()
     before, after, backup = migrate(path, tmp_path / "backups")
-    assert (before, after) == (3, 4) and backup is not None
+    assert (before, after) == (3, len(migrations())) and backup is not None
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     runs = connection.execute("SELECT * FROM schedule_runs ORDER BY id").fetchall()
@@ -472,6 +472,7 @@ def test_a_version_3_database_upgrades_and_keeps_its_runs_and_recap_days(tmp_pat
     connection.execute("INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (1, 'y', 'queued')")
     assert connection.execute("SELECT packs, per_run, missed, overlap, model FROM schedules").fetchone()[:] == ('["web"]', 0, "skip", "skip", "")
     assert connection.execute("SELECT packs FROM conversations").fetchone()[0] == '["web"]'
+    assert connection.execute("SELECT in_history FROM schedules").fetchone()[0] == 0  # hidden from the history until switched on
     assert connection.execute("SELECT day, status FROM recaps_legacy").fetchone()[:] == ("2026-10-17", "asked")
     assert connection.execute("SELECT name FROM sqlite_master WHERE name = 'recaps'").fetchone() is None
     connection.close()

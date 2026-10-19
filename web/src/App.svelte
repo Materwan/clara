@@ -22,9 +22,10 @@
   import Usage from './pages/Usage.svelte';
   import Admin from './pages/Admin.svelte';
 
+  // The chat is a page without a link: the logo and New chat lead to it, and so does every conversation of the rail.
+  const CHAT = { path: '/chat', label: 'Chat', icon: 'chat', page: Chat };
   // What you do with Clara: the links of the rail.
   const WORK = [
-    { path: '/chat', label: 'Chat', icon: 'chat', page: Chat },
     { path: '/projects', label: 'Projects', icon: 'folder', page: Projects },
     { path: '/tasks', label: 'Tasks & reminders', icon: 'tasks', page: Tasks },
     { path: '/schedules', label: 'Schedules', icon: 'clock', page: Schedules },
@@ -40,13 +41,13 @@
     { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
     { path: '/admin', label: 'Admin', icon: 'server', page: Admin },
   ];
-  const PAGES = [...WORK, ...SETTINGS];
+  const PAGES = [CHAT, ...WORK, ...SETTINGS];
 
   let healthy = $state(true);
   let main = $state<HTMLElement>();
   let rail = $state<HTMLElement>();
   let railOpener: HTMLElement | null = null;
-  const current = $derived(PAGES.find((page) => page.path === route.path) ?? WORK[0]);
+  const current = $derived(PAGES.find((page) => page.path === route.path) ?? CHAT);
   const inSettings = $derived(SETTINGS.includes(current));
   const alerts = $derived(Object.keys(live.alerts).length);
   // The lamp on Clara's portrait: green when connected, amber while the live stream reconnects, red when the server does not answer.
