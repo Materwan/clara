@@ -148,8 +148,8 @@
         <div class="small">{project.files} files · {size(project.size)} · {project.context.percent}% of the window ·
           <strong>{project.context.inline ? 'given whole in the prompt' : 'too big: Clara searches and reads them'}</strong></div>
         <div class="row">
-          <label class="button"><Icon name="upload" size={18} />Add files <input type="file" multiple hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
-          <label class="button"><Icon name="folder" size={18} />Add a folder <input type="file" webkitdirectory hidden onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
+          <label class="button"><Icon name="upload" size={18} />Add files <input class="sr-only" type="file" multiple onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
+          <label class="button"><Icon name="folder" size={18} />Add a folder <input class="sr-only" type="file" webkitdirectory onchange={(e) => upload([...((e.target as HTMLInputElement).files ?? [])])} /></label>
           {#if busy}<span class="muted small">Working…</span>{/if}
         </div>
         <form class="row" onsubmit={addRepo}><input class="grow" aria-label="GitHub repository" placeholder="GitHub owner/name or URL (@branch)" bind:value={repo} required /><button>Add repository</button></form>
@@ -179,8 +179,13 @@
     {/if}
     <div class="panel">
       <h2>Conversations</h2>
-      {#each conversations as conversation}<div><a href={'#/chat/' + conversation.id}>{conversation.title || conversation.preview}</a> <span class="muted small">{when(conversation.updated_at)}</span></div>
-      {:else}<div class="muted small">None yet: start one with “New conversation” above.</div>{/each}
+      {#if conversations.length}
+        <ul class="rows">
+          {#each conversations as conversation (conversation.id)}
+            <li><a href={'#/chat/' + conversation.id}>{conversation.title || conversation.preview || 'New conversation'}</a><span class="when">{when(conversation.updated_at)}</span></li>
+          {/each}
+        </ul>
+      {:else}<div class="muted small">None yet: start one with “New conversation” above.</div>{/if}
     </div>
   {/if}
 </div>

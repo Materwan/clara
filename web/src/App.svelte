@@ -46,6 +46,7 @@
   let healthy = $state(true);
   let main = $state<HTMLElement>();
   let rail = $state<HTMLElement>();
+  let settingsBar = $state<HTMLElement>();
   let railOpener: HTMLElement | null = null;
   const current = $derived(PAGES.find((page) => page.path === route.path) ?? CHAT);
   const inSettings = $derived(SETTINGS.includes(current));
@@ -119,6 +120,12 @@
     }
   });
 
+  // The tab bar of Settings scrolls sideways on a phone: bring the open tab into it (it may be one of the last).
+  $effect(() => {
+    void current;
+    tick().then(() => settingsBar?.querySelector('[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' }));
+  });
+
   $effect(() => {
     if (session.signedIn && session.checked) listen();
   });
@@ -177,7 +184,7 @@
           <h1 class="title">{inSettings ? 'Settings' : current.label}</h1>
         </header>
         {#if inSettings}
-          <nav class="settings-bar" aria-label="Settings">
+          <nav class="settings-bar" aria-label="Settings" bind:this={settingsBar}>
             {#each SETTINGS as page (page.path)}
               <a href={'#' + page.path} aria-current={page === current ? 'page' : undefined}>
                 <Icon name={page.icon} size={16} />{page.label}

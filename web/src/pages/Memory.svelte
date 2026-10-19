@@ -72,11 +72,11 @@
 </script>
 
 <div class="page stack">
-  <form class="panel row" onsubmit={add}>
-    <input class="grow" aria-label="Fact" placeholder="A fact about you (one short sentence)" bind:value={text} maxlength="300" required />
-    <input aria-label="Category" placeholder="category" bind:value={category} maxlength="32" />
-    <label class="small row" title="until when it holds">until <input type="datetime-local" bind:value={expires} /></label>
-    <label class="small row"><Checkbox bind:checked={pinned} /> pinned</label>
+  <form class="panel row end" onsubmit={add}>
+    <label class="field grow">Fact <input placeholder="A fact about you, in one short sentence" bind:value={text} maxlength="300" required /></label>
+    <label class="field">Category <input bind:value={category} maxlength="32" /></label>
+    <label class="field">Holds until <input type="datetime-local" bind:value={expires} /></label>
+    <label class="small row pinned"><Checkbox bind:checked={pinned} />Pinned</label>
     <button class="primary">Add</button>
   </form>
   <div class="row">
@@ -85,7 +85,7 @@
     <input type="search" aria-label="Search facts" placeholder="Search" bind:value={query} onchange={load} />
   </div>
   <table>
-    <thead><tr><th>Fact</th><th>Source</th><th>Since</th><th></th></tr></thead>
+    <thead><tr><th>Fact</th><th>Source</th><th>Since</th><th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>
       {#each facts as fact (fact.id)}
         <tr>
@@ -126,5 +126,8 @@
 <style>
   .fact-edit {
     width: 70%;
+  }
+  .pinned {
+    min-height: 2.2rem; /* as tall as the fields beside it, so the box sits level with them */
   }
 </style>

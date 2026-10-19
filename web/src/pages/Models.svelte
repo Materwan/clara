@@ -80,6 +80,8 @@
   }
 
   // A model that does not work (OpenCode lists models of APIs Clara does not speak) is left out of the default view.
+  /** An address with a place to break after every dot and slash, so a narrow column cuts it between its parts, not in the middle of one. */
+  const soft = (address: string): string => address.replace(/([./])/g, '$1​');
   const broken = (model: any): boolean => model.fit?.works === false;
   const brokenCount = $derived(catalogue.models.filter(broken).length);
   const inView = (model: any): boolean => view === 'all' || (view === 'broken') === broken(model);
@@ -96,11 +98,11 @@
   <section class="panel">
     <h2>Providers</h2>
     <table>
-      <thead><tr><th>Provider</th><th>Where</th><th>Key</th><th></th></tr></thead>
+      <thead><tr><th>Provider</th><th>Where</th><th>Key</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each providers as provider (provider.id)}
-          <tr><td><strong>{provider.label}</strong> <code class="small">{provider.id}</code></td><td class="small"><Icon name={provider.local ? 'home' : 'cloud'} size={16} /> {provider.local ? 'local' : 'hosted'} · {provider.host}</td>
-            <td class="small">{provider.needs_key ? (provider.key_set ? 'set' : 'missing (clara secrets set …)') : '—'}</td>
+          <tr><td><strong>{provider.label}</strong> <code class="small">{provider.id}</code></td><td class="small"><Icon name={provider.local ? 'home' : 'cloud'} size={16} /> {provider.local ? 'local' : 'hosted'} · <span class="url">{soft(provider.host)}</span></td>
+            <td class="small">{#if !provider.needs_key}—{:else if provider.key_set}<span class="tag ok">set</span>{:else}<span class="tag warn">no key</span> <span class="muted">add it in Admin › Secrets</span>{/if}</td>
             <td class="row"><button class="small" onclick={() => enable(provider)}>{provider.enabled ? 'Disable' : 'Enable'}</button>
               <button class="small" onclick={() => check(provider)}>Check</button>
               {#if catalogue.problems[provider.id]}<span class="danger small">{catalogue.problems[provider.id]}</span>{/if}</td></tr>
@@ -130,7 +132,7 @@
       ]} />
       <input type="search" aria-label="Filter models" placeholder="Filter" bind:value={filter} /><button aria-busy={busy} onclick={() => !busy && load(true)}><Icon name="refresh" size={16} />Refresh</button></div>
     <table>
-      <thead><tr><th>Model</th><th>Window</th><th>Can</th><th>In pickers</th><th></th></tr></thead>
+      <thead><tr><th>Model</th><th>Window</th><th>Can</th><th>In pickers</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each shown as model (model.ref)}
           <tr><td>{#if model.ref === catalogue.default}<Icon name="star" size={16} label="Default model" /> {/if}{model.ref}{model.listed ? '' : ' (not listed now)'}</td>

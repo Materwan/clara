@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Hint from './Hint.svelte';
   import Icon from './Icon.svelte';
 
   // The "+" of the composer: add files, switch the special tools of this conversation on or off (saved with it, so it
@@ -43,7 +44,7 @@
         <button type="button" class="plus-item" aria-pressed={active.includes(pack.id)} disabled={!pack.available && !active.includes(pack.id)}
           title={pack.reason || pack.description} onclick={() => onToggle(pack.id)}>
           <Icon name={pack.icon} size={18} />
-          <span class="plus-text"><b>{pack.label}</b><small>{pack.reason || pack.description}</small></span>
+          <span class="plus-text"><b>{pack.label}</b><small><Hint text={pack.reason || pack.description} /></small></span>
           <span class="plus-state" aria-hidden="true">{#if active.includes(pack.id)}<Icon name="check" size={16} />{/if}</span>
         </button>
       {/each}

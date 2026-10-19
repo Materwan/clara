@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
   import Segmented from '../components/Segmented.svelte';
   import { api, download, fileToBase64, saveBlob, size, when } from '../lib/api';
@@ -87,11 +88,11 @@
 <div class="page stack">
   {#if info}
     <p class="intro">{size(info.size)} of {size(info.max_size)} used · scripts:
-      {#if info.run_ready}<span class="ok">ready</span>{:else}<span class="warn">off ({info.run_problem})</span>{/if}</p>
+      {#if info.run_ready}<span class="tag ok">ready</span>{:else}<span class="tag warn">off</span> <Hint text={info.run_problem} />{/if}</p>
   {/if}
   <div><Segmented label="Section" options={TABS} bind:value={tab} /></div>
   {#if tab === 'files'}
-    <div class="row"><label class="button"><Icon name="upload" size={18} />Upload into uploads/<input type="file" multiple hidden onchange={upload} /></label></div>
+    <div class="row"><label class="button"><Icon name="upload" size={18} />Upload into uploads/<input class="sr-only" type="file" multiple onchange={upload} /></label></div>
     <div class="split">
       <div class="panel tree">
         {#each entries as entry (entry.path)}
@@ -119,7 +120,7 @@
     </div>
   {:else if tab === 'history'}
     <table>
-      <thead><tr><th>Commit</th><th>When</th><th>What</th><th></th></tr></thead>
+      <thead><tr><th>Commit</th><th>When</th><th>What</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each commits as commit (commit.commit)}
           <tr><td><button class="link" onclick={() => showCommit(commit.commit)}><code>{commit.commit}</code></button></td>

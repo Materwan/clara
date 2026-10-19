@@ -28,8 +28,9 @@
     <select aria-label="Group by" bind:value={group}>{#each ['day', 'model', 'kind', 'provider', 'client'] as name}<option>{name}</option>{/each}</select>
     <span class="muted small">{stats.totals.calls ?? 0} calls · {(stats.totals.prompt ?? 0).toLocaleString()} in · {(stats.totals.completion ?? 0).toLocaleString()} out · {(stats.totals.cached ?? 0).toLocaleString()} cached</span>
   </div>
-  <table>
-    <thead><tr><th>{group}</th><th>Calls</th><th>In</th><th>Out</th><th>Cached</th><th class="bar-col"><span class="sr-only">Share</span></th></tr></thead>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex (on a phone this table scrolls sideways and has nothing to focus: the keyboard needs a stop) -->
+  <table tabindex="0" aria-label={`Usage by ${group}`}>
+    <thead><tr><th>{group.charAt(0).toUpperCase() + group.slice(1)}</th><th>Calls</th><th>In</th><th>Out</th><th>Cached</th><th class="bar-col"><span class="sr-only">Share</span></th></tr></thead>
     <tbody>
       {#each stats.rows as row (row.key)}
         <tr><td>{row.key}</td><td>{row.calls}{row.failed ? ` (${row.failed} failed)` : ''}</td><td>{row.prompt.toLocaleString()}</td>
@@ -39,7 +40,8 @@
     </tbody>
   </table>
   <h2>Last calls</h2>
-  <table>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex (as above) -->
+  <table tabindex="0" aria-label="Last calls">
     <thead><tr><th>When</th><th>Kind</th><th>Model</th><th>In / out</th><th>Took</th><th>Outcome</th></tr></thead>
     <tbody>
       {#each calls as call (call.id)}

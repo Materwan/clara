@@ -2,6 +2,7 @@
   import Checkbox from '../components/Checkbox.svelte';
   import Icon from '../components/Icon.svelte';
   import Segmented from '../components/Segmented.svelte';
+  import { tick } from 'svelte';
   import { api, when, zone } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
@@ -15,7 +16,11 @@
   let status = $state<Status>('open');
   let tasks = $state<any[]>([]);
   let reminders = $state<any[]>([]);
-  let form = $state({ title: '', description: '', due: '', reminders: '', parent_id: '' });
+  const blank = () => ({ title: '', description: '', due: '', reminders: '', parent_id: '' });
+  let form = $state(blank());
+  let adding = $state(false); // the form of a new task is open (it opens from "New task" and from a task's "+ Sub")
+  let addButton = $state<HTMLButtonElement>();
+  let titleInput = $state<HTMLInputElement>();
   let reminderForm = $state({ text: '', at: '', repeat: '' });
   let month = $state(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   let editing = $state<any>(null);
@@ -34,6 +39,20 @@
   const roots = $derived(tasks.filter((task) => !task.parent_id || !tasks.some((other) => other.id === task.parent_id)));
   const childrenOf = (id: number) => tasks.filter((task) => task.parent_id === id).sort((a, b) => a.position - b.position || a.id - b.id);
 
+  async function openForm(parent = ''): Promise<void> {
+    form.parent_id = parent;
+    adding = true;
+    await tick();
+    titleInput?.focus();
+  }
+
+  async function closeForm(): Promise<void> {
+    adding = false;
+    form = blank();
+    await tick();
+    addButton?.focus();
+  }
+
   async function add(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     try {
@@ -42,7 +61,7 @@
         reminders: form.reminders.split(',').map((item) => item.trim()).filter(Boolean),
         parent_id: form.parent_id ? Number(form.parent_id) : null,
       });
-      form = { title: '', description: '', due: '', reminders: '', parent_id: '' };
+      closeForm();
       load();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -123,38 +142,48 @@
       {/if}
     </div>
     <div class="row task-actions">
-      <button class="small" onclick={() => (editing = { id: task.id, title: task.title, description: task.description, due: task.due_at ? task.due_at.slice(0, 16) : '', reminders: task.reminders.map((r: string) => r.slice(0, 16)).join(', ') })}>Edit</button>
-      <button class="small" onclick={() => (form.parent_id = String(task.id))}>+ Sub</button>
+      <button class="small ghost" onclick={() => (editing = { id: task.id, title: task.title, description: task.description, due: task.due_at ? task.due_at.slice(0, 16) : '', reminders: task.reminders.map((r: string) => r.slice(0, 16)).join(', ') })}>Edit</button>
+      <button class="small ghost" onclick={() => openForm(String(task.id))}>+ Sub</button>
       <select class="small" aria-label={`Move “${task.title}”`} onchange={(event) => { const value = (event.target as HTMLSelectElement).value; if (value) patch(task, { parent_id: Number(value) }); }}>
         <option value="">Move…</option>
         <option value="0">to the top</option>
         {#each tasks.filter((other) => other.id !== task.id && other.status === 'open') as other}<option value={other.id}>under {other.title}</option>{/each}
       </select>
-      <button class="small danger" onclick={() => remove(task)}>Delete</button>
+      <button class="small ghost danger" onclick={() => remove(task)}>Delete</button>
     </div>
   </div>
   {#each childrenOf(task.id) as child (child.id)}{@render taskRow(child, depth + 1)}{/each}
 {/snippet}
 
 <div class="page stack">
-  <div><Segmented label="View" options={TABS} bind:value={tab} /></div>
+  <div class="row">
+    <Segmented label="View" options={TABS} bind:value={tab} />
+    {#if tab === 'tasks'}
+      <button class="primary push" aria-expanded={adding} aria-controls="new-task" bind:this={addButton} onclick={() => (adding ? closeForm() : openForm())}>
+        <Icon name="plus" size={18} />New task</button>
+    {/if}
+  </div>
 
   {#if tab === 'tasks'}
-    <form class="panel stack" onsubmit={add}>
-      <div class="grid-2">
-        <input aria-label="New task" placeholder="New task" bind:value={form.title} maxlength="200" required />
-        <label class="row small">due <input class="grow" type="datetime-local" bind:value={form.due} /></label>
-        <textarea rows="2" aria-label="Description" placeholder="Description (what, where, with whom, steps)" bind:value={form.description}></textarea>
-        <div class="stack">
-          <input aria-label="Reminders" placeholder="Reminders (local times, comma separated); empty: Clara picks them" bind:value={form.reminders} />
-          <select aria-label="Sub task of" bind:value={form.parent_id}>
-            <option value="">A main task</option>
-            {#each tasks.filter((task) => task.status === 'open') as task}<option value={String(task.id)}>Sub task of: {task.title}</option>{/each}
-          </select>
+    {#if adding}
+      <form class="panel stack" id="new-task" aria-label="New task" onsubmit={add}>
+        <div class="grid-2">
+          <label class="field">Title <input bind:this={titleInput} bind:value={form.title} maxlength="200" required /></label>
+          <label class="field">Due <input type="datetime-local" bind:value={form.due} /></label>
+          <label class="field">Description <textarea rows="3" placeholder="What, where, with whom, steps" bind:value={form.description}></textarea></label>
+          <div class="stack">
+            <label class="field">Reminders <span class="hint">Local times, comma separated. Left empty, Clara picks them.</span>
+              <input placeholder="2026-10-20T09:00, …" bind:value={form.reminders} /></label>
+            <label class="field">Sub task of
+              <select bind:value={form.parent_id}>
+                <option value="">Nothing: a main task</option>
+                {#each tasks.filter((task) => task.status === 'open') as task}<option value={String(task.id)}>{task.title}</option>{/each}
+              </select></label>
+          </div>
         </div>
-      </div>
-      <button class="primary">Add task</button>
-    </form>
+        <div class="row"><button class="primary">Add task</button><button type="button" onclick={closeForm}>Cancel</button></div>
+      </form>
+    {/if}
     <div><Segmented label="Which tasks" options={STATUSES} bind:value={status} /></div>
     <div class="panel">
       {#each roots as task (task.id)}{@render taskRow(task, 0)}{:else}<div class="empty">No task.</div>{/each}
@@ -178,16 +207,17 @@
       </div>
     </div>
   {:else}
-    <form class="panel row" onsubmit={addReminder}>
-      <input class="grow" aria-label="Reminder" placeholder="Remind me to…" bind:value={reminderForm.text} maxlength="500" required />
-      <input type="datetime-local" aria-label="When" bind:value={reminderForm.at} required />
-      <select aria-label="Repeat" bind:value={reminderForm.repeat}>
-        <option value="">once</option><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option>
-      </select>
+    <form class="panel row end" onsubmit={addReminder}>
+      <label class="field grow">Reminder <input placeholder="Remind me to…" bind:value={reminderForm.text} maxlength="500" required /></label>
+      <label class="field">When <input type="datetime-local" bind:value={reminderForm.at} required /></label>
+      <label class="field">Repeat
+        <select bind:value={reminderForm.repeat}>
+          <option value="">once</option><option value="daily">daily</option><option value="weekly">weekly</option><option value="monthly">monthly</option>
+        </select></label>
       <button class="primary">Add</button>
     </form>
     <table>
-      <thead><tr><th>When</th><th>Reminder</th><th>Repeat</th><th></th></tr></thead>
+      <thead><tr><th>When</th><th>Reminder</th><th>Repeat</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each reminders as reminder (reminder.id)}
           <tr>
@@ -205,10 +235,12 @@
 </div>
 
 <style>
+  /* checkbox, then the task, then its actions; on a phone the actions go under the task, not beside it (nothing is squeezed) */
   .task {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: var(--sp-12);
-    align-items: flex-start;
+    align-items: start;
     padding: var(--sp-12) var(--sp-4);
     border-bottom: 1px solid var(--line);
   }
@@ -223,16 +255,22 @@
     text-decoration: line-through;
     color: var(--muted);
   }
+  /* quiet at rest (no borders), at full strength: text of 4.5:1 and more, as everywhere */
   .task-actions {
-    opacity: 0.65;
+    gap: var(--sp-4);
+    justify-content: flex-end;
   }
-  .task:hover .task-actions,
-  .task-actions:focus-within {
-    opacity: 1;
+  .task-actions select {
+    width: 8rem;
   }
-  @media (hover: none) {
+  @media (max-width: 600px) {
+    .task {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
     .task-actions {
-      opacity: 1;
+      grid-column: 2;
+      justify-content: flex-start;
+      margin-left: calc(var(--sp-10) * -1); /* a small button's own padding: its label lines up with the title */
     }
   }
 </style>

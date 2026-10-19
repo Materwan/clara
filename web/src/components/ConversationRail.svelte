@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
-  import { conversations, go, live, toast, ui } from '../lib/state.svelte';
+  import { conversations, go, live, narrow, toast, ui } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
 
   // The list of conversations, in the rail under the pages: on every page, scrolling with the rest of the rail.
@@ -17,6 +17,7 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let choice = $state<Record<string, boolean>>(remembered()); // group → true: opened by you, false: closed by you
   let all = $state<Record<string, boolean>>({}); // groups that listed everything ("Show more")
+  let menu = $state<string | null>(null); // the conversation whose actions are open under its row (touch screens: no hover)
   const pinned = $derived(items.filter((item) => item.pinned));
   const others = $derived(items.filter((item) => !item.pinned));
   const loose = $derived(others.filter((item) => !item.group));
@@ -59,6 +60,11 @@
   const listed = (group: Group): any[] =>
     query || all[group.key] ? group.items : group.items.filter((item, index) => index < SHOWN || item.id === current);
 
+  /** An action that brings its element into view when it appears (a menu opened on the last row of the list). */
+  function reveal(node: HTMLElement): void {
+    node.scrollIntoView({ block: 'nearest' });
+  }
+
   /** "14:05" today, "12 Oct" this year, "12 Oct 2025" before; the full date is in the title. */
   function short(iso: string): string {
     const date = new Date(iso);
@@ -75,6 +81,11 @@
       toast((error as Error).message, 'error');
     }
   }
+
+  // The drawer shutting takes an open row menu with it.
+  $effect(() => {
+    if (narrow.rail && !ui.rail) menu = null;
+  });
 
   $effect(() => {
     void conversations.changed;
@@ -121,7 +132,7 @@
         {#if item.local_only}<Icon name="home" size={14} label="Local only" />{/if}
         <span>{item.title || item.preview || 'New conversation'}</span>
       </span>
-      <span class="meta">{item.client} · {short(item.updated_at)}</span>
+      <span class="meta">{item.client === 'web' ? '' : `${item.client} · `}{short(item.updated_at)}</span>
     </a>
     <span class="actions">
       <button class="ghost icon-btn" aria-pressed={!!item.pinned} title={item.pinned ? 'Unpin' : 'Pin'} aria-label={item.pinned ? 'Unpin' : 'Pin'}
@@ -129,7 +140,16 @@
       <button class="ghost icon-btn" title="Rename" aria-label="Rename" onclick={() => rename(item)}><Icon name="edit" size={16} /></button>
       <button class="ghost icon-btn" title="Delete" aria-label="Delete" onclick={() => remove(item)}><Icon name="trash" size={16} /></button>
     </span>
+    <button class="ghost icon-btn row-more" aria-expanded={menu === item.id} aria-label={`Actions for ${item.title || item.preview || 'this conversation'}`}
+      onclick={() => (menu = menu === item.id ? null : item.id)}><Icon name="more" size={18} /></button>
   </li>
+  {#if menu === item.id}
+    <li class="convo-menu" class:nested use:reveal>
+      <button class="small toggle" aria-pressed={!!item.pinned} onclick={() => { menu = null; pin(item); }}><Icon name="pin" size={16} />Pin</button>
+      <button class="small" onclick={() => { menu = null; rename(item); }}><Icon name="edit" size={16} />Rename</button>
+      <button class="small danger" onclick={() => { menu = null; remove(item); }}><Icon name="trash" size={16} />Delete</button>
+    </li>
+  {/if}
 {/snippet}
 
 {#snippet section(group: Group)}

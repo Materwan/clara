@@ -51,7 +51,7 @@ requests wait (it opens Rules & approvals), and the account tab, which shows the
 with and a red count while alerts are active (also on the Admin tab). It opens onto **Settings**, an **Auto /
 Light / Dark** theme switch (remembered in this browser, applied before the page is drawn) and Sign out. On a phone
 the rail, with the list of conversations, slides in over the page (focus moves into it, and the page behind is inert until
-it closes). Checkboxes are drawn in the site's style (a box that fills violet, with a white tick). A question that needs an answer (delete, revoke, a secret's value, when a token or an account is attached)
+it closes; a conversation's pin, rename and delete are one ⋯ button there, as there is no hover). Checkboxes are drawn in the site's style (a box that fills violet, with a white tick). A question that needs an answer (delete, revoke, a secret's value, when a token or an account is attached)
 opens a dialog in the site's own style: Escape cancels, and a secret is typed in a masked field. Notifications wait while
 you point at them and can be dismissed. The first Tab stop is **Skip to content**. Pages:
 

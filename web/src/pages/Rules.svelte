@@ -64,6 +64,9 @@
     load();
   }
 
+  /** allow, ask, refuse: the same three words and colours as every other state (ok, warn, danger). */
+  const kind = (effect: string): string => (effect === 'allow' ? 'ok' : effect === 'ask' ? 'warn' : 'danger');
+
   async function tainted(on: boolean): Promise<void> {
     await api.put('/v1/rules/tainted', { on });
     load();
@@ -117,11 +120,11 @@
         {#if form.id}<button type="button" onclick={() => (form = empty())}>Cancel</button>{/if}</div>
     </form>
     <table>
-      <thead><tr><th>#</th><th>Effect</th><th>Tool</th><th>Target</th><th>Situation</th><th>Level</th><th>Origin</th><th>Hits</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>Effect</th><th>Tool</th><th>Target</th><th>Situation</th><th>Level</th><th>Origin</th><th>Hits</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each data.rules as rule (rule.id)}
           <tr class:off={!rule.enabled}>
-            <td>{rule.id}</td><td><strong>{rule.effect}</strong></td><td>{rule.tool || '*'}</td><td><code>{rule.target || '*'}</code></td>
+            <td>{rule.id}</td><td><span class="tag {kind(rule.effect)}">{rule.effect}</span></td><td>{rule.tool || '*'}</td><td><code>{rule.target || '*'}</code></td>
             <td>{rule.situation || 'any'}</td><td>{rule.level || 'any'}</td><td class="small">{rule.origin}{rule.note ? ` · ${rule.note}` : ''}</td>
             <td class="small">{rule.hits}</td>
             <td class="row"><button class="small" onclick={() => edit(rule)}>Edit</button><button class="small" onclick={() => toggle(rule)}>{rule.enabled ? 'Off' : 'On'}</button>
@@ -133,7 +136,7 @@
     <h2>Defaults</h2>
     <table>
       <thead><tr><th>Action class</th><th>In a chat</th><th>Unattended</th></tr></thead>
-      <tbody>{#each data.defaults as row}<tr><td>{row.description} <span class="muted small">({row.class})</span></td><td>{row.interactive}</td><td>{row.unattended}</td></tr>{/each}</tbody>
+      <tbody>{#each data.defaults as row}<tr><td>{row.description} <span class="muted small">({row.class})</span></td><td><span class="tag {kind(row.interactive)}">{row.interactive}</span></td><td><span class="tag {kind(row.unattended)}">{row.unattended}</span></td></tr>{/each}</tbody>
     </table>
   {:else if tab === 'test'}
     <form class="panel stack" onsubmit={runTest}>
@@ -148,7 +151,7 @@
     </form>
     {#if result}
       <div class="panel stack">
-        <div><strong class="big">{result.effect}</strong> — {result.reason}{result.floor ? ' (the floor: no rule can change it)' : ''}</div>
+        <div><span class="tag big {kind(result.effect)}">{result.effect}</span> {result.reason}{result.floor ? ' (the floor: no rule can change it)' : ''}</div>
         <div class="small">{result.action.summary} · {result.action.class} · {result.action.level} · {result.action.targets.join(' ')}</div>
         {#if result.raised.length}<div class="warn small">Raised: {result.raised.join('; ')}</div>{/if}
         <div class="small muted">Default for this class: chat {result.default.interactive}, unattended {result.default.unattended}. Matching rules: {result.matching.map((rule: any) => '#' + rule.id).join(', ') || 'none'}</div>
@@ -160,7 +163,7 @@
       <tbody>
         {#each audit as entry (entry.id)}
           <tr><td class="small">{when(entry.at)}</td><td>{entry.tool}</td><td class="small"><code>{entry.target}</code></td><td class="small">{entry.situation}</td>
-            <td>{entry.effect}{entry.rule_id ? ` (#${entry.rule_id})` : ''}</td><td>{entry.outcome}{entry.approval_id ? ` #${entry.approval_id}` : ''}</td></tr>
+            <td><span class="tag {kind(entry.effect)}">{entry.effect}</span>{entry.rule_id ? ` #${entry.rule_id}` : ''}</td><td>{entry.outcome}{entry.approval_id ? ` #${entry.approval_id}` : ''}</td></tr>
         {/each}
       </tbody>
     </table>
@@ -169,7 +172,7 @@
 
 <style>
   .big {
-    font-size: var(--fs-xl);
-    font-family: var(--font-display);
+    font-size: var(--fs-lg);
+    padding-block: var(--sp-4);
   }
 </style>

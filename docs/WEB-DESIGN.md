@@ -18,6 +18,8 @@ Everything lives in `web/src/app.css` (tokens and shared components) and `web/sr
    on a list row (a list item cannot carry `aria-current`).
 4. **Every control has a name a screen reader can read:** a wrapping `<label>`, `label.field`, or `aria-label`. A
    placeholder is a hint, not a name. Icon-only buttons have `aria-label` (and `title` when the picture is not obvious).
+   A file picker that looks like a button is `label.button` holding an `input.sr-only`, never a `hidden` input: a hidden
+   input cannot take focus, so the keyboard would not reach it.
 5. **No inline `style=` attributes** (the CSP forbids them). A value that comes from data goes through Svelte's `style:`
    directive, as in `style:width={…}`.
 6. **A question the user must answer is a dialog** (`confirmDialog`, `promptDialog`), never `confirm()` or `prompt()`.
@@ -47,6 +49,7 @@ forces one. Needs a browser from 2024 or later (`light-dark()`).
 | Space (a 2px grid, named by pixels) | `--sp-2` `4` `6` `8` `10` `12` `14` `16` `20` `24` `32` `48` `64`; a negative offset is `calc(var(--sp-12) * -1)` |
 | Shape | `--r-xs` 4 · `--r-sm` 6 · `--r-md` 8 · `--r-lg` 12 · `--r-pill` |
 | Motion | `--dur-fast` .15s (a colour) · `--dur` .24s (a panel, a toast) · `--dur-slow` .4s; `--ease-out`. `prefers-reduced-motion` switches all of it off |
+| Layout | `--rail-w` 248 · `--column` 920 (the conversation and the box you write in) · `--page-w` 1120 (a page's column, padding included) · `--col-pad`: the space left of that column inside `.content`, which is a query container (`100cqw`), so the page's title, its Settings tabs and its body all start at the same x whatever the scrollbar takes. The chat's header is the exception: it fills the width |
 | Stacking | `--z-head` 5 · `--z-scrim` 30 · `--z-rail` 40 · `--z-toast` 100; a dialog is in the browser's top layer, above all |
 | Breakpoints | 860 px (the rail, with the conversation list in it, becomes a drawer), 600 px (phone). CSS cannot read a token in a media query, so the first is repeated in `lib/state.svelte.ts` (`watchViewport`) |
 
@@ -59,6 +62,8 @@ variant of its own. Use `class="negative"` for another dark surface (the Admin c
 The rail has three parts: `.rail-top` (the logo and **New chat**) and `.rail-foot` (the approvals waiting for you, and the
 account tab) stay put; `.rail-scroll` between them holds the pages and the conversation list (`ConversationRail.svelte`),
 which scroll as one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`) so its buttons can fade over its title.
+A row's actions (pin, rename, delete) are three icons that appear on hover; where there is no hover (`hover: none`) they are
+one **⋯** button (`.row-more`, `aria-expanded`) that opens them, named, in a row under the conversation (`.convo-menu`).
 The list is in sections: Pinned, **Projects**, **Schedules**, then the loose conversations. A project or a schedule is a
 `.group-head` disclosure (`aria-expanded`, the chevron turns) over its rows (`.convo.nested`); `.more` lists the rest of a
 group. The button that switches a group on for the list is a `button.toggle` (`aria-pressed`) on the Projects and Schedules pages.
@@ -78,7 +83,11 @@ account tab below.
 | Frame | `.frame`, `.panel`, `table`, `.approval`, `.qcm`, `.cal` | The ruled box: a 2px rule on top, a hairline around. Knobs: `--frame-rule`, `--frame-edge`. `.frame.signal` marks a step that waits for you |
 | Segmented control | `Segmented.svelte` | A few choices, one on: a group of toggle buttons (`aria-pressed`) named by `label`; `count` shows a badge; `quiet` is the small variant (the theme switch). Not a tab list: it does not own a panel |
 | Account tab | `AccountMenu.svelte` | The foot of the rail: the signed-in token's name, the alert count and a chevron. It opens upward onto a `.frame` panel (violet rule) with Settings, the theme switch and Sign out. A disclosure (`aria-expanded`), not a menu role. Escape (heard in the capture phase, so it shuts the panel before the drawer), a click or focus outside, and the drawer closing all close it; picking a theme keeps it open |
-| Settings bar | `.settings-bar` | Page-level navigation: links with `aria-current="page"` |
+| Settings bar | `.settings-bar` | Page-level navigation: links with `aria-current="page"`. Its first label starts at the column's edge (the bar starts one tab-padding to the left); on a phone it scrolls sideways and the open tab is scrolled into view |
+| Create form | `button.primary` (`aria-expanded`, `aria-controls`) + `form.panel` | A page that is a list with something to add (Tasks, Schedules): the list first, the form opens from a **New …** button (and from a row's **+ Sub** or **Edit**). Focus goes to the first field, and comes back to the button when the form closes. Fields are `label.field` (the label above; `.hint` for what to type, which a placeholder would lose); a row of fields is `.row.end` |
+| Facts list | `dl.facts` | What something is, then its value: the status of the server. On a phone the name sits above its value |
+| Rows | `ul.rows` | A plain list of links with a date (the conversations of a project) |
+| Hint | `Hint.svelte` | A sentence from the server that may name a setting (`CLARA_VAULT_PATH`): the plain words first, the name in code style. Never wrap it in parentheses again: it often has its own |
 | Tag, count, dot | `.tag`, `.count`, `.dot` | A state, a number, a connection; each takes `ok` / `warn` / `danger` |
 | Chip | `.chip` | A file or a kind; its remove button is 24 px |
 | Dialog | `Dialog.svelte`, `lib/dialog.svelte.ts` | A native `<dialog>`: the page behind is inert, Tab stays inside, Escape cancels. `confirmDialog({ message, title?, confirm?, danger? })` returns a boolean (focus starts on **Cancel**; `danger` makes the yes button red and the top rule red); `promptDialog({ message, label?, value?, type? })` returns the text or `null` (`type: 'password'` hides it; `'datetime-local'` shows a picker). A click on the backdrop does not dismiss it, so a half-typed secret is not lost |
@@ -86,6 +95,7 @@ account tab below.
 | Empty state | `.empty` | A line of text; say what to do next |
 | Icon, mark | `Icon.svelte`, `Mark.svelte` | Line icons from `lib/icons.ts` (one stroke width). Sizes 14, 16, 18, 20: decorative unless given a `label` |
 | Cards | `ApprovalCard`, `FileCard`, `QcmForm` | What Clara puts in a conversation |
+| Your message | `.msg.user` | The bubble holds what you wrote and nothing else: a document you attached is a chip (`lib/documents.ts` splits the stored message, which keeps the `<document>` blocks for Clara; `repack` puts them back when you edit your words). Never draw a stored message whole: a document can be 40,000 characters |
 
 ## Accessibility
 
@@ -100,6 +110,9 @@ account tab below.
 - **Targets:** at least 24 px (WCAG 2.2); 36 px for icon buttons and small buttons on a touch screen
   (`pointer: coarse`). Per-conversation buttons are always visible on touch (`hover: none`) since there is no pointing
   at a row.
+- **Tables:** on a phone a table is as wide as its words and scrolls sideways (`td` breaks at words, not in them; a host or
+  an address is `.url`, which may break anywhere); a table with nothing in it to focus has `tabindex="0"` so the keyboard can
+  scroll it. A header cell for a column of buttons is `<th><span class="sr-only">Actions</span></th>`, never empty.
 - **Headings:** one `<h1>` per page (the title in the header); sections are `<h2>`. The chat's greeting is a display
   line (`.greeting`, an `<h2>`), not a second title.
 - **Forced colours** (Windows high contrast): the selected state is drawn with an outline, select arrows fall back
@@ -113,5 +126,7 @@ account tab below.
 3. A new component that restyles a button: write one plain class (the base has no specificity), and do not copy
    `:hover:not(:disabled)`.
 4. A new page: `<div class="page stack">`, one `<h1>` from the header, `Segmented` for views, `Dialog` for questions,
-   `label.field` or `aria-label` on every control.
+   `label.field` or `aria-label` on every control. Do not set a width or centre it: `.page` draws the column. A row with
+   several controls in a grid (`display: grid`) lets its text column shrink (`minmax(0, 1fr)`) and moves its buttons under
+   the text on a phone, not beside it.
 5. Run `npm run check` and `npm run build` in `web/` (releases build in a pinned Node image: see `scripts/`).

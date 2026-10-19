@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
   import LogStream from '../components/LogStream.svelte';
   import Segmented from '../components/Segmented.svelte';
@@ -20,6 +21,14 @@
   let madeToken = $state('');
   let line = $state('');
   let output = $state<{ line: string; text: string }[]>([]);
+
+  /** "under a minute", "12 min", "5 h", "3 days". */
+  function upFor(seconds: number): string {
+    if (seconds < 60) return 'under a minute';
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+    if (seconds < 172_800) return `${Math.round(seconds / 3600)} h`;
+    return `${Math.round(seconds / 86_400)} days`;
+  }
 
   async function load(): Promise<void> {
     status = await api.get('/v1/admin/status');
@@ -114,17 +123,23 @@
 
   {#if tab === 'status' && status}
     <div class="grid-2">
-      <div class="panel small stack">
-        <div><strong>Clara {status.version}</strong> {status.release ? `(${status.release})` : '(source tree)'} · {status.state} · up {Math.round(status.uptime / 3600)} h</div>
-        <div>Default model: {status.models.default || '(none)'}</div>
-        <div>Turns running: {status.agent.active} · since start: {status.agent.turns} · today: {status.usage_today.calls} calls</div>
-        <div>Database {status.storage.database_mb} MB · workspace {status.storage.workspace_mb} MB · disk {status.storage.disk_percent}%</div>
-        <div>Scripts: {status.workspace.run_ready ? 'ready' : `off (${status.workspace.run_problem})`}</div>
-        <div>Tailscale: {status.tailscale}</div>
-        <div>Backups: last {status.backups.last ?? 'never'}{status.backups.remote ? ` · remote ${status.backups.last_remote ?? 'never'}` : ''}</div>
-        <div>Clients: {Object.entries(status.clients).map(([name, seen]) => `${name} ${seen}`).join(', ') || '—'} · {status.events.listeners} listening</div>
-        <div class="row">Debug content log: {status.debug_until ? `on until ${when(status.debug_until)}` : 'off'}
-          <button class="small" onclick={() => debug(!status.debug_until)}>{status.debug_until ? 'Turn off' : 'On for 1 hour'}</button></div>
+      <div class="panel small">
+        <dl class="facts">
+          <dt>Clara</dt>
+          <dd><strong>{status.version}</strong> {status.release ? `(${status.release})` : '(source tree)'}
+            <span class="tag" class:ok={status.state === 'running'} class:warn={status.state !== 'running'}>{status.state}</span> up {upFor(status.uptime)}</dd>
+          <dt>Default model</dt><dd>{status.models.default || 'none'}</dd>
+          <dt>Answers</dt><dd>{status.agent.active} running · {status.agent.turns} since start · {status.usage_today.calls} calls today</dd>
+          <dt>Storage</dt><dd>Database {status.storage.database_mb} MB · workspace {status.storage.workspace_mb} MB · disk {status.storage.disk_percent}% full</dd>
+          <dt>Scripts</dt>
+          <dd>{#if status.workspace.run_ready}<span class="tag ok">ready</span>{:else}<span class="tag warn">off</span> <span class="muted"><Hint text={status.workspace.run_problem} /></span>{/if}</dd>
+          <dt>Tailscale</dt><dd>{status.tailscale}</dd>
+          <dt>Backups</dt><dd>Last {status.backups.last ?? 'never'}{status.backups.remote ? ` · remote ${status.backups.last_remote ?? 'never'}` : ''}</dd>
+          <dt>Clients</dt><dd>{Object.entries(status.clients).map(([name, seen]) => `${name} ${seen}`).join(', ') || 'none seen'} · {status.events.listeners} listening</dd>
+          <dt>Debug log</dt>
+          <dd class="row">{status.debug_until ? `On until ${when(status.debug_until)}` : 'Off'}
+            <button class="small" onclick={() => debug(!status.debug_until)}>{status.debug_until ? 'Turn off' : 'On for 1 hour'}</button></dd>
+        </dl>
       </div>
       <div class="panel small stack">
         <h2>Alerts</h2>
@@ -145,7 +160,7 @@
     </form>
     {#if madeToken}<div class="panel"><p>Shown once: copy it now.</p><code class="token">{madeToken}</code> <button class="small" onclick={() => (madeToken = '')}>Done</button></div>{/if}
     <table>
-      <thead><tr><th>Name</th><th>Client</th><th>May answer</th><th>Last used</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Client</th><th>May answer</th><th>Last used</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         {#each tokens.tokens as token (token.id)}
           <tr class:off={token.revoked_at}><td>{token.name}{token.name === tokens.you ? ' (this one)' : ''}</td><td>{token.client}</td><td>{token.approvals}</td>
@@ -177,7 +192,7 @@
   {:else if tab === 'backups'}
     {#if backups}
       <div class="row"><button class="primary" onclick={() => act('/v1/admin/backups')}>Back up now</button>
-        <span class="small muted">Remote: {backups.remote || 'not set (CLARA_RESTIC_REPOSITORY)'} {backups.problem ? `· ${backups.problem}` : ''}</span></div>
+        <span class="small muted">Remote copy: {#if backups.remote}{backups.remote}{:else}not set up. Point <code>CLARA_RESTIC_REPOSITORY</code> at a restic repository to keep one.{/if} {backups.problem ? `· ${backups.problem}` : ''}</span></div>
       <table>
         <thead><tr><th>File</th><th>Kind</th><th>Size</th></tr></thead>
         <tbody>{#each backups.files as file}<tr><td><code>{file.name}</code></td><td>{file.kind}</td><td>{file.size_mb} MB</td></tr>{/each}</tbody>

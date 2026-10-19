@@ -70,7 +70,7 @@ class Sandbox:
         self.db = db
         self.image = image
         self.ready = False
-        self.problem = "not checked yet" if settings.run == "auto" else "off (CLARA_RUN=off)"
+        self.problem = "not checked yet" if settings.run == "auto" else "CLARA_RUN is set to off"
         self._slots = asyncio.Semaphore(settings.run_slots)
         self._check: asyncio.Task | None = None
 

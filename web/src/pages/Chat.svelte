@@ -7,6 +7,7 @@
   import PlusMenu from '../components/PlusMenu.svelte';
   import QcmForm from '../components/QcmForm.svelte';
   import { api, fileToBase64, stream, zone } from '../lib/api';
+  import { type Document, repack, unpack } from '../lib/documents';
   import { markdown } from '../lib/markdown';
   import { conversations, go, route, toast, ui } from '../lib/state.svelte';
   import { type Call, note, summary } from '../lib/tools';
@@ -21,8 +22,10 @@
   type Message = {
     id?: number;
     role: 'user' | 'assistant';
-    content: string; // what you wrote (a reply's text is in its parts)
-    attachments: string[];
+    content: string; // the message as it is stored: what you wrote, and the documents in it (a reply's text is in its parts)
+    shown?: string; // your words alone: what the bubble draws (the documents are chips)
+    documents?: Document[]; // the documents of a stored message, kept to put them back when you edit it
+    attachments: { name: string; chars?: number }[];
     parts: Part[];
     thinking?: string;
     thinkingOpen?: boolean;
@@ -35,6 +38,15 @@
   };
 
   const blank = (role: Message['role'], content = ''): Message => ({ role, content, attachments: [], parts: [], files: [], notes: [] });
+  /** Your message as the site draws it: your words in the bubble, a chip for each document in it. */
+  function yours(content: string): Message {
+    const sent = unpack(content);
+    const message = blank('user', content);
+    message.shown = sent.text;
+    message.documents = sent.documents;
+    message.attachments = sent.documents.map(({ name, chars }) => ({ name, chars }));
+    return message;
+  }
   const SILENT = new Set(['qcm']); // the form is its own card
 
   let conversationId = $derived(route.params.id ?? null);
@@ -122,7 +134,7 @@
     let answer: Message | null = null;
     for (const item of history) {
       if (item.role === 'user') {
-        const message = blank('user', item.content);
+        const message = yours(item.content);
         Object.assign(message, { id: item.id, versions: item.versions, version: item.version });
         shown.push(message);
         answer = null;
@@ -168,8 +180,8 @@
         const index = messages.findIndex((message) => message.id === forkOf);
         if (index >= 0) messages = messages.slice(0, index);
       }
-      const user = blank('user', text);
-      user.attachments = files.map((file) => file.name);
+      const user = yours(text);
+      user.attachments.push(...files.map((file) => ({ name: file.name })));
       const answer = blank('assistant');
       answer.streaming = true;
       messages.push(user, answer);
@@ -376,6 +388,10 @@
   </div>
 {/snippet}
 
+{#snippet files(message: Message)}
+  <div class="chips notes">{#each message.attachments as file}<span class="chip" title={file.chars ? `${file.chars.toLocaleString()} characters, sent with the message` : undefined}><Icon name="clip" size={14} /><span class="name">{file.name}</span></span>{/each}</div>
+{/snippet}
+
 {#snippet callLine(call: Shown)}
   {@const said = note(call)}
   <span class="run-summary"><b>{said.label}</b>{said.detail ? ` ${said.detail}` : ''}</span>
@@ -413,7 +429,13 @@
         <div class="welcome">
           <Mark size={56} />
           <h2 class="greeting">{greeting()}</h2>
-          <p>Ask Clara anything. The notes she writes go to her workspace (notes/) and show here as cards.</p>
+          <p>Ask Clara anything. The notes she writes are saved in your workspace and show here as cards.</p>
+          {#if !conversationId && (fresh.incognito || fresh.local_only)}
+            <div class="flag-notes" role="status">
+              {#if fresh.incognito}<p class="flag-note"><Icon name="incognito" size={16} />Incognito: no facts are read or written, and the conversation is deleted 24 hours after its last message.</p>{/if}
+              {#if fresh.local_only}<p class="flag-note"><Icon name="home" size={16} />Local only: only local models answer; nothing leaves your machines.</p>{/if}
+            </div>
+          {/if}
         </div>
       {/if}
       {#each messages as message, index (index)}
@@ -423,15 +445,16 @@
               {#if editing === message.id}
                 <div class="edit">
                   <textarea rows="3" bind:value={editText} aria-label="Your question"></textarea>
+                  {#if message.documents?.length}{@render files(message)}<span class="small muted">The files are sent again with it.</span>{/if}
                   <div class="row">
                     <button class="small" onclick={() => (editing = null)}>Cancel</button>
-                    <button class="primary small" onclick={() => { const id = editing; editing = null; send(editText, id); }}>Send edited</button>
+                    <button class="primary small" onclick={() => { const id = editing; editing = null; send(repack(editText, message.documents ?? []), id); }}>Send edited</button>
                   </div>
                 </div>
               {:else}
-                <div class="bubble markdown" use:markdown={message.content}></div>
+                {#if message.shown?.trim()}<div class="bubble markdown" use:markdown={message.shown}></div>{/if}
                 {#if message.attachments.length}
-                  <div class="chips notes">{#each message.attachments as name}<span class="chip"><Icon name="clip" size={14} /><span class="name">{name}</span></span>{/each}</div>
+                  {@render files(message)}
                 {/if}
                 {#if message.versions || (message.id && !busy)}
                   <div class="msg-actions">
@@ -442,7 +465,7 @@
                     {/if}
                     {#if message.id && !busy}
                       <button class="ghost" title="Ask again" aria-label="Ask again" onclick={() => send(message.content, message.id!)}><Icon name="refresh" size={16} /></button>
-                      <button class="ghost" title="Edit" aria-label="Edit" onclick={() => { editing = message.id!; editText = message.content; }}><Icon name="edit" size={16} /></button>
+                      <button class="ghost" title="Edit" aria-label="Edit" onclick={() => { editing = message.id!; editText = message.shown ?? message.content; }}><Icon name="edit" size={16} /></button>
                     {/if}
                   </div>
                 {/if}

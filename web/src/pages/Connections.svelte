@@ -95,7 +95,7 @@
   }
 </script>
 
-<div class="page narrow stack">
+<div class="page stack">
   <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
     each GitHub and Drive change asks you first.</p>
   {#if info}
@@ -122,14 +122,15 @@
       <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok">{info.google.account}</span>{/if}
         {#if info.google.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.google.configured}
-        <p class="muted small">Set CLARA_GOOGLE_CLIENT_ID and the secret google_client_secret (a Google Cloud OAuth client, "web
-          application", with the redirect &lt;your Clara address&gt;/v1/connections/google/callback). Clara asks only for
+        <p class="muted small">Google Drive is not set up on this server. Create a Google Cloud OAuth client of type “web
+          application”, with the redirect <code>&lt;your Clara address&gt;/v1/connections/google/callback</code>, then set
+          <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret <code>google_client_secret</code>. Clara asks only for
           <code>drive.file</code>: the files she creates and those you open to her.</p>
       {:else}
         <div class="row">
           <button class="primary" onclick={startGoogle}>{info.google.connected ? 'Connect again' : 'Connect Google Drive'}</button>
           {#if info.google.connected}
-            <button onclick={picker} disabled={!info.google.picker} title={info.google.picker ? '' : 'Needs CLARA_GOOGLE_PROJECT_NUMBER and the secret google_picker_api_key'}>Open files to Clara…</button>
+            <button onclick={picker} disabled={!info.google.picker} title={info.google.picker ? '' : 'Needs CLARA_GOOGLE_PROJECT_NUMBER and the secret google_picker_api_key on the server'}>Open files to Clara…</button>
             <button class="danger" onclick={() => disconnect('google')}>Disconnect</button>
           {/if}
         </div>

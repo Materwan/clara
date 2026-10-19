@@ -149,6 +149,10 @@
   /* layout */
   --rail-w: 248px;
   --column: 920px; /* the width of the conversation and of the box you write in */
+  --page-w: 1120px; /* the width of a page's column, its padding included */
+  /* the space left of that column inside .content (the query container): the page's title, its tabs and its body all start
+     here, so they share one left edge at any width, whatever the scrollbar takes */
+  --col-pad: max(var(--sp-24), calc((100cqw - var(--page-w)) / 2 + var(--sp-24)));
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
 :root[data-theme='light'] { color-scheme: light; }
@@ -181,11 +185,14 @@ pre { background: var(--code-bg); border: 1px solid var(--code-line); border-rad
 .stack > * + * { margin-top: var(--sp-14); }
 .stack > input, .stack > select, .stack > textarea { display: block; width: 100%; }
 .push { margin-left: auto; }
+.row.start { align-items: flex-start; }
+.row.end { align-items: flex-end; } /* a row of fields, each with its label above: the buttons sit level with the fields */
 /* state, in one vocabulary everywhere: ok, warn, danger (a text colour here; .tag, .count and .dot take the same three) */
 .ok { color: var(--ok); }
 .warn { color: var(--warn); }
 .danger { color: var(--danger); }
 .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.url { overflow-wrap: anywhere; } /* an address may break anywhere: a table can be narrower than its longest one */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* the way past the rail: the first stop of the keyboard, shown only when it has focus */
 .skip { position: fixed; top: var(--sp-8); left: var(--sp-8); z-index: var(--z-toast); transform: translateY(-200%); background: var(--raised); box-shadow: var(--shadow-lg); }
@@ -209,7 +216,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 input:user-invalid, select:user-invalid, textarea:user-invalid, [aria-invalid='true'] { border-color: var(--danger); }
 input:user-invalid:focus-visible, select:user-invalid:focus-visible, textarea:user-invalid:focus-visible, [aria-invalid='true']:focus-visible { outline-color: var(--danger); }
 input:disabled, select:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
-button:focus-visible, a:focus-visible, summary:focus-visible, label:has(> input[hidden]):focus-within {
+button:focus-visible, a:focus-visible, summary:focus-visible, label.button:has(> input.sr-only:focus-visible) {
   outline: 2px solid var(--text); outline-offset: 2px;
 }
 select {
@@ -243,6 +250,9 @@ input[type='file'] { border: none; padding: 0; background: none; }
 
 label.field { display: flex; flex-direction: column; gap: var(--sp-6); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
 label.field > input, label.field > select, label.field > textarea { font-weight: 400; color: var(--text); font-size: var(--fs-md); }
+label.field .hint { font-weight: 400; color: var(--muted); font-size: var(--fs-xs); } /* what to type, under the label: a placeholder is gone once you type */
+/* a file picker that looks like a button: the input stays in the page (.sr-only, not [hidden]) so the keyboard reaches it */
+label.button { position: relative; }
 
 /* The base of a button is wrapped in :where(): it has no specificity, so a component (.segmented button, .chip button,
    .send …) restyles it with one plain class, with no :hover:not(:disabled) copy to beat it. */
@@ -379,17 +389,19 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .account-theme .segmented { display: flex; } /* the theme switch takes the panel's width, in three equal parts */
 .account-theme .segmented button { flex: 1; }
 
-.content { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.content { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; container-type: inline-size; }
 .scrim { display: none; }
 
 /* a page's own header, and the tab bar of the settings pages under it */
 .page-head {
-  display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-12) var(--sp-24); min-height: 58px; flex: none;
+  display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-12) var(--col-pad); min-height: 58px; flex: none;
   border-bottom: 1px solid var(--line); background: var(--bg); position: relative; z-index: var(--z-head);
 }
+.page-head.chat-head { padding-inline: var(--sp-24); } /* the conversation fills the width: its title does not follow the page column */
 .page-head .title { font-family: var(--font-display); font-weight: 600; font-size: var(--fs-xl); letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .page-head .open-rail { display: none; margin-left: calc(var(--sp-6) * -1); }
-.settings-bar { display: flex; gap: var(--sp-4); padding: 0 var(--sp-24); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; background: var(--bg); }
+/* the first tab's label lines up with the title and the body: the bar starts one tab-padding to the left of the column */
+.settings-bar { display: flex; gap: var(--sp-4); padding: 0 var(--col-pad) 0 calc(var(--col-pad) - var(--sp-12)); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; background: var(--bg); }
 .settings-bar::-webkit-scrollbar { display: none; }
 .settings-bar a {
   display: inline-flex; align-items: center; gap: var(--sp-8); padding: var(--sp-12) var(--sp-12); margin-bottom: -1px; border-bottom: 2px solid transparent;
@@ -400,9 +412,8 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .settings-bar a[aria-current='page'] .icon { color: var(--accent-text); }
 .scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 
-/* the content of a page: a centred column */
-.page { max-width: 1120px; margin: 0 auto; padding: var(--sp-32) var(--sp-24) var(--sp-64); }
-.page.narrow { max-width: 840px; }
+/* the content of a page: a centred column of --page-w, drawn with --col-pad so that the header above it starts at the same x */
+.page { padding: var(--sp-32) var(--col-pad) var(--sp-64); }
 .page > h2, .page > .row > h2 { font-size: var(--fs-xl); margin: var(--sp-24) 0 var(--sp-4); }
 .intro { color: var(--muted); max-width: 70ch; }
 .empty { color: var(--muted); padding: var(--sp-24) var(--sp-16); text-align: center; }
@@ -527,6 +538,11 @@ tr.off td { opacity: .5; }
 .convo:hover .actions, .convo:focus-within .actions { display: flex; }
 .convo .actions button { padding: var(--sp-4); }
 .convo .actions button[aria-pressed='true'] { color: var(--rail-signal); }
+/* on a touch screen there is no hover: one ⋯ button opens the row's actions, with their names, under the row */
+.convo .row-more { display: none; margin-right: var(--sp-4); }
+.convo-menu { display: flex; gap: var(--sp-6); padding: var(--sp-2) var(--sp-4) var(--sp-8) var(--sp-12); }
+.convo-menu.nested { padding-left: var(--sp-32); }
+.convo-menu button { flex: 1; min-width: 0; gap: var(--sp-6); padding-inline: var(--sp-6); }
 
 /* ---- chat: the conversation, as a transcript --------------------------------------------------------------- */
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -553,7 +569,8 @@ tr.off td { opacity: .5; }
 /* with a finger there is no pointing at a line: the buttons are always there, in the line instead of over it */
 @media (hover: none) {
   .msg-actions { opacity: 1; }
-  .convo .actions { position: static; transform: none; display: flex; padding-left: 0; background: none; }
+  .convo .actions, .convo:hover .actions, .convo:focus-within .actions { display: none; }
+  .convo .row-more { display: inline-flex; }
 }
 .msg-actions:empty { display: none; }
 .msg-actions button { padding: var(--sp-4); color: var(--muted); }
@@ -599,6 +616,9 @@ tr.off td { opacity: .5; }
 .welcome .mark { margin: 0 0 var(--sp-24); }
 .welcome .greeting { font-family: var(--font-display); font-size: clamp(1.9rem, 5vw, 3rem); font-weight: 600; line-height: 1; letter-spacing: -0.045em; margin-bottom: var(--sp-10); } /* a display line, not a second h1: the page's h1 is the title above */
 .welcome p { color: var(--muted); font-size: var(--fs-lg); max-width: 46ch; }
+.welcome .flag-notes { margin-top: var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-6); }
+.welcome .flag-note { display: flex; align-items: flex-start; gap: var(--sp-8); margin: 0; font-size: var(--fs-sm); text-align: left; max-width: 52ch; }
+.welcome .flag-note .icon { margin-top: var(--sp-2); }
 
 .chips { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
 .chip { display: inline-flex; align-items: center; gap: var(--sp-6); background: var(--panel-2); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-8); font-size: var(--fs-xs); color: var(--text); max-width: 100%; }
@@ -622,6 +642,20 @@ tr.off td { opacity: .5; }
 .pack { display: flex; align-items: flex-start; gap: var(--sp-8); }
 .pack .icon { flex: none; margin-top: var(--sp-2); color: var(--muted); }
 .pack-text { min-width: 0; }
+.pack.off b, .pack.off .icon { opacity: .6; } /* a tool this server cannot give: the reason stays at full strength, the tool is dimmed */
+
+/* a list of facts: what it is, then its value (the status of the server) */
+dl.facts { display: grid; grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: var(--sp-10) var(--sp-16); margin: 0; align-items: baseline; }
+dl.facts dt { color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+
+/* a plain list of links with a date: the conversations of a project */
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-16); padding: var(--sp-8) 0; border-bottom: 1px solid var(--line); }
+.rows li:last-child { border-bottom: none; }
+.rows a { color: var(--text); font-weight: 550; text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
+.rows a:hover { text-decoration: underline; }
+.rows .when { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .plus { position: relative; }
 .plus-button[aria-expanded='true'] { color: var(--text); background: var(--hover); }
 .plus-menu {
@@ -752,9 +786,9 @@ tr.off td { opacity: .5; }
   .rail-top { padding-top: calc(var(--sp-14) + env(safe-area-inset-top, 0px)); }
   .rail.open { transform: none; visibility: visible; box-shadow: var(--shadow-lg); transition: transform var(--dur) var(--ease-out); }
   .rail-head .close-rail { display: inline-flex; }
-  .page-head { padding: var(--sp-8) var(--sp-12); padding-top: calc(var(--sp-8) + env(safe-area-inset-top, 0px)); min-height: 54px; }
+  .page-head, .page-head.chat-head { padding: var(--sp-8) var(--sp-12); padding-top: calc(var(--sp-8) + env(safe-area-inset-top, 0px)); min-height: 54px; }
   .page-head .open-rail { display: inline-flex; }
-  .settings-bar { padding: 0 var(--sp-12); }
+  .settings-bar { padding: 0 var(--sp-4); } /* a tab's own padding brings its label to the page's 16px */
   .page { padding: var(--sp-20) var(--sp-16) var(--sp-48); }
   .grid-2, .split { grid-template-columns: minmax(0, 1fr); }
 }
@@ -768,7 +802,11 @@ tr.off td { opacity: .5; }
   .welcome { padding-top: 8vh; }
   .context .label { display: none; }
   .panel { padding: var(--sp-16); }
+  /* a table is as wide as its words need and scrolls sideways: it is not squeezed until the words break in the middle */
   table { display: block; overflow-x: auto; }
+  td { overflow-wrap: break-word; }
+  dl.facts { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
+  dl.facts dd { margin-bottom: var(--sp-10); }
   .cal-cell { min-height: 3.4rem; padding: var(--sp-4); align-items: center; }
   .cal-chip { width: 7px; height: 7px; padding: 0; border-radius: 50%; font-size: 0; }
 }
@@ -778,7 +816,8 @@ tr.off td { opacity: .5; }
   button.icon-btn, .msg-actions button, .convo .actions button { min-width: 36px; min-height: 36px; }
   button.small, label.button.small, select.small { min-height: 36px; }
   .chip button { min-width: 32px; min-height: 32px; }
-  .convo, .group-head button { min-height: 44px; }
+  .convo, .group-head button, .pages a { min-height: 44px; }
+  .search-field input { min-height: 36px; }
 }
 @supports (-webkit-touch-callout: none) {
   /* Safari on iPhone and iPad zooms into any field whose text is under 16px, and stays zoomed: there, fields are 16px */

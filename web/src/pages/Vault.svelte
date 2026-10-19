@@ -1,11 +1,12 @@
 <script lang="ts">
+  import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
   import { api, ApiError } from '../lib/api';
   import { markdown } from '../lib/markdown';
   import { toast } from '../lib/state.svelte';
 
   let info = $state<any>(null);
-  let missing = $state('');
+  let missing = $state(false); // the server has no vault
   let notes = $state<string[]>([]);
   let query = $state('');
   let results = $state('');
@@ -16,7 +17,7 @@
       info = await api.get('/v1/vault');
       notes = (await api.get('/v1/vault/notes')).notes;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 404) missing = error.message;
+      if (error instanceof ApiError && error.status === 404) missing = true;
       else toast((error as Error).message, 'error');
     }
   }
@@ -43,7 +44,7 @@
 
 <div class="page stack">
   {#if missing}
-    <p class="intro">{missing} Set CLARA_VAULT_PATH to your Obsidian vault (a git clone) to give Clara a second brain.</p>
+    <p class="intro">No vault is connected. To give Clara a second brain, point <Hint text="CLARA_VAULT_PATH" /> at your Obsidian vault (a git clone) on the server.</p>
   {:else if info}
     <div class="panel small">
       <div><strong>{info.notes}</strong> notes in {info.path}</div>

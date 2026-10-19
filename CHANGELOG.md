@@ -41,6 +41,30 @@ earlier server: the new Clara starts empty.
   drawers move focus and make the page behind inert; toasts wait while pointed at and can be dismissed; touch targets
   of 36 px and up; a high-contrast fallback. Fixes: the rail overflowed by 7 px and pushed Sign out out of view, the
   Settings alert count was dark red on blue in the light theme, and the Admin console's input border was too faint.
+- **Web site, second pass (a design review):**
+  - **Layout:** a page's title, its Settings tabs and its body start at one left edge at any width (`--col-pad`, drawn
+    from the width of `.content`), and every Settings page has the same width (Connections was narrower, so the page
+    jumped between tabs). On a phone the open Settings tab scrolls into view (Models, Usage and Admin were off-screen).
+  - **Tasks and Schedules:** the list comes first; the form opens from **New task** / **New schedule** (and from **+ Sub**
+    and **Edit**), with its fields labelled above them, focus in the first field and back on the button afterwards. The
+    Tasks row no longer collapses on a phone (the title was 0 px wide, under the buttons), and its actions are quiet at
+    rest with text at full strength (the faded buttons were 3:1, under the 4.5:1 the design asks for). Tools a server
+    cannot give (no vault, no Discord bot) are disabled on Schedules, as in the chat's menu, not marked red. Next runs
+    are dated like everything else, not ISO text.
+  - **Phone:** a conversation's pin, rename and delete are one ⋯ button that opens them, named, under the row (the three
+    icons took 40% of the title); tables are as wide as their words and scroll sideways instead of breaking them in
+    the middle; the touch size of the page links is 44 px.
+  - **Copy and state:** settings the server names (`CLARA_VAULT_PATH`…) are set in code style after a plain sentence;
+    "off (off (CLARA_RUN=off))" is now "off: CLARA_RUN is set to off" (the server's message is `CLARA_RUN is set to
+    off`). Admin Status is a list of facts with `ok`/`warn` tags; allow, ask and refuse are `ok`, `warn` and `danger`
+    tags in the rules. A new conversation says what Incognito and Local only mean once ticked (a tooltip does not exist
+    on touch); the rail no longer repeats "web ·" on every conversation.
+  - **A message with documents:** reopened from the history, it drew the whole attached document inside the purple bubble
+    (a 40,000-character document made a bubble many screens tall); the bubble now holds only what you wrote, with a chip
+    per file (its size in the tooltip), as while you were sending it. Edit changes your words and sends the files again
+    with them; Ask again is unchanged. The stored message is not touched: Clara still reads the documents in it.
+  - **Keyboard:** the Upload and Add files buttons are reachable by Tab (their file input was `hidden`, which cannot take
+    focus); empty table headers say "Actions" to a screen reader; a table that scrolls sideways has a focus stop.
 - **Live log:** an Admin **Logs** tab streams the server's log and the traffic records as they happen (source and
   level filters applied on the server, pause, follow, clear). Memory only: the last 500 lines, secrets masked, no
   sign-in addresses, never the debug content. New route: `GET /v1/admin/logs/stream`.
