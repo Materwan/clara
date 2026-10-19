@@ -344,6 +344,8 @@ class Agent:
             hidden.add(self.vault_opener)
         else:
             hidden |= self.vault_tools
+        if self.s.packs is not None:
+            hidden |= self.s.packs.hidden(conversation)
         for name, condition in self.tool_conditions.items():
             if not condition(state):
                 hidden.add(name)

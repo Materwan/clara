@@ -19,6 +19,7 @@ import os
 import signal
 import sys
 from collections.abc import AsyncIterator
+from datetime import time
 
 import uvicorn
 from fastapi import FastAPI
@@ -36,6 +37,7 @@ from .api import events as events_api
 from .api import gate as gate_api
 from .api import memory as memory_api
 from .api import models as models_api
+from .api import packs as packs_api
 from .api import projects as projects_api
 from .api import time as time_api
 from .api import vault as vault_api
@@ -65,16 +67,17 @@ from .ops.tailscale import FunnelOn, check_funnel_now
 from .ops.traffic import TrafficLog
 from .ops.upkeep import Upkeep, late_alert
 from .ops.usage import UsageLog
-from .recap import install as recap_install
+from .packs import install as packs_install
+from .packs.daily_note import seed as seed_daily_note
 from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
 from .settings import Settings, SettingsError, load_settings
 from .timekeeping import Reminders, Schedules, Stopping, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
-from .timekeeping.schedules import INSTRUCTIONS as SCHEDULE_INSTRUCTIONS
-from .timekeeping.schedules import Schedule, message_of
-from .timeutil import parse_iso
+from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
+from .timekeeping.schedules import Run, Schedule, instructions_of, message_of
+from .timeutil import parse_iso, zone
 from .tools.base import Toolbox, ToolContext, TurnState
 from .tools.knowledge_tools import knowledge_tools
 from .tools.memory_tools import memory_tools
@@ -159,7 +162,11 @@ def wire(s: Services) -> None:
     for loop in (s.reminders, s.tasks, s.schedules):
         loop.late = late
         loop.late_after = float(s.settings.late_alert_seconds)
-    s.schedules.runner = lambda schedule, number: run_schedule(s, schedule, number)
+    s.schedules.runner = lambda schedule, number, run: run_schedule(s, schedule, number, run)
+    s.schedules.closer = lambda schedule, run: close_run(s, schedule, run)
+    s.schedules.check_packs = lambda ids: s.packs.check(ids, "schedule") if s.packs is not None else list(ids)
+    hours, minutes = s.settings.waiting_remind_at.split(":")
+    s.schedules.remind_at = time(int(hours), int(minutes))
     s.schedules.waiting = s.approvals.pending_count
     s.approvals.toolbox = s.toolbox
     s.approvals.followup = s.agent.followup
@@ -176,20 +183,43 @@ def wire(s: Services) -> None:
     s.approvals.context_factory = approved_context
 
 
-async def run_schedule(s: Services, schedule: Schedule, number: int) -> str:
+async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -> str:
+    """One run: a turn in a conversation (the schedule's own, or a new one for each run) with the schedule's packs and
+    model. The run remembers its conversation, which is where your answer comes back when it asks something."""
     from .agent.turn import ServerStopping
 
-    conversation_id = schedule.conversation_id
-    if conversation_id is None or s.conversations.get(conversation_id) is None:
-        conversation = s.conversations.create("server", kind="schedule", title=schedule.name,
-                                              project_id=schedule.project_id, local_only=schedule.local_only)
-        conversation_id = conversation.id
-        s.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation_id, schedule.id))
+    packs = list(schedule.packs)
+    if schedule.per_run:
+        day = run.due.astimezone(zone(schedule.timezone)).date().isoformat()
+        conversation_id = s.conversations.create(
+            "server", title=f"{schedule.name} — {day}", project_id=schedule.project_id, local_only=schedule.local_only,
+            model=schedule.model, packs=packs).id
+    else:
+        conversation_id = schedule.conversation_id
+        if conversation_id is None or s.conversations.get(conversation_id) is None:
+            conversation_id = s.conversations.create("server", kind="schedule", title=schedule.name,
+                                                     project_id=schedule.project_id, local_only=schedule.local_only).id
+            s.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation_id, schedule.id))
+        s.conversations.update(conversation_id, packs=packs, model=schedule.model)
+    s.db.execute("UPDATE schedule_runs SET conversation_id = ? WHERE id = ?", (conversation_id, run.id))
     request = ChatRequest(message=message_of(schedule), client="server", conversation=conversation_id,
-                          instructions=SCHEDULE_INSTRUCTIONS, prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
-                          timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True)
+                          instructions=instructions_of(schedule), prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
+                          timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True,
+                          model=schedule.model or None)
     try:
         return await s.agent.answer(request)
+    except ServerStopping:
+        raise Stopping() from None
+
+
+async def close_run(s: Services, schedule: Schedule, run) -> None:
+    """A run that waits for an answer nobody gave: Clara finishes it from what she has (in its own conversation)."""
+    from .agent.turn import ServerStopping
+
+    try:
+        await s.agent.answer(ChatRequest(message=SCHEDULE_CLOSING, client="server", conversation=run["conversation_id"],
+                                         timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True,
+                                         model=schedule.model or None))
     except ServerStopping:
         raise Stopping() from None
 
@@ -199,8 +229,6 @@ def recover(s: Services) -> None:
     healed = s.conversations.heal_versions()
     failed = s.approvals.recover()
     interrupted = s.schedules.recover()
-    if s.recaps is not None:
-        s.recaps.recover()
     if healed or failed or interrupted:
         log.warning("after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
                     "%d scheduled run(s) to run again", healed, failed, interrupted)
@@ -262,6 +290,7 @@ def create_app(s: Services) -> FastAPI:
     app.include_router(workspace_api.router)
     app.include_router(connections_api.router)
     app.include_router(vault_api.router)
+    app.include_router(packs_api.router)
     app.include_router(web_api.router)
     # outermost last: security headers → traffic log → body limit → authentication → the routes
     app.add_middleware(AuthMiddleware, services=s)
@@ -292,8 +321,6 @@ async def first_models(s: Services) -> None:
 
 def _first_of_next_month(s: Services) -> str:
     from datetime import datetime
-
-    from .timeutil import zone
 
     now = datetime.now(zone(s.settings.timezone))
     year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
@@ -381,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     extend(services)
     recover(services)
+    seed_daily_note(services)
     services.logs.attach()
     app = create_app(services)
     config = uvicorn.Config(app, host="127.0.0.1", port=settings.port, log_level="warning", proxy_headers=False,
@@ -409,7 +437,7 @@ def extend(s: Services) -> None:
     workspace_setup.install(s)
     connectors_setup.install(s)
     vault_setup.install(s)
-    recap_install(s)
+    packs_install(s)
     ops_setup.install(s)
 
 

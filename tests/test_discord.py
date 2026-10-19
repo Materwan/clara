@@ -373,8 +373,8 @@ class ThreadingChannel(FakeChannel):
         return message
 
 
-CHECKIN = {"type": "checkin", "title": "Bilan du dimanche 18 octobre 2026", "text": "Voici ta journée… Et le reste ?",
-           "payload": {"day": "2026-10-18", "conversation": "c-checkin", "stage": "asked"}, "conversation": "c-checkin"}
+CHECKIN = {"type": "ask", "title": "Bilan du dimanche 18 octobre 2026", "text": "Voici ta journée… Et le reste ?",
+           "payload": {"conversation": "c-checkin", "stage": "asked", "thread": True}, "conversation": "c-checkin"}
 
 
 async def test_a_check_in_is_posted_in_general_with_a_thread_that_carries_your_answer(bot):
@@ -458,9 +458,8 @@ def test_the_threads_are_kept_next_to_the_current_conversation_and_are_limited(b
 # ----------------------------------------------------------------------
 # The thread goes once the recap is written
 # ----------------------------------------------------------------------
-WRITTEN = {"type": "checkin", "title": "Récap écrit", "text": "Le récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md.",
-           "payload": {"day": "2026-10-18", "conversation": "c-checkin", "stage": "written", "path": "1-daily/2026/2026-10-18.md"},
-           "conversation": "c-checkin"}
+WRITTEN = {"type": "ask", "title": "Récap écrit", "text": "Le récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md.",
+           "payload": {"conversation": "c-checkin", "stage": "finished"}, "conversation": "c-checkin"}
 
 
 def with_thread(bot, may_delete: bool = True) -> tuple[FakeThread, list]:
@@ -539,3 +538,61 @@ async def test_a_check_in_that_became_the_current_chat_stops_being_it_once_writt
 async def test_a_correction_after_the_thread_is_gone_only_says_where_the_recap_is(bot):
     await bot.deliver(WRITTEN)  # no thread known any more (the correction was asked on the web site)
     assert len(bot.channels["general"].sent) == 1 and bot.threads() == {}
+
+
+# ----------------------------------------------------------------------
+# What a scheduled run says: ask, post, reminder, thread of its own
+# ----------------------------------------------------------------------
+async def test_a_question_without_the_thread_pack_makes_the_run_the_current_conversation(bot):
+    await bot.deliver({**CHECKIN, "payload": {"conversation": "c-checkin", "stage": "asked", "thread": False}})
+    assert bot.conversation() == "c-checkin" and bot.threads() == {}
+    assert texts(bot.channels["general"])[0].startswith("📓 **Bilan du dimanche") and "Réponds ici" in texts(bot.channels["general"])[1]
+
+
+async def test_a_second_question_goes_in_the_thread_that_exists(bot):
+    thread, _ = with_thread(bot)
+    await bot.deliver(CHECKIN)
+    assert thread.sent[0][0].startswith("📓 **Bilan du dimanche") and not bot.channels["general"].sent
+
+
+async def test_a_run_can_open_write_in_and_remove_a_thread_by_itself(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    event = {"type": "ask", "title": "Rapport", "text": "Premier message", "conversation": "c-run",
+             "payload": {"conversation": "c-run", "stage": "thread_open", "thread": True}}
+    await bot.deliver(event)
+    assert general.threads[0][0] == "Rapport" and bot.threads() == {"777": "c-run"}
+    thread = general.threads[0][1]
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    await bot.deliver({**event, "text": "La suite", "payload": {"conversation": "c-run", "stage": "thread_post"}})
+    assert thread.sent[0][0] == "📓 **Rapport**\nLa suite"
+    await bot.deliver({**event, "payload": {"conversation": "c-run", "stage": "thread_close"}})
+    assert thread.deleted and bot.threads() == {} and len(general.sent) == 1  # no line in #general for a plain close
+
+
+async def test_the_tools_command_lists_and_switches_the_packs_of_the_conversation(bot, monkeypatch):
+    listing = [{"id": "web", "label": "Web search", "available": True, "reason": ""},
+               {"id": "day_conversations", "label": "Day conversations", "available": True, "reason": ""},
+               {"id": "daily_notes", "label": "Daily notes", "available": False, "reason": "No vault is set up."}]
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((method, path, options.get("json")))
+        if path == "/v1/packs":
+            return {"packs": listing}
+        if path == "/v1/conversations" and method == "POST":
+            return {"id": "c-new", "packs": options["json"]["packs"]}
+        return {"packs": ["web"]}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    text = await bot.tools_text(None, None)
+    assert "✅ `web`" in text and "▫️ `day_conversations`" in text and "(No vault is set up.)" in text
+    text = await bot.tools_text("Day conversations", "on")  # no conversation yet: one is made with it
+    assert bot.conversation() == "c-new" and ("POST", "/v1/conversations", {"packs": ["web", "day_conversations"]}) in calls
+    bot.set_conversation("c-1")
+    await bot.tools_text("web", None)  # no state: the other one
+    assert ("PATCH", "/v1/conversations/c-1", {"packs": []}) in calls
+    assert "No tool called" in await bot.tools_text("nothing", "on")

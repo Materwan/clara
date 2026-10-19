@@ -6,16 +6,28 @@
   import { live, toast } from '../lib/state.svelte';
 
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  const empty = () => ({ id: 0, name: '', prompt: '', at: '', repeat: '', weekdays: [] as number[], project: '', local_only: false, documents: [] as any[] });
+  const empty = () => ({
+    id: 0, name: '', prompt: '', at: '', repeat: '', weekdays: [] as number[], project: '', local_only: false, documents: [] as any[],
+    packs: ['web'] as string[], per_run: false, missed: 'skip', overlap: 'skip', model: '',
+  });
   let schedules = $state<any[]>([]);
   let projects = $state<any[]>([]);
+  let packs = $state<any[]>([]);
+  let models = $state<any>({ models: [], default: '' });
   let form = $state(empty());
   let history = $state<any>(null);
 
   async function load(): Promise<void> {
     schedules = (await api.get('/v1/schedules')).schedules;
     projects = (await api.get('/v1/projects')).projects;
+    packs = (await api.get('/v1/packs', { where: 'schedule' })).packs;
+    models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
   }
+
+  const packLabel = (id: string): string => packs.find((pack) => pack.id === id)?.label ?? id;
+  const togglePack = (id: string): void => {
+    form.packs = form.packs.includes(id) ? form.packs.filter((item) => item !== id) : [...form.packs, id];
+  };
 
   $effect(() => {
     void live.refresh;
@@ -27,6 +39,7 @@
     const body = {
       name: form.name, prompt: form.prompt, at: form.at, timezone: zone, repeat: form.repeat, weekdays: form.weekdays,
       project: form.project ? Number(form.project) : null, local_only: form.local_only, documents: form.documents,
+      packs: form.packs, per_run: form.per_run, missed: form.missed, overlap: form.overlap, model: form.model,
     };
     try {
       if (form.id) await api.patch(`/v1/schedules/${form.id}`, body);
@@ -43,6 +56,7 @@
       id: schedule.id, name: schedule.name, prompt: schedule.prompt, at: schedule.local_at, repeat: schedule.repeat,
       weekdays: [...schedule.weekdays], project: schedule.project ? String(schedule.project) : '', local_only: schedule.local_only,
       documents: schedule.documents.map((doc: any) => ({ name: doc.name })),
+      packs: [...schedule.packs], per_run: schedule.per_run, missed: schedule.missed, overlap: schedule.overlap, model: schedule.model,
     };
   }
 
@@ -57,6 +71,16 @@
     try {
       await api.post(`/v1/schedules/${schedule.id}/run`);
       toast('Started: the summary arrives when it ends.', 'ok');
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function close(schedule: any): Promise<void> {
+    try {
+      await api.post(`/v1/schedules/${schedule.id}/close`);
+      toast('Closing it from what Clara has: the summary arrives when it ends.', 'ok');
       load();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -81,7 +105,8 @@
 
 <div class="page stack">
   <p class="intro">Prompts Clara runs by herself, unattended: an action your rules say to ask about is held and pushed
-    to you, and the run goes on without it.</p>
+    to you, and the run goes on without it. The special tools you tick are the only extra ones a run has; a run that may
+    ask you something waits for your answer in its conversation.</p>
   <form class="panel stack" onsubmit={save}>
     <div class="grid-2">
       <input aria-label="Name" placeholder="Name" bind:value={form.name} maxlength="100" required />
@@ -105,6 +130,36 @@
       <label class="small row"><Checkbox bind:checked={form.local_only} /> local only</label>
       <label class="small">documents <input type="file" multiple onchange={addDocuments} /></label>
     </div>
+    <fieldset class="packs">
+      <legend class="small">Special tools</legend>
+      {#each packs as pack (pack.id)}
+        <label class="pack" title={pack.reason || pack.description}>
+          <Checkbox checked={form.packs.includes(pack.id)} onchange={() => togglePack(pack.id)} />
+          <Icon name={pack.icon} size={16} />
+          <span class="pack-text"><b>{pack.label}</b> <span class="muted small">{pack.description}</span>
+            {#if !pack.available}<span class="small danger"> ({pack.reason})</span>{/if}</span>
+        </label>
+      {/each}
+    </fieldset>
+    <div class="row">
+      <label class="small row">conversation
+        <select aria-label="Conversation" bind:value={form.per_run}>
+          <option value={false}>one for all runs</option><option value={true}>one per run</option>
+        </select></label>
+      <label class="small row">if the server was off
+        <select aria-label="Missed runs" bind:value={form.missed}>
+          <option value="skip">skip what was missed</option><option value="latest">run the latest missed</option><option value="all">run every missed one</option>
+        </select></label>
+      <label class="small row">if the last run is not over
+        <select aria-label="Overlap" bind:value={form.overlap}>
+          <option value="skip">skip the new run</option><option value="replace">close the old one, start the new</option><option value="queue">queue the new run</option>
+        </select></label>
+      <label class="small row">model
+        <select aria-label="Model" bind:value={form.model}>
+          <option value="">Default model ({models.default || 'none'})</option>
+          {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
+        </select></label>
+    </div>
     {#if form.documents.length}
       <div class="chips">{#each form.documents as doc, index}<span class="chip"><Icon name="file" size={14} /><span class="name">{doc.name}</span><button type="button" aria-label={`Remove ${doc.name}`} onclick={() => form.documents.splice(index, 1)}><Icon name="close" size={14} /></button></span>{/each}</div>
     {/if}
@@ -120,7 +175,12 @@
         <tr>
           <td><strong>{schedule.name}</strong> <span class="tag">{schedule.repeat || 'once'}</span>
             {#if !schedule.enabled}<span class="tag">paused</span>{/if}{#if schedule.running}<span class="tag ok">running</span>{/if}
-            {#if schedule.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}</td>
+            {#if schedule.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}
+            {#if schedule.waiting_run}<span class="tag warn">waiting for you</span>{/if}
+            {#if schedule.queued}<span class="tag">{schedule.queued} queued</span>{/if}
+            {#if schedule.per_run}<span class="tag">one conversation per run</span>{/if}
+            {#if schedule.model}<span class="tag">{schedule.model}</span>{/if}
+            {#if schedule.packs.some((id: string) => id !== 'web')}<br /><span class="muted small">{schedule.packs.filter((id: string) => id !== 'web').map(packLabel).join(' · ')}</span>{/if}</td>
           <td class="small">{schedule.next_local ?? '—'}</td>
           <td class="small">{#if schedule.last}<span class:danger={schedule.last.status !== 'ok'}>{schedule.last.status}</span> {when(schedule.last.finished_at)}<br /><span class="muted">{schedule.last.summary}</span>{:else}—{/if}</td>
           <td class="row">
@@ -128,7 +188,12 @@
             <button class="small" onclick={() => edit(schedule)}>Edit</button>
             <button class="small" onclick={() => toggle(schedule)}>{schedule.enabled ? 'Pause' : 'Resume'}</button>
             <button class="small" onclick={() => showHistory(schedule)}>Runs</button>
-            {#if schedule.conversation}<a class="small" href={'#/chat/' + schedule.conversation}>Conversation</a>{/if}
+            {#if schedule.waiting_run}
+              <a class="small" href={'#/chat/' + schedule.waiting_run.conversation}>Answer</a>
+              <button class="small" onclick={() => close(schedule)}>Close it</button>
+            {:else if schedule.conversation ?? schedule.last?.conversation_id}
+              <a class="small" href={'#/chat/' + (schedule.conversation ?? schedule.last.conversation_id)}>Conversation</a>
+            {/if}
             <button class="small danger" onclick={() => remove(schedule)}>Delete</button>
           </td>
         </tr>
@@ -141,10 +206,11 @@
     <div class="panel">
       <div class="row"><h2 class="grow">Runs of {history.name}</h2><button class="small" onclick={() => (history = null)}>Close</button></div>
       <table>
-        <thead><tr><th>Due</th><th>Status</th><th>Summary</th><th>Waiting</th></tr></thead>
+        <thead><tr><th>Due</th><th>Status</th><th>Summary</th><th>Waiting</th><th></th></tr></thead>
         <tbody>
           {#each history.history as item}
-            <tr><td class="small">{when(item.due_at)}</td><td>{item.status}</td><td class="small">{item.summary}</td><td>{item.waiting}</td></tr>
+            <tr><td class="small">{when(item.due_at)}</td><td>{item.status}</td><td class="small">{item.summary}</td><td>{item.waiting}</td>
+              <td>{#if item.conversation_id}<a class="small" href={'#/chat/' + item.conversation_id}>Conversation</a>{/if}</td></tr>
           {/each}
         </tbody>
       </table>

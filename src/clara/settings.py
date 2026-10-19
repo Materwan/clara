@@ -116,10 +116,8 @@ class Settings:
     vault_path: Path | None = None
     vault_push: bool = True
     vault_pull_seconds: int = 30
-    recap: bool = False
-    recap_at: str = "23:59"
-    recap_remind_at: str = "09:00"
-    recap_digest_chars: int = 60_000
+    day_digest_chars: int = 60_000
+    waiting_remind_at: str = "09:00"
 
     # --- connectors -----------------------------------------------------------------------------------------
     searxng_url: str = "http://127.0.0.1:8888"
@@ -346,14 +344,10 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", backup_time):
         r.problems.append(f"CLARA_BACKUP_TIME={backup_time!r} must be HH:MM.")
         backup_time = "03:30"
-    recap_at = r.text("CLARA_RECAP_AT", "23:59")
-    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", recap_at):
-        r.problems.append(f"CLARA_RECAP_AT={recap_at!r} must be HH:MM.")
-        recap_at = "23:59"
-    recap_remind_at = r.text("CLARA_RECAP_REMIND_AT", "09:00")
-    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", recap_remind_at):
-        r.problems.append(f"CLARA_RECAP_REMIND_AT={recap_remind_at!r} must be HH:MM.")
-        recap_remind_at = "09:00"
+    waiting_remind_at = r.text("CLARA_WAITING_REMIND_AT", "09:00")
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", waiting_remind_at):
+        r.problems.append(f"CLARA_WAITING_REMIND_AT={waiting_remind_at!r} must be HH:MM.")
+        waiting_remind_at = "09:00"
     release_repo = r.text("CLARA_RELEASE_REPO", "")
     if release_repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", release_repo):
         r.problems.append(f"CLARA_RELEASE_REPO={release_repo!r} must be owner/name.")
@@ -428,10 +422,8 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         vault_path=r.path("CLARA_VAULT_PATH"),
         vault_push=r.flag("CLARA_VAULT_PUSH", True),
         vault_pull_seconds=r.integer("CLARA_VAULT_PULL_SECONDS", 30, 0),
-        recap=r.flag("CLARA_RECAP", False),
-        recap_at=recap_at,
-        recap_remind_at=recap_remind_at,
-        recap_digest_chars=r.integer("CLARA_RECAP_DIGEST_CHARS", 60_000, 5_000, 400_000),
+        day_digest_chars=r.integer("CLARA_DAY_DIGEST_CHARS", 60_000, 5_000, 400_000),
+        waiting_remind_at=waiting_remind_at,
         searxng_url=r.url("CLARA_SEARXNG_URL", "http://127.0.0.1:8888"),
         fetch_max_bytes=r.size("CLARA_FETCH_MAX_SIZE", 2_000_000),
         public_url=r.url("CLARA_PUBLIC_URL", ""),

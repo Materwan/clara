@@ -61,7 +61,7 @@ async def test_a_daily_schedule_runs_unattended_and_records_its_runs(services, l
     schedules = Schedules(services.db, services.events, "Europe/Paris", clock=clock)
     ran: list[int] = []
 
-    async def runner(schedule, number):
+    async def runner(schedule, number, run):
         ran.append(number)
         return "All green.\n\nDetails follow."
 

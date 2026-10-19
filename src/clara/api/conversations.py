@@ -36,6 +36,14 @@ class NewConversation(BaseModel):
     model: str = Field(default="", max_length=200)
     incognito: bool = False
     local_only: bool = False
+    packs: list[str] | None = Field(default=None, max_length=20, description="The tool packs switched on (default: web)")
+
+
+def _packs(s, packs: list[str]) -> list[str]:
+    try:
+        return s.packs.check(packs, "chat")
+    except ValueError as error:
+        raise ApiError(422, str(error)) from None
 
 
 @router.post("", status_code=201)
@@ -44,7 +52,8 @@ def create(body: NewConversation, request: Request) -> dict:
     if body.project is not None and s.projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
     conversation = s.conversations.create(caller(request).client, title=body.title, project_id=body.project,
-                                          model=body.model, incognito=body.incognito, local_only=body.local_only)
+                                          model=body.model, incognito=body.incognito, local_only=body.local_only,
+                                          packs=_packs(s, body.packs) if body.packs is not None else None)
     return conversation.describe()
 
 
@@ -64,6 +73,7 @@ class ConversationChange(BaseModel):
     project: int | None = Field(default=None, description="0: out of any project")
     model: str | None = Field(default=None, max_length=200)
     local_only: bool | None = None
+    packs: list[str] | None = Field(default=None, max_length=20, description="The tool packs switched on, all of them")
 
 
 @router.patch("/{conversation_id}")
@@ -83,6 +93,8 @@ def change(conversation_id: str, body: ConversationChange, request: Request) -> 
         fields["model"] = body.model.strip()
     if body.local_only is not None:
         fields["local_only"] = body.local_only
+    if body.packs is not None:
+        fields["packs"] = _packs(s, body.packs)
     try:
         return s.conversations.update(conversation_id, **fields).describe()
     except ConversationError as error:

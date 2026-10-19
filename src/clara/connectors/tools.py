@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from ..agent.turn import normal_url
 from ..gate.actions import Action
 from ..secretscan import secret_kinds
+from ..timeutil import now_iso
 from ..tools.base import Tool, ToolContext, ToolError, fixed, flag, optional_number
 from .drive import DriveError
 from .github import GitHubError
@@ -247,6 +248,9 @@ async def _drive_create(context: ToolContext, name: str, content: str, folder: s
         made = await _drive(context).create(name, str(content), parent, flag(google_doc))
     except DriveError as error:
         raise ToolError(str(error)) from None
+    context.services.db.execute(
+        "INSERT INTO created_files (kind, locator, name, mime, conversation_id, created_at) VALUES ('drive', ?, ?, ?, ?, ?)",
+        (made["id"], str(made["name"])[:200], str(made.get("mimeType") or ""), context.turn.conversation_id or None, now_iso()))
     return f"Created [{made['id']}] {made['name']}: {made.get('webViewLink', '')}"
 
 

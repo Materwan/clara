@@ -45,13 +45,18 @@ class Conversation:
     context_tokens: int
     created_at: str
     updated_at: str
+    packs: tuple[str, ...] = ("web",)
+
+    def active_packs(self) -> list[str]:
+        """The packs switched on, the vault's switch included (it is stored as `vault_open`)."""
+        return [*self.packs, *(["second_brain"] if self.vault_open and "second_brain" not in self.packs else [])]
 
     def describe(self) -> dict:
         return {
             "id": self.id, "title": self.title, "titled_by": self.titled_by, "client": self.client, "kind": self.kind,
             "pinned": self.pinned, "project": self.project_id, "model": self.model, "incognito": self.incognito,
             "local_only": self.local_only, "created_at": self.created_at, "updated_at": self.updated_at,
-            "summarised": bool(self.summary),
+            "summarised": bool(self.summary), "packs": self.active_packs(),
         }
 
 
@@ -81,11 +86,19 @@ class TurnRow:
     thinking: str | None = None
 
 
+def _packs(text: str) -> tuple[str, ...]:
+    try:
+        found = json.loads(text or "[]")
+    except ValueError:
+        return ("web",)
+    return tuple(str(item) for item in found) if isinstance(found, list) else ("web",)
+
+
 def _conversation(row) -> Conversation:
     return Conversation(
         row["id"], row["title"], row["titled_by"], row["client"], row["kind"], bool(row["pinned"]), row["project_id"],
         row["model"], bool(row["incognito"]), bool(row["local_only"]), bool(row["vault_open"]), row["summary"],
-        row["summary_upto"], row["context_tokens"], row["created_at"], row["updated_at"],
+        row["summary_upto"], row["context_tokens"], row["created_at"], row["updated_at"], _packs(row["packs"]),
     )
 
 
@@ -113,7 +126,8 @@ class Conversations:
     # Conversations
     # ------------------------------------------------------------------
     def create(self, client: str, *, kind: str = "chat", title: str = "", project_id: int | None = None, model: str = "",
-               incognito: bool = False, local_only: bool = False, conversation_id: str | None = None) -> Conversation:
+               incognito: bool = False, local_only: bool = False, conversation_id: str | None = None,
+               packs: list[str] | None = None) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
         self.db.execute(
@@ -122,6 +136,8 @@ class Conversations:
             (conversation_id, title[:MAX_TITLE], "you" if title else "", client, kind, project_id, model,
              int(incognito), int(local_only), now, now),
         )
+        if packs is not None:
+            self.update(conversation_id, packs=packs)
         created = self.get(conversation_id)
         assert created is not None
         return created
@@ -163,7 +179,7 @@ class Conversations:
         return [{**_conversation(row).describe(), "preview": row["preview"] or ""} for row in rows]
 
     def update(self, conversation_id: str, **fields) -> Conversation:
-        allowed = {"title", "pinned", "project_id", "model", "local_only", "incognito", "vault_open"}
+        allowed = {"title", "pinned", "project_id", "model", "local_only", "incognito", "vault_open", "packs"}
         unknown = set(fields) - allowed
         if unknown:
             raise ConversationError(f"Unknown fields: {', '.join(sorted(unknown))}")
@@ -176,6 +192,9 @@ class Conversations:
                 values["titled_by"] = "you" if title else ""
             elif name in ("pinned", "local_only", "vault_open"):
                 values[name] = int(bool(value))
+            elif name == "packs":  # the vault's switch lives in vault_open
+                values["packs"] = json.dumps([str(item) for item in value if item != "second_brain"])
+                values["vault_open"] = int("second_brain" in value)
             elif name == "incognito":
                 if bool(value) != current.incognito and self.message_count(conversation_id):
                     raise ConversationError("Incognito is chosen when a conversation starts, not afterwards.")

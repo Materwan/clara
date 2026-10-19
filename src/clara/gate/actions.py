@@ -9,6 +9,8 @@ Targets name what is touched, with a prefix:
     github:<owner/repo>                            drive:<file id>          vault:<note path>
     domain:<host>      a web address's host        net                      a script that asks for the network
     memory, reminders, tasks, notify, forms        Clara's own records
+    history            the conversations, tasks and files of a day, read back (the packs' tools)
+    discord            a thread of your Discord server
 
 The default of each class, when no rule matches, for a chat (interactive) and for an unattended run:
 """
@@ -42,6 +44,7 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "web_search": ("allow", "allow", "Web search"),
     "fetch_trusted": ("allow", "allow", "Fetch a URL you wrote or a search returned"),
     "fetch_other": ("ask", "refuse", "Fetch any other URL"),
+    "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
 }
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
 RAISED_WHEN_TAINTED = frozenset({"github_write", "drive_write", "vault_write", "vault_destroy", "run_network"})
@@ -49,10 +52,10 @@ RAISED_WHEN_TAINTED = frozenset({"github_write", "drive_write", "vault_write", "
 OUTSIDE = frozenset({"github_write", "drive_write", "vault_write", "run_network", "fetch_other", "fetch_trusted"})
 # Classes whose call sends something off the machine (a query, an address, content): refused in a local-only turn.
 # The vault's are there because its changes are pushed to its remote (not when CLARA_VAULT_PUSH is off).
-LEAVES_MACHINE = OUTSIDE | frozenset({"web_search", "github_read", "drive_read", "vault_destroy"})
+LEAVES_MACHINE = OUTSIDE | frozenset({"web_search", "github_read", "drive_read", "vault_destroy", "discord"})
 
 PREFIXES = ("ws:", "github:", "drive:", "vault:", "domain:")
-SPECIAL_TARGETS = ("net", "search", "memory", "reminders", "tasks", "notify", "forms")
+SPECIAL_TARGETS = ("net", "search", "memory", "reminders", "tasks", "notify", "forms", "history", "discord")
 _GLOB_CHARS = re.compile(r"[*?\[]")
 
 

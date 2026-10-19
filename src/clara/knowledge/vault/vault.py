@@ -9,9 +9,9 @@
 * Daily notes live where the vault's `_clara/schema.json` says: `{"daily": {"folder": "Daily", "format": "%Y-%m-%d"}}`,
   or the layout of the Clara vault (`"daily_format": "YYYY/YYYY-MM-DD"` and `"types": {"daily": {"folder": "1-daily"}}`),
   else in `Daily/`.
-* The day's recap is one block of the daily note (between two comments): writing it again replaces that block and
-  nothing else, so what the person wrote in the note is never touched. Its `[[links]]` are kept only when the note
-  exists.
+* A block of a daily note (the day's recap, say) sits between two comments, `<!-- clara:recap -->` and
+  `<!-- /clara:recap -->`: writing it again replaces that block and nothing else, so what the person wrote in the note is
+  never touched. Its `[[links]]` are kept only when the note exists.
 """
 
 from __future__ import annotations
@@ -35,9 +35,7 @@ MAX_NOTE = 400_000
 SEARCH_LIMIT = 20
 LINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]")
 MOMENT = re.compile(r"\[[^\]]*\]|YYYY|YY|MM|M|DD|D|dddd|ddd")  # the tokens of Obsidian's date format
-RECAP_HEADING = "## Récap (Clara)"
-RECAP_START = "<!-- clara:recap -->"
-RECAP_END = "<!-- /clara:recap -->"
+BLOCK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
 CLOSED_BLOCK = ("## Second brain\nThe person's Obsidian vault (their notes, projects, ideas, knowledge) is available: "
                 "call open_second_brain when it matters, then use the vault_* tools.")
 
@@ -350,41 +348,49 @@ class Vault:
         head = re.sub(r"(?m)^(updated:\s*).*$", lambda m: m.group(1) + today.isoformat(), text[:end], count=1)
         return head + text[end:]
 
-    async def write_recap(self, day: date, body: str) -> tuple[str, list[str]]:
-        """Put the recap of a day in that day's daily note (made from the template when there is none): the block
-        between the two comments is replaced, or added at the end under a heading. Returns the note's path and the
-        links given up."""
-        body = body.replace(RECAP_START, "").replace(RECAP_END, "").strip()
+    async def write_block(self, day: date, body: str, block: str = "recap", heading: str = "Récap (Clara)") -> tuple[str, list[str]]:
+        """Put a block in a day's daily note (made from the template when there is none): the block between the two
+        comments of its name is replaced, or added at the end under a heading. Returns the note's path and the links
+        given up."""
+        if not BLOCK_ID.match(block):
+            raise VaultError("A block is named with lower-case letters, digits and dashes.")
+        start, end = f"<!-- clara:{block} -->", f"<!-- /clara:{block} -->"
+        heading = " ".join(heading.strip().lstrip("#").split())[:80] or "Clara"
+        body = body.replace(start, "").replace(end, "").strip()
         if not body:
-            raise VaultError("The recap is empty.")
+            raise VaultError("The block is empty.")
         if len(body) > MAX_NOTE:
-            raise VaultError("The recap is too long.")
+            raise VaultError("The block is too long.")
         async with self._lock:
             await asyncio.to_thread(self.git.pull, True)
             path = self.daily_path(day)
             file = self.root / path
             body, dropped = self.clean_links(body)
             text = file.read_text(encoding="utf-8") if file.exists() else self._daily_template(day)
-            block = f"{RECAP_START}\n{body}\n{RECAP_END}"
-            if RECAP_START in text and RECAP_END in text:
-                before, _, rest = text.partition(RECAP_START)
-                _, _, after = rest.partition(RECAP_END)
-                text = before + block + after
+            written = f"{start}\n{body}\n{end}"
+            if start in text and end in text:
+                before, _, rest = text.partition(start)
+                _, _, after = rest.partition(end)
+                text = before + written + after
             else:
-                text = text.rstrip("\n") + f"\n\n{RECAP_HEADING}\n{block}\n"
+                text = text.rstrip("\n") + f"\n\n## {heading}\n{written}\n"
             text = self._touch_updated(text, datetime.now(zone(self.zone)).date())
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(text, encoding="utf-8")
-            await self._commit([path], f"Clara: daily recap {path}")
+            await self._commit([path], f"Clara: daily note block {block} {path}")
         return path, dropped
 
-    def changes_on(self, day: date) -> list[dict]:
-        """The notes changed by commits made on that local day (yours through Obsidian's git sync, and Clara's)."""
+    def day_span(self, day: date) -> tuple[str, str]:
         tz = zone(self.zone)
         start = resolve_local(datetime.combine(day, datetime.min.time()), tz)
         end = resolve_local(datetime.combine(day + timedelta(days=1), datetime.min.time()), tz) - timedelta(seconds=1)
+        return iso(start), iso(end)
+
+    def changes_on(self, day: date) -> list[dict]:
+        """The notes changed by commits made on that local day (yours through Obsidian's git sync, and Clara's)."""
+        since, until = self.day_span(day)
         rows = []
-        for row in self.git.changes(iso(start), iso(end)):
+        for row in self.git.changes(since, until):
             path = row["path"]
             parts = path.split("/")
             if not path.lower().endswith(".md") or any(part.startswith(".") for part in parts) or parts[0] in HIDDEN:

@@ -1,4 +1,4 @@
-"""The vault tools: `open_second_brain`, then seven tools for that conversation.
+"""The vault tools: `open_second_brain`, then eight tools for that conversation.
 
 A conversation starts with only `open_second_brain` and a short note in the prompt (the vault's tools cost tokens in
 every round); once Clara opens it, the tools stay for the conversation.
@@ -7,6 +7,7 @@ every round); once Clara opens it, the tools stay for the conversation.
     vault_write                              create: write; replace or delete: destructive   vault_write / vault_destroy
     vault_edit                               write                        class vault_write
     vault_daily                              read, or write (append)      read / vault_write
+    vault_daily_block                        write a block of a daily note   vault_write
     vault_move                               destructive (it rewrites links)                   vault_destroy
 """
 
@@ -17,6 +18,7 @@ from typing import Any
 from ...gate.actions import Action
 from ...secretscan import secret_kinds
 from ...tools.base import Tool, ToolContext, ToolError, fixed, flag, optional_number
+from ...tools.days import resolve_day
 from .vault import VaultError
 
 OPEN_VAULT = "open_second_brain"
@@ -104,6 +106,25 @@ async def _daily(context: ToolContext, action: str = "read", text: str = "") -> 
         raise ToolError(str(error)) from None
 
 
+def _describe_block(context: ToolContext, arguments: dict) -> Action:
+    return Action("", "write", "vault_write", ("vault:daily",), "Write a block of a daily note",
+                  tuple(secret_kinds(str(arguments.get("content") or ""))))
+
+
+async def _daily_block(context: ToolContext, content: str, date: str = "", block: str = "recap",
+                       heading: str = "Récap (Clara)") -> str:
+    day = resolve_day(context, date)
+    try:
+        path, dropped = await _vault(context).write_block(day, str(content), str(block or "recap"), str(heading or ""))
+    except VaultError as error:
+        raise ToolError(str(error)) from None
+    text = f"Block « {block or 'recap'} » of {day} written in {path} (it replaces the one written before)."
+    if dropped:
+        text += (" Links removed, as no note has that name (or several do): " + ", ".join(dropped)
+                 + ". Look the note up with vault_search and call again if it exists.")
+    return text
+
+
 async def _move(context: ToolContext, note: str, destination: str) -> str:
     try:
         return await _vault(context).move(str(note), str(destination))
@@ -138,6 +159,15 @@ def vault_tools() -> list[Tool]:
               "heading": {"type": "string"}, "replace_all": {"type": "boolean"}}, ("note",)),
         Tool("vault_daily", "Today's daily note: read it, or append a line (timestamped).", _daily, _describe_daily,
              {"action": {"type": "string", "enum": ["read", "append"]}, "text": {"type": "string"}}),
+        Tool("vault_daily_block", "Write a block of a day's daily note (the note is made from the template when it does not "
+             "exist): the text goes between two comments under its own heading and replaces what an earlier call wrote "
+             "there, so calling again corrects it and the rest of the note is never touched. [[Links]] to notes that do "
+             "not exist are removed. `date` defaults to the day of the scheduled run you are in, else today.",
+             _daily_block, _describe_block,
+             {"content": {"type": "string", "description": "The whole block, markdown, with no level 1 or 2 heading."},
+              "date": {"type": "string", "description": "YYYY-MM-DD, today or yesterday."},
+              "block": {"type": "string", "description": "The block's name (lower case, digits, dashes). Default: recap."},
+              "heading": {"type": "string", "description": "The heading it goes under. Default: Récap (Clara)."}}, ("content",)),
         Tool("vault_move", "Rename or move a note; every [[link]] to it is updated.", _move,
              fixed("vault_destroy", "destructive", lambda c, a: _target(a), lambda a: f"Move {a.get('note')} to {a.get('destination')}"),
              {"note": NOTE, "destination": {"type": "string", "description": "Its new path."}}, ("note", "destination")),

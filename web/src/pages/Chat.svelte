@@ -4,6 +4,7 @@
   import FileCard from '../components/FileCard.svelte';
   import Icon from '../components/Icon.svelte';
   import Mark from '../components/Mark.svelte';
+  import PlusMenu from '../components/PlusMenu.svelte';
   import QcmForm from '../components/QcmForm.svelte';
   import { api, fileToBase64, stream, zone } from '../lib/api';
   import { markdown } from '../lib/markdown';
@@ -45,9 +46,16 @@
   let dragging = $state(false);
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
-  let fresh = $state({ incognito: false, local_only: false, model: '' });
+  let fresh = $state({ incognito: false, local_only: false, model: '', packs: ['web'] as string[] });
+  /** The special tools you can switch on in a chat (the "+" menu), and the projects to choose from. */
+  let packList = $state<any[]>([]);
+  let projectList = $state<any[]>([]);
+  /** A project chosen in the menu for a conversation not started yet (undefined: the one it was started from). */
+  let chosenProject = $state<number | null | undefined>(undefined);
   /** The project a conversation belongs to: its own, or for a new one the project it was started from (#/chat?project=). */
-  let projectId = $derived(conversationId ? (conversation?.project ?? null) : Number(route.query.get('project')) || null);
+  let projectId = $derived(conversationId ? (conversation?.project ?? null)
+    : (chosenProject !== undefined ? chosenProject : Number(route.query.get('project')) || null));
+  let activePacks = $derived<string[]>(conversationId ? (conversation?.packs ?? ['web']) : fresh.packs);
   let projectName = $state('');
   let editing = $state<number | null>(null);
   let editText = $state('');
@@ -71,6 +79,9 @@
     conversation = null;
     messages = [];
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
+    packList = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
+    projectList = (await api.get('/v1/projects').catch(() => ({ projects: [] }))).projects;
+    if (!id) chosenProject = undefined;
     if (!id) return;
     try {
       conversation = await api.get(`/v1/conversations/${id}`);
@@ -147,7 +158,7 @@
     let id = conversationId;
     try {
       if (!id) {
-        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined });
+        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs });
         id = made.id as string;
         skipReload = id;
         go('/chat/' + id);
@@ -292,6 +303,34 @@
     }
     attached = chosen;
   }
+
+  /** Switch a special tool on or off: saved with the conversation, or kept for the one about to start. */
+  async function togglePack(id: string): Promise<void> {
+    const next = activePacks.includes(id) ? activePacks.filter((item) => item !== id) : [...activePacks, id];
+    if (!conversationId) {
+      fresh.packs = next;
+      return;
+    }
+    try {
+      conversation = { ...conversation, ...(await api.patch(`/v1/conversations/${conversationId}`, { packs: next })) };
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function chooseProject(id: number | null): Promise<void> {
+    if (!conversationId) {
+      chosenProject = id;
+      return;
+    }
+    try {
+      conversation = { ...conversation, ...(await api.patch(`/v1/conversations/${conversationId}`, { project: id ?? 0 })) };
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  const packLabel = (id: string): string => packList.find((pack) => pack.id === id)?.label ?? id;
 
   function keydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -478,6 +517,16 @@
     ondragover={(event) => { event.preventDefault(); dragging = true; }} ondragleave={() => (dragging = false)} ondrop={drop}>
     <div class="composer-frame">
       <div class="composer-inner">
+        {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
+          <div class="chips" aria-label="Tools of this conversation">
+            {#each activePacks.filter((id) => id !== 'web') as id (id)}
+              <span class="chip"><Icon name={packList.find((pack) => pack.id === id)?.icon ?? 'sparkle'} size={14} /><span class="name">{packLabel(id)}</span>
+                <button aria-label={`Switch off ${packLabel(id)}`} onclick={() => togglePack(id)}><Icon name="close" size={14} /></button></span>
+            {/each}
+            {#if !activePacks.includes('web')}<span class="chip"><Icon name="globe" size={14} /><span class="name">No web search</span>
+              <button aria-label="Switch web search back on" onclick={() => togglePack('web')}><Icon name="close" size={14} /></button></span>{/if}
+          </div>
+        {/if}
         {#if attached.length}
           <div class="chips">
             {#each attached as file, index}
@@ -489,9 +538,8 @@
         <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
           onkeydown={keydown} onpaste={paste}></textarea>
         <div class="composer-bar">
-          <button class="ghost icon-btn attach" title="Attach files (PDF, Word, text, pictures)" aria-label="Attach files" onclick={() => picker?.click()}>
-            <Icon name="clip" />
-          </button>
+          <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
+            onToggle={togglePack} onProject={chooseProject} />
           <input type="file" multiple hidden bind:this={picker} onchange={pick} />
           <select class="model-select" aria-label="Model" value={conversationId ? conversation?.model ?? '' : fresh.model}
             onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>

@@ -18,7 +18,7 @@ from datetime import timedelta
 from ..db import Database
 from ..timeutil import iso, now_iso, utcnow
 
-KINDS = ("reminder", "notification", "approval", "approval_resolved", "alert", "server", "schedule", "task", "update", "checkin")
+KINDS = ("reminder", "notification", "approval", "approval_resolved", "alert", "server", "schedule", "task", "update", "ask")
 LISTENER_IDLE_DAYS = 30
 MAX_TEXT = 2_000
 MAX_TITLE = 100

@@ -44,20 +44,30 @@ earlier server: the new Clara starts empty.
 - **Live log:** an Admin **Logs** tab streams the server's log and the traffic records as they happen (source and
   level filters applied on the server, pause, follow, clear). Memory only: the last 500 lines, secrets masked, no
   sign-in addresses, never the debug content. New route: `GET /v1/admin/logs/stream`.
-- **Daily recap:** at the end of each day (`CLARA_RECAP`, 23:59, or at the next start) Clara opens a French check-in
-  conversation with a digest of the day made in code (conversations with their earlier context, tasks, reminders,
-  scheduled runs, vault changes from git, her own actions), announces it on the web site and in a Discord thread under
-  the question in `#general`, **waits for your answer**, then writes the recap into one replaceable block of the
-  vault's daily note, with `[[links]]` to notes that exist, and marks the tasks you confirmed. Unanswered, it is
-  reminded the next morning and closed from the digest alone when the next check-in comes. New: the `write_daily_recap`
-  tool, the `checkin` event, `/recap`, the `recap` alert, `CLARA_RECAP`, `CLARA_RECAP_AT`, `CLARA_RECAP_REMIND_AT`,
-  `CLARA_RECAP_DIGEST_CHARS`. The vault's daily note now follows the Clara vault's own layout
+- **Tool packs:** special tools a conversation or a schedule is granted, listed by `GET /v1/packs`: web search, second
+  brain, **day conversations** (`day_conversations`, `read_conversation`), **day activity**, **files created**
+  (`files_created` lists a day's files in short lines, `read_created_file` reads one on demand, whole or as the day's
+  diff), **daily notes** (a range), and, for scheduled runs, **ask you** (`ask_person`, `finish_run`) and **Discord thread**.
+  In the web chat the attach button became a **"+" menu**: add files, switch the packs, web search and the second brain on
+  or off, choose the project; the choice is saved with the conversation, and `/tools` does the same on Discord and in the
+  terminal. A pack decides which tools exist, never what the gate allows. Incognito conversations are never read back;
+  local-only ones only from a local-only conversation.
+- **Schedules grew up:** packs, a model of its own, one conversation per run, a run that **asks and waits** for your answer
+  (`waiting`, reminded once, closed from what Clara has, `finish_run`), what to do with runs missed while the server was off
+  (`skip`, `latest`, `all`) and with a run that comes due before the last is over (`skip`, `replace`, `queue`). The
+  Schedules page has all of it. Fixed: "Run now" on the Schedules page failed (the route needed the server's event loop).
+- **The daily note is a schedule:** "Bilan du jour" is made once at start when there is a vault (every day at 23:59). It
+  reads the day with the packs' tools, asks you one question on the web site and Discord (a thread under it in `#general`),
+  waits for your answer, writes the day into a block of that day's daily note (`vault_daily_block`, `[[links]]` kept only
+  for notes that exist), marks the tasks you confirmed, and the thread is deleted when it ends. It replaces the built-in
+  recap of the same day (`CLARA_RECAP*`, `/recap`, `write_daily_recap`, the `recap` alert and the `checkin` event are gone;
+  an earlier recap's days become its runs). The vault's daily note now follows the Clara vault's own layout
   (`types.daily.folder` with `daily_format`, such as `1-daily/2026/2026-10-18.md`), is made from `_templates/daily.md`,
-  and `vault_daily` adds its lines under `## Log`. The Discord bot needs *Create Public Threads*, *Send Messages in
-  Threads* and *Manage Threads* in `#general`: it deletes the check-in's thread once the recap is written (a line in
-  `#general` gives the note's path).
+  and `vault_daily` adds its lines under `## Log`. New: `ask` event, `discord` action class, `CLARA_DAY_DIGEST_CHARS`,
+  `CLARA_WAITING_REMIND_AT`. The Discord bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads*
+  in `#general`.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 3 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days).
+- **Migrations:** schema version 4 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs).

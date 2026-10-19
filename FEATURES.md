@@ -57,11 +57,11 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 
 | Page | What you do there |
 | --- | --- |
-| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; attach files by button or drag and drop (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable, pinned ones first, then newest first; pin, rename, delete |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries |
+| Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own; answer or close a run that waits for you |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions |
 | Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs |
 | Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
@@ -99,6 +99,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/task add [due <when>] [remind <when>]… <title> [\| <description>]`, `/task sub <id> …`, `/task done\|reopen\|delete <id>`, `/task move <id> <parent>\|none`, `/task set <id> title\|description\|due\|remind <value>` | Manage tasks |
 | `/notify [@clients] <text>` | Send yourself a notification |
 | `/model [provider:model \| default]` | This conversation's model |
+| `/tools [<pack> [on\|off]]` | The special tools of this conversation: list them, or switch one |
 | `/approvals`, `/allow`, `/always`, `/refuse`, `/never <id>` | Approval requests |
 | `/undo` | Revert Clara's last workspace change |
 | `/quit` | Leave |
@@ -124,7 +125,6 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/audit [n]` | The last gate decisions |
 | `/undo [commit]` | Revert the last workspace change (or a given commit) |
 | `/vault [status\|sync\|reindex]` | The Obsidian vault |
-| `/recap [status] \| now [day] \| close [day] \| skip [day]` | The end-of-day check-in and the daily-note recap (section 6): its state; ask a day now (`day`: `YYYY-MM-DD`, `today`, `yesterday`); close an unanswered one from its digest; skip a day |
 | `/backup [now]` | Local backups (and the remote copy) |
 | `/update [list \| <tag>]` | Tagged releases: list, or install one (preflight, then restart) |
 | `/restart [now]` | Stop and start again (the same release) |
@@ -143,7 +143,7 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   its heartbeat (the `discord` alert). Otherwise run it as `clara-discord.service`. Use one of the two, never both.
 - Connects with the guild, guild-message and message-content intents (the last is privileged: switch it on in the
   developer portal): no member list, no presences, no direct messages.
-- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general` (and in a check-in thread under it); every other user, channel and server is ignored
+- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general` (and in a thread of a scheduled run under it); every other user, channel and server is ignored
   without a reply. At start it finds the four channels: if one is missing, is not a text channel, or they are not all
   in one server, it refuses to start and says which. Only one bot runs per state file.
 - What you write in `#general` is a chat message in the bot's current conversation; files and pictures you attach go
@@ -158,8 +158,16 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | `#notification` | Reminders, notifications, task reminders, schedule summaries and update news |
   | `#alerts` | Alerts |
 
-- The end-of-day check-in (a `checkin` event, section 6) is posted in `#general` with a **thread** under it: what you write in that thread goes to the check-in's conversation, whatever the current conversation is, and the reminder is posted in it. **Once the recap is written** (or the check-in closed without your answer) the bot says so in `#general` (« Récap écrit » with the note's path, after the answer that wrote it was posted) and **deletes the thread**; the conversation stays in Clara, and a correction is made there (the web site), which only says again where the recap is. The bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general` (it logs what it lacks at start); without *Manage Threads* it archives the thread instead, and without the right to open threads the check-in becomes the current conversation (until its recap is written).
-- Slash commands (in your server, for you only): `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
+- **What a scheduled run says** (the `ask` event, section 5): a run's question is posted in `#general`, with a **thread** under it
+  when the run has the Discord thread pack; what you write in the thread goes to the run's conversation, whatever the current
+  conversation is. Without a thread (no pack, or the bot may not open one) the run's conversation becomes the current
+  one, until the run ends. A reminder is posted in the thread. **When the run ends** (it finishes, or it is closed because
+  you did not answer) the bot says so in `#general` (the run's summary, which for the daily note gives the note's path),
+  after the answer that finished it was posted, and **deletes the thread**; the conversation stays in Clara, and a
+  correction is made there (the web site). A run can also open, write in and remove a thread by itself
+  (`discord_thread`). The bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general`
+  (it logs what it lacks at start); without *Manage Threads* it archives the thread instead.
+- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation: list them, or switch one on or off), `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
   `/approvals`.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
   raises the `discord` alert after 5 minutes of silence. A bot that stopped by itself (exit code 0) is not started
@@ -185,6 +193,13 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   (ask again or edit: a new version of a message), `timezone`, `tools` (client-side tools), `instructions`,
   `incognito`, `local_only`.
 - **Versions:** editing a message or asking again keeps the earlier answer as another version; you move between them.
+- **Special tools (packs):** a pack is a name for a group of tools that exist only where it is switched on: **Web search**
+  (on by default), **Second brain** (the vault open), **Day conversations**, **Day activity**, **Files created**, **Daily
+  notes**, and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
+  Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
+  it, so it follows the conversation to every client, and a new conversation starts with web search only. A pack that
+  cannot be used says why (no vault, Discord bot not connected). A pack only decides which tools exist: the rule gate
+  still decides each call. `GET /v1/packs` lists them.
 - **Titles and summaries:** a title is written after the first answer (by the side-jobs model). When a conversation
   passes `CLARA_COMPACT_PERCENT` of the model's window, or `CLARA_COMPACT_TOKENS`, older turns are summarised; the last
   `CLARA_KEEP_RECENT_TURNS` stay whole. With `CLARA_PURGE_SUMMARISED=true` the summarised messages are deleted.
@@ -240,15 +255,31 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Tasks:** a to-do list with sub-tasks (50 per task), due dates and reminders. When you give no reminder times,
   Clara picks some (and says when); 10 reminders at most per task (`CLARA_TASK_MAX_REMINDERS`). 200 open tasks.
 - **Schedules:** a prompt that runs unattended on a schedule (once, daily, weekly on chosen weekdays, monthly), with
-  optional documents, a project, and the local-only flag;
-  each run is recorded with a short summary and notifies you. A run more than an hour late is skipped and recorded as
-  missed. 100 schedules.
+  optional documents, a project, a model of its own, the local-only flag and its **packs** (the special tools its runs get;
+  none by default but web search). Each run is a turn in a conversation: one shared by all the runs, or (**per run**) a
+  new one each time, which is a normal chat in your list. Each run is recorded with a short summary and notifies you.
+  - **Asking and waiting:** a schedule with the *Ask you* pack may ask you one question (`ask_person`: an `ask` event on
+    the web site and Discord) and end its turn; the run is then `waiting`, your answer arrives in the run's conversation
+    like in any chat (with the same packs), and `finish_run` ends it. A waiting run is reminded once, at
+    `CLARA_WAITING_REMIND_AT` (09:00) after at least three hours; `Close it` on the Schedules page (or the next run, below)
+    closes it from what Clara has: she is told no answer came, does what the task says for that case and finishes.
+  - **Missed** (the server was off, more than an hour late): `skip` records them; `latest` runs the latest one at the next
+    start; `all` runs every missed one in turn (31 at most). **Overlap** (a run comes due while the previous one still
+    runs or waits): `skip` records the new one as skipped; `replace` closes a waiting run, then starts the new one (a
+    running one is waited for); `queue` starts it when the old one ends.
+  - A run more than an hour late is skipped and recorded as missed unless `missed` says otherwise. 100 schedules.
+  - **The daily note** is a schedule made once at start when there is a vault ("Bilan du jour", every day at 23:59, one
+    conversation per run, missed `latest`, overlap `replace`, packs second brain, day conversations, day activity, files
+    created, ask you, Discord thread). Its prompt (French, yours to edit) has Clara read the day, ask you one question,
+    wait for your answer, write the day into a block of that day's daily note (`vault_daily_block`), mark the tasks you
+    confirmed done and finish; unanswered, she writes it from what she read, the uncertain points under « À confirmer ».
+    Delete or pause it as any schedule; it is not made again.
 - **Notifications:** Clara may notify you (3 per turn, only when asked or when long work is done); you can notify
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
   back (`GET /v1/events`, or the live stream `GET /v1/events/stream`). Event kinds: `reminder`, `notification`,
-  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `checkin` (the end-of-day check-in: asked, reminded and closed for the web site and Discord, and written for Discord alone).
+  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone).
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
@@ -263,35 +294,29 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Files sent in a conversation:** kept with the conversation (20 per conversation) and readable later by number.
 - **Notes:** Clara's notes are Markdown files in the workspace folder `notes/` (with its git history and undo).
 - **Second brain (Obsidian vault):** a git clone of your vault (`CLARA_VAULT_PATH`). It is closed by default: the model
-  sees a one-line mention and calls `open_second_brain` when your notes matter, which opens seven tools for that
+  sees a one-line mention and calls `open_second_brain` when your notes matter, which opens eight tools for that
   conversation. Search is FTS5 over titles and text. Moving a note updates every `[[link]]` to it (bare links stay
   bare). Deleted notes go to `.trash/`. The daily note follows the vault's own settings (`_clara/schema.json`: `daily.folder` and `daily.format`, or the Clara vault's `types.daily.folder` with `daily_format` such as `YYYY/YYYY-MM-DD`); a new one is made from `_templates/daily.md`, and a line added to today's note goes under its `## Log`.
   Changes are committed and pushed (`CLARA_VAULT_PUSH`) a few seconds after the last one (never force-pushed; the
   token travels as an HTTP header, never in the URL); the vault is pulled every `CLARA_VAULT_PULL_SECONDS` (30). A
   failed push raises the `vault_push` alert.
-- **Daily recap (check-in):** with `CLARA_RECAP` and a vault, at the end of each local day (`CLARA_RECAP_AT`, 23:59 in
-  `CLARA_TIMEZONE`; at the next start if the server was off then, for yesterday only) Clara opens a conversation
-  "Bilan du 2026-10-18", **in French**, and **waits for your answer before writing anything**:
-  - The conversation's first message carries a **digest of the day**, made in code: the conversations with a message
-    that day (normal, project and scheduled ones, with the stored summary and last exchanges for those begun earlier;
-    never incognito or local-only ones, nor earlier check-ins), the tasks done and the open ones that may be done,
-    reminders that fired, scheduled runs, the notes of the vault changed that day (read from git, yours and Clara's),
-    the notes used in each conversation, and what Clara did through the gate (writes, commits, pull requests…). A day
-    over `CLARA_RECAP_DIGEST_CHARS` (60,000, and at most 35% of the model's window) is shortened: the longest
-    conversations are summarised by the side-jobs model, or their excerpts cut shorter if it fails.
-  - Clara's opening message (what she saw, tasks that may be done, "what else did you do?") is announced by a
-    `checkin` event on the web site (a notification; the conversation is in the list) and on Discord (a thread in
-    `#general`). You answer there, from either surface, like in any chat.
-  - When she has enough, Clara shows a preview and writes the recap with `write_daily_recap`: one block of the day's
-    daily note, between `<!-- clara:recap -->` and `<!-- /clara:recap -->` under `## Récap (Clara)`, replaced at each call
-    (what you wrote in the note is never touched). `[[Links]]` are kept only for notes that exist (rewritten to the
-    note's name). A task you confirm is marked done with `update_task`; nothing else is marked.
-  - Unanswered, the check-in is reminded at `CLARA_RECAP_REMIND_AT` (09:00) the next morning. When the next day's
-    check-in comes while it is still unanswered, Clara first writes its recap from the digest alone, the uncertain
-    points under « À confirmer » (the conversation stays open: a late answer updates the note).
-  - Once the recap is written, the Discord thread is deleted (a line in `#general` says where the note is); see the Discord section.
-  - A failed attempt is tried again twice, ten minutes apart, then raises the `recap` alert. `/recap` shows the days.
-  - Without `CLARA_RECAP` nothing runs by itself, but `/recap now` works with a vault.
+- **Daily notes:** a block of a day's daily note sits between `<!-- clara:<name> -->` and `<!-- /clara:<name> -->` under its own
+  `## ` heading; `vault_daily_block` writes it (the note is made from `_templates/daily.md` when it does not exist), and
+  writing it again replaces that block and nothing else, so what you wrote in the note is never touched. `[[Links]]`
+  are kept only for notes that exist (rewritten to the note's name). `daily_notes` reads a week or a month back.
+- **A day read back (the packs' tools):** `day_conversations` gives the conversations with a message that day (normal,
+  project and scheduled ones, with the stored summary and last exchanges for those begun earlier, the clients used and
+  the vault notes used; over `CLARA_DAY_DIGEST_CHARS` (60,000, and at most a fifth of the model's window) the longest are
+  summarised by the side-jobs model, or cut shorter if it fails); `read_conversation` gives one in full, a page at a time;
+  `day_activity` the tasks done and the open ones that may be done, reminders that fired, scheduled runs and what Clara
+  did through the gate. **Who may read what:** an incognito conversation is never read; a local-only one only from a
+  local-only conversation; what a conversation nobody may read made (a task, a note, a file) stays out too. With no date,
+  a tool means the day of the scheduled run it is in (the local date of the moment the run was due), else today.
+- **Files of a day without their content:** `files_created` lists them, one short line each (reference, what happened,
+  when, who, lines added and removed, size, a few words of what it is), at most 60 at a time: the workspace and the vault
+  (from their git history; the vault's include yours, made through Obsidian), the Drive files Clara created, and the
+  files you sent. `read_created_file` reads one by its reference when Clara needs it, whole or (`mode=diff`) as that
+  day's diff only, a page at a time.
 - **Forms:** the `qcm` tool shows a form (single choice, multiple choice, free text; 20 questions, 10 options each,
   LaTeX allowed) that you answer in the web chat; an optional key grades it.
 
@@ -339,7 +364,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
 (`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
-`reminders`, `tasks`, `notify`, `forms`) and a one-line summary. The gate answers allow, ask or refuse. The model can
+`reminders`, `tasks`, `notify`, `forms`, `history`, `discord`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
 ### Defaults (when no rule matches)
@@ -361,6 +386,7 @@ neither read nor change rules, and no tool answers a request.
 | `web_search`: web search | allow | allow |
 | `fetch_trusted`: fetch a URL you wrote or a search returned | allow | allow |
 | `fetch_other`: fetch any other URL | ask | refuse |
+| `discord`: open, write in or remove a Discord thread | allow | allow |
 
 ### Rules
 
@@ -407,7 +433,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-48 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+57 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub or Drive connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -451,6 +477,15 @@ vault, no GitHub or Drive connection, a local-only conversation) are not offered
 | `drive_create` | Create a file (or a Google Doc) | drive_write / write |
 | `drive_update` | Replace a file's content | drive_write / destructive |
 | `drive_delete` | Move a file to Drive's trash | drive_write / destructive |
+| `day_conversations` | What was said on a day, with the context of conversations begun earlier (pack Day conversations) | read |
+| `read_conversation` | One conversation in full, a page at a time | read |
+| `day_activity` | Tasks, reminders, scheduled runs and Clara's actions of a day (pack Day activity) | read |
+| `files_created` | The files of a day, one short line each (pack Files created) | read |
+| `read_created_file` | One of them, whole or as the day's diff | read; drive_read for a Drive file |
+| `daily_notes` | A range of daily notes of the vault (pack Daily notes) | read |
+| `ask_person` | Ask you one question from a scheduled run and wait for the answer (pack Ask you; scheduled runs only) | memory / write |
+| `finish_run` | End the scheduled run, with a summary | memory / write |
+| `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only) | discord / write |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
 | `vault_search` | Search notes | read |
 | `vault_read` | Read a note, with line numbers | read |
@@ -458,7 +493,7 @@ vault, no GitHub or Drive connection, a local-only conversation) are not offered
 | `vault_write` | Create a note, replace one, or delete one (to `.trash/`) | vault_write / write; vault_destroy / destructive to replace or delete |
 | `vault_edit` | Replace a passage, or append (at the end or under a heading) | vault_write / write |
 | `vault_daily` | Read today's daily note, or append a timestamped line | read; vault_write / write to append |
-| `write_daily_recap` | Write the recap of the day being checked in into that day's daily note (offered only in a check-in conversation) | vault_write / write |
+| `vault_daily_block` | Write a block of a day's daily note (replaced at each call, the rest of the note untouched) | vault_write / write |
 | `vault_move` | Rename or move a note, updating every link | vault_destroy / destructive |
 
 Client-side tools (`clara-chat --local-tools`: `local_list`, `local_read`) are declared by the client per request
@@ -568,7 +603,6 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `discord` | The Discord bot has not checked in for 5 minutes (with `CLARA_DISCORD_EXPECTED` or `CLARA_DISCORD_AUTOSTART`), or the server cannot keep it running (a wrong setting, a refused token or intent, no discord.py) |
   | `vault` | `CLARA_VAULT_PATH` is not a folder |
   | `vault_push` | The vault could not be pulled or pushed |
-  | `recap` | The daily check-in could not be started after three attempts |
   | `backup` | A backup, its check or its remote copy failed |
   | `github` | GitHub refused the token |
   | `google` | Google refused the refresh token (reconnect Drive) |
@@ -661,10 +695,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_VAULT_PATH` | — | Your Obsidian vault (a git clone) |
 | `CLARA_VAULT_PUSH` | true | Push the vault after changes |
 | `CLARA_VAULT_PULL_SECONDS` | 30 | Pull interval (0: never) |
-| `CLARA_RECAP` | false | Open the end-of-day check-in by itself (needs the vault) |
-| `CLARA_RECAP_AT` | 23:59 | When the day's check-in is opened (HH:MM, in `CLARA_TIMEZONE`) |
-| `CLARA_RECAP_REMIND_AT` | 09:00 | When an unanswered check-in is reminded, the next morning |
-| `CLARA_RECAP_DIGEST_CHARS` | 60000 | Most characters of a day's digest (and at most 35% of the model's window) |
+| `CLARA_DAY_DIGEST_CHARS` | 60000 | Most characters `day_conversations` gives (and at most a fifth of the model's window) |
+| `CLARA_WAITING_REMIND_AT` | 09:00 | When a scheduled run still waiting for your answer is reminded (HH:MM, after three hours at least) |
 | `CLARA_SEARXNG_URL` | `http://127.0.0.1:8888` | SearXNG |
 | `CLARA_FETCH_MAX_SIZE` | 2m | Largest page fetched |
 | `CLARA_PUBLIC_URL` | the Tailscale address | Your `https://` address, for Google's redirect |
@@ -763,11 +795,13 @@ keep-alive every 15 s.
 | `GET /v1/tasks/{task_id}` | One task with its sub-tasks |
 | `PATCH /v1/tasks/{task_id}` | Change one |
 | `DELETE /v1/tasks/{task_id}` | Delete one |
+| `GET /v1/packs` | The special tools (packs) for a chat or a schedule, with whether each can be used now |
 | `GET /v1/schedules` | Schedules |
 | `POST /v1/schedules` | Add one |
 | `GET /v1/schedules/{schedule_id}` | One schedule with its runs |
 | `PATCH /v1/schedules/{schedule_id}` | Change, pause or resume one |
 | `POST /v1/schedules/{schedule_id}/run` | Run it now |
+| `POST /v1/schedules/{schedule_id}/close` | Close the run that waits for your answer, from what Clara has |
 | `DELETE /v1/schedules/{schedule_id}` | Delete one |
 | `GET /v1/events/stream` | Live events (after your cursor) |
 | `GET /v1/events` | Events you missed |
@@ -875,7 +909,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Projects | 90 MB and 1,000 files per upload; `CLARA_PROJECT_MAX_CHARS`, `CLARA_PROJECT_MAX_FILES`; a file over 30 MB in an archive is skipped; 600 MB unpacked per archive; GitHub archives 300 MB |
 | Workspace | `CLARA_WORKSPACE_MAX_SIZE`, `CLARA_WORKSPACE_MAX_FILE`; reads 1,000 lines at once; 80 search matches |
 | Vault note | 400,000 characters; 20 search results |
-| Daily recap | one check-in a day; digest `CLARA_RECAP_DIGEST_CHARS`; 3 attempts; the opening message 2,000 characters in its event |
+| Special tools | `day_conversations` `CLARA_DAY_DIGEST_CHARS`; `files_created` 60 files a page; `daily_notes` 31 days; a question of `ask_person` 2,000 characters; 31 missed or queued runs per schedule |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

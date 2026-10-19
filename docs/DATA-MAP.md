@@ -22,19 +22,19 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `/etc/clara/discord-token.cred`, `discord-clara-token.cred`, `discord.env` (or the token files named in `clara.env` when the server starts the bot) | The Discord bot's token, its Clara token, your Discord id and the ids of your four channels | — | No |
 | `/opt/clara/releases/<tag>/`, `/opt/clara/current` | Installed releases and their virtualenvs | Until you remove old ones | No |
 | `/var/lib/clara-home/` | The `clara` user's home: rootless Podman's images and storage, SearXNG's settings | — | No |
-| `/var/lib/clara-discord/state.json` (`<data>/discord-state.json` when the server starts the bot) | The bot's current conversation id, and the open check-in threads, at most 30 (thread id → conversation; removed once the recap is written) | — | No |
+| `/var/lib/clara-discord/state.json` (`<data>/discord-state.json` when the server starts the bot) | The bot's current conversation id, and the open threads of scheduled runs, at most 30 (thread id → conversation; removed when the run ends) | — | No |
 | `~/.config/clara/token` (on each device) | A client token (0600) | Until you delete it | No |
 
 ## In the database
 
 | Table | Holds | Kept |
 | --- | --- | --- |
-| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message; with `CLARA_PURGE_SUMMARISED`, summarised messages go |
+| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, the packs switched on, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message; with `CLARA_PURGE_SUMMARISED`, summarised messages go |
 | `conversation_files` | Files sent in a conversation (their bytes) and their text | With the conversation |
 | `facts`, `facts_fts`, `forgotten` | Facts with source, dates, pin, expiry, supersede; tombstones of forgotten facts (their folded text) | Until you delete them; superseded and expired facts stay visible on the Memory page |
 | `projects`, `project_sources`, `project_files` | Project settings, GitHub sources, file contents | Until you delete the project |
-| `recaps` | One row per day of the daily recap: its status, the check-in conversation, the daily note it went into, attempts, an error text | Until deleted (a few hundred bytes a day) |
-| `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features, run history and summaries | Until deleted; a once-only reminder goes when it fires |
+| `created_files` | The Drive files Clara created (id, name, conversation, time), which have no history of ours to read back | Until deleted |
+| `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features; a schedule's packs, model and policies; each run's status (including `waiting`), summary and conversation | Until deleted; a once-only reminder goes when it fires |
 | `events`, `event_cursors` | Reminders fired, notifications, approval news, alerts, server and update news; each token's read position | Until every active client read them (a day at least), 90 days at most |
 | `approvals` | Requests with their frozen action and arguments, answer, result | 30 days after they finish |
 | `rules` | Your rules | Until you delete them |
@@ -55,7 +55,7 @@ keep what they held until they rotate out.
 | To | What | When |
 | --- | --- | --- |
 | The model provider of the conversation | The prompt: persona, your facts (not in incognito), the conversation or its summary, project content, tool results, attached files and pictures | Every model call. Local Ollama hosts keep it on your machines; hosted providers are listed with their terms in [PROVIDERS.md](PROVIDERS.md). A local-only conversation never reaches a hosted provider |
-| The model provider of the check-in conversation | The digest of the day: your conversations of that day (normal, project and scheduled ones; never incognito or local-only ones), with their earlier summary and last exchanges, tasks, reminders, vault changes and Clara's actions; a long conversation first goes to the side-jobs model for a summary | At each end-of-day check-in, when `CLARA_RECAP` is on |
+| The model provider of a conversation that reads a day back | What the special tools return: your conversations of that day (normal, project and scheduled ones; never incognito ones, local-only ones only to a local-only conversation), with their earlier summary and last exchanges, tasks, reminders, a short list of the day's files (and a file's text or diff when Clara asks for it), daily notes; a long conversation first goes to the side-jobs model for a summary | When a conversation or schedule has those packs on |
 | SearXNG, then the search engines it asks | The search query | `web_search` |
 | The web site fetched | A request for that address | `web_fetch` |
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |

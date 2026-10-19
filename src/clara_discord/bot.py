@@ -11,11 +11,12 @@ function: DMs are ignored.
   those say to answer on the web or with clara-admin. The server enforces it, whatever the bot shows.
 * Alerts go to #alerts; reminders, notifications, task reminders, schedule summaries and update news go to
   #notification (the event stream; what was missed while the bot was away arrives when it reconnects).
-* The end-of-day check-in (a `checkin` event) is posted in #general with a thread under it: what you write in that
-  thread goes to the check-in's conversation, whatever the current conversation is. If the bot may not create threads,
-  the check-in becomes the current conversation instead. Once the recap is written (or the check-in closed without
-  your answer) the bot says so in #general and deletes the thread (it archives it when it may not delete); the
-  conversation stays in Clara.
+* When a scheduled run asks you something (an `ask` event) the question is posted in #general, with a thread under it
+  when the run has the Discord thread pack: what you write in that thread goes to the run's conversation, whatever the
+  current conversation is. If the bot may not create threads, or the run has no thread, the run's conversation becomes
+  the current one instead. When the run ends (or is closed without your answer) the bot says so in #general and
+  deletes the thread (it archives it when it may not delete); the conversation stays in Clara. A run can also open,
+  write in and remove a thread by itself.
 * A heartbeat every minute lets the server alert you when the bot is gone.
 
 Exit codes: 0 stopped, 2 a setting, the token, the channels or an intent is wrong (starting again will not help),
@@ -34,6 +35,7 @@ import logging
 import re
 import signal
 import sys
+from typing import Literal
 
 import discord
 from discord import app_commands
@@ -151,7 +153,7 @@ class ClaraBot(discord.Client):
         self._save(conversation=conversation)
 
     def threads(self) -> dict[str, str]:
-        """The check-in threads: Discord thread id -> Clara conversation."""
+        """The threads of scheduled runs: Discord thread id -> Clara conversation."""
         found = self._state().get("threads")
         return found if isinstance(found, dict) else {}
 
@@ -196,7 +198,7 @@ class ClaraBot(discord.Client):
                 continue
             allowed = live.permissions_for(guild.me)
             wanted = ("view_channel", "send_messages", "attach_files")
-            if name == "general":  # the check-in thread, opened and then removed
+            if name == "general":  # a run's thread, opened and then removed
                 wanted += ("create_public_threads", "send_messages_in_threads", "manage_threads")
             lacking = [right for right in wanted if not getattr(allowed, right)]
             if lacking:
@@ -249,7 +251,7 @@ class ClaraBot(discord.Client):
         if channel.id == general:
             conversation, remember = self.conversation(), True
         elif isinstance(channel, discord.Thread) and channel.parent_id == general:
-            conversation, remember = self.threads().get(str(channel.id)), False  # a check-in thread
+            conversation, remember = self.threads().get(str(channel.id)), False  # a thread of a run
             if conversation is None:
                 return
         else:
@@ -310,7 +312,31 @@ class ClaraBot(discord.Client):
             except (ClaraError, discord.HTTPException) as error:
                 log.warning("cannot send %s: %s", card.get("path"), error)
         if conversation in self.finished:  # the recap was written during this answer: now the thread can go
-            await self.close_checkin(self.finished.pop(conversation))
+            await self.close_ask(self.finished.pop(conversation))
+
+    async def tools_text(self, pack: str | None, state: str | None) -> str:
+        """The packs of the current conversation (a new one starts with web search), after switching one if asked. The
+        conversation decides: what is on here is on wherever it is continued."""
+        listing = (await self.clara.call("GET", "/v1/packs", params={"where": "chat"}))["packs"]
+        current = self.conversation()
+        active = (await self.clara.call("GET", f"/v1/conversations/{current}"))["packs"] if current else ["web"]
+        note = ""
+        if pack:
+            wanted = pack.strip().lower()
+            match = next((item for item in listing if wanted in (item["id"], item["label"].lower())), None)
+            if match is None:
+                return f"No tool called {pack!r}: " + ", ".join(item["id"] for item in listing) + "."
+            on = (match["id"] not in active) if state is None else state == "on"
+            active = [item for item in active if item != match["id"]] + ([match["id"]] if on else [])
+            if current:
+                await self.clara.call("PATCH", f"/v1/conversations/{current}", json={"packs": active})
+            else:
+                made = await self.clara.call("POST", "/v1/conversations", json={"packs": active})
+                self.set_conversation(made["id"])
+                note = "\n(A new conversation was started for it.)"
+        lines = [f"{'✅' if item['id'] in active else '▫️'} `{item['id']}` — {item['label']}"
+                 + ("" if item["available"] else f" ({item['reason']})") for item in listing]
+        return "\n".join(lines) + note + "\n`/tools pack:<id> state:on|off` switches one."
 
     async def show_approval(self, approval: dict) -> bool:
         """Post a request in #approval, once. True when it was posted now."""
@@ -364,8 +390,8 @@ class ClaraBot(discord.Client):
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=f"🔐 #{approval['id']} {approval['summary']}: **{approval['status']}**", view=None)
             return
-        if kind == "checkin":
-            await self.deliver_checkin(event)
+        if kind == "ask":
+            await self.deliver_ask(event)
             return
         icon, route = ICONS.get(str(kind)), ROUTES.get(str(kind))
         if icon is None or route is None:
@@ -375,49 +401,61 @@ class ClaraBot(discord.Client):
         for part in split_message(text):
             await self.channels[route].send(part)
 
-    async def deliver_checkin(self, event: dict) -> None:
-        """The end-of-day check-in: the question in #general with a thread under it that carries your answer; its
-        reminder goes in that thread. When the recap is written (or the check-in closed unanswered) the thread is
-        removed, after the answer that wrote it was posted."""
+    async def deliver_ask(self, event: dict) -> None:
+        """What a scheduled run says to you (`ask` events), by stage:
+
+        asked, thread_open   the message in #general, with a thread under it (when the run has the thread pack, or
+                             for thread_open); the thread carries your answers to the run's conversation
+        thread_post          a message in that thread       reminder   the same, in the thread when there is one
+        finished, closed     a line in #general, then the thread is removed (after the answer being written is posted)
+        thread_close         the thread is removed
+        """
         payload = event.get("payload") or {}
         conversation = payload.get("conversation") or event.get("conversation")
         stage = payload.get("stage")
-        if stage in ("written", "closed") and conversation:
+        if stage in ("finished", "closed", "thread_close") and conversation:
             if conversation in self.answering:
                 self.finished[conversation] = event
             else:
-                await self.close_checkin(event)
+                await self.close_ask(event)
             return
-        target: discord.abc.Messageable = self.channels["general"]
-        if conversation and stage != "asked":
-            thread_id = self.thread_of(conversation)
-            if thread_id is not None:
-                with contextlib.suppress(discord.HTTPException):
-                    target = await self.fetch_channel(thread_id)  # an archived thread comes back when written to
-        title = event.get("title") or "Bilan du jour"
+        thread_id = self.thread_of(conversation)
+        existing = None
+        if thread_id is not None:
+            with contextlib.suppress(discord.HTTPException):
+                existing = await self.fetch_channel(thread_id)  # an archived thread comes back when written to
+        target: discord.abc.Messageable = existing or self.channels["general"]
+        title = event.get("title") or "Clara"
         first = None
         for part in split_message(f"📓 **{title}**\n{event.get('text', '')}"):
             sent = await target.send(part)
             first = first or sent
-        if stage != "asked" or not conversation or first is None:
+        wants_thread = stage == "thread_open" or (stage == "asked" and payload.get("thread"))
+        if existing is not None or not conversation or first is None:
             return
-        try:
-            thread = await first.create_thread(name=title[:100], auto_archive_duration=THREAD_ARCHIVE_MINUTES)
-        except (discord.Forbidden, discord.HTTPException) as error:
-            log.warning("cannot open the check-in thread (%s): the check-in becomes the current conversation", error)
+        if stage in ("reminder", "thread_post"):
+            return
+        if wants_thread:
+            try:
+                thread = await first.create_thread(name=title[:100], auto_archive_duration=THREAD_ARCHIVE_MINUTES)
+            except (discord.Forbidden, discord.HTTPException) as error:
+                log.warning("cannot open the thread (%s): the conversation becomes the current one", error)
+            else:
+                self.remember_thread(thread.id, conversation)
+                return
+        if stage in ("asked", "thread_open"):  # no thread: your next message answers it
             self.set_conversation(conversation)
-            await self.channels["general"].send("↩️ Réponds ici : ce bilan est maintenant la conversation courante.")
-            return
-        self.remember_thread(thread.id, conversation)
+            await self.channels["general"].send("↩️ Réponds ici : cette conversation est maintenant la conversation courante.")
 
-    async def close_checkin(self, event: dict) -> None:
-        """Say in #general that the recap is written, then remove the check-in's thread (archive it if the bot may not
-        delete). The conversation stays in Clara; a correction is made there."""
+    async def close_ask(self, event: dict) -> None:
+        """A run ended: say so in #general (unless the event only removes the thread), then remove its thread (archive it
+        if the bot may not delete). The conversation stays in Clara; a correction is made there."""
         payload = event.get("payload") or {}
         conversation = payload.get("conversation") or event.get("conversation")
-        for part in split_message(f"📓 **{event.get('title') or 'Bilan du jour'}**\n{event.get('text', '')}"):
-            await self.channels["general"].send(part)
-        if self.conversation() == conversation:  # a check-in that had become the current chat is not any more
+        if payload.get("stage") != "thread_close":
+            for part in split_message(f"📓 **{event.get('title') or 'Clara'}**\n{event.get('text', '')}"):
+                await self.channels["general"].send(part)
+        if self.conversation() == conversation:  # a run that had become the current chat is not any more
             self.set_conversation(None)
         thread_id = self.thread_of(conversation)
         if thread_id is not None and await self.remove_thread(thread_id):
@@ -499,6 +537,17 @@ class ClaraBot(discord.Client):
                 found = (await self.clara.call("GET", "/v1/reminders"))["reminders"]
                 text = "\n".join(f"[{r['id']}] {r['local']} {r['text']}" for r in found if not r["system"]) or "None."
                 await interaction.response.send_message(split_message(text)[0], ephemeral=True)
+            except ClaraError as error:
+                await interaction.response.send_message(f"⚠️ {error}")
+
+        @tree.command(name="tools", description="The special tools of the current conversation (switch one on or off)")
+        @app_commands.describe(pack="The tool to switch (its id, as listed)", state="on or off (default: the other one)")
+        @here
+        async def tools(interaction: discord.Interaction, pack: str | None = None, state: Literal["on", "off"] | None = None) -> None:
+            if not await only_you(interaction):
+                return
+            try:
+                await interaction.response.send_message(await self.tools_text(pack, state), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 

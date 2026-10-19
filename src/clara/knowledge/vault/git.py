@@ -283,24 +283,24 @@ class GitSync:
 
     def changes(self, since: str, until: str) -> list[dict]:
         """The files touched by commits made from `since` to `until` (ISO instants), one row each, newest commit first:
-        `{"path", "status" (created, changed, deleted), "authors", "subject"}`. A file added and changed in the span is
+        `{"path", "status" (created, changed, deleted), "authors", "subject", "at"}`. A file added and changed in the span is
         `created`; one added and deleted is left out."""
         out = self.git(
-            "log", f"--since={since}", f"--until={until}", "--no-merges", "--name-status", "--format=%x01%an%x09%s",
+            "log", f"--since={since}", f"--until={until}", "--no-merges", "--name-status", "--format=%x01%an%x09%aI%x09%s",
             check=False,
         )
         found: dict[str, dict] = {}
-        author = subject = ""
+        author = subject = at = ""
         for line in out.splitlines():
             if line.startswith("\x01"):
-                author, _, subject = line[1:].partition("\t")
+                author, at, subject = (line[1:].split("\t", 2) + ["", ""])[:3]
                 continue
             parts = line.split("\t")
             if len(parts) < 2 or not parts[0]:
                 continue
             code, path = parts[0][0], parts[-1]
             row = found.setdefault(path, {"path": path, "status": "", "authors": [], "subject": subject, "added": False,
-                                          "last": code})
+                                          "last": code, "at": at})
             if code == "A":
                 row["added"] = True
             if author not in row["authors"]:
@@ -314,8 +314,25 @@ class GitSync:
             else:
                 row["status"] = "created" if row["added"] else "changed"
             rows.append({"path": row["path"], "status": row["status"], "authors": tuple(row["authors"]),
-                         "subject": row["subject"]})
+                         "subject": row["subject"], "at": row["at"]})
         return rows
+
+    def numstat(self, since: str, until: str) -> dict[str, tuple[int, int]]:
+        """Lines added and removed per file by the commits made from `since` to `until`."""
+        out = self.git("log", f"--since={since}", f"--until={until}", "--no-merges", "--numstat", "--format=", check=False)
+        found: dict[str, tuple[int, int]] = {}
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3:
+                added, removed = (int(value) if value.isdigit() else 0 for value in parts[:2])
+                before = found.get(parts[2], (0, 0))
+                found[parts[2]] = (before[0] + added, before[1] + removed)
+        return found
+
+    def diff(self, path: str, since: str, until: str) -> str:
+        """What the commits made from `since` to `until` changed in one file (newest first)."""
+        return self.git("log", f"--since={since}", f"--until={until}", "--no-merges", "-p", "--format=--- %h %an: %s", "--",
+                        path, check=False)
 
     def deleted_path(self, name: str) -> str:
         """The path a note called `name` had when it was deleted (the latest), or ''."""

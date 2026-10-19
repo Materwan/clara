@@ -48,6 +48,7 @@ HELP = """\
 /task move <id> <parent-id>|none                 /task set <id> title|description|due|remind <value>
 /notify [@clients] <text>  send yourself a notification
 /model [provider:model | default]   this conversation's model
+/tools [<pack> [on|off]]   the special tools of this conversation (listed; or switch one)
 /approvals                 requests waiting      /allow|/always|/refuse|/never <id>  answer one
 /undo                      revert Clara's last workspace change
 /quit                      leave"""
@@ -236,7 +237,7 @@ def describe_event(event: dict) -> str | None:
     kind = event.get("type")
     if kind == "reminder":
         return f"\a⏰ {event['text']}"
-    if kind in ("notification", "task", "schedule", "checkin"):
+    if kind in ("notification", "task", "schedule", "ask"):
         return f"\a🔔 {event.get('title') + ': ' if event.get('title') else ''}{event['text']}"
     if kind == "alert":
         return f"\a⚠ {event.get('title')}: {event['text']}"
@@ -413,6 +414,8 @@ def command(chat: Chat, line: str) -> bool:
         else:
             models = api.get("/v1/models")
             print(f"Default: {models['default']}\n" + "\n".join(f"  {m['ref']}" for m in models["models"]))
+    elif name == "/tools":
+        print(tools_text(chat, argument))
     elif name == "/approvals":
         found = api.get("/v1/approvals", status="pending")["approvals"]
         print("\n".join(f"#{a['id']} [{a['level']}] {a['summary']}" for a in found) or "Nothing waits.")
@@ -424,6 +427,28 @@ def command(chat: Chat, line: str) -> bool:
     else:
         print(HELP)
     return True
+
+
+def tools_text(chat: Chat, argument: str) -> str:
+    """The packs of this conversation (a new one starts with web search), after switching one if asked: what is on
+    stays on wherever the conversation is continued."""
+    api = chat.api
+    listing = api.get("/v1/packs", where="chat")["packs"]
+    active = api.get(f"/v1/conversations/{chat.conversation}")["packs"] if chat.conversation else ["web"]
+    words = argument.split()
+    if words:
+        match = next((item for item in listing if words[0].lower() in (item["id"], item["label"].lower())), None)
+        if match is None:
+            return f"No tool called {words[0]!r}: " + ", ".join(item["id"] for item in listing) + "."
+        on = (match["id"] not in active) if len(words) < 2 else words[1].lower() == "on"
+        active = [item for item in active if item != match["id"]] + ([match["id"]] if on else [])
+        if chat.conversation:
+            api.patch(f"/v1/conversations/{chat.conversation}", {"packs": active})
+        else:
+            chat.conversation = api.post("/v1/conversations", {"packs": active, "incognito": chat.incognito,
+                                                               "local_only": chat.local_only})["id"]
+    return "\n".join(f"{'[x]' if item['id'] in active else '[ ]'} {item['id']:<18} {item['label']}"
+                     + ("" if item["available"] else f"  ({item['reason']})") for item in listing)
 
 
 def task_command(chat: Chat, argument: str, now: datetime) -> None:

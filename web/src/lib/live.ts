@@ -4,7 +4,7 @@
 import { api, stream } from './api';
 import { live, session, toast } from './state.svelte';
 
-const SHOWN: Record<string, string> = { reminder: 'bell', notification: 'bell', task: 'tasks', schedule: 'clock', alert: 'warn', update: 'download', checkin: 'book' };
+const SHOWN: Record<string, string> = { reminder: 'bell', notification: 'bell', task: 'tasks', schedule: 'clock', alert: 'warn', update: 'download', ask: 'bell' };
 let running = false;
 
 export async function loadPending(): Promise<void> {
@@ -53,14 +53,14 @@ function handle(event: any): void {
   if (event.type === 'alert') loadPending();
   const icon = SHOWN[event.type];
   if (icon) {
-    // the end-of-day question is long: the toast only says where to answer it (the conversation is in the list)
-    const text =
-      event.type === 'checkin'
-        ? `${event.title}. Réponds dans la conversation « Bilan du ${event.payload?.day ?? ''} ».`
-        : `${event.title && event.type !== 'reminder' ? event.title + ': ' : ''}${event.text}`;
+    // a scheduled run's question is long: the toast only says where to answer it (the run's conversation is in the list)
+    const asking = event.type === 'ask' && event.payload?.stage === 'asked';
+    const text = asking
+      ? `${event.title} is waiting for your answer: open its conversation.`
+      : `${event.title && event.type !== 'reminder' ? event.title + ': ' : ''}${event.text}`;
     toast(text, event.type === 'alert' ? 'error' : 'info', icon);
     if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-      new Notification(event.title || 'Clara', { body: event.type === 'checkin' ? text : event.text });
+      new Notification(event.title || 'Clara', { body: asking ? text : event.text });
     }
   }
   live.refresh++;

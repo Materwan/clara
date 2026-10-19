@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from ..llm import ProviderError, split_ref
 from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, ScheduleError, TaskError
 from ..timekeeping.tasks import MAX_DESCRIPTION, MAX_TITLE
 from .common import ApiError, caller, services
@@ -148,6 +149,19 @@ class NewSchedule(BaseModel):
     weekdays: list[int] = Field(default_factory=list, max_length=7)
     project: int | None = None
     local_only: bool = False
+    packs: list[str] = Field(default_factory=lambda: ["web"], max_length=20, description="The tool packs its runs get")
+    per_run: bool = Field(default=False, description="A new conversation for each run")
+    missed: Literal["skip", "latest", "all"] = "skip"
+    overlap: Literal["skip", "replace", "queue"] = "skip"
+    model: str = Field(default="", max_length=200, description="'': the default model")
+
+
+def _model(model: str) -> str:
+    try:
+        split_ref(model) if model.strip() else None
+    except ProviderError as error:
+        raise ApiError(422, str(error)) from None
+    return model.strip()
 
 
 @router.get("/schedules")
@@ -162,7 +176,8 @@ def add_schedule(body: NewSchedule, request: Request) -> dict:
     try:
         schedule = service.create(body.name, body.prompt, body.at, documents=[d.model_dump() for d in body.documents],
                                   timezone=body.timezone, repeat=body.repeat, weekdays=body.weekdays,
-                                  project_id=body.project, local_only=body.local_only)
+                                  project_id=body.project, local_only=body.local_only, packs=body.packs,
+                                  per_run=body.per_run, missed=body.missed, overlap=body.overlap, model=_model(body.model))
     except ScheduleError as error:
         raise ApiError(422, str(error)) from None
     return service.describe(schedule)
@@ -189,6 +204,11 @@ class ScheduleChange(BaseModel):
     project: int | None = None
     local_only: bool | None = None
     enabled: bool | None = None
+    packs: list[str] | None = Field(default=None, max_length=20)
+    per_run: bool | None = None
+    missed: Literal["skip", "latest", "all"] | None = None
+    overlap: Literal["skip", "replace", "queue"] | None = None
+    model: str | None = Field(default=None, max_length=200)
 
 
 @router.patch("/schedules/{schedule_id}")
@@ -197,6 +217,8 @@ def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) ->
     fields = {key: value for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
     if "project" in fields:
         fields["project_id"] = fields.pop("project") or None
+    if "model" in fields:
+        fields["model"] = _model(fields["model"])
     try:
         return service.describe(service.update(schedule_id, **fields))
     except ScheduleError as error:
@@ -204,12 +226,23 @@ def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) ->
 
 
 @router.post("/schedules/{schedule_id}/run")
-def run_schedule(schedule_id: int, request: Request) -> dict:
+async def run_schedule(schedule_id: int, request: Request) -> dict:  # async: starting a run needs the server's event loop
     service = services(request).schedules
     try:
         return service.describe(service.run_now(schedule_id))
     except ScheduleError as error:
         raise ApiError(409, str(error)) from None
+
+
+@router.post("/schedules/{schedule_id}/close")
+async def close_schedule(schedule_id: int, request: Request) -> dict:
+    """Close the run that waits for your answer, from what Clara has (she finishes it in the background)."""
+    service = services(request).schedules
+    if service.find(schedule_id) is None:
+        raise ApiError(404, f"No scheduled task {schedule_id}.")
+    if not service.close_waiting(schedule_id):
+        raise ApiError(409, "No run of it is waiting for an answer (or it is being closed).")
+    return service.describe(service.get(schedule_id))
 
 
 @router.delete("/schedules/{schedule_id}")
