@@ -385,6 +385,9 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .account-item .icon { color: var(--muted); }
 .account-item[aria-current='page'] .icon { color: var(--rail-signal); }
 .account-item .count { margin-left: auto; }
+.account-clients { padding: var(--sp-2) 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.account-label { padding: var(--sp-6) var(--sp-8) var(--sp-2); font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); }
+.account-check { cursor: pointer; }
 .account-theme { padding: var(--sp-2) 0; }
 .account-theme .segmented { display: flex; } /* the theme switch takes the panel's width, in three equal parts */
 .account-theme .segmented button { flex: 1; }
@@ -606,6 +609,9 @@ tr.off td { opacity: .5; }
 }
 .call-key { font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); }
 .call-detail pre { border: none; padding: 0; background: none; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); line-height: 1.45; color: var(--text); max-height: 18rem; overflow: auto; }
+/* a sub agent's conversation, under the call that started it: its own reply, set apart by a rule */
+.sub-body { display: flex; flex-direction: column; gap: var(--sp-8); margin: var(--sp-4) 0 var(--sp-8) var(--sp-6); padding-left: var(--sp-14); min-width: 0; border-left: 2px solid var(--line-strong); color: var(--text-2); }
+.sub-prompt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow: auto; font-size: var(--fs-xs); line-height: 1.45; color: var(--text-2); }
 .thinking-text { white-space: pre-wrap; margin: var(--sp-4) 0 var(--sp-4) var(--sp-20); color: var(--text-2); font-size: var(--fs-sm); }
 .spin { flex: none; display: inline-block; width: .8em; height: .8em; border: 2px solid var(--line-strong); border-top-color: var(--accent-line); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

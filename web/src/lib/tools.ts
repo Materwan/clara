@@ -48,12 +48,13 @@ const NOTES: Record<string, [string, string, string?]> = {
   vault_edit: ['book', 'Edited the note', 'note'],
   vault_daily: ['book', 'Opened the daily note'],
   vault_move: ['book', 'Moved the note', 'note'],
+  local_task: ['sparkle', 'Sub agent', 'description'], // the console's: its conversation opens under the call
 };
 
 export type Call = { name: string; arguments: any; result?: string; running?: boolean };
 
-export function note(call: Call): { icon: string; label: string; detail: string } {
-  const [icon, label, key] = NOTES[call.name] ?? ['bolt', call.name.replaceAll('_', ' ')];
+/** A text argument of a call, trimmed ("" when it has none). The arguments may still be the JSON text the model wrote. */
+export function argument(call: Call, key: string): string {
   let args = call.arguments;
   if (typeof args === 'string') {
     try {
@@ -62,7 +63,12 @@ export function note(call: Call): { icon: string; label: string; detail: string 
       args = {};
     }
   }
-  const raw = key && args && typeof args[key] === 'string' ? args[key].trim() : '';
+  return args && typeof args[key] === 'string' ? args[key].trim() : '';
+}
+
+export function note(call: Call): { icon: string; label: string; detail: string } {
+  const [icon, label, key] = NOTES[call.name] ?? ['bolt', call.name.replaceAll('_', ' ')];
+  const raw = key ? argument(call, key) : '';
   return { icon, label, detail: raw.length > 80 ? raw.slice(0, 79) + '…' : raw };
 }
 

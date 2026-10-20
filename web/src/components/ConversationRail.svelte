@@ -1,12 +1,14 @@
 <script lang="ts">
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
+  import { hidden } from '../lib/display.svelte';
   import { conversations, go, live, narrow, toast, ui } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
 
   // The list of conversations, in the rail under the pages: on every page, scrolling with the rest of the rail.
   // The conversations of a project or of a schedule are grouped under its name; they are listed only when that project
-  // or schedule is switched on for the history (a search looks through all of them).
+  // or schedule is switched on for the history, and those of Discord or the console only when the account menu shows them
+  // (a search looks through all of them; so do pinned conversations).
   type Group = { key: string; kind: 'project' | 'schedule'; name: string; items: any[] };
   const KEY = 'clara-rail-groups';
   const SHOWN = 5; // conversations a group lists before "Show more"
@@ -76,7 +78,7 @@
 
   async function load(): Promise<void> {
     try {
-      items = (await api.get('/v1/conversations', { q: query, kind: 'any', history: !query, limit: 200 })).conversations;
+      items = (await api.get('/v1/conversations', { q: query, kind: 'any', history: !query, hide: query ? '' : hidden(), limit: 200 })).conversations;
     } catch (error) {
       toast((error as Error).message, 'error');
     }

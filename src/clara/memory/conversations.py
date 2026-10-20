@@ -23,6 +23,7 @@ from .facts import fts_query
 
 MAX_TITLE = 100
 PREVIEW = 300
+PROMPT = 2_000
 ANY = "any"
 NONE = "none"
 
@@ -46,6 +47,7 @@ class Conversation:
     created_at: str
     updated_at: str
     packs: tuple[str, ...] = ("web",)
+    parent_id: str | None = None  # the conversation this one is shown in (a sub agent's), else None
 
     def active_packs(self) -> list[str]:
         """The packs switched on, the vault's switch included (it is stored as `vault_open`)."""
@@ -56,7 +58,7 @@ class Conversation:
             "id": self.id, "title": self.title, "titled_by": self.titled_by, "client": self.client, "kind": self.kind,
             "pinned": self.pinned, "project": self.project_id, "model": self.model, "incognito": self.incognito,
             "local_only": self.local_only, "created_at": self.created_at, "updated_at": self.updated_at,
-            "summarised": bool(self.summary), "packs": self.active_packs(),
+            "summarised": bool(self.summary), "packs": self.active_packs(), "parent": self.parent_id,
         }
 
 
@@ -99,6 +101,7 @@ def _conversation(row) -> Conversation:
         row["id"], row["title"], row["titled_by"], row["client"], row["kind"], bool(row["pinned"]), row["project_id"],
         row["model"], bool(row["incognito"]), bool(row["local_only"]), bool(row["vault_open"]), row["summary"],
         row["summary_upto"], row["context_tokens"], row["created_at"], row["updated_at"], _packs(row["packs"]),
+        row["parent_id"],
     )
 
 
@@ -127,14 +130,14 @@ class Conversations:
     # ------------------------------------------------------------------
     def create(self, client: str, *, kind: str = "chat", title: str = "", project_id: int | None = None, model: str = "",
                incognito: bool = False, local_only: bool = False, conversation_id: str | None = None,
-               packs: list[str] | None = None) -> Conversation:
+               packs: list[str] | None = None, parent_id: str | None = None) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
         self.db.execute(
             "INSERT INTO conversations (id, title, titled_by, client, kind, project_id, model, incognito, local_only,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (conversation_id, title[:MAX_TITLE], "you" if title else "", client, kind, project_id, model,
-             int(incognito), int(local_only), now, now),
+             int(incognito), int(local_only), parent_id, now, now),
         )
         if packs is not None:
             self.update(conversation_id, packs=packs)
@@ -161,17 +164,21 @@ class Conversations:
               " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)")
 
     def listing(self, q: str = "", project: str = ANY, kind: str = "chat", limit: int = 50, offset: int = 0,
-                history: bool = False) -> list[dict]:
+                history: bool = False, hide_clients: tuple[str, ...] = ()) -> list[dict]:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
         `group` (its schedule, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
-        leaves out those whose group is not shown in the history, the pinned ones apart."""
-        where = []
+        leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
+        the conversations the listed clients started. A sub agent's conversation is never listed: it is shown in its parent's."""
+        where = ["c.parent_id IS NULL"]
         params: list = []
         if kind != ANY:
             where.append("c.kind = ?")
             params.append(kind)
         if history:
             where.append(f"(c.pinned = 1 OR {self._SHOWN} = 1)")
+        if hide_clients:
+            where.append(f"(c.pinned = 1 OR c.client NOT IN ({', '.join('?' * len(hide_clients))}))")
+            params += hide_clients
         if project == NONE:
             where.append("c.project_id IS NULL")
         elif project != ANY:
@@ -191,10 +198,21 @@ class Conversations:
             " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
             f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
             " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
-            f" FROM conversations c WHERE {' AND '.join(where) or '1'} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
+            f" FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
         )
         return [{**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)} for row in rows]
+
+    def subagents(self, conversation_id: str) -> list[dict]:
+        """The conversations of the sub agents the conversation started, oldest first, each with the `prompt` it was given
+        (its first question, cut to PROMPT characters): the site matches it with the tool call that started it."""
+        rows = self.db.all(
+            "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
+            " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS prompt"
+            " FROM conversations c WHERE c.parent_id = ? ORDER BY c.created_at, c.id",
+            (PROMPT, conversation_id),
+        )
+        return [{**_conversation(row).describe(), "prompt": row["prompt"] or ""} for row in rows]
 
     @staticmethod
     def _group(row) -> dict | None:
@@ -247,10 +265,11 @@ class Conversations:
         return self.db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,)).rowcount > 0
 
     def sweep_incognito(self, hours: int) -> int:
-        """Delete incognito conversations idle for longer than `hours`."""
+        """Delete incognito conversations idle for longer than `hours`. A sub agent's (always incognito) lives and dies with
+        its parent: it goes when the parent is swept or deleted."""
         limit = iso(utcnow() - timedelta(hours=hours))
         return self.db.execute(
-            "DELETE FROM conversations WHERE incognito = 1 AND updated_at <= ?", (limit,)
+            "DELETE FROM conversations WHERE incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,)
         ).rowcount
 
     # ------------------------------------------------------------------

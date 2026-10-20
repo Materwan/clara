@@ -55,6 +55,8 @@ class ChatBody(BaseModel):
     instructions: str = Field(default="", max_length=20_000)
     incognito: bool = False
     local_only: bool = False
+    parent: str | None = Field(default=None, pattern=r"^c[0-9a-f]{16}$",
+                               description="With a new conversation: the one it is shown in (a sub agent's)")
 
 
 def _files(body: ChatBody) -> tuple[Attached, ...]:
@@ -82,7 +84,7 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         message=prepared.message, client=who.client, token_id=who.token.id, conversation=body.conversation,
         tools=tuple(body.tools), instructions=body.instructions, timezone=body.timezone, images=prepared.images,
         files=files, project=body.project, model=body.model, fork_of=body.fork_of, incognito=body.incognito,
-        local_only=body.local_only, wait_for_approvals=wait,
+        local_only=body.local_only, parent=body.parent, wait_for_approvals=wait,
     )
 
 

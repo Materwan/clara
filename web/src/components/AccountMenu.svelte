@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { CLIENTS, display, setShown } from '../lib/display.svelte';
   import { ui } from '../lib/state.svelte';
+  import Checkbox from './Checkbox.svelte';
   import Icon from './Icon.svelte';
   import ThemeSwitch from './ThemeSwitch.svelte';
 
   // The account tab, pinned at the foot of the rail: who you are signed in as (the token's name). It opens upward onto
-  // Settings, the colour theme and Sign out. A disclosure (aria-expanded), not a menu role: it holds a link, a switch and a button.
+  // Settings, the clients whose conversations the list shows, the colour theme and Sign out. A disclosure (aria-expanded), not a menu role: it holds a link, a switch and a button.
   let { name, alerts, inSettings, onSignOut }: { name: string; alerts: number; inSettings: boolean; onSignOut: () => void } = $props();
   let open = $state(false);
   let root = $state<HTMLElement>();
@@ -54,6 +56,14 @@
         <Icon name="admin" size={18} />Settings
         {#if alerts}<span class="count danger" title={alertTitle}>{alerts}</span>{/if}
       </a>
+      <div class="account-clients" role="group" aria-label="Conversations in the list" title="Pinned conversations and searches always show them">
+        <span class="account-label">Show in the list</span>
+        {#each CLIENTS as client (client.id)}
+          <label class="account-item account-check">
+            <Checkbox checked={display[client.id]} onchange={(event) => setShown(client.id, event.currentTarget.checked)} />{client.label} conversations
+          </label>
+        {/each}
+      </div>
       <div class="account-theme"><ThemeSwitch /></div>
       <button type="button" class="account-item" onclick={() => { close(); onSignOut(); }}><Icon name="logout" size={18} />Sign out</button>
     </div>

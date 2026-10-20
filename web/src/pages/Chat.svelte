@@ -10,9 +10,11 @@
   import { type Document, repack, unpack } from '../lib/documents';
   import { markdown } from '../lib/markdown';
   import { conversations, go, route, toast, ui } from '../lib/state.svelte';
-  import { type Call, note, summary } from '../lib/tools';
+  import { type Call, argument, note, summary } from '../lib/tools';
 
-  type Shown = Call & { open?: boolean };
+  // A sub agent of the console works in a conversation of its own; it is shown under the `local_task` call that started it
+  type Sub = { id: string; label: string; prompt: string; open: boolean; loaded: boolean; failed: string; messages: Message[] };
+  type Shown = Call & { open?: boolean; sub?: Sub };
   // Clara's reply in the order she made it: text, runs of tool calls (calls with no text between them), requests, forms
   type Part =
     | { kind: 'text'; text: string }
@@ -48,10 +50,12 @@
     return message;
   }
   const SILENT = new Set(['qcm']); // the form is its own card
+  const PROMPT = 2000; // how much of its prompt Clara tells of a sub agent (PROMPT in memory/conversations.py)
 
   let conversationId = $derived(route.params.id ?? null);
   let conversation = $state<any>(null);
   let messages = $state<Message[]>([]);
+  let orphans = $state<Sub[]>([]); // sub agents whose `local_task` call is not in the messages (shown after them)
   let draft = $state('');
   let attached = $state<File[]>([]);
   let busy = $state(false);
@@ -90,6 +94,7 @@
   async function load(id: string | null): Promise<void> {
     conversation = null;
     messages = [];
+    orphans = [];
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
     packList = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
     projectList = (await api.get('/v1/projects').catch(() => ({ projects: [] }))).projects;
@@ -97,8 +102,10 @@
     if (!id) return;
     try {
       conversation = await api.get(`/v1/conversations/${id}`);
+      if (conversation.parent) return go('/chat/' + conversation.parent); // a sub agent's conversation is read in its parent's
       const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
       messages = group(history, conversation.approvals ?? []);
+      orphans = putSubagents(messages, conversation.subagents ?? []);
       scrollDown();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -156,6 +163,42 @@
     }
     if (answer) for (const approval of waiting) answer.parts.push({ kind: 'approval', approval });
     return shown;
+  }
+
+  /** Put each sub agent's conversation under the `local_task` call that gave it its prompt; the rest are returned, named. */
+  function putSubagents(shown: Message[], found: any[]): Sub[] {
+    const left: Sub[] = found.map((item) => ({
+      id: item.id, label: item.title || item.prompt.slice(0, 70), prompt: item.prompt.trim(), open: false, loaded: false, failed: '', messages: [],
+    }));
+    for (const message of shown) {
+      for (const part of message.parts) {
+        if (part.kind !== 'run') continue;
+        for (const call of part.calls) {
+          if (call.name !== 'local_task') continue;
+          const wanted = [...argument(call, 'prompt')].slice(0, PROMPT).join('');
+          const index = left.findIndex((item) => item.prompt === wanted);
+          if (index < 0) continue;
+          const [claimed] = left.splice(index, 1);
+          claimed.label = ''; // under its call, which says what it was for
+          call.sub = claimed;
+        }
+      }
+    }
+    return left;
+  }
+
+  /** Open or close a sub agent's conversation; its messages are read the first time it opens. */
+  async function toggleSub(item: Sub): Promise<void> {
+    item.open = !item.open;
+    if (!item.open || item.loaded) return;
+    item.failed = '';
+    try {
+      const history = (await api.get(`/v1/conversations/${item.id}/messages`, { calls: true })).messages;
+      item.messages = group(history, []);
+      item.loaded = true;
+    } catch (error) {
+      item.failed = (error as Error).message;
+    }
   }
 
   function scrollDown(): void {
@@ -398,6 +441,87 @@
   {#if call.running}<span class="spin" aria-hidden="true"></span>{/if}
 {/snippet}
 
+{#snippet replyParts(message: Message, nested: boolean)}
+  <div class="parts">
+    {#if message.thinking}
+      <div class="run" class:open={message.thinkingOpen}>
+        <button class="run-head" aria-expanded={!!message.thinkingOpen} onclick={() => (message.thinkingOpen = !message.thinkingOpen)}>
+          <Icon name="chevron" size={14} /><span class="run-summary">{message.streaming && !message.parts.length ? 'Thinking…' : 'Thought it through'}</span>
+        </button>
+        {#if message.thinkingOpen}<div class="thinking-text">{message.thinking}</div>{/if}
+      </div>
+    {/if}
+    {#each message.parts as part, p (p)}
+      {#if part.kind === 'text'}
+        <div class="markdown" use:markdown={part.text}></div>
+      {:else if part.kind === 'run'}
+        <div class="run" class:open={part.open}>
+          <button class="run-head" aria-expanded={part.open} onclick={() => (part.open = !part.open)}>
+            <Icon name="chevron" size={14} />
+            {#if part.calls.length === 1}
+              {@render callLine(part.calls[0])}
+            {:else}
+              <span class="run-summary">{summary(part.calls)}</span>
+              {#if part.calls.some((call) => call.running)}<span class="spin" aria-hidden="true"></span>{/if}
+            {/if}
+          </button>
+          {#if part.open}
+            {#if part.calls.length === 1}
+              {@render callDetail(part.calls[0])}
+            {:else}
+              <div class="run-list">
+                {#each part.calls as call, c (c)}
+                  <div>
+                    <button class="run-head" aria-expanded={!!call.open} onclick={() => (call.open = !call.open)}>
+                      <Icon name={note(call).icon} size={14} />{@render callLine(call)}
+                    </button>
+                    {#if call.open}{@render callDetail(call)}{/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          {/if}
+        </div>
+        {#if !nested}
+          {#each part.calls as call, c (c)}{#if call.sub}{@render subagent(call.sub)}{/if}{/each}
+        {/if}
+      {:else if part.kind === 'approval'}
+        <ApprovalCard approval={part.approval} />
+      {:else}
+        <QcmForm form={part.form} onAnswer={(text) => send(text)} />
+      {/if}
+    {/each}
+    {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
+    {#each message.files as card}<FileCard {card} />{/each}
+  </div>
+{/snippet}
+
+{#snippet subagent(item: Sub)}
+  <div class="run sub" class:open={item.open}>
+    <button class="run-head" aria-expanded={item.open} onclick={() => toggleSub(item)}>
+      <Icon name="chevron" size={14} /><Icon name="sparkle" size={14} />
+      <span class="run-summary">{#if item.label}<b>Sub agent</b> {item.label}{:else}<b>What the sub agent did</b>{/if}</span>
+    </button>
+    {#if item.open}
+      <div class="sub-body">
+        {#if item.failed}
+          <p class="small muted">{item.failed}</p>
+        {:else if !item.loaded}
+          <p class="small muted">Loading…</p>
+        {:else}
+          {#each item.messages as message, m (m)}
+            {#if message.role === 'user'}
+              <div><div class="call-key">Given</div><div class="sub-prompt">{message.shown}</div></div>
+            {:else}
+              {@render replyParts(message, true)}
+            {/if}
+          {/each}
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <section class="chat" aria-label="Conversation">
   <header class="page-head chat-head">
     <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
@@ -476,55 +600,7 @@
           <div class="msg assistant" class:live={message.streaming}>
             <div class="who"><Mark size={30} /></div>
             <div class="body">
-              <div class="parts">
-                {#if message.thinking}
-                  <div class="run" class:open={message.thinkingOpen}>
-                    <button class="run-head" aria-expanded={!!message.thinkingOpen} onclick={() => (message.thinkingOpen = !message.thinkingOpen)}>
-                      <Icon name="chevron" size={14} /><span class="run-summary">{message.streaming && !message.parts.length ? 'Thinking…' : 'Thought it through'}</span>
-                    </button>
-                    {#if message.thinkingOpen}<div class="thinking-text">{message.thinking}</div>{/if}
-                  </div>
-                {/if}
-                {#each message.parts as part, p (p)}
-                  {#if part.kind === 'text'}
-                    <div class="markdown" use:markdown={part.text}></div>
-                  {:else if part.kind === 'run'}
-                    <div class="run" class:open={part.open}>
-                      <button class="run-head" aria-expanded={part.open} onclick={() => (part.open = !part.open)}>
-                        <Icon name="chevron" size={14} />
-                        {#if part.calls.length === 1}
-                          {@render callLine(part.calls[0])}
-                        {:else}
-                          <span class="run-summary">{summary(part.calls)}</span>
-                          {#if part.calls.some((call) => call.running)}<span class="spin" aria-hidden="true"></span>{/if}
-                        {/if}
-                      </button>
-                      {#if part.open}
-                        {#if part.calls.length === 1}
-                          {@render callDetail(part.calls[0])}
-                        {:else}
-                          <div class="run-list">
-                            {#each part.calls as call, c (c)}
-                              <div>
-                                <button class="run-head" aria-expanded={!!call.open} onclick={() => (call.open = !call.open)}>
-                                  <Icon name={note(call).icon} size={14} />{@render callLine(call)}
-                                </button>
-                                {#if call.open}{@render callDetail(call)}{/if}
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-                      {/if}
-                    </div>
-                  {:else if part.kind === 'approval'}
-                    <ApprovalCard approval={part.approval} />
-                  {:else}
-                    <QcmForm form={part.form} onAnswer={(text) => send(text)} />
-                  {/if}
-                {/each}
-                {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
-                {#each message.files as card}<FileCard {card} />{/each}
-              </div>
+              {@render replyParts(message, false)}
               {#if message.notes.length}
                 <div class="reply-notes">{#each message.notes as line}<span>{line}</span>{/each}</div>
               {/if}
@@ -533,6 +609,9 @@
           </div>
         {/if}
       {/each}
+      {#if orphans.length}
+        <div class="msg assistant"><div class="who"></div><div class="body"><div class="parts">{#each orphans as item (item.id)}{@render subagent(item)}{/each}</div></div></div>
+      {/if}
     </div>
   </div>
 

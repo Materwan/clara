@@ -29,7 +29,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 
 | Table | Holds | Kept |
 | --- | --- | --- |
-| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, the packs switched on, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message; with `CLARA_PURGE_SUMMARISED`, summarised messages go |
+| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, the packs switched on, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message (a console sub agent's, which is incognito, goes with its parent instead); with `CLARA_PURGE_SUMMARISED`, summarised messages go |
 | `conversation_files` | Files sent in a conversation (their bytes) and their text | With the conversation |
 | `facts`, `facts_fts`, `forgotten` | Facts with source, dates, pin, expiry, supersede; tombstones of forgotten facts (their folded text) | Until you delete them; superseded and expired facts stay visible on the Memory page |
 | `projects`, `project_sources`, `project_files` | Project settings, GitHub sources, file contents | Until you delete the project |

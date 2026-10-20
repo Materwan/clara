@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from ..auth import CLIENTS
 from ..connectors.forms import forms_in, with_answers
 from ..memory.conversations import ANY, ConversationError
 from .common import ApiError, caller, failure, refuse_when_stopping, services
@@ -26,8 +27,10 @@ def _get(request: Request, conversation_id: str):
 @router.get("")
 def listing(request: Request, q: str = Query("", max_length=200), project: str = Query(ANY, pattern=r"^(any|none|\d+)$"),
             kind: Literal["chat", "schedule", "any"] = "chat", history: bool = False,
+            hide: str = Query("", max_length=100, pattern=r"^[a-z,]*$", description="Clients whose conversations are left out (the pinned ones stay)"),
             limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict:
-    return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset, history)}
+    hidden = tuple(client for client in dict.fromkeys(hide.split(",")) if client in CLIENTS)
+    return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset, history, hidden)}
 
 
 class NewConversation(BaseModel):
@@ -62,7 +65,7 @@ def get(conversation_id: str, request: Request) -> dict:
     conversation = _get(request, conversation_id)
     s = services(request)
     return {**conversation.describe(), "context": s.agent.context_info(conversation_id),
-            "answering": s.agent.answering(conversation_id),
+            "answering": s.agent.answering(conversation_id), "subagents": s.conversations.subagents(conversation_id),
             "files": [item.describe() for item in s.conversation_files.of(conversation_id)],
             "approvals": [item.describe() for item in s.approvals.waiting(conversation_id)]}
 

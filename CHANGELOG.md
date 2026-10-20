@@ -96,8 +96,16 @@ earlier server: the new Clara starts empty.
   listed only when its schedule (else its project) is on, a search finds them all, a pinned one always stays. New:
   `in_history` on `PATCH /v1/projects/{id}` and `PATCH /v1/schedules/{id}`; `kind=any`, `history` and `group` on
   `GET /v1/conversations`.
+- **Sub agents of the console on the web site:** a console sub agent (`local_task`) works in an incognito conversation of its
+  own. It no longer shows in the rail, in a search or in the console's list: the chat page of the conversation that started
+  it shows it as a block that opens under the `local_task` call (a link to the sub agent's own conversation leads to its
+  parent). It is kept as long as its parent: the incognito sweep skips it, and deleting or sweeping the parent deletes it.
+  New: `parent` in the body of `POST /v1/chat/stream` (a new conversation only; one level deep), `parent` on a conversation
+  and `subagents` on `GET /v1/conversations/{id}`.
+- **Discord and console conversations can be hidden in the rail:** two switches in the account menu, kept in the browser,
+  both on at first. A pinned conversation and a search still show them. New: `hide` on `GET /v1/conversations`.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 5 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first).
+- **Migrations:** schema version 6 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent).
