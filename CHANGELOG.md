@@ -80,6 +80,7 @@ earlier server: the new Clara starts empty.
   (`waiting`, reminded once, closed from what Clara has, `finish_run`), what to do with runs missed while the server was off
   (`skip`, `latest`, `all`) and with a run that comes due before the last is over (`skip`, `replace`, `queue`). The
   Schedules page has all of it. Fixed: "Run now" on the Schedules page failed (the route needed the server's event loop).
+- **Try again:** a reply on the web site that failed or was cut off has a **Try again** button (its question is asked again; a new version when it is stored). Schedules have `attempts` (1 to 3, 3 by default): a run the model could not answer is tried again after 1 and 5 minutes, unless it had already used a tool or written text. The Schedules page has the setting; the API takes `attempts` on create and change.
 - **The daily note is a schedule:** "Bilan du jour" is made once at start when there is a vault (every day at 23:59). It
   reads the day with the packs' tools, asks you one question on the web site and Discord (a thread under it in `#general`),
   waits for your answer, writes the day into a block of that day's daily note (`vault_daily_block`, `[[links]]` kept only
@@ -108,4 +109,4 @@ earlier server: the new Clara starts empty.
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 6 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent).
+- **Migrations:** schema version 7 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

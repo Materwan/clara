@@ -10,7 +10,7 @@
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const empty = () => ({
     id: 0, name: '', prompt: '', at: '', repeat: '', weekdays: [] as number[], project: '', local_only: false, documents: [] as any[],
-    packs: ['web'] as string[], per_run: false, missed: 'skip', overlap: 'skip', model: '',
+    packs: ['web'] as string[], per_run: false, missed: 'skip', overlap: 'skip', model: '', attempts: 3,
   });
   let schedules = $state<any[]>([]);
   let projects = $state<any[]>([]);
@@ -57,7 +57,7 @@
     const body = {
       name: form.name, prompt: form.prompt, at: form.at, timezone: zone, repeat: form.repeat, weekdays: form.weekdays,
       project: form.project ? Number(form.project) : null, local_only: form.local_only, documents: form.documents,
-      packs: form.packs, per_run: form.per_run, missed: form.missed, overlap: form.overlap, model: form.model,
+      packs: form.packs, per_run: form.per_run, missed: form.missed, overlap: form.overlap, model: form.model, attempts: form.attempts,
     };
     try {
       if (form.id) await api.patch(`/v1/schedules/${form.id}`, body);
@@ -75,6 +75,7 @@
       weekdays: [...schedule.weekdays], project: schedule.project ? String(schedule.project) : '', local_only: schedule.local_only,
       documents: schedule.documents.map((doc: any) => ({ name: doc.name })),
       packs: [...schedule.packs], per_run: schedule.per_run, missed: schedule.missed, overlap: schedule.overlap, model: schedule.model,
+      attempts: schedule.attempts,
     };
     await openForm();
   }
@@ -201,6 +202,10 @@
       <label class="field">If the last run is not over
         <select bind:value={form.overlap}>
           <option value="skip">skip the new run</option><option value="replace">close the old one, start the new</option><option value="queue">queue the new run</option>
+        </select></label>
+      <label class="field">If the model is busy or unreachable
+        <select bind:value={form.attempts}>
+          <option value={1}>do not try again</option><option value={2}>try again once, after 1 minute</option><option value={3}>try again, after 1 and 5 minutes</option>
         </select></label>
     </div>
     <div class="row">

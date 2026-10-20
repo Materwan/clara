@@ -16,6 +16,9 @@
   other). **Overlap** (a run comes due while the previous one still runs or waits): `overlap` is `skip` (recorded, not
   run), `replace` (a waiting run is closed from what it has, then the new one starts; a running one is waited for) or
   `queue` (the new one waits until the old one ends).
+* **Retry** (`attempts`, 3 by default): a run the model could not answer (busy, unreachable: 429, 5xx, a timeout) is
+  tried again after 1 and 5 minutes. Only when it had done nothing yet: a run that already used a tool or wrote text is
+  not run again, so its actions are not repeated.
 * The next run is set before a run starts, so nothing runs twice. A run cut by a stop is run again at the next start. A
   run more than CLARA_LATE_ALERT_SECONDS late raises an alert (not a catch-up).
 """
@@ -49,6 +52,8 @@ MAX_BACKLOG = 31  # missed runs looked at, and queued runs kept, per schedule
 REMIND_AFTER = timedelta(hours=3)
 MISSED = ("skip", "latest", "all")
 OVERLAPS = ("skip", "replace", "queue")
+MAX_ATTEMPTS = 3
+RETRY_WAITS = (60, 300)  # seconds before the 2nd and the 3rd attempt
 ASK_TEXT = 2_000
 
 INSTRUCTIONS = (
@@ -101,6 +106,7 @@ class Schedule:
     overlap: str = "skip"
     model: str = ""
     in_history: bool = False  # its conversations are listed in the web site's history
+    attempts: int = MAX_ATTEMPTS  # tries of a run when the model is busy or unreachable (1: no retry)
 
     @property
     def asks(self) -> bool:
@@ -121,7 +127,7 @@ def _schedule(row) -> Schedule:
                     datetime.fromisoformat(row["local_at"]), row["timezone"],
                     parse_iso(row["next_at"]) if row["next_at"] else None, bool(row["enabled"]), bool(row["local_only"]),
                     row["created_at"], tuple(json.loads(row["packs"] or "[]")), bool(row["per_run"]), row["missed"],
-                    row["overlap"], row["model"], bool(row["in_history"]))
+                    row["overlap"], row["model"], bool(row["in_history"]), row["attempts"])
 
 
 def _document(doc: dict) -> str:
@@ -229,6 +235,12 @@ class Schedules(DueLoop):
             raise ScheduleError(f"{what} must be one of: {', '.join(allowed)}.")
         return value
 
+    @staticmethod
+    def _attempts(value: int) -> int:
+        if not isinstance(value, int) or not 1 <= value <= MAX_ATTEMPTS:
+            raise ScheduleError(f"attempts must be a whole number from 1 to {MAX_ATTEMPTS} (1: no retry).")
+        return value
+
     def _timing(self, at: str, timezone: str | None, repeat: str, weekdays: list[int]) -> tuple[datetime, str, str, tuple[int, ...]]:
         repeat = (repeat or "").strip().lower()
         if repeat and repeat not in REPEATS:
@@ -256,7 +268,8 @@ class Schedules(DueLoop):
     def create(self, name: str, prompt: str, at: str, *, documents: list[dict] | None = None, timezone: str | None = None,
                repeat: str = "", weekdays: list[int] | None = None, project_id: int | None = None,
                local_only: bool = False, conversation_id: str | None = None, packs: list[str] | None = None,
-               per_run: bool = False, missed: str = "skip", overlap: str = "skip", model: str = "") -> Schedule:
+               per_run: bool = False, missed: str = "skip", overlap: str = "skip", model: str = "",
+               attempts: int = MAX_ATTEMPTS) -> Schedule:
         if int(self.db.value("SELECT COUNT(*) FROM schedules", (), 0)) >= MAX_SCHEDULES:
             raise ScheduleError(f"At most {MAX_SCHEDULES} scheduled tasks: delete some first.")
         docs = self._documents(documents)
@@ -264,12 +277,13 @@ class Schedules(DueLoop):
         now = now_iso()
         schedule_id = self.db.insert(
             "INSERT INTO schedules (name, prompt, documents, conversation_id, project_id, repeat, weekdays, local_at,"
-            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self._name(name), self._prompt(prompt, docs), json.dumps(docs, ensure_ascii=False), conversation_id,
              project_id, repeat, ",".join(map(str, days)), local.isoformat(timespec="minutes"), zone_name,
              iso(self._first(local, zone_name, repeat, days)), int(local_only), self._packs(packs), int(per_run),
-             self._policy(missed, MISSED, "missed"), self._policy(overlap, OVERLAPS, "overlap"), model.strip(), now, now),
+             self._policy(missed, MISSED, "missed"), self._policy(overlap, OVERLAPS, "overlap"), model.strip(),
+             self._attempts(attempts), now, now),
         )
         self.wake()
         return self.get(schedule_id)
@@ -310,6 +324,8 @@ class Schedules(DueLoop):
             columns["overlap"] = self._policy(fields["overlap"], OVERLAPS, "overlap")
         if "model" in fields:
             columns["model"] = str(fields["model"] or "").strip()
+        if "attempts" in fields:
+            columns["attempts"] = self._attempts(fields["attempts"])
         if "in_history" in fields:
             columns["in_history"] = int(bool(fields["in_history"]))
         enabled = bool(fields.get("enabled", old.enabled))
@@ -359,6 +375,7 @@ class Schedules(DueLoop):
             "enabled": schedule.enabled, "local_only": schedule.local_only, "running": schedule.id in self._running,
             "packs": list(schedule.packs), "per_run": schedule.per_run, "missed": schedule.missed,
             "overlap": schedule.overlap, "model": schedule.model, "in_history": schedule.in_history,
+            "attempts": schedule.attempts,
             "waiting_run": {"id": waiting["id"], "conversation": waiting["conversation_id"], "since": waiting["waiting_since"]}
             if waiting else None,
             "queued": int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'",
@@ -567,6 +584,15 @@ class Schedules(DueLoop):
     # ------------------------------------------------------------------
     # A run
     # ------------------------------------------------------------------
+    async def pause_before_retry(self, attempt: int) -> None:
+        """Wait before the attempt after `attempt`. A server that stops meanwhile ends the run: it runs again at the next
+        start, as a run cut by a stop does."""
+        if self.stopping:
+            raise Stopping()
+        await asyncio.sleep(RETRY_WAITS[attempt - 1])
+        if self.stopping:
+            raise Stopping()
+
     async def _execute(self, schedule: Schedule, run_id: int, due: datetime) -> None:
         number = int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ?"
                                    " AND status NOT IN ('queued', 'skipped', 'missed')", (schedule.id,), 1))

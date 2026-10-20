@@ -154,6 +154,7 @@ class NewSchedule(BaseModel):
     missed: Literal["skip", "latest", "all"] = "skip"
     overlap: Literal["skip", "replace", "queue"] = "skip"
     model: str = Field(default="", max_length=200, description="'': the default model")
+    attempts: int = Field(default=3, description="Tries of a run when the model is busy or unreachable: 1 to 3")
 
 
 def _model(model: str) -> str:
@@ -177,7 +178,8 @@ def add_schedule(body: NewSchedule, request: Request) -> dict:
         schedule = service.create(body.name, body.prompt, body.at, documents=[d.model_dump() for d in body.documents],
                                   timezone=body.timezone, repeat=body.repeat, weekdays=body.weekdays,
                                   project_id=body.project, local_only=body.local_only, packs=body.packs,
-                                  per_run=body.per_run, missed=body.missed, overlap=body.overlap, model=_model(body.model))
+                                  per_run=body.per_run, missed=body.missed, overlap=body.overlap, model=_model(body.model),
+                                  attempts=body.attempts)
     except ScheduleError as error:
         raise ApiError(422, str(error)) from None
     return service.describe(schedule)
@@ -209,6 +211,7 @@ class ScheduleChange(BaseModel):
     missed: Literal["skip", "latest", "all"] | None = None
     overlap: Literal["skip", "replace", "queue"] | None = None
     model: str | None = Field(default=None, max_length=200)
+    attempts: int | None = None
     in_history: bool | None = None
 
 

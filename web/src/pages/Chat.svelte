@@ -37,6 +37,8 @@
     version?: number;
     streaming?: boolean;
     error?: string;
+    interrupted?: boolean; // the stored reply was cut off (its text says why)
+    upload?: { name: string; data: string }[]; // the files of a question not stored yet, to send again with it
   };
 
   const blank = (role: Message['role'], content = ''): Message => ({ role, content, attachments: [], parts: [], files: [], notes: [] });
@@ -50,6 +52,7 @@
     return message;
   }
   const SILENT = new Set(['qcm']); // the form is its own card
+  const INTERRUPTED = '[This answer was interrupted'; // the note the server stores at the end of a reply cut off (turn.py)
   const PROMPT = 2000; // how much of its prompt Clara tells of a sub agent (PROMPT in memory/conversations.py)
 
   let conversationId = $derived(route.params.id ?? null);
@@ -152,6 +155,7 @@
         shown.push(answer);
       }
       if (item.role === 'assistant') {
+        if (item.content?.includes(INTERRUPTED)) answer.interrupted = true;
         if (item.thinking) answer.thinking = (answer.thinking ? `${answer.thinking}\n\n` : '') + item.thinking;
         if (item.content) addText(answer, (answer.parts.at(-1)?.kind === 'text' ? '\n\n' : '') + item.content);
         for (const call of item.tool_calls ?? []) addCall(answer, { name: call.name, arguments: call.arguments });
@@ -205,11 +209,11 @@
     queueMicrotask(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   }
 
-  async function send(text = draft, forkOf: number | null = null): Promise<void> {
+  async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
     controller = new AbortController();
-    const files = await Promise.all(attached.map(async (file) => ({ name: file.name, data: await fileToBase64(file) })));
+    const files = carried ?? await Promise.all(attached.map(async (file) => ({ name: file.name, data: await fileToBase64(file) })));
     let id = conversationId;
     try {
       if (!id) {
@@ -224,6 +228,7 @@
         if (index >= 0) messages = messages.slice(0, index);
       }
       const user = yours(text);
+      user.upload = files;
       user.attachments.push(...files.map((file) => ({ name: file.name })));
       const answer = blank('assistant');
       answer.streaming = true;
@@ -297,6 +302,20 @@
 
   function stop(): void {
     controller?.abort();
+  }
+
+  /** A reply that failed or was cut off can be tried again: its question is asked again (a new version when it is stored). */
+  function canRetry(message: Message, index: number): boolean {
+    const question = messages[index - 1];
+    if (busy || question?.role !== 'user' || !(message.error || message.interrupted)) return false;
+    return question.id !== undefined || index === messages.length - 1; // a question not stored: the reply after it is dropped
+  }
+
+  async function retry(index: number): Promise<void> {
+    const question = messages[index - 1];
+    const stored = question.id !== undefined; // a stored question carries its documents in its content: none sent again
+    if (!stored) messages = messages.slice(0, index - 1);
+    await send(question.content, question.id ?? null, stored ? [] : (question.upload ?? []));
   }
 
   async function switchVersion(message: Message, step: number): Promise<void> {
@@ -605,6 +624,9 @@
                 <div class="reply-notes">{#each message.notes as line}<span>{line}</span>{/each}</div>
               {/if}
               {#if message.error}<div class="failed-note"><Icon name="warn" size={18} /><span>{message.error}</span></div>{/if}
+              {#if canRetry(message, index)}
+                <div class="retry"><button class="small" onclick={() => retry(index)}><Icon name="refresh" size={16} /> Try again</button></div>
+              {/if}
             </div>
           </div>
         {/if}

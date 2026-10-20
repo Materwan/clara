@@ -55,6 +55,7 @@ from .knowledge.conversation_files import ConversationFiles
 from .knowledge.github_snapshot import GitHub as GitHubSnapshots
 from .knowledge.projects import Projects
 from .llm import Catalog, NoModel, Providers, Router
+from .llm.retry import retryable
 from .memory.conversations import Conversations
 from .memory.facts import Facts
 from .ops import setup as ops_setup
@@ -206,10 +207,22 @@ async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -
                           instructions=instructions_of(schedule), prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
                           timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True,
                           model=schedule.model or None)
-    try:
-        return await s.agent.answer(request)
-    except ServerStopping:
-        raise Stopping() from None
+    attempt = 1
+    while True:
+        before = s.conversations.message_count(conversation_id)
+        try:
+            return await s.agent.answer(request)
+        except ServerStopping:
+            raise Stopping() from None
+        except Exception as error:
+            # A turn that used a tool or wrote text stores what it did: only a run that stored nothing is tried again.
+            done = s.conversations.message_count(conversation_id) != before
+            if done or attempt >= schedule.attempts or not retryable(error):
+                raise
+            log.warning("schedule %s: attempt %d of %d failed (%s), trying again",
+                        schedule.id, attempt, schedule.attempts, error)
+            await s.schedules.pause_before_retry(attempt)
+            attempt += 1
 
 
 async def close_run(s: Services, schedule: Schedule, run) -> None:

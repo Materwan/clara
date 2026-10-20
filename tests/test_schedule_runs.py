@@ -12,9 +12,11 @@ import pytest
 from clara.agent.turn import ChatRequest
 from clara.app import build_services, create_app, extend, open_database
 from clara.knowledge.vault.git import init_repository
+from clara.llm.types import LlmError
 from clara.packs import daily_note
 from clara.settings import load_settings
 from clara.timekeeping import ScheduleError
+from clara.timekeeping import schedules as schedules_module
 from fakes import calls
 from test_packs import SCHEMA, TEMPLATE, commit_all
 
@@ -476,3 +478,65 @@ def test_a_version_3_database_upgrades_and_keeps_its_runs_and_recap_days(tmp_pat
     assert connection.execute("SELECT day, status FROM recaps_legacy").fetchone()[:] == ("2026-10-17", "asked")
     assert connection.execute("SELECT name FROM sqlite_master WHERE name = 'recaps'").fetchone() is None
     connection.close()
+
+
+# ----------------------------------------------------------------------
+# A run the model could not answer is tried again
+# ----------------------------------------------------------------------
+@pytest.fixture
+def no_wait(monkeypatch):
+    monkeypatch.setattr(schedules_module, "RETRY_WAITS", (0, 0))
+
+
+def asked(llm) -> int:
+    return sum(1 for request in llm.seen if "Fais le bilan du jour." in request["messages"][-1]["content"])
+
+
+async def test_a_busy_model_is_asked_again_and_the_run_goes_on(s, llm, clock, no_wait):
+    schedule = plan(s, packs=["web"], per_run=True)
+    llm.replies = [LlmError("OpenCode Go answered HTTP 429", 429), "Fait."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    run = runs(s, schedule.id)[0]
+    assert run["status"] == "ok" and asked(llm) == 2
+    assert s.conversations.message_count(run["conversation_id"]) == 2  # the second attempt's question and reply, once
+
+
+async def test_a_run_tried_three_times_fails_with_the_last_error(s, llm, clock, no_wait):
+    schedule = plan(s, packs=["web"])
+    llm.replies = [LlmError("busy", 503)] * 3
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    run = runs(s, schedule.id)[0]
+    assert run["status"] == "failed" and asked(llm) == 3
+
+
+async def test_attempts_of_one_mean_no_retry(s, llm, clock, no_wait):
+    schedule = plan(s, packs=["web"], attempts=1)
+    llm.replies = [LlmError("busy", 429), "Fait."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    assert runs(s, schedule.id)[0]["status"] == "failed" and asked(llm) == 1
+
+
+async def test_a_refused_key_or_a_bad_request_is_not_asked_again(s, llm, clock, no_wait):
+    schedule = plan(s, packs=["web"])
+    llm.replies = [LlmError("refused the API key", 401), "Fait."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    assert runs(s, schedule.id)[0]["status"] == "failed" and asked(llm) == 1
+
+
+async def test_a_run_that_already_did_something_is_not_run_again(s, llm, clock, no_wait):
+    schedule = plan(s, packs=["web"], per_run=True)
+    llm.replies = [calls(("no_such_tool", {})), LlmError("busy", 429), "Fait."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    run = runs(s, schedule.id)[0]
+    assert run["status"] == "failed" and llm.replies == ["Fait."]  # the tool round was stored: no third attempt
+
+
+def test_the_attempts_are_one_to_three_and_shown(s):
+    schedule = plan(s, packs=["web"])
+    assert schedule.attempts == 3 and s.schedules.describe(schedule)["attempts"] == 3
+    assert s.schedules.update(schedule.id, attempts=1).attempts == 1
+    for bad in (0, 4, "two"):
+        with pytest.raises(ScheduleError):
+            s.schedules.update(schedule.id, attempts=bad)
+    with pytest.raises(ScheduleError):
+        plan(s, name="Autre", packs=["web"], attempts=5)
