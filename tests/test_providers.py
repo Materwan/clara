@@ -118,6 +118,39 @@ async def test_other_providers_are_not_sent_the_session_header(settings):
     await backend.aclose()
 
 
+READ = {"type": "function", "function": {"name": "local_read", "parameters": {"type": "object", "properties": {
+    "path": {"type": "string"}, "limit": {"type": "integer"}, "offset": {"type": "integer"}}}}}
+
+
+async def test_a_call_written_as_text_is_read_as_a_call_and_not_shown(settings):
+    written = ("Je lis le fichier.< longcat_tool_call>local_read <longcat_arg_key>path</longcat_arg_key> "
+               "<longcat_arg_value>src/a.py</longcat_arg_value>\n<longcat_tool_call>local_read "
+               "<longcat_arg_key>limit</longcat_arg_key> <longcat_arg_value>230</longcat_arg_value> "
+               "<longcat_arg_key>offset</longcat_arg_key> <longcat_arg_value>1</longcat_arg_value></longcat_tool_call>")
+    pieces = [written[i:i + 7] for i in range(0, len(written), 7)]  # small pieces: the marker is split across chunks
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sse = "".join(f"data: {json.dumps({'choices': [{'delta': {'content': piece}}]})}\n\n" for piece in pieces)
+        return httpx.Response(200, text=sse + "data: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+
+    backend = make_backend(settings, handler, "longcat-2.5-preview-free")
+    chunks = [c async for c in backend.stream([{"role": "user", "content": "hi"}], [READ])]
+    assert "".join(c.text for c in chunks) == "Je lis le fichier."
+    calls = [call for c in chunks for call in c.tool_calls]
+    assert [(c.name, c.arguments) for c in calls] == [
+        ("local_read", {"path": "src/a.py"}), ("local_read", {"limit": 230, "offset": 1})]
+    await backend.aclose()
+
+
+def test_text_that_only_looks_like_a_marker_is_shown():
+    from clara.llm.textcalls import TextCalls
+
+    filter = TextCalls([READ])
+    shown = filter.feed("1 < 2 and <b>bold</b>, <longcat_tool_call>nothing_known</longcat_tool_call>")
+    rest, calls = filter.finish()
+    assert not calls and shown + rest == "1 < 2 and <b>bold</b>, <longcat_tool_call>nothing_known</longcat_tool_call>"
+
+
 def test_opencode_go_needs_its_key_before_it_can_be_enabled(services):
     providers: Providers = services.providers
     assert not providers.usable("opencode-go") and "not enabled" in providers.why_not("opencode-go")

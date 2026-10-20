@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .retry import KEY_STATUSES, NOT_THE_KEY
+from .textcalls import TextCalls
 from .types import Capabilities, Known, LlmChunk, LlmError, ToolCall
 
 log = logging.getLogger(__name__)
@@ -221,6 +222,7 @@ class OpenAIBackend:
     async def stream(self, messages: list[dict], tools: list[dict] | None,
                      session: str | None = None) -> AsyncIterator[LlmChunk]:
         calls: dict[int, dict[str, Any]] = {}
+        written = TextCalls(tools) if tools else None  # LongCat sometimes writes its call as text
         counted = (0, 0, 0)
         named = {self._flavor.session_header: session or self._session} if self._flavor.session_header else None
         request = self._http.stream("POST", f"{self.host}/chat/completions",
@@ -258,7 +260,8 @@ class OpenAIBackend:
                 chunk = LlmChunk()
                 for choice in part.get("choices") or []:
                     delta = choice.get("delta") or {}
-                    chunk.text += delta.get("content") or ""
+                    text = delta.get("content") or ""
+                    chunk.text += written.feed(text) if written else text
                     chunk.thinking += delta.get("reasoning_content") or delta.get("reasoning") or ""
                     for piece in delta.get("tool_calls") or []:
                         index = int(piece.get("index", len(calls)))
@@ -271,11 +274,16 @@ class OpenAIBackend:
                             slot["extra"] = piece["extra_content"]
                 if chunk.text or chunk.thinking:
                     yield chunk
+        rest, found = written.finish() if written else ("", [])
+        if rest:
+            yield LlmChunk(text=rest)
         if calls:
             yield LlmChunk(tool_calls=[
                 ToolCall(slot["name"], _arguments(slot["arguments"]), slot["extra"])
                 for _, slot in sorted(calls.items()) if slot["name"]
             ])
+        elif found:
+            yield LlmChunk(tool_calls=found)
 
     async def list_models(self) -> list[str]:
         response = await self._http.get(self._flavor.models_url or f"{self.host}/models", timeout=CONNECT_TIMEOUT)
