@@ -98,7 +98,7 @@
       <thead><tr><th>#</th><th>Action</th><th>Status</th><th>Answered by</th></tr></thead>
       <tbody>
         {#each history.filter((item) => item.status !== 'pending') as item (item.id)}
-          <tr><td>{item.id}</td><td>{item.summary}<div class="muted small">{item.tool} · {item.level} · {item.reason}</div></td>
+          <tr><td class="num">{item.id}</td><td>{item.summary}<div class="muted small">{item.tool} · {item.level} · {item.reason}</div></td>
             <td>{item.status}{item.answer ? ` (${item.answer})` : ''}</td><td class="small">{item.decided_by || '—'} {when(item.decided_at)}</td></tr>
         {:else}<tr><td colspan="4" class="empty">No request answered yet.</td></tr>{/each}
       </tbody>
@@ -124,7 +124,7 @@
       <tbody>
         {#each data.rules as rule (rule.id)}
           <tr class:off={!rule.enabled}>
-            <td>{rule.id}</td><td><span class="tag {kind(rule.effect)}">{rule.effect}</span></td><td>{rule.tool || '*'}</td><td><code>{rule.target || '*'}</code></td>
+            <td class="num">{rule.id}</td><td><span class="tag {kind(rule.effect)}">{rule.effect}</span></td><td>{rule.tool || '*'}</td><td><code>{rule.target || '*'}</code></td>
             <td>{rule.situation || 'any'}</td><td>{rule.level || 'any'}</td><td class="small">{rule.origin}{rule.note ? ` · ${rule.note}` : ''}</td>
             <td class="small">{rule.hits}</td>
             <td class="row"><button class="small" onclick={() => edit(rule)}>Edit</button><button class="small" onclick={() => toggle(rule)}>{rule.enabled ? 'Off' : 'On'}</button>

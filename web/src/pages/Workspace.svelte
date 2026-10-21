@@ -135,7 +135,7 @@
       <thead><tr><th>#</th><th>Started</th><th>Exit</th><th>Network</th><th>Took</th><th>Log</th></tr></thead>
       <tbody>
         {#each runs as run (run.id)}
-          <tr><td>{run.id}</td><td class="small">{when(run.started_at)}</td>
+          <tr><td class="num">{run.id}</td><td class="small">{when(run.started_at)}</td>
             <td class:danger={run.exit_code !== 0}>{run.timed_out ? 'timed out' : run.exit_code ?? run.status}</td>
             <td>{run.network ? 'on' : 'off'}</td><td class="small">{(run.duration_ms / 1000).toFixed(1)} s</td>
             <td>{#if run.log_path}<button class="link" onclick={() => { tab = 'files'; view(run.log_path); }}>{run.log_path}</button>{/if}</td></tr>

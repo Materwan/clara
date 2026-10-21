@@ -109,7 +109,7 @@
       const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
       messages = group(history, conversation.approvals ?? []);
       orphans = putSubagents(messages, conversation.subagents ?? []);
-      scrollDown();
+      scrollDown(true);
     } catch (error) {
       toast((error as Error).message, 'error');
       go('/chat');
@@ -205,7 +205,22 @@
     }
   }
 
-  function scrollDown(): void {
+  // The page follows the answer as it streams, until you scroll up to read: then it stays where you are, and follows again once you are back at the bottom.
+  let following = true;
+  let lastTop = 0;
+
+  function onScroll(): void {
+    if (!scroller) return;
+    const away = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (away <= 2) following = true;
+    else if (scroller.scrollTop < lastTop) following = false;
+    else if (away < 40) following = true;
+    lastTop = scroller.scrollTop;
+  }
+
+  function scrollDown(force = false): void {
+    if (force) following = true;
+    if (!following) return;
     queueMicrotask(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   }
 
@@ -236,7 +251,7 @@
       const current = messages[messages.length - 1];
       draft = '';
       attached = [];
-      scrollDown();
+      scrollDown(true);
       const body = { message: text, conversation: id, attachments: files, timezone: zone, fork_of: forkOf ?? undefined };
       for await (const event of stream('POST', '/v1/chat/stream', body, controller.signal)) {
         switch (event.type) {
@@ -566,7 +581,7 @@
     {/if}
   </header>
 
-  <div class="messages" bind:this={scroller}>
+  <div class="messages" bind:this={scroller} onscroll={onScroll}>
     <div class="messages-inner">
       {#if !messages.length}
         <div class="welcome">

@@ -448,6 +448,7 @@ table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: va
 .panel table { border: none; border-radius: 0; }
 th { text-align: left; font-size: var(--fs-xs); color: var(--muted); font-weight: 650; padding: var(--sp-10) var(--sp-12); border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 td { padding: var(--sp-10) var(--sp-12); border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+td.num { white-space: nowrap; } /* an id stays on one line: overflow-wrap: anywhere would let the column shrink to one digit wide */
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover td { background: var(--hover); }
 td.row { display: table-cell; }
