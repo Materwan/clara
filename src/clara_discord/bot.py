@@ -10,14 +10,17 @@ function: DMs are ignored.
   says where to answer). The bot's token may answer every level but *destructive* (deletions, overwrites, merges):
   those say to answer on the web or with clara-admin. The server enforces it, whatever the bot shows.
 * Alerts go to #alerts; reminders, notifications, task reminders, schedule summaries and update news go to
-  #notification (the event stream; what was missed while the bot was away arrives when it reconnects).
+  #notification (the event stream; what was missed while the bot was away arrives when it reconnects). The server
+  says the channel of each event (you choose it on the web site, or switch the kind off); ROUTES below is what the bot
+  does with a server that does not say.
 * When a scheduled run asks you something (an `ask` event) the question is posted in #general, with a thread under it
   when the run has the Discord thread pack: what you write in that thread goes to the run's conversation, whatever the
   current conversation is. If the bot may not create threads, or the run has no thread, the run's conversation becomes
   the current one instead. When the run ends (or is closed without your answer) the bot says so in #general and
   deletes the thread (it archives it when it may not delete); the conversation stays in Clara. A run can also open,
   write in and remove a thread by itself.
-* A heartbeat every minute lets the server alert you when the bot is gone.
+* A heartbeat every minute lets the server alert you when the bot is gone. It also tells the channels the bot found and
+  the rights it lacks in them, for the Discord page of the web site, which can have a test message posted in each.
 
 Exit codes: 0 stopped, 2 a setting, the token, the channels or an intent is wrong (starting again will not help),
 3 another bot already runs with the same state file.
@@ -35,10 +38,13 @@ import logging
 import re
 import signal
 import sys
+from datetime import UTC, datetime
 from typing import Literal
 
 import discord
 from discord import app_commands
+
+from clara.timeutil import parse_iso
 
 from .api import Clara, ClaraError
 from .settings import Settings, SettingsError
@@ -50,6 +56,7 @@ MAX_FILES = 4
 MAX_FILE_BYTES = 25_000_000
 MAX_TOTAL_BYTES = 34_000_000  # what Clara takes for one message in all
 HEARTBEAT = 60.0
+TEST_MAX_AGE = 120.0  # a test message older than this (the bot was away) is dropped: it would only confuse
 RETRY = (2, 5, 15, 30, 60)
 EXIT_SETTINGS = 2
 EXIT_RUNNING = 3
@@ -61,6 +68,8 @@ ICONS = {"reminder": "⏰", "notification": "🔔", "task": "📋", "schedule": 
 # event kind -> channel (approvals have their own path: buttons in #approval; replies to you go to #general)
 ROUTES = {"reminder": "notification", "notification": "notification", "task": "notification",
           "schedule": "notification", "update": "notification", "alert": "alerts"}
+CHOICES = ("general", "notification", "alerts")  # the channels the server may send an event to (or "off")
+TEST_SOURCE = "discord-test"
 
 
 class ChannelError(RuntimeError):
@@ -188,10 +197,12 @@ class ClaraBot(discord.Client):
             raise ChannelError("The four channels must all be in one server.")
         self.guild_id = guilds.pop()
 
-    def check_permissions(self) -> None:
+    def lacking_rights(self) -> dict[str, tuple[str, list[str]]]:
+        """For each channel the bot can look at: its name in Discord and the rights it lacks there."""
         guild = self.get_guild(self.guild_id) if self.guild_id else None
         if guild is None:
-            return
+            return {}
+        found: dict[str, tuple[str, list[str]]] = {}
         for name, channel in self.channels.items():
             live = self.get_channel(channel.id)
             if live is None:
@@ -200,7 +211,11 @@ class ClaraBot(discord.Client):
             wanted = ("view_channel", "send_messages", "attach_files")
             if name == "general":  # a run's thread, opened and then removed
                 wanted += ("create_public_threads", "send_messages_in_threads", "manage_threads")
-            lacking = [right for right in wanted if not getattr(allowed, right)]
+            found[name] = (live.name, [right for right in wanted if not getattr(allowed, right)])
+        return found
+
+    def check_permissions(self) -> None:
+        for name, (_, lacking) in self.lacking_rights().items():
             if lacking:
                 log.warning("in #%s the bot lacks: %s", name, ", ".join(lacking))
 
@@ -231,13 +246,24 @@ class ClaraBot(discord.Client):
                  self.settings.owner_id, self.settings.channels["general"], self.guild_id)
         self.check_permissions()
 
+    async def beat(self, test: dict | None = None) -> None:
+        """One heartbeat. Connected, it says who the bot is and what it sees in each channel; `test` tells how a test
+        message went."""
+        ready = self.is_ready() and not self.is_closed()
+        body: dict = {"state": "connected" if ready else "disconnected"}
+        if ready:
+            body["bot"] = str(self.user)
+            body["channels"] = {name: {"name": found, "missing": lacking} for name, (found, lacking) in self.lacking_rights().items()}
+            if test is not None:
+                body["test"] = test
+        try:
+            await self.clara.call("POST", "/v1/clients/heartbeat", json=body)
+        except ClaraError as error:
+            log.warning("heartbeat: %s", error)
+
     async def heartbeat(self) -> None:
         while True:
-            state = "connected" if self.is_ready() and not self.is_closed() else "disconnected"
-            try:
-                await self.clara.call("POST", "/v1/clients/heartbeat", json={"state": state})
-            except ClaraError as error:
-                log.warning("heartbeat: %s", error)
+            await self.beat()
             await asyncio.sleep(HEARTBEAT)
 
     # ------------------------------------------------------------------
@@ -393,13 +419,36 @@ class ClaraBot(discord.Client):
         if kind == "ask":
             await self.deliver_ask(event)
             return
-        icon, route = ICONS.get(str(kind)), ROUTES.get(str(kind))
-        if icon is None or route is None:
+        if event.get("source") == TEST_SOURCE:
+            await self.deliver_test(event)
+            return
+        icon = ICONS.get(str(kind))
+        told = event.get("channel")
+        route = told if told in (*CHOICES, "off") else ROUTES.get(str(kind))  # the server's word, else the fallback table
+        if icon is None or route is None or route == "off":
             return
         title = event.get("title") or ""
         text = f"{icon} **{title}**\n{event.get('text', '')}" if title and kind != "reminder" else f"{icon} {event.get('text', '')}"
         for part in split_message(text):
             await self.channels[route].send(part)
+
+    async def deliver_test(self, event: dict) -> None:
+        """A test message from the web site: posted in the channel it names, whatever the routes say, then the result is
+        reported at once (the page is waiting for it)."""
+        channel = self.channels.get(str(event.get("channel")))
+        if channel is None:
+            return
+        try:
+            if (datetime.now(UTC) - parse_iso(str(event.get("created_at")))).total_seconds() > TEST_MAX_AGE:
+                return
+        except ValueError:
+            return
+        ok, error = True, ""
+        try:
+            await channel.send(f"🧪 **{event.get('title') or 'Test'}**\n{event.get('text', '')}")
+        except discord.HTTPException as problem:
+            ok, error = False, problem.text or f"Discord refused ({problem.status})"
+        await self.beat(test={"event": int(event.get("id") or 0), "ok": ok, "error": error})
 
     async def deliver_ask(self, event: dict) -> None:
         """What a scheduled run says to you (`ask` events), by stage:

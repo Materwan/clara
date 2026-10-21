@@ -125,7 +125,13 @@ earlier server: the new Clara starts empty.
   at `max_per_hour`; `latest`, `digest`, `skip`), a run the stop cut is not repeated unless asked. Also fixed: mail past the 50th
   that arrived during a stop was never announced; the poll now takes a backlog oldest first and forgets its place when nobody
   listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`. The web site has a **Hooks** view on the Schedules page (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
+- **Discord page:** the Admin page has a **Discord** tab: whether the bot is connected and what it sees in each of its four
+  channels (their names, the rights it lacks), a **test message** per channel, and which channel carries each of twelve kinds of
+  message (`#notification`, `#general`, `#alerts` or off on Discord; hook results and failures, new mail, Clara's own notices and
+  the rest can now be told apart). Approval requests stay in `#approval`, the questions of scheduled runs in `#general`, and alerts
+  cannot be switched off. The server tells the bot each event's channel, so the choice applies to the next message; with nothing
+  chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
 - **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MICROSOFT_CLIENT_ID`,
-  `CLARA_MICROSOFT_TENANT`, `CLARA_MAIL_POLL_SECONDS`; the runtime settings `mail_notify` and `mail_notify_senders`; the secrets
+  `CLARA_MICROSOFT_TENANT`, `CLARA_MAIL_POLL_SECONDS`; the runtime settings `discord_routes`, `mail_notify` and `mail_notify_senders`; the secrets
   `microsoft_client_secret`, `gmail_refresh_token` and `outlook_refresh_token`; the alerts `gmail` and `outlook`.
 - **Migrations:** schema version 9 (0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail and Outlook as connections, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

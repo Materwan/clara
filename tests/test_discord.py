@@ -10,6 +10,7 @@ import discord
 import pytest
 
 from clara_discord import bot as bot_module
+from clara_discord.api import ClaraError
 from clara_discord.bot import ChannelError, ClaraBot, split_message
 from clara_discord.settings import CHANNEL_SETTINGS, Settings, SettingsError
 
@@ -36,6 +37,7 @@ class FakeChannel:
 
     def __init__(self, channel_id: int):
         self.id = channel_id
+        self.name = f"channel-{channel_id}"
         self.sent: list[tuple[str, object]] = []
 
     async def send(self, content=None, view=None, file=None):
@@ -233,6 +235,132 @@ async def test_events_go_to_the_channel_of_their_kind(bot):
         "⏰ Call the plumber", "🔔 **Answer ready**\nYour summary is done.", "📋 **Task: taxes**\nDue tomorrow.",
         "🗓 **Scheduled task: news**\nThree items.", "⬆️ **Updated to v1.2.0**\nThe new release is running."]
     assert not bot.channels["general"].sent and not bot.channels["approval"].sent
+
+
+# ----------------------------------------------------------------------
+# Routes chosen on the web site, and test messages
+# ----------------------------------------------------------------------
+async def test_the_channel_the_server_names_wins_and_off_posts_nothing(bot):
+    await bot.deliver({"type": "reminder", "text": "Call", "channel": "general"})
+    await bot.deliver({"type": "notification", "title": "New email", "text": "x: y", "channel": "alerts"})
+    await bot.deliver({"type": "task", "title": "Task: taxes", "text": "Due.", "channel": "off"})
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "full", "channel": "notification"})
+    assert texts(bot.channels["general"]) == ["⏰ Call"]
+    assert texts(bot.channels["alerts"]) == ["🔔 **New email**\nx: y"]
+    assert texts(bot.channels["notification"]) == ["⚠️ **Disk**\nfull"]
+    assert not bot.channels["approval"].sent
+
+
+@pytest.mark.parametrize("told", ["approval", "elsewhere", "", None, 7, ["general"]])
+async def test_a_channel_the_bot_does_not_take_from_the_server_means_its_own_table(bot, told):
+    """#approval carries only what waits for your answer, whatever a server says."""
+    await bot.deliver({"type": "reminder", "text": "Call", "channel": told})
+    assert texts(bot.channels["notification"]) == ["⏰ Call"]
+    assert not bot.channels["approval"].sent and not bot.channels["general"].sent
+
+
+def watch_heartbeats(bot, monkeypatch) -> list:
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((method, path, options.get("json")))
+        return {}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    return calls
+
+
+def a_test(channel: str, event: int = 7, age: float = 0.0, **more) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    from clara.timeutil import iso
+
+    return {"id": event, "type": "notification", "source": "discord-test", "channel": channel,
+            "title": "Test from Clara's web site", "text": f"This is #{channel}.",
+            "created_at": iso(datetime.now(UTC) - timedelta(seconds=age)), **more}
+
+
+async def test_a_test_message_is_posted_in_the_channel_it_names_and_the_result_is_reported_at_once(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(a_test("approval"))
+    assert texts(bot.channels["approval"]) == ["🧪 **Test from Clara's web site**\nThis is #approval."]
+    assert not any(bot.channels[name].sent for name in ("general", "notification", "alerts"))
+    [(method, path, body)] = calls
+    assert (method, path) == ("POST", "/v1/clients/heartbeat")
+    assert body["state"] == "connected" and body["bot"] == "Clara#1234" and body["test"] == {"event": 7, "ok": True, "error": ""}
+
+
+async def test_a_test_message_the_bot_may_not_post_is_reported_with_discord_s_reason(bot, monkeypatch):
+    class Refusing(FakeChannel):
+        async def send(self, content=None, view=None, file=None):
+            raise refusal(403, "Missing Permissions")
+
+    bot.channels["alerts"] = Refusing(ALERTS)
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(a_test("alerts", event=9))
+    assert calls[0][2]["test"] == {"event": 9, "ok": False, "error": "Missing Permissions"}
+
+
+@pytest.mark.parametrize("event", [a_test("general", age=121), a_test("elsewhere"), a_test("general", created_at="yesterday"),
+                                   a_test("general", created_at=None)])
+async def test_a_stale_or_unaddressed_test_is_dropped_without_a_word(bot, monkeypatch, event):
+    """The bot was away when it was asked: the message would arrive hours later and mean nothing."""
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(event)
+    assert not any(channel.sent for channel in bot.channels.values()) and not calls
+
+
+async def test_a_message_that_only_looks_like_a_test_is_posted_by_its_kind(bot):
+    """Only the server's own test source means a test; the channel a notification names is still limited to three."""
+    await bot.deliver({"type": "notification", "source": "client:script", "title": "Hi", "text": "x", "channel": "approval"})
+    assert texts(bot.channels["notification"]) == ["🔔 **Hi**\nx"] and not bot.channels["approval"].sent
+
+
+async def test_the_heartbeat_tells_who_the_bot_is_and_what_it_sees_in_each_channel(bot, monkeypatch):
+    class Rights:
+        def __init__(self, lacks):
+            self.lacks = lacks
+
+        def __getattr__(self, right):
+            return right not in self.lacks
+
+    lacks = {GENERAL: {"manage_threads"}, NOTIFICATION: set(), APPROVAL: {"send_messages", "attach_files"}, ALERTS: set()}
+    live = {channel_id: SimpleNamespace(name=f"live-{channel_id}", permissions_for=lambda me, c=channel_id: Rights(lacks[c]))
+            for channel_id in lacks}
+    monkeypatch.setattr(bot, "get_guild", lambda guild_id: SimpleNamespace(me=object()))
+    monkeypatch.setattr(bot, "get_channel", live.get)
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.beat()
+    [(_, _, body)] = calls
+    assert body == {"state": "connected", "bot": "Clara#1234", "channels": {
+        "general": {"name": f"live-{GENERAL}", "missing": ["manage_threads"]},
+        "notification": {"name": f"live-{NOTIFICATION}", "missing": []},
+        "approval": {"name": f"live-{APPROVAL}", "missing": ["send_messages", "attach_files"]},
+        "alerts": {"name": f"live-{ALERTS}", "missing": []}}}
+
+
+async def test_a_bot_that_is_not_ready_says_only_that_it_is_not(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: False)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.beat(test={"event": 1, "ok": True, "error": ""})
+    assert calls == [("POST", "/v1/clients/heartbeat", {"state": "disconnected"})]
+
+
+async def test_a_heartbeat_that_fails_is_not_fatal(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+
+    async def call(method, path, **options):
+        raise ClaraError(0, "Clara cannot be reached")
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    await bot.beat()  # logged, not raised
 
 
 # ----------------------------------------------------------------------

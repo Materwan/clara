@@ -219,6 +219,17 @@ What goes where: your chat and Clara's answers in `#general` (a scheduled run's 
 (`#general` says when one waits); reminders, task reminders, schedule summaries, notifications and update news in
 `#notification`; alerts in `#alerts`. Keep the server to yourself: anyone in it reads those channels.
 
+**Choosing the channels and checking the bot:** the Admin page's **Discord** tab shows whether the bot is connected (its
+last heartbeat, its name, whether the server started it), and for each of the four channels the name Discord gives it,
+the rights the bot lacks there (a missing *Manage Threads* shows at once, not in a log) and what it receives now. *Send a
+test message* posts a short message in that channel and tells whether Discord accepted it (the reason when it did not);
+it needs the bot connected. Below, each of twelve kinds of message (reminders, tasks, scheduled tasks, hook results,
+hook failures, hook notices, new mail, Clara's own notices, answer ready, other notifications, updates, alerts) has a
+selector: `#notification`, `#general`, `#alerts`, or off on Discord. Nothing changes until you choose; a change applies to
+the next message. A common use: send *Hook failures* to `#alerts`, or switch *New mail* off on Discord and keep it on the
+web site. Approval requests and the questions of scheduled runs cannot be moved, and alerts cannot be switched off. The
+setting is `discord_routes`, which the Settings tab also shows as JSON.
+
 ### Special tools and the daily note
 
 Special tools (**packs**) are switched on per conversation in the web chat's **"+" menu** (or `/tools` on Discord and in

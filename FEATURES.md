@@ -70,7 +70,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
-| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; debug switch; backups (list, back up now); releases (notes, install); the console |
+| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
 
 The site is built at release time (`scripts/build-web.sh`): the machine needs no Node. Every page is served with a
 strict Content-Security-Policy (scripts, styles, fonts and connections from the site only; nothing is inlined as a
@@ -157,8 +157,24 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | --- | --- |
   | `#general` | Your conversation with Clara; a line saying where to answer when she waits for an approval |
   | `#approval` | Approval requests, with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
-  | `#notification` | Reminders, notifications, task reminders, schedule summaries and update news |
+  | `#notification` | Reminders, notifications, task reminders, schedule and hook summaries and update news (by default: see below) |
   | `#alerts` | Alerts |
+
+- **Which channel carries what (Admin page, Discord tab; runtime setting `discord_routes`):** approval requests always go
+  to `#approval` and the questions of scheduled runs to `#general`. Every other message belongs to one of twelve
+  categories, each sent by default where the table above says: reminders, tasks, scheduled tasks, hook results, hook
+  failures, hook notices, new mail, Clara's own notices (her `notify` tool), answer ready, other notifications
+  (scripts and other clients), updates (all to `#notification`) and alerts (to `#alerts`). You send a category to
+  `#notification`, `#general` or `#alerts`, or switch it off (Discord stays silent; the web site and the other clients
+  still get it). `#approval` is not a choice, so whatever is there waits for your answer, and alerts cannot be switched
+  off. The page shows what each channel receives now. The server works out the channel when it sends an event to the
+  bot (the event's `channel`), so a change applies to the next message and the bot holds no table of its own beyond the
+  fallback for a server that does not say. The page never sees or sets channel ids; they stay in the bot's settings.
+- **What the page shows about the bot:** whether it is connected (its last heartbeat), its name, whether the server
+  started it, a problem it ended with, and for each of the four channels the name Discord gives it and the rights the
+  bot lacks there. The heartbeat carries it (every minute). **Test message:** a button per channel posts a short message
+  there, whatever the routes say, and reports whether Discord accepted it (at most 6 a minute; refused when the bot is
+  not connected; the bot drops a test older than two minutes, so none arrives late).
 
 - **What a scheduled run says** (the `ask` event, section 5): a run's question is posted in `#general`, with a **thread** under it
   when the run has the Discord thread pack; what you write in the thread goes to the run's conversation, whatever the current
@@ -283,7 +299,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
-  back (`GET /v1/events`, or the live stream `GET /v1/events/stream`). Event kinds: `reminder`, `notification`,
+  back (`GET /v1/events`, or the live stream `GET /v1/events/stream`, which tells the Discord bot each event's `channel`). Event kinds: `reminder`, `notification`,
   `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone).
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
@@ -833,6 +849,7 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `debug_until` | The debug content log's end (empty: off) |
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
+| `discord_routes` | Where Discord posts each kind of message: `{category: notification\|general\|alerts\|off}`; a category not named keeps its default |
 | `mail_notify` | Notify you of new mail in the inbox of a connected mailbox (off) |
 | `mail_notify_senders` | Only for senders whose name or address contains one of these words (empty: all) |
 
@@ -959,7 +976,9 @@ keep-alive every 15 s.
 | `GET /v1/admin/releases` | Releases and the updater's state |
 | `POST /v1/admin/update` | Install a release |
 | `GET /v1/admin/alerts` | Active and recent alerts |
-| `POST /v1/clients/heartbeat` | A client says it is alive (the Discord bot) |
+| `GET /v1/admin/discord` | The Discord page: the bot's state, its channels, the category routes, the last test |
+| `POST /v1/admin/discord/test` | Post a test message in one channel (`general`, `notification`, `approval`, `alerts`) |
+| `POST /v1/clients/heartbeat` | A client says it is alive (the Discord bot also says its name, the channels it sees and how a test went) |
 | `GET /v1/workspace` | Workspace status |
 | `GET /v1/workspace/tree` | The tree |
 | `GET /v1/workspace/file` | Read a file |

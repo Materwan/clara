@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Discord from '../components/Discord.svelte';
   import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
   import LogStream from '../components/LogStream.svelte';
@@ -7,8 +8,8 @@
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
 
-  type Tab = 'status' | 'tokens' | 'secrets' | 'settings' | 'backups' | 'updates' | 'logs' | 'console';
-  const TABS: { value: Tab; label: string }[] = (['status', 'tokens', 'secrets', 'settings', 'backups', 'updates', 'logs', 'console'] as Tab[]).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }));
+  type Tab = 'status' | 'tokens' | 'secrets' | 'settings' | 'discord' | 'backups' | 'updates' | 'logs' | 'console';
+  const TABS: { value: Tab; label: string }[] = (['status', 'tokens', 'secrets', 'settings', 'discord', 'backups', 'updates', 'logs', 'console'] as Tab[]).map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }));
 
   let tab = $state<Tab>('status');
   let status = $state<any>(null);
@@ -189,6 +190,8 @@
         {/each}
       </tbody>
     </table>
+  {:else if tab === 'discord'}
+    <Discord />
   {:else if tab === 'backups'}
     {#if backups}
       <div class="row"><button class="primary" onclick={() => act('/v1/admin/backups')}>Back up now</button>

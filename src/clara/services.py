@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .ops.discord_report import DiscordReport
+
 if TYPE_CHECKING:
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
@@ -77,6 +79,7 @@ class Services:
     discord: Any = None
     monitors: Any = None
     clients: dict[str, float] = field(default_factory=dict)  # client heartbeats: name -> monotonic time
+    discord_report: DiscordReport = field(default_factory=DiscordReport)  # what the bot's heartbeats said
     boot_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started: float = field(default_factory=time.monotonic)
 

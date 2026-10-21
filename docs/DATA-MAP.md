@@ -69,7 +69,7 @@ keep what they held until they rotate out.
 | The model provider of a hook's run | The event (sender, subject, snippet) and what the run reads with its tools, like any tool result | When a hook runs (a `local_only` hook never reaches a hosted model) |
 | Discord | When new-mail notifications are on: the sender and subject of each new email (never the text) | `mail_notify`, with the bot running |
 | The vault's git remote | Your vault's changes | After vault changes, when `CLARA_VAULT_PUSH` |
-| Discord | Clara's answers, notifications, alerts and approval requests, posted in the channels of your private server | When the bot runs |
+| Discord | Clara's answers, notifications, alerts and approval requests, posted in the channels of your private server (the Admin page's Discord tab chooses the channel of each kind, and posts a test message on request) | When the bot runs |
 | The restic repository | The newest database backup and the workspace bundle, encrypted by restic | Nightly, when `CLARA_RESTIC_REPOSITORY` is set |
 | GitHub releases | Requests for the release list and assets | When you list or install releases |
 | Tailscale | Nothing of Clara's content: it carries the encrypted traffic between your devices | Always |

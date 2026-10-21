@@ -1,5 +1,5 @@
 """Administration: status, tokens, secrets (set or not, never their values), runtime settings, the debug switch, the
-console, usage statistics, stop and restart, backups and updates, client heartbeats."""
+console, usage statistics, stop and restart, backups and updates, client heartbeats, the Discord page."""
 
 from __future__ import annotations
 
@@ -13,9 +13,12 @@ from pydantic import BaseModel, Field
 
 from .. import console
 from ..auth import TokenError
+from ..events.routing import CATEGORIES, CHANNELS, CHOICES, TEST_SOURCE, carried, channel_of
+from ..ops.discord_report import TESTS_PER_MINUTE
 from ..ops.lifecycle import EXIT_RESTART
 from ..ops.logstream import LEVELS, RING, SOURCES
 from ..ops.status import set_debug, status
+from ..ops.upkeep import DISCORD_SILENCE
 from ..runtime import KNOBS
 from ..secrets import CONNECTION_TOKENS, KNOWN_SECRETS, SecretError
 from .common import ApiError, caller, event_stream, services, sse, with_keepalive
@@ -260,8 +263,23 @@ def alerts(request: Request) -> dict:
 # ----------------------------------------------------------------------
 # Clients tell they are alive (the Discord bot)
 # ----------------------------------------------------------------------
+class ChannelReport(BaseModel):
+    name: str = Field(default="", max_length=100)
+    missing: list[str] = Field(default_factory=list, max_length=12)  # the rights the bot lacks there
+
+
+class TestReport(BaseModel):
+    event: int = Field(ge=0)
+    ok: bool
+    error: str = Field(default="", max_length=300)
+
+
 class Heartbeat(BaseModel):
     state: Literal["connected", "disconnected"] = "connected"
+    # the Discord bot also tells who it is, the channels it found and how the last test message went
+    bot: str = Field(default="", max_length=100)
+    channels: dict[str, ChannelReport] = Field(default_factory=dict, max_length=8)
+    test: TestReport | None = None
 
 
 @router.post("/clients/heartbeat")
@@ -271,6 +289,59 @@ def heartbeat(body: Heartbeat, request: Request) -> dict:
     if body.state == "connected":
         s.clients[who.client] = time.monotonic()
         s.alerts.clear(who.client)
+        if who.client == "discord":
+            s.discord_report.update(body.bot, {name: (found.name, found.missing) for name, found in body.channels.items()},
+                                    (body.test.event, body.test.ok, body.test.error) if body.test else None)
     else:
         s.clients.pop(who.client, None)
+        if who.client == "discord":
+            s.discord_report.clear()
     return {"ok": True}
+
+
+# ----------------------------------------------------------------------
+# The Discord page: the bot's state, where each kind of message goes, a test message per channel
+# ----------------------------------------------------------------------
+@router.get("/admin/discord")
+def discord_page(request: Request) -> dict:
+    s = services(request)
+    routes = s.runtime.get("discord_routes")
+    seen = s.clients.get("discord")
+    age = None if seen is None else int(time.monotonic() - seen)
+    carries = carried(routes)
+    report = s.discord_report
+    autostart = bool(s.settings.discord_autostart)
+    return {
+        "bot": {"state": "not seen" if age is None else "silent" if age >= DISCORD_SILENCE else "connected",
+                "seen_seconds": age, "name": report.bot, "started_by_server": autostart,
+                "expected": autostart or bool(s.settings.discord_expected),
+                "problem": getattr(s.discord, "problem", "") if s.discord is not None else "",
+                "alert": s.alerts.active.get("discord", "")},
+        "channels": [{"id": name, "known": name in report.channels, "name": report.channels.get(name, {}).get("name", ""),
+                      "missing": report.channels.get(name, {}).get("missing", []), "carries": carries[name]}
+                     for name in CHANNELS],
+        "categories": [{"id": category.id, "label": category.label, "about": category.about, "default": category.default,
+                        "channel": channel_of(category.id, routes), "can_be_off": category.can_be_off}
+                       for category in CATEGORIES],
+        "choices": list(CHOICES),
+        "test": report.test,
+    }
+
+
+class DiscordTest(BaseModel):
+    channel: Literal["general", "notification", "approval", "alerts"]
+
+
+@router.post("/admin/discord/test", status_code=201)
+def discord_test(body: DiscordTest, request: Request) -> dict:
+    """A message for one channel, whatever the routes say. The bot tells in its next heartbeat how it went."""
+    s = services(request)
+    seen = s.clients.get("discord")
+    if seen is None or time.monotonic() - seen >= DISCORD_SILENCE:
+        raise ApiError(409, "The Discord bot is not connected: it would not post the message.")
+    if not s.discord_report.allow_test():
+        raise ApiError(429, f"At most {TESTS_PER_MINUTE} test messages a minute.")
+    carries = carried(s.runtime.get("discord_routes"))[body.channel]
+    event = s.events.publish("notification", "Test from Clara's web site", f"This is #{body.channel}. It receives: {', '.join(carries) or 'nothing at the moment'}.",
+                             payload={"discord_test": body.channel}, targets=("discord",), source=TEST_SOURCE)
+    return {"event": event.id, "channel": body.channel}

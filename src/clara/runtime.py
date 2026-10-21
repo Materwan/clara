@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .db import Database
+from .events.routing import check_routes
 from .timeutil import now_iso
 
 
@@ -63,6 +64,8 @@ KNOBS: dict[str, Knob] = {
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),
     "hidden_tools": Knob({}, lambda value: {str(k): _names(v) for k, v in dict(value).items()},
                          "Tools not offered to some clients: {client: [tool, ...]}."),
+    "discord_routes": Knob({}, check_routes, "Where Discord posts each kind of message: {category: notification|general|alerts|off}; "
+                           "a category not named keeps its default."),
     "mail_notify": Knob(False, _bool, "Notify you of new mail in the inbox of a connected Gmail or Outlook mailbox."),
     "mail_notify_senders": Knob([], _names, "Only for senders whose name or address contains one of these words ([]: all)."),
 }

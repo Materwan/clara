@@ -2,7 +2,7 @@
 
     GET  /v1/events/stream     server-sent events: what this token missed since its cursor, then each new one.
                                `Last-Event-ID` (or `after`) resumes from an event; a token that never listened
-                               starts from now.
+                               starts from now. To the Discord bot each event also says its `channel`.
     GET  /v1/events            the recent events (a client's inbox)
     POST /v1/events/ack        moves this token's cursor (a client that shows events without streaming them)
     POST /v1/notifications     a client notifies you (at most 10 a minute)
@@ -19,6 +19,7 @@ from fastapi import APIRouter, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from ..events import KINDS
+from ..events.routing import route
 from .common import ApiError, caller, event_stream, services, sse, with_keepalive
 
 router = APIRouter(prefix="/v1", tags=["events"])
@@ -39,7 +40,12 @@ async def stream(request: Request, after: int | None = Query(None, ge=0),
     async def events() -> AsyncIterator[dict]:
         yield {"type": "server", "state": s.lifecycle.state, "boot": s.boot_id}
         async for event in s.events.listen(who.token.id, who.client, start):
-            yield {**event.describe(), "_id": event.id}
+            item = {**event.describe(), "_id": event.id}
+            if who.client == "discord":  # the channel is told at delivery, so a change of routes applies to a stream already open
+                channel = route(event, s.runtime.get("discord_routes"))
+                if channel is not None:
+                    item["channel"] = channel
+            yield item
 
     async def lines() -> AsyncIterator[str]:
         async with contextlib.aclosing(with_keepalive(events())) as items:
