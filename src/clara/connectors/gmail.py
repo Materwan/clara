@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import logging
 import re
 import time
 from urllib.parse import quote, urlencode
@@ -24,7 +25,9 @@ import httpx
 
 from .drive import AUTH_URL, DriveError, GoogleAuth
 from .mail import (
+    LISTING_MAX,
     MAX_DOWNLOAD,
+    NEW_BATCH,
     Attachment,
     MailClient,
     MailError,
@@ -42,6 +45,8 @@ from .mail import (
     reply_subject,
     threading_headers,
 )
+
+log = logging.getLogger(__name__)
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 SCOPES = ("https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose openid email")
@@ -284,9 +289,23 @@ class Gmail(MailClient):
         made = await self.json("POST", f"{API}/messages/send", json=body)
         return Sent(str(made.get("id", "")))
 
-    async def new_since(self, received_ms: int) -> list[Summary]:
+    async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:
+        """The oldest `limit` inbox messages received since `received_ms`. Gmail lists newest first, so every id since then is
+        listed (ids only: 500 a page, cheap), and the details are fetched for the oldest `limit` of them alone. A backlog
+        thus comes in order across polls, and nothing is skipped however many mails arrived while Clara was off."""
         seconds = max(0, received_ms // 1000 - 1)  # `after:` counts whole seconds: look a little back, the caller dedupes
-        listing = await self.json("GET", f"{API}/messages", params={"labelIds": ["INBOX"], "q": f"after:{seconds}",
-                                                                      "maxResults": 50})
-        found = await self.summaries([str(item["id"]) for item in listing.get("messages", []) or []])
+        ids: list[str] = []
+        token = ""
+        while len(ids) < LISTING_MAX:
+            params: dict = {"labelIds": ["INBOX"], "q": f"after:{seconds}", "maxResults": 500}
+            if token:
+                params["pageToken"] = token
+            page = await self.json("GET", f"{API}/messages", params=params)
+            ids += [str(item["id"]) for item in page.get("messages", []) or []]
+            token = str(page.get("nextPageToken") or "")
+            if not token:
+                break
+        if token:
+            log.warning("gmail: more than %d messages since the cursor: the oldest ones may be missed", LISTING_MAX)
+        found = await self.summaries(ids[-limit:])
         return sorted(found, key=lambda item: item.received_ms)

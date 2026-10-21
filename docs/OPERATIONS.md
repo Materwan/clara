@@ -123,6 +123,36 @@ Outlook (outlook.com, hotmail, live, and work or school mailboxes) uses Microsof
 - **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
   inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` or `outlook` alert once.
 
+### Hooks (Clara acts when a mail arrives)
+
+A hook is a rule you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
+one, and the model cannot make one. On the web site, make and watch them in **Schedules → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
+notifications) listens.
+
+```text
+/triggers add invoices '{"on": "mail.received",
+    "filter": {"from": {"contains": ["@billing.example"]}, "subject": {"contains": ["invoice", "facture"]}},
+    "prompt": "An invoice arrived. Read it, add a task with the amount and the due date, and tell me in one sentence.",
+    "tools": ["mail_read", "add_task", "notify"], "max_per_hour": 10}'
+/triggers test invoices          # the latest stored event: does it match, what would Clara receive, with which tools
+/triggers runs invoices          # what it did, each with a conversation you can open
+/triggers off invoices           # stops it, and drops what waited
+```
+
+The same through `POST /v1/triggers` (fields in FEATURES.md, section 5). Good habits:
+
+- **Give the fewest tools.** With none listed a run can only search and read mail and notify. List what the job needs and no more;
+  a hostile mail can steer a run only within them.
+- **Test before trusting.** `/triggers test` runs nothing. To see the first real event, make the hook with `"action": "notify"` and a
+  text like `"{from}: {subject}"`, which uses no model.
+- **A backlog is yours to decide.** After a stop, `catch_up` is `all` by default: every mail found late gets a run, at most
+  `max_per_hour` an hour, oldest first. For a long outage prefer `"catch_up": "digest"` (one run for all) and `"max_age_hours"`.
+- **Sending.** An email-triggered run is tainted, so a send always asks you; answer it on the web site or the console (it is
+  `destructive`, which Discord cannot approve). Add `mail_send` to the hook's tools only for a hook that needs to reply.
+- **Where the runs are.** Each run is a conversation in the project « Hook: <name> ». Switch that project's *in history* on to see
+  them in the web history; put files or instructions in the project to give every run the same context.
+- **Cost.** A run is a model call (kind `hook` in `/usage`). The filter is cheap and uses no model, so make it as narrow as you can.
+
 ### The Obsidian vault
 
 ```bash

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import logging
 import re
 import time
@@ -158,6 +159,8 @@ class ChatRequest:
     store: bool = True  # False: persona and memory, but nothing stored (an announcement with no conversation left)
     quiet: bool = False  # never notify that this turn ended
     wait_for_approvals: bool = True  # a chat waits for your answer to an approval request (False: it is pushed)
+    tainted: bool = False  # the turn starts as if it had read untrusted content (a run an outside event started)
+    only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (a hook's allow-list)
 
 
 @dataclass
@@ -208,6 +211,8 @@ class Agent:
         self.vault_closed_block = ""
         self.vault_tools: frozenset[str] = frozenset()
         self.vault_opener = ""
+        # conversation id -> limits its later turns keep (a hook's run: tainted, only its tools), as ChatRequest fields
+        self.restrictions: list[Callable[[str], dict]] = []
 
     # ------------------------------------------------------------------
     # State
@@ -334,6 +339,7 @@ class Agent:
             project_id=conversation.project_id if conversation else None,
             incognito=bool(conversation and conversation.incognito),
             local_only=local_only,
+            tainted=request.tainted,
             read_chars=self._read_chars(choice.window),
         )
         return TurnPlan(conversation, choice, state, self._hidden(request, conversation, state, choice))
@@ -365,6 +371,8 @@ class Agent:
             if not condition(state):
                 hidden.add(name)
         hidden |= set(self.s.runtime.get("hidden_tools").get(request.client, []))
+        if request.only_tools:
+            hidden |= {name for name in names if not any(fnmatch.fnmatchcase(name, pattern) for pattern in request.only_tools)}
         return hidden & set(names)
 
     # ------------------------------------------------------------------
@@ -1028,8 +1036,11 @@ class Agent:
         conversation = self.s.conversations.get(conversation_id)
         if conversation is None:
             return
+        limits: dict = {}
+        for restrict in self.restrictions:
+            limits.update(restrict(conversation_id))
         await self.answer(ChatRequest(message=message, client="server", conversation=conversation_id,
-                                      mode="unattended", kind="followup", quiet=True))
+                                      mode="unattended", kind="followup", quiet=True, **limits))
 
 
 @contextlib.asynccontextmanager

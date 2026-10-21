@@ -125,7 +125,7 @@ uv run clara-server                      # http://127.0.0.1:8765
 
 | Folder | What is there |
 | --- | --- |
-| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/`, `events/`, `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, Outlook, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
+| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/`, `triggers/` (hooks: what Clara does when a mail arrives), `events/`, `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, Outlook, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
 | `src/clara_discord/` | The Discord bot |
 | `web/` | The Svelte site (built into `src/clara/web/dist`) |
 | `tests/` | The test suite (a fake model provider in `fakes.py`) |

@@ -11,7 +11,7 @@ from datetime import timedelta
 from ..db import Database
 from ..timeutil import iso, now_iso, utcnow
 
-KINDS = ("chat", "title", "summary", "reminder", "task", "schedule", "followup")
+KINDS = ("chat", "title", "summary", "reminder", "task", "schedule", "hook", "followup")
 PERIODS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90, "365d": 365, "all": None}
 GROUPS = ("day", "model", "kind", "provider", "client")
 

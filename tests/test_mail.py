@@ -25,7 +25,7 @@ from clara.gate import Action, Situation
 from clara.settings import SettingsError, load_settings
 from clara.tools.base import ToolContext, TurnState
 from fakes import calls
-from mailworld import World, gmail_message, graph_message, parse_sent
+from mailworld import connect_mailbox, gmail_message, graph_message, parse_sent
 
 NOW = 1_760_000_000_000  # ms
 CHAT = Situation("interactive")
@@ -35,37 +35,6 @@ ALONE = Situation("unattended")
 @pytest.fixture
 def environ(environ):
     return {**environ, "CLARA_GOOGLE_CLIENT_ID": "gid", "CLARA_MICROSOFT_CLIENT_ID": "mid", "CLARA_PUBLIC_URL": "https://clara.test"}
-
-
-@pytest.fixture
-def world(monkeypatch):
-    """Every Google and Microsoft client the server makes talks to the stand-ins."""
-    found = World()
-    transport = found.transport()
-    for cls in (GoogleAuth, MicrosoftAuth, Gmail, Outlook):
-        real = cls.__init__
-
-        def init(self, *args, _real=real, **kwargs):
-            kwargs["transport"] = transport
-            _real(self, *args, **kwargs)
-
-        monkeypatch.setattr(cls, "__init__", init)
-    api = importlib.import_module("clara.api.connections")
-    real_check = outlook_module.check_account
-
-    async def check(token):
-        return await real_check(token, transport)
-
-    monkeypatch.setattr(api, "check_account", check)
-    return found
-
-
-def connect_mailbox(services, *providers: str) -> None:
-    services.secrets.set("google_client_secret", "gs")
-    services.secrets.set("microsoft_client_secret", "ms")
-    for provider in providers:
-        services.secrets.set(f"{provider}_refresh_token", "rt-0")
-        services.connections.set(provider, "me@gmail.com" if provider == "gmail" else "me@outlook.com")
 
 
 async def run_tool(services, name: str, arguments: dict, *, mode: str = "interactive", tainted: bool = False,
@@ -588,6 +557,107 @@ async def test_new_mail_is_announced_once_and_only_when_asked(services, world):
     assert notifications(services)[1:] == [("New email (Gmail)", "The Boss <boss@corp.example>: Review")]
     services.connectors.watch.forget("gmail")
     assert watch.cursor("gmail") is None
+
+
+def seconds_iso(seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def add_backlog(world, provider: str, count: int) -> list[str]:
+    """`count` messages that arrived after now, one a second, named in the order they arrived."""
+    base = time.time() + 5
+    ids = [f"m{number:04d}" for number in range(count)]
+    for number, found in enumerate(ids):
+        if provider == "gmail":
+            world.gmail[found] = gmail_message(found, f"P{number} <p{number}@example.com>", f"Subject {number}", "x",
+                                               int((base + number) * 1000))
+        else:
+            world.graph[found] = graph_message(found, f"p{number}@example.com", f"Subject {number}", "x",
+                                               seconds_iso(base + number), name=f"P{number}")
+    return ids
+
+
+@pytest.mark.parametrize("provider", ["gmail", "outlook"])
+async def test_a_backlog_is_worked_through_from_its_start_and_nothing_is_lost(services, world, provider, monkeypatch):
+    """Mail that arrived while Clara was off: more than one poll's worth is announced oldest first, across polls and a restart,
+    with none skipped (the oldest ones used to be dropped past the 50th)."""
+    from clara.connectors.mail_watch import MailWatch
+
+    connect_mailbox(services, provider)
+    services.runtime.set("mail_notify", True)
+    await services.connectors.watch.poll()  # the baseline: connecting announces nothing
+    ids = add_backlog(world, provider, 620)  # NEW_BATCH (100) x MAX_ROUNDS (5) = 500 are handled by one poll
+    handled: list[list[str]] = []
+    monkeypatch.setattr(MailWatch, "announce", lambda self, name, items: handled.append([item.id for item in items]))
+    await services.connectors.watch.poll()
+    # the OLDEST ones, in order: a prefix of the backlog (each round reads one second back, so a round adds a little under 100)
+    first = handled[0]
+    assert first == ids[:len(first)] and 450 <= len(first) <= 500, len(first)
+    restarted = MailWatch(services)  # a new process: only the database remembers where it stopped
+    await restarted.poll()
+    assert len(handled) == 2 and handled[1] == ids[len(first):]  # it goes on exactly where the first stopped
+    await restarted.poll()
+    assert len(handled) == 2  # and it ends: nothing is announced twice
+    assert [found for batch in handled for found in batch] == ids  # every one of the 620, once, in order
+
+
+async def test_gmail_lists_every_id_but_fetches_only_the_oldest_batch(world):
+    ids = add_backlog(world, "gmail", 1200)
+    found = await gmail().new_since(0, 100)
+    assert [item.id for item in found] == ids[:100]
+    assert [item.received_ms for item in found] == sorted(item.received_ms for item in found)
+    assert len(world.gmail_queries) == 3  # 500 + 500 + 200 ids, followed through the page tokens
+    assert world.gmail_gets == 100  # details cost one request each: only the batch pays them
+
+
+async def test_outlook_asks_for_the_oldest_first(world):
+    ids = add_backlog(world, "outlook", 150)
+    found = await outlook().new_since(0, 100)
+    query = world.graph_queries[0]
+    assert query["$orderby"] == "receivedDateTime asc" and query["$top"] == "100"
+    assert [item.id for item in found] == ids[:100]
+
+
+async def test_a_poll_cut_by_an_error_moves_nothing_and_the_next_one_starts_again(services, world, monkeypatch):
+    from clara.connectors.mail_watch import MailWatch
+
+    connect_mailbox(services, "gmail")
+    services.runtime.set("mail_notify", True)
+    await services.connectors.watch.poll()
+    before = services.connectors.watch.cursor("gmail")
+    ids = add_backlog(world, "gmail", 250)  # three rounds
+    client = services.connectors.mail_client("gmail")
+    real, calls_made = client.new_since, []
+
+    async def flaky(received_ms, limit=100):
+        calls_made.append(received_ms)
+        if len(calls_made) == 2:
+            raise mail.MailError("Google says too many requests for now: try again later.")
+        return await real(received_ms, limit)
+
+    monkeypatch.setattr(client, "new_since", flaky)
+    handled: list[list[str]] = []
+    monkeypatch.setattr(MailWatch, "announce", lambda self, name, items: handled.append([item.id for item in items]))
+    await services.connectors.watch.poll()
+    assert handled == [] and services.connectors.watch.cursor("gmail") == before  # nothing announced, nothing moved
+    await services.connectors.watch.poll()
+    assert handled == [ids]  # all of it, once
+
+
+async def test_a_crowd_arriving_in_one_second_cannot_stall_the_poll(services, world, monkeypatch):
+    """More mails than a batch with the very same time: the poll still ends (it keeps what it can see)."""
+    from clara.connectors.mail_watch import MailWatch
+
+    connect_mailbox(services, "outlook")
+    services.runtime.set("mail_notify", True)
+    await services.connectors.watch.poll()
+    when = seconds_iso(time.time() + 5)
+    for number in range(150):
+        world.graph[f"x{number:03d}"] = graph_message(f"x{number:03d}", "bulk@example.com", f"Bulk {number}", "x", when)
+    handled: list[list[str]] = []
+    monkeypatch.setattr(MailWatch, "announce", lambda self, name, items: handled.append([item.id for item in items]))
+    await asyncio.wait_for(services.connectors.watch.poll(), 10)
+    assert len(handled) == 1 and len(handled[0]) == 100
 
 
 async def test_many_new_messages_make_one_notification_with_a_count(services, world):

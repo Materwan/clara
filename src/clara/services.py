@@ -68,6 +68,7 @@ class Services:
     packs: Any = None
     web: Any = None
     connectors: Any = None
+    triggers: Any = None
     connections: Any = None
     github_snapshots: Any = None
     tailscale: Any = None
@@ -80,7 +81,7 @@ class Services:
     started: float = field(default_factory=time.monotonic)
 
     def due_loops(self) -> list:
-        return [self.reminders, self.tasks, self.schedules]
+        return [self.reminders, self.tasks, self.schedules, *([self.triggers] if self.triggers is not None else [])]
 
     def reminders_firing(self) -> bool:
         return self.reminders.busy_firing or self.tasks.busy_firing

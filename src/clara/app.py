@@ -40,6 +40,7 @@ from .api import models as models_api
 from .api import packs as packs_api
 from .api import projects as projects_api
 from .api import time as time_api
+from .api import triggers as triggers_api
 from .api import vault as vault_api
 from .api import web as web_api
 from .api import workspace as workspace_api
@@ -83,6 +84,7 @@ from .tools.base import Toolbox, ToolContext, TurnState
 from .tools.knowledge_tools import knowledge_tools
 from .tools.memory_tools import memory_tools
 from .tools.time_tools import time_tools
+from .triggers.setup import install as triggers_install
 from .workspace import setup as workspace_setup
 
 log = logging.getLogger("clara")
@@ -242,9 +244,10 @@ def recover(s: Services) -> None:
     healed = s.conversations.heal_versions()
     failed = s.approvals.recover()
     interrupted = s.schedules.recover()
-    if healed or failed or interrupted:
+    cut = s.triggers.recover() if s.triggers is not None else 0
+    if healed or failed or interrupted or cut:
         log.warning("after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
-                    "%d scheduled run(s) to run again", healed, failed, interrupted)
+                    "%d scheduled run(s) to run again, %d hook run(s) put right", healed, failed, interrupted, cut)
     if s.workspace is not None:
         s.workspace.recover()
 
@@ -301,6 +304,7 @@ def create_app(s: Services) -> FastAPI:
                    events_api.router, projects_api.router, gate_api.router, models_api.router, admin_api.router):
         app.include_router(router)
     app.include_router(workspace_api.router)
+    app.include_router(triggers_api.router)
     app.include_router(connections_api.router)
     app.include_router(vault_api.router)
     app.include_router(packs_api.router)
@@ -451,6 +455,7 @@ def extend(s: Services) -> None:
     connectors_setup.install(s)
     vault_setup.install(s)
     packs_install(s)
+    triggers_install(s)
     ops_setup.install(s)
 
 

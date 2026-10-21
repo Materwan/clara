@@ -29,6 +29,10 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 - **Automatic updates.** Releases are installed when you choose one.
 - **Spending caps.** Spending is shown, not capped. Use the providers' own limits if you need one.
 - **Arbitrary MCP servers or plug-ins.** Every tool is in this repository, with its gate class, and tested.
+- **Hook sources other than mail** in 1.0 (GitHub pull requests, Drive changes, files). The design
+  takes them (`triggers/events.py`, a source hands events to `Triggers.ingest`); only the mail source, the API and the console exist.
+- **Receiving webhooks from the internet.** Clara is reachable on your tailnet only, so GitHub or Google cannot call her; sources are
+  polled. A script on your own tailnet is the one thing that could push (not built).
 - **Calendar and messaging connectors** in 1.0. Each would be a new outside-world class with its own defaults. (Email
   moved out of this list: Gmail and Outlook are connected, with three classes of their own; see
   [DECISIONS.md](DECISIONS.md).)

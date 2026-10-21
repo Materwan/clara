@@ -77,6 +77,7 @@ account tab below.
 
 | Component | Where | Notes |
 | --- | --- | --- |
+| Hooks | `components/Hooks.svelte` | The Hooks view of the Schedules page (`#/schedules?view=hooks`, the `Segmented` at the top of Schedules). Uses only the site's classes (`.panel`, `.packs`, `.tag`, `.toggle`, `table`); a notice is a `.tag.warn` and a line of text, there is no banner component. Its form's fieldsets get `min-width: 0` (a fieldset otherwise grows to its widest control and pushes out of the card on a phone) |
 | Button | `button` | Variants: default (outline), `.primary`, `.danger`, `.ghost`, `.icon-btn`, `.link`. Sizes: default, `.small`, `.large`. States: hover, active, focus-visible, `:disabled`, `aria-busy="true"` (spinner; keeps its label). The base is wrapped in `:where()` (specificity 0): a component restyles a button with one plain class |
 | Field | `label.field` + `input` / `select` / `textarea` | A label above a control. States: hover, focus-visible, `:disabled`, `:user-invalid` and `[aria-invalid='true']` (red border). `.small` for compact controls. On iPhone and iPad fields are 16 px (Safari zooms into a smaller one and stays zoomed) |
 | Checkbox | `Checkbox.svelte` | Never a bare `<input type="checkbox">`. The input is the box (`appearance: none`, 16 px, 2 px `--line-strong` border); ticked, it fills `--check` and a tick drawn like the line icons unrolls over it. Takes every input attribute; `bind:checked` works. It is a line high, so beside text it sits on the first line. Radios share the look, round, with a violet dot |

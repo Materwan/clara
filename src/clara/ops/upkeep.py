@@ -6,7 +6,7 @@
   fed only while every loop has turned within the last two minutes;
 * every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted;
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
-  sessions;
+  sessions, and the events of hooks older than 30 days (those a run still needs stay);
 * every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
   waits for the mail providers, so the watchdog does not count it.
 """
@@ -110,6 +110,8 @@ class Upkeep:
         limit = iso(utcnow() - timedelta(days=s.settings.retention_days))
         s.db.execute("DELETE FROM audit_log WHERE at < ?", (limit,))
         s.web_sessions.prune()
+        if s.triggers is not None:
+            s.triggers.prune(s.settings.retention_days)
 
     async def _watchdog(self, interval: float) -> None:
         while True:

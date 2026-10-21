@@ -61,6 +61,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects** and the **schedules** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project or a schedule shows its conversations here only when its **Show in history** button is on (both start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's run belongs to the schedule even when the schedule has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
+| Schedules → Hooks | The same page has a second view, **Hooks** (a switch at its top; the address `#/schedules?view=hooks` opens it): the list of hooks with what each waits for in words, its tools, its pace, what is waiting and its last run; **New hook** and **Edit** with a condition builder (a field, a comparison, a value; commas mean « or »), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs, and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the mail, what happened, a link to each conversation); **Pause**, **Show in history** (the hook's project), **Delete**; *the events seen*. It warns when no mailbox is connected or mail polling is off, and reloads by itself while a run goes or waits |
 | Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
 | Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs |
@@ -117,6 +118,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/tokens [list] \| create \| revoke \| approvals` | Client tokens (revoking works at once) |
 | `/secrets [list] \| set <name> <value> \| unset <name>` | The encrypted secrets store |
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
+| `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
 | `/approvals [list] \| allow\|always\|refuse\|never <id>` | Pending approval requests |
 | `/debug [on\|off]` | Full prompts and answers to the debug log for one hour |
@@ -286,6 +288,47 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
+### Hooks: when something happens
+
+A schedule runs Clara at a time; a **hook** runs her when something happens outside. Today that is a new message in the
+inbox of a connected Gmail or Outlook mailbox (`mail.received`); the design takes other sources (a pull request, a file).
+
+- **Events.** The mail poll (section 8) finds new messages and stores each as an *event*, once: `(source, key)` is unique,
+  so the same message seen twice (a restart, a replay) is one event. An event carries the sender, the subject, a short
+  snippet, the mailbox and whether it has attachments, never the body; everything in it was written by someone else. Events
+  are kept 30 days (longer while a run still waits for one), runs `CLARA_RETENTION_DAYS`.
+- **Triggers.** You write them (`/triggers`, `POST /v1/triggers`); the model has no tool to make, read or change one, so a
+  message cannot create a hook. A trigger has: a name; an event kind; a **filter** (fields `account`, `mailbox`, `from`,
+  `from_address`, `subject`, `snippet`, `has_attachment`, `unread`; operators `eq`, `contains`, `starts_with`, `ends_with`,
+  `not_contains`; all fields must hold, any value of an operator; no regular expression, on purpose); an **action** (`run`: a turn of
+  Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… and no model); its
+  `tools`; a `project`; an optional `model`; `local_only`; `catch_up`; `max_per_hour`; `max_age_hours`; `include_self`;
+  `rerun_interrupted`; `attempts`; `announce`. Mail from Clara's own account is left out unless `include_self`; a sender's
+  `From` can be forged, so a sender filter is a convenience, not a proof.
+- **A run** is an unattended turn in a conversation of its own, inside the hook's **project** (made when you make the hook, named
+  « Hook: <name> »; its files and instructions are context for every run; its conversations are listed in the web history only when
+  you switch that project's history on). It is **tainted from its first word**: every outside write (a send, a GitHub change, a
+  Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
+  lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`),
+  so a hook never has more than you gave it. The same limits hold for the turn that follows one of its approvals. The event
+  reaches the model after your prompt, inside an `<event>` tag as JSON with `<` and `>` escaped, with a line saying it is
+  data. To let a hook send, list `mail_send` in its tools **and** write the rule; the run is tainted, so each send still asks.
+- **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the mail poll had reached are
+  written in one transaction. Mail that arrived while Clara was off is found (oldest first, section 8) and handled by the
+  trigger's `catch_up`, for events found more than 15 minutes after they happened: `all` (a run each, the default, at the
+  pace of `max_per_hour`), `latest` (a run for the newest; the others are recorded as skipped), `digest` (one run for the
+  whole backlog, listing up to 25 events) or `skip` (all recorded, none run). `max_age_hours` makes a run that waited too
+  long `expired`. A run the stop cut that had done nothing starts again; one that had begun is `interrupted` and not run
+  again (Clara cannot know what it did) unless the hook has `rerun_interrupted`.
+- **Pace.** One run of a hook at a time, at most `max_per_hour` started in any hour (20 by default), two hooks at once, 500 runs
+  waiting per hook (more are recorded as skipped, with a `trigger:<id>` alert). Turning a hook off drops what waited.
+- **The mail poll** looks only while a listener exists (notifications on, or a hook enabled); with none it forgets its place, so the
+  first look after one appears starts from now and never replays old mail. A hook made today sees mail from now on.
+- **Looking.** `POST /v1/triggers/{id}/test` and `/triggers test` show, for a stored event, a sample or the latest event, whether
+  the filter matches, the exact message Clara would get and her tools, without running anything. Each run is recorded
+  (`ok`, `failed`, `interrupted`, `skipped`, `expired`) with its summary and conversation, and tells you how it ended with a
+  `schedule` event (`announce` off keeps a good run quiet; a failed one always tells).
+
 ## 6. Knowledge
 
 - **Projects:** a set of files a conversation works with: uploads (files, and `.zip` archives whose text files are
@@ -382,6 +425,9 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   inbox of each connected mailbox is looked at; the first look only notes where it stands. A message announces itself as
   « sender: subject » (never the text) to every client, Discord's `#notification` included; more than four new messages
   at once make one notification with a count; `mail_notify_senders` keeps only senders containing one of its words.
+  Mail that arrived while Clara was off is taken oldest first, 100 messages a round and 5 rounds a poll (a bigger
+  backlog goes on at the next poll, from where this one stopped); the place only moves once a poll's messages were handled,
+  so an error half way repeats the poll instead of skipping anything.
   This loop is not counted by the systemd watchdog.
 - **Content leaving the machine:** a call that would send text looking like a secret to GitHub, Drive, the vault's
   remote, a draft, an email or a networked script is raised to `ask`, naming the kind of secret found.
@@ -439,7 +485,7 @@ counted.
   "always" answer to a message with several recipients writes a rule that matches nothing: write one rule per address
   on the Rules page. In a local-only conversation the mail tools are not offered and the gate refuses them.
 - **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
-  Drive file, an email or an attachment), outside-world writes (`github_write`, `drive_write`, `mail_send`, `vault_write`, `vault_destroy`) and networked
+  Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `vault_write`, `vault_destroy`) and networked
   scripts (`run_network`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
   Rules page switches it off.
 - **Secrets going out:** see section 8.
@@ -568,7 +614,7 @@ and run on the client.
   model of the fallback list that fails for any other reason is skipped too. Once a model has started answering, or
   when the answer's time budget is spent, nothing is asked again. A local model never falls back to a hosted one.
 - **Per conversation:** each conversation may have its own model.
-- **Usage:** one row per model call (kind `chat`, `title`, `summary`, `reminder`, `task`, `schedule`, `followup`;
+- **Usage:** one row per model call (kind `chat`, `title`, `summary`, `reminder`, `task`, `schedule`, `hook`, `followup`;
   provider, model, client, tokens in, out and cached, duration, outcome), kept `CLARA_RETENTION_DAYS`. No text. No
   limits, no credits.
 
@@ -649,6 +695,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `backup` | A backup, its check or its remote copy failed |
   | `github` | GitHub refused the token |
   | `google` | Google refused the refresh token (reconnect Drive) |
+  | `trigger:<id>` | A hook has more than 500 runs waiting: the newest events were recorded but not run |
   | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
   | `outlook` | Microsoft refused the Outlook refresh token (reconnect Outlook) |
   | `update` | An update was not installed, or was rolled back |
@@ -923,6 +970,14 @@ keep-alive every 15 s.
 | `GET /v1/workspace/commits/{commit}` | One commit's diff |
 | `POST /v1/workspace/undo` | Revert the last change, or a commit |
 | `GET /v1/workspace/runs` | Script runs |
+| `GET /v1/triggers` | The hooks and the kinds of event (their fields, their default tools) |
+| `POST /v1/triggers` | Make a hook |
+| `GET /v1/triggers/{trigger_id}` | One hook, with its latest runs |
+| `PATCH /v1/triggers/{trigger_id}` | Change it, turn it on or off |
+| `DELETE /v1/triggers/{trigger_id}` | Delete it (its runs go; its project stays) |
+| `POST /v1/triggers/{trigger_id}/test` | What would happen for an event (stored, sample or latest): match, message, tools; nothing is done |
+| `GET /v1/triggers/{trigger_id}/runs` | Its runs |
+| `GET /v1/trigger-events` | The events stored |
 | `GET /v1/connections` | GitHub, Drive, Gmail and Outlook: state, repositories, files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
@@ -969,6 +1024,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Vault note | 400,000 characters; 20 search results |
 | Special tools | `day_conversations` `CLARA_DAY_DIGEST_CHARS`; `files_created` 60 files a page; `daily_notes` 31 days; a question of `ask_person` 2,000 characters; 31 missed or queued runs per schedule |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
+| Hooks | 50 hooks; a prompt of 20,000 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each; 2 hooks running at once; a filter of 10 fields with 20 values of 200 characters; events kept 30 days |
 | Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

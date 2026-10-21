@@ -2,10 +2,23 @@
   import { tick } from 'svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Hint from '../components/Hint.svelte';
+  import Hooks from '../components/Hooks.svelte';
   import Icon from '../components/Icon.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, fileToBase64, when, zone } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
-  import { conversations, live, toast } from '../lib/state.svelte';
+  import { conversations, live, route, toast } from '../lib/state.svelte';
+
+  // Two views of the page: what Clara does at a time, and what she does when something happens (hooks).
+  type View = 'tasks' | 'hooks';
+  const VIEWS = [{ value: 'tasks' as View, label: 'Scheduled tasks', icon: 'clock' }, { value: 'hooks' as View, label: 'Hooks', icon: 'bolt' }];
+  const viewOf = (): View => (route.query.get('view') === 'hooks' ? 'hooks' : 'tasks');
+  let view = $state<View>(viewOf());
+  $effect(() => {
+    view = viewOf(); // a link to #/schedules?view=hooks, or back to #/schedules
+  });
+  // the view is in the address, so a reload or a link comes back to it (`history` below is the runs panel, not the browser's)
+  const viewChanged = (next: View): void => window.history.replaceState(null, '', next === 'hooks' ? '#/schedules?view=hooks' : '#/schedules');
 
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const empty = () => ({
@@ -134,6 +147,10 @@
 </script>
 
 <div class="page stack">
+  <div><Segmented label="Show" options={VIEWS} bind:value={view} onchange={viewChanged} /></div>
+  {#if view === 'hooks'}
+  <Hooks />
+  {:else}
   <div class="row start">
     <p class="intro grow">Prompts Clara runs by herself, unattended: an action your rules say to ask about is held and pushed
       to you, and the run goes on without it. The special tools you tick are the only extra ones a run has; a run that may
@@ -264,4 +281,5 @@
       </table>
     </div>
   {/if}
+{/if}
 </div>

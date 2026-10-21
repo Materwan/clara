@@ -215,6 +215,74 @@ def _rules(s: Services, args: list[str], token: TokenInfo) -> str:
     return "Usage: /rules [list] | add <allow|ask|refuse> tool=… target=… situation=… level=… note=… | del <id> | on|off <id> | test <tool> <json>"
 
 
+def _hook(s: Services, ref: str):
+    from .triggers import TriggerError
+
+    found = s.triggers.find(int(ref)) if ref.isdigit() else s.triggers.by_name(ref)
+    if found is None:
+        raise TriggerError(f"No hook {ref}.")
+    return found
+
+
+def _hook_line(s: Services, item) -> str:
+    info = s.triggers.describe(item)
+    last = info["last"]
+    return (f"#{item.id} {item.name}  {item.on} {item.action}{'' if item.enabled else ' (off)'}  catch-up {item.catch_up}, "
+            f"{item.max_per_hour}/h  queued {info['queued']}  last: {last['status'] + ' ' + (last['finished_at'] or '')[:16] if last else 'never'}")
+
+
+def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
+    from .triggers import KINDS, TriggerError
+
+    if s.triggers is None:
+        return "Hooks are not available."
+    usage = ("Usage: /triggers [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
+             "del <id|name> | test <id|name> [event id] | runs <id|name> [n] | events [n]")
+    if not args or args[0] == "list":
+        return "\n".join(_hook_line(s, item) for item in s.triggers.listing()) or (
+            f"(no hooks) Kinds of event: {', '.join(KINDS)}. {usage}")
+    action, *rest = args
+    try:
+        if action == "show" and rest:
+            item = _hook(s, rest[0])
+            return json.dumps(s.triggers.describe(item), indent=2, ensure_ascii=False)
+        if action in ("add", "edit") and len(rest) >= 2:
+            try:
+                fields = json.loads(" ".join(rest[1:]))
+            except ValueError as error:
+                return f"The fields are not JSON ({error}). Quote them: '{{\"on\": \"mail.received\", ...}}'."
+            if not isinstance(fields, dict):
+                return "The fields are a JSON object."
+            if action == "add":
+                on = fields.pop("on", "")
+                made = s.triggers.create(rest[0], on, **fields)
+                return f"Made hook #{made.id}. Its runs go in project #{made.project_id}.\n{_hook_line(s, made)}"
+            return "Changed.\n" + _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, **fields))
+        if action in ("on", "off") and rest:
+            return _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, enabled=action == "on"))
+        if action in ("del", "delete") and rest:
+            return "Deleted." if s.triggers.delete(_hook(s, rest[0]).id) else "Nothing deleted."
+        if action == "test" and rest:
+            item = _hook(s, rest[0])
+            event = s.triggers.event(int(rest[1])) if len(rest) > 1 else (s.triggers.recent_events(1, item.on) or [None])[0]
+            if event is None:
+                return "No event of this kind was stored yet (/triggers events)."
+            shown = s.triggers.preview(item, event)
+            return (f"Event #{event.id}: {event.title}\n{'MATCHES' if shown['matches'] else 'does not match: ' + shown['why_not']}\n"
+                    f"Action: {shown['action']}; tools: {', '.join(shown['tools']) or '(none)'}\n--- what Clara would receive ---\n{shown['message']}")
+        if action == "runs" and rest:
+            item = _hook(s, rest[0])
+            runs = s.triggers.runs(item.id, int(rest[1]) if len(rest) > 1 else 10)
+            return "\n".join(f"run {r['id']} {r['status']:<11} {r['queued_at'][:16]}  {r['event_count']} event(s)  "
+                             f"{(r['summary'] or r['note'])[:90]}" for r in runs) or "No run yet."
+        if action == "events":
+            found = s.triggers.recent_events(int(rest[0]) if rest else 10)
+            return "\n".join(f"#{e.id} {e.kind} {e.occurred_at[:16]}{' (self)' if e.self_caused else ''}  {e.title[:90]}" for e in found) or "No event yet."
+    except (TriggerError, ValueError) as error:
+        return f"Error: {error}"
+    return usage
+
+
 def _tainted(s: Services, args: list[str], token: TokenInfo) -> str:
     if args and args[0] in ("on", "off"):
         s.runtime.set("tainted_rule", args[0] == "on")
@@ -336,6 +404,7 @@ COMMANDS: list[Command] = [
     Command("secrets", "/secrets [list] | set <name> <value> | unset <name>", "The encrypted secrets store.", _secrets),
     Command("rules", "/rules [list] | add | del | on | off | test", "The rule gate.", _rules),
     Command("tainted", "/tainted [on|off]", "The tainted-turn rule.", _tainted),
+    Command("triggers", "/triggers [list] | show | add | edit | on | off | del | test | runs | events", "Hooks: what Clara does when something happens (a mail arrives).", _triggers),
     Command("approvals", "/approvals [list] | allow|always|refuse|never <id>", "Pending approval requests.", _approvals),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),
     Command("usage", "/usage [24h|7d|30d|90d|365d|all] [day|model|kind|provider|client]", "Token statistics.", _usage),

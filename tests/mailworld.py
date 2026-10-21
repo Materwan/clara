@@ -48,6 +48,7 @@ class World:
         self.gmail: dict[str, dict] = {}
         self.gmail_files: dict[str, bytes] = {}
         self.gmail_queries: list[dict] = []
+        self.gmail_gets = 0  # message details fetched (what a backlog costs)
         self.gmail_sent: list[dict] = []
         self.gmail_drafts: list[dict] = []
         self.google_tokens = 0
@@ -109,9 +110,15 @@ class World:
         if path == "/messages" and request.method == "GET":
             self.gmail_queries.append({key: params.get_list(key) for key in set(params.keys())})
             after = re.search(r"after:(\d+)", params.get("q", ""))
-            found = [m for m in self.gmail.values() if not after or int(m["internalDate"]) / 1000 > int(after.group(1))]
-            return httpx.Response(200, json={"messages": [{"id": m["id"], "threadId": m["threadId"]} for m in found]
-                                             [: int(params.get("maxResults", 10))]})
+            found = sorted((m for m in self.gmail.values() if not after or int(m["internalDate"]) / 1000 > int(after.group(1))),
+                           key=lambda m: int(m["internalDate"]), reverse=True)  # newest first, as Gmail lists
+            size = min(int(params.get("maxResults", 100)), 500)
+            start = int(params.get("pageToken") or 0)
+            page = found[start:start + size]
+            answer: dict = {"messages": [{"id": m["id"], "threadId": m["threadId"]} for m in page]}
+            if start + size < len(found):
+                answer["nextPageToken"] = str(start + size)
+            return httpx.Response(200, json=answer)
         if path == "/messages/send":
             self.gmail_sent.append(json.loads(request.content))
             return httpx.Response(200, json={"id": "sent-1", "threadId": "t-sent"})
@@ -125,6 +132,7 @@ class World:
         found = re.fullmatch(r"/messages/([^/]+)", path)
         if found:
             message = self.gmail.get(unquote(found.group(1)))
+            self.gmail_gets += 1
             if message is None:
                 return httpx.Response(404, json={"error": {"code": 404, "message": "Requested entity was not found."}})
             if params.get("format") == "metadata":
@@ -162,7 +170,10 @@ class World:
             self.graph_queries.append({"path": path, **dict(params)})
             since = re.search(r"receivedDateTime ge (\S+)", params.get("$filter", ""))
             floor = parse_time(since.group(1)) if since else 0
-            return httpx.Response(200, json={"value": [m for m in self.graph.values() if parse_time(m["receivedDateTime"]) >= floor]})
+            found = [m for m in self.graph.values() if parse_time(m["receivedDateTime"]) >= floor]
+            if "$orderby" in params:
+                found.sort(key=lambda m: parse_time(m["receivedDateTime"]), reverse=params["$orderby"].endswith("desc"))
+            return httpx.Response(200, json={"value": found[: int(params.get("$top", 10))]})
         if path == "/messages" and request.method == "POST":
             return httpx.Response(201, json={"id": "draft-1", "webLink": "https://outlook.example/draft-1"})
         found = re.fullmatch(r"/messages/([^/]+)/createReply", path)
@@ -205,3 +216,11 @@ def parse_sent(raw: dict) -> object:
     """The RFC 5322 message a Gmail `raw` field carries."""
     data = raw["raw"] + "=" * (-len(raw["raw"]) % 4)
     return message_from_bytes(base64.urlsafe_b64decode(data), policy=policy.default)
+
+
+def connect_mailbox(services, *providers: str) -> None:
+    services.secrets.set("google_client_secret", "gs")
+    services.secrets.set("microsoft_client_secret", "ms")
+    for provider in providers:
+        services.secrets.set(f"{provider}_refresh_token", "rt-0")
+        services.connections.set(provider, "me@gmail.com" if provider == "gmail" else "me@outlook.com")

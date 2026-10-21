@@ -31,6 +31,7 @@ import httpx
 
 from .mail import (
     MAX_DOWNLOAD,
+    NEW_BATCH,
     TIMEOUT,
     Attachment,
     MailClient,
@@ -353,11 +354,13 @@ class Outlook(MailClient):
             raise
         return Sent(draft)
 
-    async def new_since(self, received_ms: int) -> list[Summary]:
+    async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:
+        """The oldest `limit` inbox messages received since `received_ms`: Graph orders them ascending, so the first page is
+        the start of the backlog (the property that orders also leads the filter, as Graph demands)."""
         since = datetime.fromtimestamp(max(0, received_ms - 1000) / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         listing = await self.json("GET", self._base("inbox"), params={
-            "$filter": f"receivedDateTime ge {since}", "$orderby": "receivedDateTime desc", "$top": 50, "$select": SELECT})
-        return sorted((summary_of(item) for item in listing.get("value", []) or []), key=lambda item: item.received_ms)
+            "$filter": f"receivedDateTime ge {since}", "$orderby": "receivedDateTime asc", "$top": limit, "$select": SELECT})
+        return [summary_of(item) for item in listing.get("value", []) or []]
 
 
 def _day_ms(day: str) -> int:

@@ -10,6 +10,7 @@ from clara.app import build_services, create_app, extend, open_database
 from clara.services import Services
 from clara.settings import load_settings
 from fakes import FakeLLM
+from mailworld import World
 
 KEY = "ab" * 32
 
@@ -72,3 +73,33 @@ def parse_sse(text: str) -> list[dict]:
             if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
     return events
+
+
+@pytest.fixture
+def world(monkeypatch):
+    """Gmail, Outlook and their token endpoints as stand-ins: every Google and Microsoft client the server makes talks to them."""
+    import importlib
+
+    from clara.connectors import outlook as outlook_module
+    from clara.connectors.drive import GoogleAuth
+    from clara.connectors.gmail import Gmail
+    from clara.connectors.outlook import MicrosoftAuth, Outlook
+
+    found = World()
+    transport = found.transport()
+    for cls in (GoogleAuth, MicrosoftAuth, Gmail, Outlook):
+        real = cls.__init__
+
+        def init(self, *args, _real=real, **kwargs):
+            kwargs["transport"] = transport
+            _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(cls, "__init__", init)
+    api = importlib.import_module("clara.api.connections")
+    real_check = outlook_module.check_account
+
+    async def check(token):
+        return await real_check(token, transport)
+
+    monkeypatch.setattr(api, "check_account", check)
+    return found

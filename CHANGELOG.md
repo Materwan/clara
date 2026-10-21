@@ -115,9 +115,17 @@ earlier server: the new Clara starts empty.
   shown in full), is refused unattended, cannot be approved from Discord, and is raised to ask after untrusted content
   whatever the rules say. Rules can name a recipient (`mail:to:*@example.com`). What a message says is cleaned of hidden
   characters and CSS-hidden text and handed over as data; the sign-in proves the token reaches a mailbox before anything is
-  kept; optional new-mail notifications (sender and subject only). The tools, the classes and the limits are in FEATURES.md (sections 8, 9 and 10), the reasons in DECISIONS.md, the setup in OPERATIONS.md. Email
+  kept; optional new-mail notifications (sender and subject only; a backlog from a stop is taken oldest first, none skipped). The tools, the classes and the limits are in FEATURES.md (sections 8, 9 and 10), the reasons in DECISIONS.md, the setup in OPERATIONS.md. Email
   connectors move out of NON-GOALS.md.
+- **Hooks:** Clara acts when something happens outside. A *trigger* you write (`/triggers`, `POST /v1/triggers`; the model cannot
+  make one) matches new mail by field (no regular expression), and either notifies you or runs Clara: unattended, **tainted from
+  its first word**, with **only the tools you list** (by default: read mail and notify), in a conversation of its own inside a
+  project per hook. Events are stored once; the events, the runs they plan and the mail poll's place are one transaction, so a stop
+  loses nothing and repeats nothing. Mail that arrived while Clara was off is handled by the trigger's `catch_up` (`all` by default,
+  at `max_per_hour`; `latest`, `digest`, `skip`), a run the stop cut is not repeated unless asked. Also fixed: mail past the 50th
+  that arrived during a stop was never announced; the poll now takes a backlog oldest first and forgets its place when nobody
+  listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`. The web site has a **Hooks** view on the Schedules page (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
 - **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MICROSOFT_CLIENT_ID`,
   `CLARA_MICROSOFT_TENANT`, `CLARA_MAIL_POLL_SECONDS`; the runtime settings `mail_notify` and `mail_notify_senders`; the secrets
   `microsoft_client_secret`, `gmail_refresh_token` and `outlook_refresh_token`; the alerts `gmail` and `outlook`.
-- **Migrations:** schema version 8 (0008: Gmail and Outlook as connections, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).
+- **Migrations:** schema version 9 (0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail and Outlook as connections, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

@@ -42,6 +42,8 @@ MAX_FILES = 5
 MAX_DOWNLOAD = 25_000_000  # an attachment bigger than this is not fetched
 TIMEOUT = httpx.Timeout(20.0, read=90.0)
 SHOWN_FIELD = 200  # a subject or a sender in a list, cut here
+NEW_BATCH = 100  # messages `new_since` returns at once
+LISTING_MAX = 5_000  # ids looked at to find the oldest new messages (Gmail lists newest first); more is logged, not lost silently
 
 
 class MailError(ValueError):
@@ -351,7 +353,8 @@ class MailClient:
         attachment(id, att)      (Attachment, bytes)
         draft(Outgoing, sender)  saved in the mailbox, not sent
         send(Outgoing, sender)   sent
-        new_since(received_ms)   inbox summaries received since then, oldest first
+        new_since(ms, limit)     the OLDEST `limit` inbox messages received since then, oldest first: a backlog is
+                                 worked through from its start, never from its end (the caller moves its cursor on)
     """
 
     provider = ""
@@ -430,7 +433,7 @@ class MailClient:
     async def send(self, mail: Outgoing, sender: str) -> Sent:
         raise NotImplementedError
 
-    async def new_since(self, received_ms: int) -> list[Summary]:
+    async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:
         raise NotImplementedError
 
 
