@@ -67,3 +67,11 @@ the provider appear only once you `show` them.
 A Google Cloud OAuth client whose consent screen is in **Testing** publishing status gets refresh tokens that expire
 after 7 days: Drive would then ask to be reconnected every week. Publish the app (as an internal or external app with
 only the `drive.file` scope), or accept reconnecting. To verify in Google's current documentation.
+
+## Gmail and Outlook (not model providers)
+
+Gmail's scopes (`gmail.readonly`, `gmail.compose`) are *restricted*: the same 7-day rule applies to a consent screen in
+**Testing**, and an app *In production* without Google's verification shows an « unverified app » warning (fine for your
+own account). Outlook's refresh tokens last 90 days after their last use and are renewed at each use; a client secret made
+in Azure expires after 24 months at most. Both mail providers' terms are those of the accounts you connect. To verify in
+Google's and Microsoft's current documentation.

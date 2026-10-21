@@ -17,7 +17,7 @@ from ..ops.lifecycle import EXIT_RESTART
 from ..ops.logstream import LEVELS, RING, SOURCES
 from ..ops.status import set_debug, status
 from ..runtime import KNOBS
-from ..secrets import KNOWN_SECRETS, SecretError
+from ..secrets import CONNECTION_TOKENS, KNOWN_SECRETS, SecretError
 from .common import ApiError, caller, event_stream, services, sse, with_keepalive
 
 router = APIRouter(prefix="/v1", tags=["admin"])
@@ -88,8 +88,8 @@ class SecretValue(BaseModel):
 @router.put("/admin/secrets/{name}")
 def set_secret(name: str, body: SecretValue, request: Request) -> dict:
     s = services(request)
-    if name not in KNOWN_SECRETS or name == "google_refresh_token":
-        raise ApiError(404, f"Unknown secret {name} (the Google refresh token is set by connecting Drive).")
+    if name not in KNOWN_SECRETS or name in CONNECTION_TOKENS:
+        raise ApiError(404, f"Unknown secret {name} (refresh tokens are set by connecting Drive, Gmail or Outlook).")
     try:
         s.secrets.set(name, body.value.strip())
     except SecretError as error:

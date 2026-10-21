@@ -706,7 +706,7 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .approval-head { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; font-weight: 650; }
 .approval-head .icon { color: var(--accent-text); }
 .approval-head .tags { margin-left: auto; display: flex; gap: var(--sp-4); }
-.approval-summary { margin: 0; overflow-wrap: anywhere; }
+.approval-summary { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; } /* an email to send is shown line by line, whole */
 .approval-reason { color: var(--text-2); font-style: italic; overflow-wrap: anywhere; font-size: var(--fs-sm); }
 .approval.settled { --frame-rule: var(--line-strong); }
 .approval.settled .approval-head .icon { color: var(--muted); }

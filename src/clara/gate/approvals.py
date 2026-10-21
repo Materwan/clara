@@ -45,6 +45,8 @@ KEEP_DAYS = 30  # finished requests are kept this long (the audit log keeps the 
 FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
 MAX_PENDING = 10  # requests one conversation may have waiting
 RESULT_SHOWN = 300
+SUMMARY_SHOWN = 500
+SUMMARY_FULL = {"mail_send": 8_000}  # classes whose request shows everything that would leave (the text of an email)
 
 WAITING = (
     "Waiting for permission (request #{id}): this was NOT done, and the person was asked. Go on with anything that does "
@@ -94,12 +96,17 @@ class Approval:
 
     def outcome_line(self) -> str:
         if self.status == "done":
-            return f"- #{self.id} approved and done: {self.summary}. Result: {self.result[:RESULT_SHOWN]}"
+            return f"- #{self.id} approved and done: {self.brief}. Result: {self.result[:RESULT_SHOWN]}"
         if self.status == "failed":
-            return f"- #{self.id} approved, but it failed: {self.summary}. {self.result[:RESULT_SHOWN]}"
+            return f"- #{self.id} approved, but it failed: {self.brief}. {self.result[:RESULT_SHOWN]}"
         if self.status == "denied":
-            return f"- #{self.id} refused: {self.summary}. Do not do it, nor find another way round."
-        return f"- #{self.id} nobody answered in time, so it was not done: {self.summary}."
+            return f"- #{self.id} refused: {self.brief}. Do not do it, nor find another way round."
+        return f"- #{self.id} nobody answered in time, so it was not done: {self.brief}."
+
+    @property
+    def brief(self) -> str:
+        """The summary as Clara is told it: the whole text of an email is for you to read, not for her prompt again."""
+        return self.summary if len(self.summary) <= SUMMARY_SHOWN else self.summary[:SUMMARY_SHOWN] + "…"
 
 
 def _approval(row) -> Approval:
@@ -147,7 +154,7 @@ class Approvals:
             " 'pending', ?, ?)",
             (conversation_id, context.turn.turn_id, action.tool, json.dumps(arguments, ensure_ascii=False),
              args_digest(arguments), action.target, action.level, action.klass, situation.describe(),
-             action.summary[:500], "; ".join(reason for reason in reasons if reason), iso(now),
+             action.summary[:SUMMARY_FULL.get(action.klass, SUMMARY_SHOWN)], "; ".join(reason for reason in reasons if reason), iso(now),
              iso(now + timedelta(seconds=self.expire_after))),
         )
         approval = self.get(approval_id)

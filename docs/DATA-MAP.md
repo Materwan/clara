@@ -41,7 +41,8 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `audit_log` | Every gate decision: tool, target, level, situation, a **digest** of the arguments, rule, effect, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `usage_log` | One row per model call: kind, client, conversation, provider, model, token counts, duration, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `ws_runs` | Script runs: command digest, exit code, duration, network flag, commit | Not pruned (a few hundred bytes a run) |
-| `connections`, `resources` | GitHub and Google account names, connection state; the repositories, files and folders Clara may use | Until you remove them |
+| `connections`, `resources` | GitHub, Google, Gmail and Outlook account names (a mailbox's address), connection state; the repositories, files and folders Clara may use | Until you remove them |
+| `mail_cursors` | Per mailbox, the time of the newest inbox message already announced and the ids of the last 100 (new-mail notifications) | Until you disconnect the mailbox |
 | `secrets`, `secrets_meta` | Encrypted secrets (AES-GCM) and the key check value | Until removed |
 | `tokens`, `web_sessions` | Token hashes, names, scopes, last use; web session hashes | Revoked tokens stay listed; sessions until they expire |
 | `models`, `settings` | The model catalogue and your choices; runtime settings | — |
@@ -60,6 +61,10 @@ keep what they held until they rotate out.
 | The web site fetched | A request for that address | `web_fetch` |
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |
 | Google | Requests for Drive files Clara may use; content Clara writes; the token at revocation | Drive tools (writes ask first) |
+| Gmail, Google | Searches (their words), requests for messages and attachments, the drafts and emails Clara writes with their attachments | Mail tools (a send asks first, always) |
+| Outlook, Microsoft | The same, to Microsoft Graph; the refresh token is exchanged at each use and the new one kept | Mail tools (a send asks first, always) |
+| The model provider of the conversation, again | The emails and attachment text Clara reads: a tool result is part of the prompt, in a hosted conversation too. A local-only conversation is not offered the mail tools | `mail_read` and the others |
+| Discord | When new-mail notifications are on: the sender and subject of each new email (never the text) | `mail_notify`, with the bot running |
 | The vault's git remote | Your vault's changes | After vault changes, when `CLARA_VAULT_PUSH` |
 | Discord | Clara's answers, notifications, alerts and approval requests, posted in the channels of your private server | When the bot runs |
 | The restic repository | The newest database backup and the workspace bundle, encrypted by restic | Nightly, when `CLARA_RESTIC_REPOSITORY` is set |

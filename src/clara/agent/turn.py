@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-OUTSIDE_TOOL_PREFIXES = ("web_", "github_", "drive_")  # tools that only reach outside: not offered when local only
+OUTSIDE_TOOL_PREFIXES = ("web_", "github_", "drive_", "mail_")  # tools that only reach outside: not offered when local only
 RECENT_TOOL_RESULTS_KEPT = 5
 TOOL_HISTORY_SHARE = 0.15
 TOOL_HISTORY_MAX_TOKENS = 8_000

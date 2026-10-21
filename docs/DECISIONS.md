@@ -37,6 +37,12 @@ made while building, to be confirmed or changed.
 | Markdown files Clara writes | Merged into the workspace, folder `notes/` (git history, undo) |
 | The vault | Seven tools behind `open_second_brain`, opened per conversation |
 | Google Drive | `drive.file` scope and the Google Picker |
+| Mail (this lifts the non-goal « email connectors ») | Gmail and Outlook through their own APIs with OAuth, never a password: Gmail with `gmail.readonly` and `gmail.compose` (a token of its own, not Drive's), Outlook with Graph `Mail.ReadWrite` and `Mail.Send` for personal and work accounts. One mailbox of each |
+| Mail: what Clara may do | Search and read; read an attachment's text, keep it in the workspace, send workspace files as attachments; save drafts; send. No label, archive, delete or settings |
+| Mail: the three classes | `mail_read` and `mail_draft` are allowed everywhere; `mail_send` asks in a chat, is refused unattended, is at the `destructive` level (the Discord token cannot approve it), and is raised to ask after untrusted content whatever the rules |
+| Mail: reading allowed everywhere | The owner chose « allow everywhere » over « ask when unattended »: a schedule may read the inbox without a prompt. A rule can ask or refuse (`mail_read`, target `mail:outlook`); reads taint the turn either way |
+| Mail: what is sent | Only to the addresses in the call, shown whole in the approval request (the text up to 6,000 characters, so nothing hides past the part you read). The target of a send is each recipient (`mail:to:<address>`), so « allow always » can never open sending in general |
+| Mail: new-mail notifications | Opt-in (`mail_notify`), a poll every `CLARA_MAIL_POLL_SECONDS`, sender and subject only, to every client; on its own loop, which the watchdog does not count |
 | Facts from tainted turns | Kept, shown to the model tagged `[unconfirmed]` until you confirm |
 | Tainted-turn rule | On by default |
 | Discord and approvals | Discord may answer approvals except destructive ones |
@@ -77,8 +83,18 @@ made while building, to be confirmed or changed.
 | A model silent past the first-token timeout hands over to the next fallback; a spent budget does not | A stalled provider is the commonest outage; nothing was said, so nothing repeats | — |
 | Updates go through `clara-launcher`: the server exits 75 for an update, 76 for a restart; the launcher switches the `current` link and rolls back | The new code is checked before the old one stops, and something outside the server can undo a failed start | — |
 | Rule specificity: fields set, then literal characters in the target, then in the tool, then strictness | Predictable and explainable in the test box | — |
-| Local-only conversations also hide the web, GitHub and Drive tools, and the gate refuses anything leaving the machine (vault changes too when the vault pushes) | "Local only" must hold for tool calls, not only for the model | — |
+| Local-only conversations also hide the web, GitHub, Drive and mail tools, and the gate refuses anything leaving the machine (vault changes too when the vault pushes) | "Local only" must hold for tool calls, not only for the model | — |
 | A message carries 4 files and 34 MB in all | Base64-encoded, that fits the 48 MB request limit (the review's item 51) | — |
 | The tool count, routes, settings and alerts in FEATURES.md are checked by a test | The review's item 50 | — |
 | Release signing is optional but, once `CLARA_RELEASE_PUBKEY` is set, required | A public repository; a GitHub account takeover should not be enough to ship code to the machine | `scripts/release_signing.py new` |
 | GitHub Actions are pinned by major version, updated by Dependabot pull requests | Commit-SHA pinning is stronger; it can be switched to when the workflows settle | `.github/` |
+| Gmail has its own token and shares Drive's redirect address | A Drive token must not gain mail powers, and Drive's `drive.file` token must not be attachable as a mailbox (a sign-in is bound to the connection it was started for); using Google's existing redirect means one address less to register | `connectors/gmail.py`, `api/connections.py` |
+| Microsoft `Mail.ReadWrite` for drafts | Graph has no draft-only permission. The alternative (`Mail.Read` and `Mail.Send` only) leaves Outlook without drafts | The registration's permissions, and `outlook.py` |
+| Sending is `destructive` | An email cannot be taken back, and it keeps a Discord account takeover from sending mail: the Discord token (scope `safe`) cannot approve it. The price: approvals of emails are answered on the web site or the console, or on Discord after `/tokens approvals <the bot's token> all` | `gate/actions.py`, the token's scope |
+| A draft is allowed, and not raised after untrusted content | It stays in your mailbox until you send it yourself, and the request to send is what is guarded | `mail_draft` in `gate/actions.py` |
+| No « send this draft » tool, and no recipient chosen by Clara | A draft can be edited after it was shown, so an approval of it would not describe what is sent; a send names its addresses and carries its whole text, which is what the request shows | — |
+| The text of an email to send is 6,000 characters at most | The request shows all of it (8,000 characters for this class, 500 for the others); a longer text would hide a tail you never read | `MAX_BODY` in `connectors/mail.py` |
+| 5 emails per answer | A loop of sends is stopped long before the approvals pile up | `SENDS_PER_TURN` in `connectors/mail_tools.py` |
+| A new-mail notification carries the sender and the subject | The text then passes through Discord's servers when Discord is a listener; the body never does | `connectors/mail_watch.py` |
+| The mail tools are hidden in a local-only conversation | Like Drive's and GitHub's: a search or a read is a call to the provider, and « local only » means nothing leaves. A local model on a normal conversation reads mail without sending it to a hosted model | `OUTSIDE_TOOL_PREFIXES` |
+| Gmail attachments to send: 7 MB in all; Outlook: 2.2 MB each, 10 MB in all | Gmail carries the message in one JSON request; Graph takes an attachment in one request of 3 MB. Bigger files need upload sessions | `connectors/gmail.py`, `outlook.py` |

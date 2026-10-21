@@ -6,7 +6,9 @@
   fed only while every loop has turned within the last two minutes;
 * every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted;
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
-  sessions.
+  sessions;
+* every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
+  waits for the mail providers, so the watchdog does not count it.
 """
 
 from __future__ import annotations
@@ -45,6 +47,9 @@ class Upkeep:
             ("hourly", 3600.0, self.hourly),
         ):
             self._tasks.append(asyncio.create_task(self._loop(name, seconds, job), name=f"upkeep-{name}"))
+        if self.s.settings.mail_poll_seconds > 0:
+            self._tasks.append(asyncio.create_task(
+                self._loop("mail", float(self.s.settings.mail_poll_seconds), self.mail, watched=False), name="upkeep-mail"))
         interval = watchdog_seconds()
         if interval:
             self._tasks.append(asyncio.create_task(self._watchdog(interval), name="watchdog"))
@@ -56,9 +61,10 @@ class Upkeep:
             with contextlib.suppress(BaseException):
                 await task
 
-    async def _loop(self, name: str, seconds: float, job) -> None:
+    async def _loop(self, name: str, seconds: float, job, *, watched: bool = True) -> None:
         while True:
-            self.passes[name] = time.monotonic()
+            if watched:
+                self.passes[name] = time.monotonic()
             try:
                 result = job()
                 if asyncio.iscoroutine(result):
@@ -70,6 +76,10 @@ class Upkeep:
     # ------------------------------------------------------------------
     def approvals(self) -> None:
         self.s.approvals.sweep()
+
+    async def mail(self) -> None:
+        if self.s.connectors is not None:
+            await self.s.connectors.watch.poll()
 
     def every_minute(self) -> None:
         s = self.s

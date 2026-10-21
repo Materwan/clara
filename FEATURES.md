@@ -360,13 +360,36 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
   confirm before anything is stored. Disconnecting revokes the token at Google. Reading Google Docs, Sheets and Slides
   gives text; every create, update or delete (to Drive's trash) asks by default.
+- **Gmail:** OAuth with PKCE and two scopes only, `gmail.readonly` and `gmail.compose` (plus `openid email` to show which
+  mailbox you attach), using the Google client of Drive but a token of its own. Clara can search (free words, sender,
+  recipient, subject, unread, with an attachment, between two dates, in the inbox, sent, drafts, trash, spam or
+  everywhere), read a message, read an attachment's text, keep an attachment in the workspace, save a draft and send. She
+  cannot label, archive, mark read, trash or change any setting: the token has no scope for it. The Gmail API itself says
+  whose mailbox it is, which also proves the API is on in your Google Cloud project, before anything is stored.
+- **Outlook:** Microsoft Graph for personal accounts (outlook.com, hotmail, live) and work or school accounts
+  (`CLARA_MICROSOFT_TENANT`, `common` by default), OAuth with PKCE for a *web* app registration (a client secret in the
+  store). Permissions `Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`: Graph has no draft-only
+  permission, so the token could also change or delete mail, which Clara's tools never do. The sign-in proves the token
+  reaches an inbox before anything is stored. Microsoft rotates the refresh token at each use; the new one is stored at
+  once. Microsoft has no call to revoke it: disconnecting forgets it here, and the app is removed in your Microsoft account.
+- **Mail, both:** one Gmail and one Outlook mailbox at most. What a message says is untrusted: hidden characters (zero-width,
+  direction controls, Unicode tag characters) are removed and HTML is read without text that CSS hides, the result is
+  handed over as data, and the turn is tainted. An email goes only to the addresses given in the call (no address is
+  found for her), at most 20, text up to 6,000 characters (all of it is shown in the approval request), at most 5
+  attachments from the workspace (Gmail 7 MB in all; Outlook 2.2 MB each and 10 MB in all), at most 5 emails per answer.
+  A reply keeps its thread (Gmail: the headers and thread id; Outlook: Graph's reply draft with the quoted message).
+- **New-mail notifications:** off until `mail_notify` is on (Connections page). Every `CLARA_MAIL_POLL_SECONDS` (120) the
+  inbox of each connected mailbox is looked at; the first look only notes where it stands. A message announces itself as
+  « sender: subject » (never the text) to every client, Discord's `#notification` included; more than four new messages
+  at once make one notification with a count; `mail_notify_senders` keeps only senders containing one of its words.
+  This loop is not counted by the systemd watchdog.
 - **Content leaving the machine:** a call that would send text looking like a secret to GitHub, Drive, the vault's
-  remote or a networked script is raised to `ask`, naming the kind of secret found.
+  remote, a draft, an email or a networked script is raised to `ask`, naming the kind of secret found.
 
 ## 9. The rule gate
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
-(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
+(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:<gmail|outlook>`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
@@ -384,6 +407,9 @@ neither read nor change rules, and no tool answers a request.
 | `github_write`: GitHub issue, branch, pull request, commit | ask | ask |
 | `drive_read`: Drive read (files Clara created or you opened to her) | allow | allow |
 | `drive_write`: Drive create, update, delete | ask | ask |
+| `mail_read`: mail read: search, read a message or an attachment (Gmail, Outlook) | allow | allow |
+| `mail_draft`: mail draft: save a draft in your mailbox (nothing is sent) | allow | allow |
+| `mail_send`: mail send: an email leaves your mailbox | ask | refuse |
 | `vault_write`: create or edit vault notes (git history) | allow | allow |
 | `vault_destroy`: delete or move vault notes | ask | ask |
 | `web_search`: web search | allow | allow |
@@ -406,8 +432,14 @@ counted.
   refused. Beyond the gate, by construction: no tool reaches the database, the secrets, the data folder or the
   settings (tools work in the workspace, the vault, projects and memory only), and scripts never get the server's
   environment.
+- **Mail rules:** sending is the one action that always asks in a chat and is refused unattended, at the `destructive`
+  level (so the Discord token, scope `safe`, cannot approve it: answer from the web site or the console, or give that
+  token scope `all`). Its targets are the recipients, one `mail:to:<address>` each, so `allow mail_send mail:to:*@example.com`
+  opens one domain and a message with any other address stays closed (an allow rule must match every target). An
+  "always" answer to a message with several recipients writes a rule that matches nothing: write one rule per address
+  on the Rules page. In a local-only conversation the mail tools are not offered and the gate refuses them.
 - **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
-  Drive file), outside-world writes (`github_write`, `drive_write`, `vault_write`, `vault_destroy`) and networked
+  Drive file, an email or an attachment), outside-world writes (`github_write`, `drive_write`, `mail_send`, `vault_write`, `vault_destroy`) and networked
   scripts (`run_network`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
   Rules page switches it off.
 - **Secrets going out:** see section 8.
@@ -420,6 +452,8 @@ counted.
 - An `ask` creates a request with the frozen action. You answer **allow once**, **allow always**, **refuse once** or
   **refuse always**; the two "always" answers write a rule. A request expires after `CLARA_APPROVAL_EXPIRE` (24 h)
   and Clara is told it was not done. Finished requests are kept 30 days (the audit log keeps the decisions longer).
+  A request to send an email shows the sender, every address, the subject, the attachments and the whole text
+  (up to 8,000 characters; other requests show 500); Clara is told only the first 500 characters of it afterwards.
 - **In a streamed chat** the turn waits up to `CLARA_APPROVAL_WAIT` (600 s) for your answer, then goes on without the
   action; a later answer runs it and starts a short follow-up turn with the result. A request not answered within 60 s
   is pushed to your other clients too.
@@ -436,8 +470,8 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-57 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
-vault, no GitHub or Drive connection, a local-only conversation) are not offered.
+63 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+vault, no GitHub, Drive, Gmail or Outlook connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
 | --- | --- | --- |
@@ -480,6 +514,12 @@ vault, no GitHub or Drive connection, a local-only conversation) are not offered
 | `drive_create` | Create a file (or a Google Doc) | drive_write / write |
 | `drive_update` | Replace a file's content | drive_write / destructive |
 | `drive_delete` | Move a file to Drive's trash | drive_write / destructive |
+| `mail_search` | Search a mailbox, newest first — untrusted | mail_read / read |
+| `mail_read` | Read one email: headers, text in parts, attachments — untrusted | mail_read / read |
+| `mail_attachment_read` | The text of an attachment (text, code, PDF, Word) — untrusted | mail_read / read |
+| `mail_attachment_save` | Keep an attachment as a workspace file, never over an existing one — untrusted | mail_read / write |
+| `mail_draft` | Save a draft in the mailbox; nothing is sent | mail_draft / write |
+| `mail_send` | Send an email (asks; refused unattended) | mail_send / destructive |
 | `day_conversations` | What was said on a day, with the context of conversations begun earlier (pack Day conversations) | read |
 | `read_conversation` | One conversation in full, a page at a time | read |
 | `day_activity` | Tasks, reminders, scheduled runs and Clara's actions of a day (pack Day activity) | read |
@@ -609,6 +649,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `backup` | A backup, its check or its remote copy failed |
   | `github` | GitHub refused the token |
   | `google` | Google refused the refresh token (reconnect Drive) |
+  | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
+  | `outlook` | Microsoft refused the Outlook refresh token (reconnect Outlook) |
   | `update` | An update was not installed, or was rolled back |
   | `funnel` | Funnel was found on and turned off |
   | `tailscale` | Tailscale has not been serving Clara for 2 minutes |
@@ -705,6 +747,9 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_PUBLIC_URL` | the Tailscale address | Your `https://` address, for Google's redirect |
 | `CLARA_GOOGLE_CLIENT_ID` | — | Google OAuth client (web application) |
 | `CLARA_GOOGLE_PROJECT_NUMBER` | — | Google Cloud project number (the Picker) |
+| `CLARA_MICROSOFT_CLIENT_ID` | — | Microsoft Entra (Azure) app registration, platform Web (Outlook) |
+| `CLARA_MICROSOFT_TENANT` | `common` | `common`, `organizations`, `consumers`, a tenant id or a tenant domain |
+| `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
 | `CLARA_TAILSCALE_BIN` | tailscale | The tailscale binary |
@@ -741,6 +786,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `debug_until` | The debug content log's end (empty: off) |
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
+| `mail_notify` | Notify you of new mail in the inbox of a connected mailbox (off) |
+| `mail_notify_senders` | Only for senders whose name or address contains one of these words (empty: all) |
 
 ### Secrets (encrypted store: `clara secrets set <name>`, the Admin page)
 
@@ -752,8 +799,11 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `mistral_api_key` | Mistral API key |
 | `opencode_go_api_key` | OpenCode Go API key |
 | `github_token` | GitHub fine-grained personal access token (set from the Connections page) |
-| `google_client_secret` | Google OAuth client secret |
+| `google_client_secret` | Google OAuth client secret (Drive and Gmail) |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |
+| `gmail_refresh_token` | Gmail refresh token (set by connecting Gmail, never by hand) |
+| `microsoft_client_secret` | Microsoft (Azure) app client secret (Outlook) |
+| `outlook_refresh_token` | Outlook refresh token (set by connecting Outlook, never by hand; Microsoft renews it at each use) |
 | `google_picker_api_key` | Google API key for the Drive Picker |
 | `vault_git_token` | Token to push the vault over HTTPS |
 | `restic_password` | Password of the restic repository |
@@ -873,7 +923,7 @@ keep-alive every 15 s.
 | `GET /v1/workspace/commits/{commit}` | One commit's diff |
 | `POST /v1/workspace/undo` | Revert the last change, or a commit |
 | `GET /v1/workspace/runs` | Script runs |
-| `GET /v1/connections` | GitHub and Drive: state, repositories, files |
+| `GET /v1/connections` | GitHub, Drive, Gmail and Outlook: state, repositories, files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |
@@ -885,6 +935,11 @@ keep-alive every 15 s.
 | `DELETE /v1/connections/google` | Disconnect (revoke at Google) |
 | `GET /v1/connections/google/picker` | What the picker window needs (web session only) |
 | `POST /v1/connections/google/picked` | Files and folders you opened to Clara |
+| `POST /v1/connections/mail/{mailbox}/start` | Start the Gmail or Outlook consent (web session only) |
+| `GET /v1/connections/outlook/callback` | Microsoft's redirect (forwards to the site; no token, does nothing else) |
+| `POST /v1/connections/mail/{mailbox}/finish` | Exchange the code and prove the mailbox is reachable; returns its address |
+| `POST /v1/connections/mail/{mailbox}/confirm` | Attach that mailbox |
+| `DELETE /v1/connections/mail/{mailbox}` | Disconnect (Gmail: revoked at Google; Outlook: forgotten here) |
 | `GET /v1/vault` | Vault status |
 | `GET /v1/vault/notes` | The notes |
 | `GET /v1/vault/search` | Search |
@@ -914,5 +969,6 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Vault note | 400,000 characters; 20 search results |
 | Special tools | `day_conversations` `CLARA_DAY_DIGEST_CHARS`; `files_created` 60 files a page; `daily_notes` 31 days; a question of `ask_person` 2,000 characters; 31 missed or queued runs per schedule |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
+| Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

@@ -108,5 +108,16 @@ earlier server: the new Clara starts empty.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
-- **New settings:** all of them (see FEATURES.md, section 14).
-- **Migrations:** schema version 7 (0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).
+- **Mail (Gmail and Outlook):** two more connections on the Connections page. Gmail through its API with `gmail.readonly` and
+  `gmail.compose` only (a token of its own, not Drive's); Outlook through Microsoft Graph for personal and work accounts. Six
+  tools (`mail_search`, `mail_read`, `mail_attachment_read`, `mail_attachment_save`, `mail_draft`, `mail_send`) and three
+  gate classes: reading and drafts are allowed, sending asks in a chat (the whole text and every address in the request,
+  shown in full), is refused unattended, cannot be approved from Discord, and is raised to ask after untrusted content
+  whatever the rules say. Rules can name a recipient (`mail:to:*@example.com`). What a message says is cleaned of hidden
+  characters and CSS-hidden text and handed over as data; the sign-in proves the token reaches a mailbox before anything is
+  kept; optional new-mail notifications (sender and subject only). The tools, the classes and the limits are in FEATURES.md (sections 8, 9 and 10), the reasons in DECISIONS.md, the setup in OPERATIONS.md. Email
+  connectors move out of NON-GOALS.md.
+- **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MICROSOFT_CLIENT_ID`,
+  `CLARA_MICROSOFT_TENANT`, `CLARA_MAIL_POLL_SECONDS`; the runtime settings `mail_notify` and `mail_notify_senders`; the secrets
+  `microsoft_client_secret`, `gmail_refresh_token` and `outlook_refresh_token`; the alerts `gmail` and `outlook`.
+- **Migrations:** schema version 8 (0008: Gmail and Outlook as connections, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

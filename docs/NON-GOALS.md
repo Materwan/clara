@@ -29,7 +29,13 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 - **Automatic updates.** Releases are installed when you choose one.
 - **Spending caps.** Spending is shown, not capped. Use the providers' own limits if you need one.
 - **Arbitrary MCP servers or plug-ins.** Every tool is in this repository, with its gate class, and tested.
-- **Email, calendar, messaging connectors** in 1.0. Each would be a new outside-world class with its own defaults.
+- **Calendar and messaging connectors** in 1.0. Each would be a new outside-world class with its own defaults. (Email
+  moved out of this list: Gmail and Outlook are connected, with three classes of their own; see
+  [DECISIONS.md](DECISIONS.md).)
+- **More than Gmail and Outlook for mail, and more than one of each.** Other providers, IMAP/SMTP with a password
+  (a password cannot be limited to reading), several Gmail or Outlook mailboxes at once.
+- **Organising a mailbox:** labels, archive, mark read, delete, filters, forwarding rules, an HTML composer. The Gmail
+  token has no scope for them; the Outlook token could (Graph has no narrower permission) but no tool does.
 - **Translation or stemming in memory search.**
 - **A mobile app.** The web site works on a phone over the tailnet.
 - **Rewriting git history to erase deleted files** in the workspace or the vault. Deletion there is undoable on

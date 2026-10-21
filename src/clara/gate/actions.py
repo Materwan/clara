@@ -7,6 +7,7 @@ Targets name what is touched, with a prefix:
 
     ws:<path>          a workspace path            (a rule may leave the prefix out: `scratch/**`)
     github:<owner/repo>                            drive:<file id>          vault:<note path>
+    mail:<gmail|outlook>   a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
     domain:<host>      a web address's host        net                      a script that asks for the network
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
@@ -39,6 +40,9 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "github_write": ("ask", "ask", "GitHub issue, branch, pull request, commit"),
     "drive_read": ("allow", "allow", "Drive read (files Clara created or you opened to her)"),
     "drive_write": ("ask", "ask", "Drive create, update, delete"),
+    "mail_read": ("allow", "allow", "Mail read: search, read a message or an attachment (Gmail, Outlook)"),
+    "mail_draft": ("allow", "allow", "Mail draft: save a draft in your mailbox (nothing is sent)"),
+    "mail_send": ("ask", "refuse", "Mail send: an email leaves your mailbox"),
     "vault_write": ("allow", "allow", "Create or edit vault notes (git history)"),
     "vault_destroy": ("ask", "ask", "Delete or move vault notes"),
     "web_search": ("allow", "allow", "Web search"),
@@ -47,14 +51,15 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
 }
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
-RAISED_WHEN_TAINTED = frozenset({"github_write", "drive_write", "vault_write", "vault_destroy", "run_network"})
+RAISED_WHEN_TAINTED = frozenset({"github_write", "drive_write", "mail_send", "vault_write", "vault_destroy", "run_network"})
 # Classes whose content leaves the machine: content that looks like a secret raises them to `ask`
-OUTSIDE = frozenset({"github_write", "drive_write", "vault_write", "run_network", "fetch_other", "fetch_trusted"})
+OUTSIDE = frozenset({"github_write", "drive_write", "mail_draft", "mail_send", "vault_write", "run_network", "fetch_other",
+                     "fetch_trusted"})
 # Classes whose call sends something off the machine (a query, an address, content): refused in a local-only turn.
 # The vault's are there because its changes are pushed to its remote (not when CLARA_VAULT_PUSH is off).
-LEAVES_MACHINE = OUTSIDE | frozenset({"web_search", "github_read", "drive_read", "vault_destroy", "discord"})
+LEAVES_MACHINE = OUTSIDE | frozenset({"web_search", "github_read", "drive_read", "mail_read", "vault_destroy", "discord"})
 
-PREFIXES = ("ws:", "github:", "drive:", "vault:", "domain:")
+PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:")
 SPECIAL_TARGETS = ("net", "search", "memory", "reminders", "tasks", "notify", "forms", "history", "discord")
 _GLOB_CHARS = re.compile(r"[*?\[]")
 

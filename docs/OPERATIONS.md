@@ -73,6 +73,56 @@ page, then add each repository there: Clara reaches no other, and every change a
 3. On the Connections page: **Connect Google Drive**, consent, check the address shown, **Attach it**. Clara makes
    her own "Clara" folder. **Open files to Clara…** opens the Picker for files and folders you want her to see.
 
+### Gmail
+
+Gmail uses Drive's Google Cloud project, OAuth client and redirect address (`.../v1/connections/google/callback`), with
+a token of its own.
+
+1. In the same project: enable the **Gmail API** (APIs & Services → Library). On the OAuth consent screen (Google Auth
+   Platform → Data Access) add the scopes `.../auth/gmail.readonly` and `.../auth/gmail.compose`, and nothing else
+   (Clara cannot label, archive, delete or change settings: the token has no scope for it). The scope picker lists only
+   the scopes of enabled APIs; if one is missing, paste its full URL in the *Manually add scopes* box, then *Add to
+   table*, *Update* and *Save*.
+2. These are Google's *restricted* scopes. An app *In production* that Google has not verified shows an « unverified
+   app » warning at consent (fine for your own account) and its tokens do not expire; an app in *Testing* gets tokens
+   that end after 7 days ([PROVIDERS.md](PROVIDERS.md)). Google's verification for restricted scopes asks for a security
+   assessment: it is not worth it for one person.
+3. Nothing new to set if Drive works (`CLARA_GOOGLE_CLIENT_ID`, the secret `google_client_secret`). On the Connections
+   page: **Connect Gmail**, consent, check the address shown, **Attach it**. A Gmail API that is not turned on is told
+   at that moment, before anything is stored.
+4. Disconnecting revokes the Gmail token at Google. Google may count Drive's and Gmail's tokens as one grant: if Drive
+   then asks to be reconnected after you disconnected Gmail, that is why (to verify with a real account).
+
+### Outlook
+
+Outlook (outlook.com, hotmail, live, and work or school mailboxes) uses Microsoft Graph and an app of your own:
+
+1. In the Microsoft Entra admin center (entra.microsoft.com) → *App registrations* → *New registration*. Supported account
+   types: *any organizational directory and personal Microsoft accounts* (both kinds; `CLARA_MICROSOFT_TENANT=common`, the
+   default), or personal only (`consumers`), or one organisation (its tenant id or domain, and set the setting to it).
+   Redirect URI, platform **Web**: `https://<machine>.<tailnet>.ts.net/v1/connections/outlook/callback`.
+2. *API permissions* → Microsoft Graph → *Delegated*: `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
+   Graph has no draft-only permission, so `Mail.ReadWrite` could also change or delete mail; Clara's tools never do.
+   A work or school account may need an administrator to grant consent.
+3. *Certificates & secrets* → a client secret (it expires, 24 months at most: note the date). In `/etc/clara/clara.env`:
+   `CLARA_MICROSOFT_CLIENT_ID=<Application (client) ID>`, and `CLARA_MICROSOFT_TENANT` if it is not `common`. Then
+   `clara secrets set microsoft_client_secret`. Restart.
+4. On the Connections page: **Connect Outlook**, consent, check the address shown, **Attach it**. The sign-in refuses an
+   account whose inbox Clara cannot read, before anything is stored.
+5. Disconnecting forgets the token here; Microsoft has no call to revoke it, so also remove the app at
+   https://account.microsoft.com/privacy/app-access (personal) or https://myapps.microsoft.com (work or school).
+   A refresh token unused for 90 days ends; an expired client secret is told as « the client secret is wrong or has expired ».
+
+### Mail in daily use
+
+- **Approving an email** needs the web site or the console. Discord cannot, because sending is a `destructive` action
+  and the Discord token's scope is `safe`; if you want to answer from Discord, `/tokens approvals <the bot's token> all`
+  gives it that right (and to every other destructive action).
+- **Letting a schedule send** is a rule you write: `allow mail_send mail:to:you@example.com` with the situation
+  `unattended`. It still asks after a turn read untrusted content (an inbox read is one).
+- **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
+  inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` or `outlook` alert once.
+
 ### The Obsidian vault
 
 ```bash

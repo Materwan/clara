@@ -25,8 +25,10 @@ Only the latest release is supported. Updates are installed by choice (`/update`
 | What leaked | Do |
 | --- | --- |
 | A client token | `clara token revoke <name>` (or the Admin page): refused at once, no restart. Make a new one. |
-| The secrets key | `clara secrets rotate --new-key-file <file>` with a new key, then update the systemd credential (docs/OPERATIONS.md). Then change every secret the store held (provider keys, GitHub token, Google client secret; disconnect and reconnect Drive). |
+| The secrets key | `clara secrets rotate --new-key-file <file>` with a new key, then update the systemd credential (docs/OPERATIONS.md). Then change every secret the store held (provider keys, GitHub token, Google and Microsoft client secrets; disconnect and reconnect Drive, Gmail and Outlook). |
 | A provider key, the GitHub token | Revoke it at the provider or on GitHub, then `clara secrets set <name>` or the Connections page. |
-| Google access | Disconnect Drive on the Connections page (the token is revoked at Google), and check https://myaccount.google.com/permissions. |
+| Google access | Disconnect Drive and Gmail on the Connections page (the tokens are revoked at Google), and check https://myaccount.google.com/permissions. |
+| Microsoft access (Outlook) | Disconnect Outlook on the Connections page, then remove the app at https://account.microsoft.com/privacy/app-access (personal) or https://myapps.microsoft.com (work or school): Microsoft has no call for Clara to revoke the token herself. Renew the app's client secret in Azure. |
+| An email you did not mean to send | It cannot be unsent: every send was shown whole in an approval request and is in the audit log (tool, recipients, time). Turn off the rule that allowed it (Rules page); if you suspect an injection, revoke the web token and the connections above. |
 | A backup | Backups hold the database: facts, conversations, encrypted secrets (useless without the key, which is never in a backup). Rotate the key if you think both leaked. |
 | The Discord account | Revoke the `discord` token; destructive actions could not be approved from Discord anyway (its scope is `safe`). |

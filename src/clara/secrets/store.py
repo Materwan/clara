@@ -48,13 +48,19 @@ KNOWN_SECRETS: dict[str, str] = {
     "mistral_api_key": "Mistral API key (provider `mistral`)",
     "opencode_go_api_key": "OpenCode Go API key (provider `opencode-go`)",
     "github_token": "GitHub fine-grained personal access token",
-    "google_client_secret": "Google OAuth client secret (Drive)",
+    "google_client_secret": "Google OAuth client secret (Drive and Gmail)",
     "google_refresh_token": "Google refresh token (set by the Drive connection, not by hand)",
     "google_picker_api_key": "Google API key for the Drive Picker",
+    "gmail_refresh_token": "Gmail refresh token (set by the Gmail connection, not by hand)",
+    "microsoft_client_secret": "Microsoft (Azure) app client secret (Outlook)",
+    "outlook_refresh_token": "Outlook refresh token (set by the Outlook connection, not by hand)",
     "vault_git_token": "Token to push the Obsidian vault over HTTPS",
     "restic_password": "Password of the restic repository for remote backups",
     "release_token": "Optional GitHub token for release downloads (public repositories need none)",
 }
+
+# Set by a connection flow after you confirm the account, never by hand (an unconfirmed account must not be attachable)
+CONNECTION_TOKENS = frozenset({"google_refresh_token", "gmail_refresh_token", "outlook_refresh_token"})
 
 
 class SecretError(Exception):
