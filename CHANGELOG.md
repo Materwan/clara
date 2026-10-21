@@ -108,8 +108,8 @@ earlier server: the new Clara starts empty.
 - **Operations:** tagged releases with checksums, optional Ed25519 signatures, preflight on a database copy and
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
-- **Mail (Gmail and Outlook):** two more connections on the Connections page. Gmail through its API with `gmail.readonly` and
-  `gmail.compose` only (a token of its own, not Drive's); Outlook through Microsoft Graph for personal and work accounts. Six
+- **Mail (Gmail):** one more connection on the Connections page. Gmail through its API with `gmail.readonly` and
+  `gmail.compose` only (a token of its own, not Drive's). Six
   tools (`mail_search`, `mail_read`, `mail_attachment_read`, `mail_attachment_save`, `mail_draft`, `mail_send`) and three
   gate classes: reading and drafts are allowed, sending asks in a chat (the whole text and every address in the request,
   shown in full), is refused unattended, cannot be approved from Discord, and is raised to ask after untrusted content
@@ -131,7 +131,6 @@ earlier server: the new Clara starts empty.
   the rest can now be told apart). Approval requests stay in `#approval`, the questions of scheduled runs in `#general`, and alerts
   cannot be switched off. The server tells the bot each event's channel, so the choice applies to the next message; with nothing
   chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
-- **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MICROSOFT_CLIENT_ID`,
-  `CLARA_MICROSOFT_TENANT`, `CLARA_MAIL_POLL_SECONDS`; the runtime settings `discord_routes`, `mail_notify` and `mail_notify_senders`; the secrets
-  `microsoft_client_secret`, `gmail_refresh_token` and `outlook_refresh_token`; the alerts `gmail` and `outlook`.
-- **Migrations:** schema version 9 (0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail and Outlook as connections, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).
+- **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MAIL_POLL_SECONDS`; the runtime settings `discord_routes`, `mail_notify` and `mail_notify_senders`; the secret
+  `gmail_refresh_token`; the alert `gmail`.
+- **Migrations:** schema version 9 (0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail as a connection, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

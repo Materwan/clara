@@ -4,7 +4,7 @@ Clara is a personal AI agent for **one person**, running on **one Linux machine*
 person's own devices over Tailscale**. She chats from a web site, a terminal, an admin console, a Discord server of
 your own or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
 writes files in her own workspace, runs scripts in isolated containers, and works with GitHub, Google Drive, your
-Gmail and Outlook mail, your Obsidian vault and the web. Every action she takes goes through rules you set: allowed, asked, or refused.
+Gmail, your Obsidian vault and the web. Every action she takes goes through rules you set: allowed, asked, or refused.
 
 There are no accounts, no users, no credits and no public exposure: Clara 1.0 is a rewrite from zero of an earlier,
 broader server, following [the rebuild plan](clara-rebuild-plan.md) and answering
@@ -42,7 +42,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
   |                    |                                                         |
   |                    v                                                         |
   |   tools: memory, time, projects, files, forms, vault, web (SearXNG),         |
-  |          GitHub, Drive, Gmail, Outlook, workspace, scripts (rootless Podman) |
+  |          GitHub, Drive, Gmail, workspace, scripts (rootless Podman)          |
   |   time: reminders, tasks, schedules -> unattended turns through the gate     |
   |   ops: events, alerts, backups (SQLite + restic), traffic and usage logs     |
   +---------+---------------------------+---------------------------+------------+
@@ -66,7 +66,7 @@ from inside the server, through the same gate, as "unattended".
 - Models: [Ollama](https://ollama.com) on this machine or another of your tailnet, and/or keys for Ollama cloud,
   Gemini, DeepSeek, Mistral or OpenCode Go.
 - Optional: a SearXNG instance (`deploy/searxng/`), [restic](https://restic.net) and another tailnet machine for remote
-  backups, a Google Cloud OAuth client for Drive and Gmail, a Microsoft Entra app for Outlook, a GitHub fine-grained
+  backups, a Google Cloud OAuth client for Drive and Gmail, a GitHub fine-grained
   token, a Discord bot.
 
 ## Install
@@ -101,7 +101,7 @@ clara-admin --save-token                 # the console token; then /status, /mod
 ```
 
 On the web site, under **Settings**: choose your default model on **Models**, look at **Rules & approvals** to see
-what Clara may do alone, connect GitHub, Drive, Gmail and Outlook on **Connections** if you want them.
+what Clara may do alone, connect GitHub, Drive and Gmail on **Connections** if you want them.
 
 ## Development
 
@@ -125,7 +125,7 @@ uv run clara-server                      # http://127.0.0.1:8765
 
 | Folder | What is there |
 | --- | --- |
-| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/`, `triggers/` (hooks: what Clara does when a mail arrives), `events/` (the event store and which Discord channel carries each kind), `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, Outlook, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
+| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/`, `triggers/` (hooks: what Clara does when a mail arrives), `events/` (the event store and which Discord channel carries each kind), `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
 | `src/clara_discord/` | The Discord bot |
 | `web/` | The Svelte site (built into `src/clara/web/dist`) |
 | `tests/` | The test suite (a fake model provider in `fakes.py`) |

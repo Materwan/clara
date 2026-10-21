@@ -45,7 +45,7 @@ class EventKind:
 
 KINDS: dict[str, EventKind] = {
     "mail.received": EventKind(
-        "mail.received", "A new message in the inbox of a connected Gmail or Outlook mailbox",
+        "mail.received", "A new message in the inbox of a connected Gmail mailbox",
         {"account": "text", "mailbox": "text", "from": "text", "from_address": "text", "subject": "text", "snippet": "text",
          "has_attachment": "bool", "unread": "bool"},
         ("mail_search", "mail_read", "mail_attachment_read")),

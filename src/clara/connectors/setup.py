@@ -1,4 +1,4 @@
-"""Adds the web, GitHub, Google Drive, Gmail and Outlook to a server, and what the prompt says about them."""
+"""Adds the web, GitHub, Google Drive and Gmail to a server, and what the prompt says about them."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from .gmail import Gmail
 from .mail import LABELS, PROVIDERS, MailClient, MailError
 from .mail_tools import mail_tools
 from .mail_watch import MailWatch
-from .outlook import MicrosoftAuth, Outlook
 from .store import Connections
 from .tools import drive_tools, github_tools, web_tools
 from .web import Web
@@ -30,13 +29,13 @@ FLOW_SECONDS = 600
 
 @dataclass
 class Flow:
-    """A consent (Google for Drive or Gmail, Microsoft for Outlook) started from one browser session: only that session
-    may finish it, and only through the connection it was started for (a Gmail consent cannot be attached as Drive)."""
+    """A consent (Google for Drive or Gmail) started from one browser session: only that session may finish it, and only
+    through the connection it was started for (a Gmail consent cannot be attached as Drive)."""
 
     web_session: int
     verifier: str
     expires: float
-    provider: str = "drive"  # drive, gmail or outlook
+    provider: str = "drive"  # drive or gmail
     refresh_token: str = field(default="", repr=False)
     email: str = ""
 
@@ -49,8 +48,6 @@ class Connectors:
         self._drive_key = ""
         self._gmail: Gmail | None = None
         self._gmail_key = ""
-        self._outlook: Outlook | None = None
-        self._outlook_key = ""
         self.watch = MailWatch(s)
 
     # ------------------------------------------------------------------
@@ -84,12 +81,6 @@ class Connectors:
             self.s.alerts.raise_("google", "Google Drive refused the connection", str(error))
 
     # ------------------------------------------------------------------
-    def microsoft_auth(self) -> MicrosoftAuth | None:
-        secret = self.s.secrets.get("microsoft_client_secret")
-        if not self.s.settings.microsoft_client_id or not secret:
-            return None
-        return MicrosoftAuth(self.s.settings.microsoft_client_id, secret, self.s.settings.microsoft_tenant)
-
     def gmail_client(self) -> Gmail | None:
         refresh = self.s.secrets.get("gmail_refresh_token")
         auth = self.google_auth()
@@ -99,22 +90,8 @@ class Connectors:
             self._gmail, self._gmail_key = Gmail(auth, refresh), refresh
         return self._gmail
 
-    def outlook_client(self) -> Outlook | None:
-        refresh = self.s.secrets.get("outlook_refresh_token")
-        auth = self.microsoft_auth()
-        if not refresh or auth is None:
-            return None
-        if self._outlook is None or self._outlook_key != refresh:
-            self._outlook, self._outlook_key = Outlook(auth, refresh, on_refresh=self._outlook_renewed), refresh
-        return self._outlook
-
-    def _outlook_renewed(self, token: str) -> None:
-        """Microsoft gave a new refresh token: it replaces the old one at once, so a restart finds the good one."""
-        self.s.secrets.set("outlook_refresh_token", token)
-        self._outlook_key = token
-
     def mail_client(self, provider: str) -> MailClient | None:
-        return self.gmail_client() if provider == "gmail" else self.outlook_client() if provider == "outlook" else None
+        return self.gmail_client() if provider == "gmail" else None
 
     def mail_connected(self, provider: str) -> bool:
         return provider in PROVIDERS and bool(self.s.connections.get(provider)) and self.s.secrets.has(f"{provider}_refresh_token")

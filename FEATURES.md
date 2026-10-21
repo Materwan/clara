@@ -307,7 +307,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 ### Hooks: when something happens
 
 A schedule runs Clara at a time; a **hook** runs her when something happens outside. Today that is a new message in the
-inbox of a connected Gmail or Outlook mailbox (`mail.received`); the design takes other sources (a pull request, a file).
+inbox of a connected Gmail mailbox (`mail.received`); the design takes other sources (a pull request, a file).
 
 - **Events.** The mail poll (section 8) finds new messages and stores each as an *event*, once: `(source, key)` is unique,
   so the same message seen twice (a restart, a replay) is one event. An event carries the sender, the subject, a short
@@ -425,18 +425,12 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   everywhere), read a message, read an attachment's text, keep an attachment in the workspace, save a draft and send. She
   cannot label, archive, mark read, trash or change any setting: the token has no scope for it. The Gmail API itself says
   whose mailbox it is, which also proves the API is on in your Google Cloud project, before anything is stored.
-- **Outlook:** Microsoft Graph for personal accounts (outlook.com, hotmail, live) and work or school accounts
-  (`CLARA_MICROSOFT_TENANT`, `common` by default), OAuth with PKCE for a *web* app registration (a client secret in the
-  store). Permissions `Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`: Graph has no draft-only
-  permission, so the token could also change or delete mail, which Clara's tools never do. The sign-in proves the token
-  reaches an inbox before anything is stored. Microsoft rotates the refresh token at each use; the new one is stored at
-  once. Microsoft has no call to revoke it: disconnecting forgets it here, and the app is removed in your Microsoft account.
-- **Mail, both:** one Gmail and one Outlook mailbox at most. What a message says is untrusted: hidden characters (zero-width,
+- **Mail:** one Gmail mailbox at most. What a message says is untrusted: hidden characters (zero-width,
   direction controls, Unicode tag characters) are removed and HTML is read without text that CSS hides, the result is
   handed over as data, and the turn is tainted. An email goes only to the addresses given in the call (no address is
   found for her), at most 20, text up to 6,000 characters (all of it is shown in the approval request), at most 5
-  attachments from the workspace (Gmail 7 MB in all; Outlook 2.2 MB each and 10 MB in all), at most 5 emails per answer.
-  A reply keeps its thread (Gmail: the headers and thread id; Outlook: Graph's reply draft with the quoted message).
+  attachments from the workspace (Gmail 7 MB in all), at most 5 emails per answer.
+  A reply keeps its thread (the headers and thread id).
 - **New-mail notifications:** off until `mail_notify` is on (Connections page). Every `CLARA_MAIL_POLL_SECONDS` (120) the
   inbox of each connected mailbox is looked at; the first look only notes where it stands. A message announces itself as
   « sender: subject » (never the text) to every client, Discord's `#notification` included; more than four new messages
@@ -451,7 +445,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 ## 9. The rule gate
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
-(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:<gmail|outlook>`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
+(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
@@ -469,7 +463,7 @@ neither read nor change rules, and no tool answers a request.
 | `github_write`: GitHub issue, branch, pull request, commit | ask | ask |
 | `drive_read`: Drive read (files Clara created or you opened to her) | allow | allow |
 | `drive_write`: Drive create, update, delete | ask | ask |
-| `mail_read`: mail read: search, read a message or an attachment (Gmail, Outlook) | allow | allow |
+| `mail_read`: mail read: search, read a message or an attachment (Gmail) | allow | allow |
 | `mail_draft`: mail draft: save a draft in your mailbox (nothing is sent) | allow | allow |
 | `mail_send`: mail send: an email leaves your mailbox | ask | refuse |
 | `vault_write`: create or edit vault notes (git history) | allow | allow |
@@ -533,7 +527,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 ## 10. Tools
 
 63 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
-vault, no GitHub, Drive, Gmail or Outlook connection, a local-only conversation) are not offered.
+vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
 | --- | --- | --- |
@@ -713,7 +707,6 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `google` | Google refused the refresh token (reconnect Drive) |
   | `trigger:<id>` | A hook has more than 500 runs waiting: the newest events were recorded but not run |
   | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
-  | `outlook` | Microsoft refused the Outlook refresh token (reconnect Outlook) |
   | `update` | An update was not installed, or was rolled back |
   | `funnel` | Funnel was found on and turned off |
   | `tailscale` | Tailscale has not been serving Clara for 2 minutes |
@@ -810,8 +803,6 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_PUBLIC_URL` | the Tailscale address | Your `https://` address, for Google's redirect |
 | `CLARA_GOOGLE_CLIENT_ID` | — | Google OAuth client (web application) |
 | `CLARA_GOOGLE_PROJECT_NUMBER` | — | Google Cloud project number (the Picker) |
-| `CLARA_MICROSOFT_CLIENT_ID` | — | Microsoft Entra (Azure) app registration, platform Web (Outlook) |
-| `CLARA_MICROSOFT_TENANT` | `common` | `common`, `organizations`, `consumers`, a tenant id or a tenant domain |
 | `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
@@ -866,8 +857,6 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `google_client_secret` | Google OAuth client secret (Drive and Gmail) |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |
 | `gmail_refresh_token` | Gmail refresh token (set by connecting Gmail, never by hand) |
-| `microsoft_client_secret` | Microsoft (Azure) app client secret (Outlook) |
-| `outlook_refresh_token` | Outlook refresh token (set by connecting Outlook, never by hand; Microsoft renews it at each use) |
 | `google_picker_api_key` | Google API key for the Drive Picker |
 | `vault_git_token` | Token to push the vault over HTTPS |
 | `restic_password` | Password of the restic repository |
@@ -997,7 +986,7 @@ keep-alive every 15 s.
 | `POST /v1/triggers/{trigger_id}/test` | What would happen for an event (stored, sample or latest): match, message, tools; nothing is done |
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
-| `GET /v1/connections` | GitHub, Drive, Gmail and Outlook: state, repositories, files; the mail notification settings |
+| `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories, files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |
@@ -1009,11 +998,10 @@ keep-alive every 15 s.
 | `DELETE /v1/connections/google` | Disconnect (revoke at Google) |
 | `GET /v1/connections/google/picker` | What the picker window needs (web session only) |
 | `POST /v1/connections/google/picked` | Files and folders you opened to Clara |
-| `POST /v1/connections/mail/{mailbox}/start` | Start the Gmail or Outlook consent (web session only) |
-| `GET /v1/connections/outlook/callback` | Microsoft's redirect (forwards to the site; no token, does nothing else) |
+| `POST /v1/connections/mail/{mailbox}/start` | Start the Gmail consent (web session only) |
 | `POST /v1/connections/mail/{mailbox}/finish` | Exchange the code and prove the mailbox is reachable; returns its address |
 | `POST /v1/connections/mail/{mailbox}/confirm` | Attach that mailbox |
-| `DELETE /v1/connections/mail/{mailbox}` | Disconnect (Gmail: revoked at Google; Outlook: forgotten here) |
+| `DELETE /v1/connections/mail/{mailbox}` | Disconnect (revoked at Google) |
 | `GET /v1/vault` | Vault status |
 | `GET /v1/vault/notes` | The notes |
 | `GET /v1/vault/search` | Search |

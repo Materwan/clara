@@ -1,5 +1,5 @@
 """Mail, in common: what a message is, how untrusted text is cleaned, how a message to send is checked and built, and the
-HTTP client both mailboxes share (`gmail.py`, `outlook.py`).
+HTTP client a mailbox connector builds on (`gmail.py`).
 
 Clara reaches a mailbox through the provider's own API with an OAuth token you gave on the Connections page; she never
 sees a password. What she may do, in the order of risk:
@@ -31,8 +31,8 @@ from typing import Any
 
 import httpx
 
-PROVIDERS = ("gmail", "outlook")
-LABELS = {"gmail": "Gmail", "outlook": "Outlook"}
+PROVIDERS = ("gmail",)
+LABELS = {"gmail": "Gmail"}
 FOLDERS = ("inbox", "sent", "drafts", "trash", "spam", "all")
 SEARCH_MAX = 25
 MAX_RECIPIENTS = 20
@@ -345,7 +345,7 @@ def human(size: int) -> str:
 # ----------------------------------------------------------------------
 class MailClient:
     """HTTP with a bearer token: a stale one is refreshed once, a throttled call waits and tries again, any other failure is
-    turned into text by the mailbox's `problem`. Subclasses fill in the calls (see gmail.py and outlook.py):
+    turned into text by the mailbox's `problem`. Subclasses fill in the calls (see gmail.py):
 
         whoami()                 the mailbox's own address
         search(Search)           summaries, newest first
@@ -414,7 +414,7 @@ class MailClient:
         except ValueError:
             raise MailError(f"{self.label} answered something that is not JSON.") from None
 
-    # The calls below are the contract; the two mailboxes implement them.
+    # The calls below are the contract; the mailbox connector implements them.
     async def whoami(self) -> str:
         raise NotImplementedError
 

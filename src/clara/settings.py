@@ -27,9 +27,6 @@ HOSTED_PROVIDERS = ("cloud", "gemini", "deepseek", "mistral", "opencode-go")
 RESERVED_PROVIDER_IDS = frozenset(HOSTED_PROVIDERS)
 TAILSCALE_PORTS = (443, 8443, 10000)
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
-# The Microsoft sign-in authority is part of an address: a keyword, a tenant id or a tenant domain, nothing else
-_TENANT = re.compile(r"^(?:common|organizations|consumers|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|"
-                     r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+)$")
 MAIL_POLL_MIN = 30
 
 
@@ -129,8 +126,6 @@ class Settings:
     public_url: str = ""
     google_client_id: str = ""
     google_project_number: str = ""
-    microsoft_client_id: str = ""
-    microsoft_tenant: str = "common"
     mail_poll_seconds: int = 120
 
     # --- operations -----------------------------------------------------------------------------------------
@@ -351,11 +346,6 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", backup_time):
         r.problems.append(f"CLARA_BACKUP_TIME={backup_time!r} must be HH:MM.")
         backup_time = "03:30"
-    microsoft_tenant = r.text("CLARA_MICROSOFT_TENANT", "common")
-    if not _TENANT.match(microsoft_tenant):
-        r.problems.append(f"CLARA_MICROSOFT_TENANT={microsoft_tenant!r} must be common, organizations, consumers, a "
-                          "tenant id or a tenant domain.")
-        microsoft_tenant = "common"
     mail_poll_seconds = r.integer("CLARA_MAIL_POLL_SECONDS", 120, 0, 86_400)
     if 0 < mail_poll_seconds < MAIL_POLL_MIN:
         r.problems.append(f"CLARA_MAIL_POLL_SECONDS={mail_poll_seconds} must be 0 (never) or at least {MAIL_POLL_MIN}.")
@@ -445,8 +435,6 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         public_url=r.url("CLARA_PUBLIC_URL", ""),
         google_client_id=r.text("CLARA_GOOGLE_CLIENT_ID", ""),
         google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),
-        microsoft_client_id=r.text("CLARA_MICROSOFT_CLIENT_ID", ""),
-        microsoft_tenant=microsoft_tenant,
         mail_poll_seconds=mail_poll_seconds,
         tailscale=r.choice("CLARA_TAILSCALE", "serve", ("serve", "off")),
         tailscale_port=tailscale_port,

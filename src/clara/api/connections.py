@@ -1,12 +1,10 @@
 """Connections: GitHub (a fine-grained token you paste), Google Drive (OAuth, `drive.file`), Gmail (OAuth, read and
-drafts) and Outlook (Microsoft OAuth, read, drafts and send), and the resources Clara may use: the repositories you add,
-the Drive files and folders you pick.
+drafts), and the resources Clara may use: the repositories you add, the Drive files and folders you pick.
 
 Each consent is bound to the browser session that started it, and to the connection it was started for: the provider
 sends the browser back to a `callback` (which needs no token: it only forwards to the web site), the web site, signed
 in, finishes the exchange, shows the address that would be attached, and you confirm. Gmail uses Google's callback
-(one redirect address to register); Outlook has its own. Disconnecting revokes the token at Google; Microsoft has no
-call for that, so the token is forgotten here and the app can be removed in your Microsoft account.
+(one redirect address to register). Disconnecting revokes the token at Google.
 """
 
 from __future__ import annotations
@@ -23,11 +21,10 @@ from ..connectors.github import REPO, GitHub, GitHubError
 from ..connectors.gmail import Gmail
 from ..connectors.gmail import authorize_url as gmail_authorize_url
 from ..connectors.mail import MailError
-from ..connectors.outlook import check_account
 from .common import ApiError, caller, services
 
 router = APIRouter(prefix="/v1/connections", tags=["connections"])
-Mailbox = Literal["gmail", "outlook"]
+Mailbox = Literal["gmail"]
 
 
 def _connectors(request: Request):
@@ -58,7 +55,6 @@ def status(request: Request) -> dict:
                    "picker": bool(s.settings.google_project_number and s.secrets.has("google_picker_api_key")),
                    "files": [r.describe() for r in s.connections.resources() if r.kind.startswith("drive")]},
         "gmail": _mailbox_state(s, connectors, "gmail", connectors.google_auth() is not None),
-        "outlook": _mailbox_state(s, connectors, "outlook", connectors.microsoft_auth() is not None),
         "mail": {"notify": s.runtime.get("mail_notify"), "senders": s.runtime.get("mail_notify_senders"),
                  "poll_seconds": s.settings.mail_poll_seconds},
     }
@@ -259,7 +255,7 @@ def google_picked(body: PickedFiles, request: Request) -> dict:
 
 
 # ----------------------------------------------------------------------
-# Gmail and Outlook
+# Gmail
 # ----------------------------------------------------------------------
 @router.post("/mail/{mailbox}/start")
 def mail_start(mailbox: Mailbox, request: Request) -> dict:
@@ -267,26 +263,11 @@ def mail_start(mailbox: Mailbox, request: Request) -> dict:
     who = caller(request)
     if who.web_session is None:
         raise ApiError(409, "Connect a mailbox from the web site: the consent is tied to your browser.")
+    if connectors.google_auth() is None:
+        raise ApiError(409, "Set CLARA_GOOGLE_CLIENT_ID and the secret google_client_secret first.")
     verifier, challenge = pkce()
-    if mailbox == "gmail":
-        if connectors.google_auth() is None:
-            raise ApiError(409, "Set CLARA_GOOGLE_CLIENT_ID and the secret google_client_secret first.")
-        state = connectors.new_flow(who.web_session, verifier, "gmail")
-        return {"url": gmail_authorize_url(s.settings.google_client_id, _redirect_uri(request, "google"), state, challenge)}
-    auth = connectors.microsoft_auth()
-    if auth is None:
-        raise ApiError(409, "Set CLARA_MICROSOFT_CLIENT_ID and the secret microsoft_client_secret first.")
-    state = connectors.new_flow(who.web_session, verifier, "outlook")
-    return {"url": auth.authorize_url(_redirect_uri(request, "outlook"), state, challenge)}
-
-
-@router.get("/outlook/callback", include_in_schema=False)
-def outlook_callback(state: str = Query("", max_length=100), code: str = Query("", max_length=2000),
-                     error: str = Query("", max_length=200), error_description: str = Query("", max_length=400)) -> RedirectResponse:
-    """Microsoft sends the browser here. Nothing is done: the signed-in web site finishes it."""
-    query = urlencode({"outlook_state": state, "outlook_code": code,
-                       "outlook_error": (error + " " + error_description.split("\n")[0]).strip()})
-    return RedirectResponse(f"/#/connections?{query}", status_code=303)
+    state = connectors.new_flow(who.web_session, verifier, mailbox)
+    return {"url": gmail_authorize_url(s.settings.google_client_id, _redirect_uri(request, "google"), state, challenge)}
 
 
 @router.post("/mail/{mailbox}/finish")
@@ -298,23 +279,14 @@ async def mail_finish(mailbox: Mailbox, body: Finish, request: Request) -> dict:
     except ValueError as error:
         raise ApiError(409, str(error)) from None
     try:
-        if mailbox == "gmail":
-            google = connectors.google_auth()
-            if google is None:
-                raise ApiError(409, "Google is not configured.")
-            tokens = await google.exchange(body.code, flow.verifier, _redirect_uri(request, "google"))
-            if not tokens.get("refresh_token"):
-                raise ApiError(422, "Google gave no refresh token: remove Clara from your Google account's access, then retry.")
-            # the Gmail API itself says whose mailbox this is: it also proves the API is on and the permission given
-            account = await Gmail(google, tokens["refresh_token"]).whoami() or email_of(tokens.get("id_token", ""))
-        else:
-            microsoft = connectors.microsoft_auth()
-            if microsoft is None:
-                raise ApiError(409, "Microsoft is not configured.")
-            tokens = await microsoft.exchange(body.code, flow.verifier, _redirect_uri(request, "outlook"))
-            if not tokens.get("refresh_token"):
-                raise ApiError(422, "Microsoft gave no refresh token (the offline_access permission was not granted).")
-            account = await check_account(tokens["access_token"])
+        google = connectors.google_auth()
+        if google is None:
+            raise ApiError(409, "Google is not configured.")
+        tokens = await google.exchange(body.code, flow.verifier, _redirect_uri(request, "google"))
+        if not tokens.get("refresh_token"):
+            raise ApiError(422, "Google gave no refresh token: remove Clara from your Google account's access, then retry.")
+        # the Gmail API itself says whose mailbox this is: it also proves the API is on and the permission given
+        account = await Gmail(google, tokens["refresh_token"]).whoami() or email_of(tokens.get("id_token", ""))
     except (DriveError, MailError) as error:
         raise ApiError(422, str(error)) from None
     if not account:
@@ -339,7 +311,7 @@ async def mail_confirm(mailbox: Mailbox, body: Confirm, request: Request) -> dic
     connectors.flows.pop(body.state, None)
     connectors.watch.forget(mailbox)
     google = connectors.google_auth()
-    if mailbox == "gmail" and old and old != flow.refresh_token and google is not None:
+    if old and old != flow.refresh_token and google is not None:
         await google.revoke(old)
     s.alerts.clear(mailbox)
     return {"account": flow.email}
@@ -351,7 +323,7 @@ async def mail_disconnect(mailbox: Mailbox, request: Request) -> dict:
     secret = f"{mailbox}_refresh_token"
     token = s.secrets.get(secret)
     google = connectors.google_auth()
-    revoked = bool(mailbox == "gmail" and token and google and await google.revoke(token))
+    revoked = bool(token and google and await google.revoke(token))
     s.secrets.unset(secret)
     s.connections.remove(mailbox)
     connectors.watch.forget(mailbox)

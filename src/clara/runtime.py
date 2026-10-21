@@ -66,7 +66,7 @@ KNOBS: dict[str, Knob] = {
                          "Tools not offered to some clients: {client: [tool, ...]}."),
     "discord_routes": Knob({}, check_routes, "Where Discord posts each kind of message: {category: notification|general|alerts|off}; "
                            "a category not named keeps its default."),
-    "mail_notify": Knob(False, _bool, "Notify you of new mail in the inbox of a connected Gmail or Outlook mailbox."),
+    "mail_notify": Knob(False, _bool, "Notify you of new mail in the inbox of a connected Gmail mailbox."),
     "mail_notify_senders": Knob([], _names, "Only for senders whose name or address contains one of these words ([]: all)."),
 }
 

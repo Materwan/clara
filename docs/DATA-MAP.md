@@ -41,7 +41,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `audit_log` | Every gate decision: tool, target, level, situation, a **digest** of the arguments, rule, effect, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `usage_log` | One row per model call: kind, client, conversation, provider, model, token counts, duration, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `ws_runs` | Script runs: command digest, exit code, duration, network flag, commit | Not pruned (a few hundred bytes a run) |
-| `connections`, `resources` | GitHub, Google, Gmail and Outlook account names (a mailbox's address), connection state; the repositories, files and folders Clara may use | Until you remove them |
+| `connections`, `resources` | GitHub, Google and Gmail account names (a mailbox's address), connection state; the repositories, files and folders Clara may use | Until you remove them |
 | `trigger_events` | The events hooks were started by: kind, a stable key, the actor (a sender's address), a title and JSON data (for mail: mailbox, sender, subject, a 160-character snippet, whether it has attachments), when it happened | 30 days (longer while a run waits for it) |
 | `triggers`, `trigger_runs` | Your hooks (filter, prompt, tools, limits) and each run: its events, status, summary, conversation | Until you delete the hook; runs `CLARA_RETENTION_DAYS` (400) |
 | `mail_cursors` | Per mailbox, the time of the newest inbox message already announced and the ids of the last 100 (new-mail notifications) | Until you disconnect the mailbox |
@@ -64,7 +64,6 @@ keep what they held until they rotate out.
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |
 | Google | Requests for Drive files Clara may use; content Clara writes; the token at revocation | Drive tools (writes ask first) |
 | Gmail, Google | Searches (their words), requests for messages and attachments, the drafts and emails Clara writes with their attachments | Mail tools (a send asks first, always) |
-| Outlook, Microsoft | The same, to Microsoft Graph; the refresh token is exchanged at each use and the new one kept | Mail tools (a send asks first, always) |
 | The model provider of the conversation, again | The emails and attachment text Clara reads: a tool result is part of the prompt, in a hosted conversation too. A local-only conversation is not offered the mail tools | `mail_read` and the others |
 | The model provider of a hook's run | The event (sender, subject, snippet) and what the run reads with its tools, like any tool result | When a hook runs (a `local_only` hook never reaches a hosted model) |
 | Discord | When new-mail notifications are on: the sender and subject of each new email (never the text) | `mail_notify`, with the bot running |

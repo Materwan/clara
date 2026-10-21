@@ -25,7 +25,7 @@ from mailworld import connect_mailbox, gmail_message
 
 @pytest.fixture
 def environ(environ):
-    return {**environ, "CLARA_GOOGLE_CLIENT_ID": "gid", "CLARA_MICROSOFT_CLIENT_ID": "mid", "CLARA_PUBLIC_URL": "https://clara.test"}
+    return {**environ, "CLARA_GOOGLE_CLIENT_ID": "gid", "CLARA_PUBLIC_URL": "https://clara.test"}
 
 
 def event(key: str = "m1", *, minutes_ago: float = 0, subject: str = "Invoice 42", sender: str = "Billing <billing@acme.example>",
@@ -422,7 +422,7 @@ def chat_calls(llm) -> list[dict]:
 
 async def new_mail_run(services, llm, world, *, tools=None, replies=None):
     """A hook on invoices, one invoice mail arriving through the real Gmail poll, and the run it makes."""
-    connect_mailbox(services, "gmail")
+    connect_mailbox(services)
     trigger = make(services, tools=tools)
     watch = services.connectors.watch
     await watch.poll()  # the baseline: nothing before now
@@ -529,7 +529,7 @@ async def test_a_notify_hook_needs_no_model_and_never_re_reads_what_it_inserts(s
 # The mail source
 # ----------------------------------------------------------------------
 async def test_the_mail_poll_looks_only_while_someone_listens_and_never_replays_old_mail(services, world):
-    connect_mailbox(services, "gmail")
+    connect_mailbox(services)
     watch = services.connectors.watch
     watch.save("gmail", int(time.time() * 1000) - 5 * 86_400_000, [])  # a place left five days ago
     await watch.poll()
@@ -548,7 +548,7 @@ async def test_the_mail_poll_looks_only_while_someone_listens_and_never_replays_
 
 
 async def test_a_failed_ingest_moves_nothing_so_the_next_poll_finds_the_mail_again(services, world, monkeypatch):
-    connect_mailbox(services, "gmail")
+    connect_mailbox(services)
     trigger = make(services)
     watch = services.connectors.watch
     await watch.poll()
@@ -568,7 +568,7 @@ async def test_a_failed_ingest_moves_nothing_so_the_next_poll_finds_the_mail_aga
 
 
 async def test_notifications_and_hooks_both_hear_the_same_mail_once(services, world):
-    connect_mailbox(services, "gmail")
+    connect_mailbox(services)
     services.runtime.set("mail_notify", True)
     trigger = make(services)
     watch = MailWatch(services)
@@ -581,7 +581,7 @@ async def test_notifications_and_hooks_both_hear_the_same_mail_once(services, wo
 
 async def test_mail_that_arrived_while_off_becomes_runs_oldest_first_with_the_backlog_policy(services, world, monkeypatch):
     """The whole path: a poll after a stop finds mail older than the staleness limit; the hook's policy decides."""
-    connect_mailbox(services, "gmail")
+    connect_mailbox(services)
     trigger = make(services, catch_up="digest")
     watch = services.connectors.watch
     await watch.poll()

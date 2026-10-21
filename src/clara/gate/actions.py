@@ -7,7 +7,7 @@ Targets name what is touched, with a prefix:
 
     ws:<path>          a workspace path            (a rule may leave the prefix out: `scratch/**`)
     github:<owner/repo>                            drive:<file id>          vault:<note path>
-    mail:<gmail|outlook>   a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
+    mail:gmail             a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
     domain:<host>      a web address's host        net                      a script that asks for the network
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
@@ -40,7 +40,7 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "github_write": ("ask", "ask", "GitHub issue, branch, pull request, commit"),
     "drive_read": ("allow", "allow", "Drive read (files Clara created or you opened to her)"),
     "drive_write": ("ask", "ask", "Drive create, update, delete"),
-    "mail_read": ("allow", "allow", "Mail read: search, read a message or an attachment (Gmail, Outlook)"),
+    "mail_read": ("allow", "allow", "Mail read: search, read a message or an attachment (Gmail)"),
     "mail_draft": ("allow", "allow", "Mail draft: save a draft in your mailbox (nothing is sent)"),
     "mail_send": ("ask", "refuse", "Mail send: an email leaves your mailbox"),
     "vault_write": ("allow", "allow", "Create or edit vault notes (git history)"),

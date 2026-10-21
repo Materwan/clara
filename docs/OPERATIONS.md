@@ -93,26 +93,6 @@ a token of its own.
 4. Disconnecting revokes the Gmail token at Google. Google may count Drive's and Gmail's tokens as one grant: if Drive
    then asks to be reconnected after you disconnected Gmail, that is why (to verify with a real account).
 
-### Outlook
-
-Outlook (outlook.com, hotmail, live, and work or school mailboxes) uses Microsoft Graph and an app of your own:
-
-1. In the Microsoft Entra admin center (entra.microsoft.com) → *App registrations* → *New registration*. Supported account
-   types: *any organizational directory and personal Microsoft accounts* (both kinds; `CLARA_MICROSOFT_TENANT=common`, the
-   default), or personal only (`consumers`), or one organisation (its tenant id or domain, and set the setting to it).
-   Redirect URI, platform **Web**: `https://<machine>.<tailnet>.ts.net/v1/connections/outlook/callback`.
-2. *API permissions* → Microsoft Graph → *Delegated*: `Mail.ReadWrite`, `Mail.Send`, `User.Read`, `offline_access`.
-   Graph has no draft-only permission, so `Mail.ReadWrite` could also change or delete mail; Clara's tools never do.
-   A work or school account may need an administrator to grant consent.
-3. *Certificates & secrets* → a client secret (it expires, 24 months at most: note the date). In `/etc/clara/clara.env`:
-   `CLARA_MICROSOFT_CLIENT_ID=<Application (client) ID>`, and `CLARA_MICROSOFT_TENANT` if it is not `common`. Then
-   `clara secrets set microsoft_client_secret`. Restart.
-4. On the Connections page: **Connect Outlook**, consent, check the address shown, **Attach it**. The sign-in refuses an
-   account whose inbox Clara cannot read, before anything is stored.
-5. Disconnecting forgets the token here; Microsoft has no call to revoke it, so also remove the app at
-   https://account.microsoft.com/privacy/app-access (personal) or https://myapps.microsoft.com (work or school).
-   A refresh token unused for 90 days ends; an expired client secret is told as « the client secret is wrong or has expired ».
-
 ### Mail in daily use
 
 - **Approving an email** needs the web site or the console. Discord cannot, because sending is a `destructive` action
@@ -121,7 +101,7 @@ Outlook (outlook.com, hotmail, live, and work or school mailboxes) uses Microsof
 - **Letting a schedule send** is a rule you write: `allow mail_send mail:to:you@example.com` with the situation
   `unattended`. It still asks after a turn read untrusted content (an inbox read is one).
 - **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
-  inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` or `outlook` alert once.
+  inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` alert once.
 
 ### Hooks (Clara acts when a mail arrives)
 

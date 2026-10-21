@@ -15,7 +15,7 @@
     { value: 'ends_with', label: 'ends with' }, { value: 'not_contains', label: 'does not contain' },
   ];
   const FIELDS: Record<string, string> = {
-    from: 'Sender', from_address: 'Sender address', subject: 'Subject', snippet: 'Start of the text', account: 'Service (gmail or outlook)',
+    from: 'Sender', from_address: 'Sender address', subject: 'Subject', snippet: 'Start of the text', account: 'Service (gmail)',
     mailbox: 'Mailbox address', has_attachment: 'Has an attachment', unread: 'Is unread',
   };
   const KINDS: Record<string, string> = { 'mail.received': 'new mail' };
@@ -61,7 +61,7 @@
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
     const connections = await api.get('/v1/connections').catch(() => null);
     if (connections) {
-      mail = { ready: connections.gmail.connected || connections.outlook.connected, poll: connections.mail.poll_seconds };
+      mail = { ready: connections.gmail.connected, poll: connections.mail.poll_seconds };
     }
     if (runs) runs = { hook: runs.hook, runs: (await api.get(`/v1/triggers/${runs.hook.id}/runs`)).runs };
     if (seen) seen = (await api.get('/v1/trigger-events', { limit: 30 })).events;
@@ -255,7 +255,7 @@
   </div>
   {#if !mail.ready}
     <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />No mailbox</span>
-      <span class="small">A hook on new mail has nothing to look at. Connect Gmail or Outlook on the <a href="#/connections">Connections</a> page.</span></p>
+      <span class="small">A hook on new mail has nothing to look at. Connect Gmail on the <a href="#/connections">Connections</a> page.</span></p>
   {:else if mail.poll === 0}
     <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Mail polling is off</span>
       <span class="small"><code>CLARA_MAIL_POLL_SECONDS</code> is 0 on the server, so no hook will start.</span></p>

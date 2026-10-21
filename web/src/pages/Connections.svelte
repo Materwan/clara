@@ -10,8 +10,7 @@
   let repo = $state('');
   let branch = $state('');
   let senders = $state('');
-  type Mailbox = 'gmail' | 'outlook';
-  const MAILBOXES: { id: Mailbox; label: string }[] = [{ id: 'gmail', label: 'Gmail' }, { id: 'outlook', label: 'Outlook' }];
+  type Mailbox = 'gmail';
 
   async function load(): Promise<void> {
     info = await api.get('/v1/connections');
@@ -26,20 +25,19 @@
   // The provider sent the browser back here with a code. The server proves the account is reachable and says which it
   // is; Clara attaches it only if you agree.
   async function finishConsent(): Promise<void> {
-    const microsoft = route.query.get('outlook_state');
-    const state = microsoft ?? route.query.get('google_state');
+    const state = route.query.get('google_state');
     if (!state) return;
-    const kind = microsoft ? 'outlook' : route.query.get('flow') === 'gmail' ? 'gmail' : 'drive';
-    const code = route.query.get(microsoft ? 'outlook_code' : 'google_code');
-    const error = route.query.get(microsoft ? 'outlook_error' : 'google_error');
+    const kind = route.query.get('flow') === 'gmail' ? 'gmail' : 'drive';
+    const code = route.query.get('google_code');
+    const error = route.query.get('google_error');
     history.replaceState(null, '', '#/connections');
     if (error || !code) {
-      toast(`${microsoft ? 'Microsoft' : 'Google'} said: ${error || 'no code'}`, 'error');
+      toast(`Google said: ${error || 'no code'}`, 'error');
       return;
     }
     try {
       const found = await api.post(kind === 'drive' ? '/v1/connections/google/finish' : `/v1/connections/mail/${kind}/finish`, { state, code });
-      const what = kind === 'drive' ? 'Google account' : kind === 'gmail' ? 'Gmail mailbox' : 'Outlook mailbox';
+      const what = kind === 'drive' ? 'Google account' : 'Gmail mailbox';
       const attach = await confirmDialog({
         title: `Attach a ${what}`, message: `Attach the ${what} ${found.account || '(address not given)'} to Clara?`
           + (kind === 'drive' ? '' : ' She will be able to read it and save drafts; she sends only what you approve.'),
@@ -105,14 +103,12 @@
 
   async function confirmMailbox(kind: Mailbox, state: string, account: string): Promise<void> {
     await api.post(`/v1/connections/mail/${kind}/confirm`, { state });
-    toast(`${kind === 'gmail' ? 'Gmail' : 'Outlook'} connected (${account}).`, 'ok');
+    toast(`Gmail connected (${account}).`, 'ok');
     load();
   }
 
-  async function disconnectMailbox(kind: Mailbox, label: string): Promise<void> {
-    const message = kind === 'gmail' ? 'Disconnect Gmail? The token is revoked at Google.'
-      : 'Disconnect Outlook? The token is forgotten here; Microsoft has no call to revoke it, so also remove Clara in your Microsoft account (account.microsoft.com/privacy/app-access, or myapps.microsoft.com for a work account).';
-    if (!(await confirmDialog({ title: `Disconnect ${label}`, message, confirm: 'Disconnect', danger: true }))) return;
+  async function disconnectMailbox(kind: Mailbox): Promise<void> {
+    if (!(await confirmDialog({ title: 'Disconnect Gmail', message: 'Disconnect Gmail? The token is revoked at Google.', confirm: 'Disconnect', danger: true }))) return;
     await api.del(`/v1/connections/mail/${kind}`);
     load();
   }
@@ -195,38 +191,27 @@
           {#if item.mime !== 'clara'}<button class="small danger" onclick={() => removeResource(item.id)}>Remove</button>{/if}</div>
       {/each}
     </section>
-    {#each MAILBOXES as box (box.id)}
-      {@const state = info[box.id]}
-      <section class="panel stack">
-        <h2><Icon name="mail" size={18} /> {box.label} {#if state.connected}<span class="tag ok">{state.account}</span>{/if}
-          {#if state.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
-        {#if !state.configured}
-          {#if box.id === 'gmail'}
-            <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
-              <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
-              <code>gmail.readonly</code> and <code>gmail.compose</code> to its consent screen (Data Access; if the picker does not list them,
-              paste their full addresses in <i>Manually add scopes</i>). Clara asks for nothing else: she cannot
-              archive, label, delete or change any setting of your mailbox.</p>
-          {:else}
-            <p class="muted small">Register an app in Microsoft Entra (Azure) with the platform <b>Web</b>, the redirect
-              <code>&lt;your Clara address&gt;/v1/connections/outlook/callback</code>, the delegated permissions <code>Mail.ReadWrite</code>,
-              <code>Mail.Send</code>, <code>User.Read</code> and <code>offline_access</code>, and a client secret. Then set
-              <code>CLARA_MICROSOFT_CLIENT_ID</code> and the secret <code>microsoft_client_secret</code>. Microsoft has no permission for drafts alone:
-              <code>Mail.ReadWrite</code> could also change or delete mail, which Clara's tools never do.</p>
-          {/if}
-        {:else}
-          <div class="row">
-            <button class="primary" onclick={() => startMailbox(box.id)}>{state.connected ? 'Connect again' : `Connect ${box.label}`}</button>
-            {#if state.connected}<button class="danger" onclick={() => disconnectMailbox(box.id, box.label)}>Disconnect</button>{/if}
-          </div>
-          {#if state.connected}
-            <p class="muted small">Clara can search and read this mailbox, read attachments and keep them in her workspace, and save drafts. She sends
-              nothing without your approval, which shows every address and the whole text.</p>
-          {/if}
+    <section class="panel stack">
+      <h2><Icon name="mail" size={18} /> Gmail {#if info.gmail.connected}<span class="tag ok">{info.gmail.account}</span>{/if}
+        {#if info.gmail.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
+      {#if !info.gmail.configured}
+        <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
+          <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
+          <code>gmail.readonly</code> and <code>gmail.compose</code> to its consent screen (Data Access; if the picker does not list them,
+          paste their full addresses in <i>Manually add scopes</i>). Clara asks for nothing else: she cannot
+          archive, label, delete or change any setting of your mailbox.</p>
+      {:else}
+        <div class="row">
+          <button class="primary" onclick={() => startMailbox('gmail')}>{info.gmail.connected ? 'Connect again' : 'Connect Gmail'}</button>
+          {#if info.gmail.connected}<button class="danger" onclick={() => disconnectMailbox('gmail')}>Disconnect</button>{/if}
+        </div>
+        {#if info.gmail.connected}
+          <p class="muted small">Clara can search and read this mailbox, read attachments and keep them in her workspace, and save drafts. She sends
+            nothing without your approval, which shows every address and the whole text.</p>
         {/if}
-      </section>
-    {/each}
-    {#if info.gmail.connected || info.outlook.connected}
+      {/if}
+    </section>
+    {#if info.gmail.connected}
       <section class="panel stack">
         <h2><Icon name="bell" size={18} /> New email</h2>
         <label class="row"><Checkbox checked={info.mail.notify} disabled={info.mail.poll_seconds === 0} onchange={(event) => setNotify(event.currentTarget.checked)} />

@@ -77,17 +77,13 @@ def parse_sse(text: str) -> list[dict]:
 
 @pytest.fixture
 def world(monkeypatch):
-    """Gmail, Outlook and their token endpoints as stand-ins: every Google and Microsoft client the server makes talks to them."""
-    import importlib
-
-    from clara.connectors import outlook as outlook_module
+    """Gmail and its token endpoint as stand-ins: every Google client the server makes talks to them."""
     from clara.connectors.drive import GoogleAuth
     from clara.connectors.gmail import Gmail
-    from clara.connectors.outlook import MicrosoftAuth, Outlook
 
     found = World()
     transport = found.transport()
-    for cls in (GoogleAuth, MicrosoftAuth, Gmail, Outlook):
+    for cls in (GoogleAuth, Gmail):
         real = cls.__init__
 
         def init(self, *args, _real=real, **kwargs):
@@ -95,11 +91,6 @@ def world(monkeypatch):
             _real(self, *args, **kwargs)
 
         monkeypatch.setattr(cls, "__init__", init)
-    api = importlib.import_module("clara.api.connections")
-    real_check = outlook_module.check_account
-
-    async def check(token):
-        return await real_check(token, transport)
-
-    monkeypatch.setattr(api, "check_account", check)
     return found
+
+
