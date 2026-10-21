@@ -54,9 +54,17 @@ class Reminder:
 
     def describe(self) -> dict:
         tz = zone(self.timezone)
-        return {"id": self.id, "text": self.text, "due_at": iso(self.due_at), "local": local_text(self.due_at, tz),
-                "timezone": self.timezone, "repeat": self.repeat, "targets": list(self.targets),
-                "conversation": self.conversation_id, "system": self.system}
+        return {
+            "id": self.id,
+            "text": self.text,
+            "due_at": iso(self.due_at),
+            "local": local_text(self.due_at, tz),
+            "timezone": self.timezone,
+            "repeat": self.repeat,
+            "targets": list(self.targets),
+            "conversation": self.conversation_id,
+            "system": self.system,
+        }
 
     def line(self) -> str:
         again = f" ({self.repeat})" if self.repeat else ""
@@ -65,9 +73,18 @@ class Reminder:
 
 
 def _reminder(row) -> Reminder:
-    return Reminder(row["id"], row["text"], parse_iso(row["due_at"]), datetime.fromisoformat(row["local_at"]),
-                    row["timezone"], row["repeat"], tuple(t for t in row["targets"].split("|") if t),
-                    row["conversation_id"], row["client"], bool(row["system"]))
+    return Reminder(
+        row["id"],
+        row["text"],
+        parse_iso(row["due_at"]),
+        datetime.fromisoformat(row["local_at"]),
+        row["timezone"],
+        row["repeat"],
+        tuple(t for t in row["targets"].split("|") if t),
+        row["conversation_id"],
+        row["client"],
+        bool(row["system"]),
+    )
 
 
 Composer = Callable[[Reminder], Awaitable["str | None"]]
@@ -86,9 +103,18 @@ class Reminders(DueLoop):
         self.late: Lateness | None = None
         self.late_after = 300.0
 
-    def create(self, text: str, when: str, *, repeat: str = "", timezone: str | None = None,
-               targets: Iterable[str] | None = None, conversation_id: str | None = None, client: str = "",
-               system: bool = False) -> Reminder:
+    def create(
+        self,
+        text: str,
+        when: str,
+        *,
+        repeat: str = "",
+        timezone: str | None = None,
+        targets: Iterable[str] | None = None,
+        conversation_id: str | None = None,
+        client: str = "",
+        system: bool = False,
+    ) -> Reminder:
         text = " ".join((text or "").split())
         if not text:
             raise ReminderError("A reminder needs a text.")
@@ -110,8 +136,18 @@ class Reminders(DueLoop):
         reminder_id = self.db.insert(
             "INSERT INTO reminders (text, due_at, local_at, timezone, repeat, targets, conversation_id, client, system,"
             " created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (text, iso(due), local.isoformat(timespec="minutes"), zone_name, repeat, "|".join(shown), conversation_id,
-             client, int(system), now_iso()),
+            (
+                text,
+                iso(due),
+                local.isoformat(timespec="minutes"),
+                zone_name,
+                repeat,
+                "|".join(shown),
+                conversation_id,
+                client,
+                int(system),
+                now_iso(),
+            ),
         )
         self.wake()
         reminder = self.get(reminder_id)
@@ -150,8 +186,10 @@ class Reminders(DueLoop):
 
     async def fire_due(self) -> int:
         now = self._clock()
-        due = [_reminder(row) for row in self.db.all("SELECT * FROM reminders WHERE due_at <= ? ORDER BY due_at",
-                                                      (iso(now),))]
+        due = [
+            _reminder(row)
+            for row in self.db.all("SELECT * FROM reminders WHERE due_at <= ? ORDER BY due_at", (iso(now),))
+        ]
         if not due:
             return 0
         written = await asyncio.gather(*(self._compose(reminder) for reminder in due))
@@ -169,9 +207,13 @@ class Reminders(DueLoop):
             if failure:
                 text += f"\n(Clara could not write this reminder herself: {failure}. Here it is as it was set.)"
             self.events.publish(
-                "reminder", "Reminder", text,
+                "reminder",
+                "Reminder",
+                text,
                 payload={"reminder": reminder.describe(), "message": message or "", "text": reminder.text},
-                targets=reminder.targets, source="reminders", conversation_id=reminder.conversation_id,
+                targets=reminder.targets,
+                source="reminders",
+                conversation_id=reminder.conversation_id,
             )
             late = (fired_at - reminder.due_at).total_seconds()
             if late > self.late_after and self.late is not None:

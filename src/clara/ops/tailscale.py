@@ -39,8 +39,9 @@ Runner = Callable[[list[str], float], Awaitable[Output]]
 
 
 async def run(args: list[str], timeout: float) -> Output:
-    process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
-                                                   stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    process = await asyncio.create_subprocess_exec(
+        *args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+    )
     try:
         out, _ = await asyncio.wait_for(process.communicate(), timeout)
     except TimeoutError:
@@ -71,8 +72,9 @@ def check_funnel_now(binary: str, port: int) -> None:
     """At start, before anything is served: FunnelOn when Funnel is on for the port. A missing tailscale is not an
     error here (the monitor reports it)."""
     try:
-        done = subprocess.run([binary, "serve", "status", "--json"], capture_output=True, text=True,
-                              timeout=COMMAND_TIMEOUT, check=False)
+        done = subprocess.run(
+            [binary, "serve", "status", "--json"], capture_output=True, text=True, timeout=COMMAND_TIMEOUT, check=False
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return
     try:
@@ -80,13 +82,22 @@ def check_funnel_now(binary: str, port: int) -> None:
     except ValueError:
         return
     if port in funnel_ports(status):
-        raise FunnelOn(f"Tailscale Funnel is on for port {port}: Clara would be on the public internet. Turn it off "
-                       f"(tailscale funnel --https={port} off) and start again.")
+        raise FunnelOn(
+            f"Tailscale Funnel is on for port {port}: Clara would be on the public internet. Turn it off "
+            f"(tailscale funnel --https={port} off) and start again."
+        )
 
 
 class Tailscale:
-    def __init__(self, https_port: int, target: str, binary: str = "tailscale", runner: Runner = run,
-                 alert: Callable[[str, str, str], object] | None = None, clear: Callable[[str], object] | None = None):
+    def __init__(
+        self,
+        https_port: int,
+        target: str,
+        binary: str = "tailscale",
+        runner: Runner = run,
+        alert: Callable[[str, str, str], object] | None = None,
+        clear: Callable[[str], object] | None = None,
+    ):
         self.https_port = https_port
         self.target = target
         self.binary = binary
@@ -150,11 +161,17 @@ class Tailscale:
         if self.https_port in funnel_ports(serve):
             await self._command(["funnel", f"--https={self.https_port}", "off"])
             if self._alert:
-                self._alert("funnel", "Funnel was turned on", f"Funnel was on for port {self.https_port}: Clara turned it off.")
+                self._alert(
+                    "funnel", "Funnel was turned on", f"Funnel was on for port {self.https_port}: Clara turned it off."
+                )
         if not serving(serve, self.https_port, self.target):
             out = await self._command(["serve", "--bg", f"--https={self.https_port}", self.target])
             if out.code != 0:
-                hint = " (the service user may need: sudo tailscale set --operator=clara)" if "denied" in out.text.lower() else ""
+                hint = (
+                    " (the service user may need: sudo tailscale set --operator=clara)"
+                    if "denied" in out.text.lower()
+                    else ""
+                )
                 self._fail(f"tailscale serve failed: {out.text or out.code}{hint}")
                 return
         self.url = f"https://{name}" + ("" if self.https_port == 443 else f":{self.https_port}")

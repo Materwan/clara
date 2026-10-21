@@ -59,7 +59,10 @@ def _list_project_files(context: ToolContext, folder: str = "") -> str:
 
 def _read_project_file(context: ToolContext, path: str, start_line: Any = 1, end_line: Any = None) -> str:
     return context.services.projects.read(
-        _project(context), str(path), optional_number(start_line, "start_line") or 1, optional_number(end_line, "end_line"),
+        _project(context),
+        str(path),
+        optional_number(start_line, "start_line") or 1,
+        optional_number(end_line, "end_line"),
         context.turn.read_chars,
     )
 
@@ -92,7 +95,9 @@ def knowledge_tools() -> list[Tool]:
                 "message."
             ),
             function=_read_conversation_file,
-            describe=fixed("read", "read", "memory", lambda a: f"Read file {a.get('file') or a.get('name')} of this conversation"),
+            describe=fixed(
+                "read", "read", "memory", lambda a: f"Read file {a.get('file') or a.get('name')} of this conversation"
+            ),
             parameters={
                 "file": {"type": "integer", "description": "The file's number, as listed."},
                 "name": {"type": "string", "description": "Its name instead (several files can share one)."},
@@ -150,13 +155,22 @@ def knowledge_tools() -> list[Tool]:
                         "type": "object",
                         "properties": {
                             "text": {"type": "string", "description": f"At most {MAX_QUESTION} characters."},
-                            "type": {"type": "string", "enum": list(TYPES),
-                                     "description": "single (default): one option; multiple: any; text: typed."},
-                            "options": {"type": "array", "items": {"type": "string"},
-                                        "description": f"{MIN_OPTIONS}-{MAX_OPTIONS} options of at most {MAX_OPTION} "
-                                                       "characters, no letter or number in front; none for text."},
-                            "correct": {"type": "array", "items": {"type": "integer"},
-                                        "description": "Optional: the right options, from 0; gives a score."},
+                            "type": {
+                                "type": "string",
+                                "enum": list(TYPES),
+                                "description": "single (default): one option; multiple: any; text: typed.",
+                            },
+                            "options": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": f"{MIN_OPTIONS}-{MAX_OPTIONS} options of at most {MAX_OPTION} "
+                                "characters, no letter or number in front; none for text.",
+                            },
+                            "correct": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": "Optional: the right options, from 0; gives a score.",
+                            },
                             "explanation": {"type": "string", "description": "Optional: why, shown after."},
                             "answer": {"type": "string", "description": "text only, optional: the expected answer."},
                         },

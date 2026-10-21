@@ -16,8 +16,13 @@ if TYPE_CHECKING:
 def install(s: Services) -> None:
     settings = s.settings
     if settings.tailscale == "serve":
-        s.tailscale = Tailscale(settings.tailscale_port, f"http://127.0.0.1:{settings.port}", settings.tailscale_bin,
-                                alert=s.alerts.raise_, clear=s.alerts.clear)
+        s.tailscale = Tailscale(
+            settings.tailscale_port,
+            f"http://127.0.0.1:{settings.port}",
+            settings.tailscale_bin,
+            alert=s.alerts.raise_,
+            clear=s.alerts.clear,
+        )
     s.backups = Backups(s)
     s.updater = Updater(s)
     s.updater.report()

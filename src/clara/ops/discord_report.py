@@ -29,8 +29,11 @@ class DiscordReport:
         """A heartbeat: `channels` maps the bot's channel names to (name in Discord, rights it lacks)."""
         self.bot = bot[:MAX_NAME]
         if channels:
-            self.channels = {name: {"name": found[:MAX_NAME], "missing": [right[:MAX_NAME] for right in lacking[:MAX_RIGHTS]]}
-                             for name, (found, lacking) in channels.items() if name in CHANNELS}
+            self.channels = {
+                name: {"name": found[:MAX_NAME], "missing": [right[:MAX_NAME] for right in lacking[:MAX_RIGHTS]]}
+                for name, (found, lacking) in channels.items()
+                if name in CHANNELS
+            }
         if test is not None:
             event, ok, error = test
             self.test = {"event": event, "ok": ok, "error": error[:300], "at": now_iso()}

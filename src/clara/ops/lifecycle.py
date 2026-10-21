@@ -31,7 +31,9 @@ FLUSH_SECONDS = 0.5
 
 
 class Lifecycle:
-    def __init__(self, services: Services, drain_seconds: float, poll: float = POLL_SECONDS, flush: float = FLUSH_SECONDS):
+    def __init__(
+        self, services: Services, drain_seconds: float, poll: float = POLL_SECONDS, flush: float = FLUSH_SECONDS
+    ):
         self.s = services
         self.drain_seconds = drain_seconds
         self._poll, self._flush = poll, flush
@@ -53,12 +55,18 @@ class Lifecycle:
 
     def busy(self) -> bool:
         s = self.s
-        return (s.agent.busy or s.reminders_firing() or s.schedules.firing or (s.triggers is not None and s.triggers.firing))
+        return (
+            s.agent.busy or s.reminders_firing() or s.schedules.firing or (s.triggers is not None and s.triggers.firing)
+        )
 
     def progress(self) -> dict:
         waited = time.monotonic() - self.started_stopping if self.started_stopping else 0.0
-        return {"state": self.state, "running_turns": self.s.agent.stats.active, "waited": round(waited, 1),
-                "limit": self.drain_seconds}
+        return {
+            "state": self.state,
+            "running_turns": self.s.agent.stats.active,
+            "waited": round(waited, 1),
+            "limit": self.drain_seconds,
+        }
 
     def stop(self, force: bool = False, exit_code: int = EXIT_STOP) -> str:
         if self._task is None:
@@ -74,8 +82,10 @@ class Lifecycle:
                 return "Stopping now."
             if not self.busy():
                 return "Stopping: nothing is running."
-            return (f"Stopping: new questions are refused, waiting at most {self.drain_seconds:g} s for "
-                    f"{self.s.agent.stats.active} running turn(s). /stop now cuts them.")
+            return (
+                f"Stopping: new questions are refused, waiting at most {self.drain_seconds:g} s for "
+                f"{self.s.agent.stats.active} running turn(s). /stop now cuts them."
+            )
         if force and not self._force:
             self._force = True
             return "Stopping now, whatever is running."
@@ -100,8 +110,11 @@ class Lifecycle:
             await asyncio.sleep(self._poll)
             if time.monotonic() - last_report >= REPORT_SECONDS:
                 last_report = time.monotonic()
-                log.info("stopping: waiting for %d running turn(s), %d s so far", self.s.agent.stats.active,
-                         last_report - started)
+                log.info(
+                    "stopping: waiting for %d running turn(s), %d s so far",
+                    self.s.agent.stats.active,
+                    last_report - started,
+                )
         self._announce("stopped")
         await asyncio.sleep(self._flush)
         self.s.events.close()

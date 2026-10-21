@@ -191,6 +191,76 @@ async def test_backups_are_private_verified_and_kept(services):
     assert result["integrity"] == "ok" and result["schema"] >= 1 and "facts" in result["rows"]
 
 
+def _restic_that(tmp_path, services, body: str):
+    """A stand-in for restic: a script that writes its PID to a file, then does `body`."""
+    import dataclasses
+
+    script = tmp_path / "restic"
+    script.write_text(f"#!/bin/sh\necho $$ > {tmp_path}/pid\n{body}\n")
+    script.chmod(0o755)
+    services.settings = dataclasses.replace(services.settings, restic_bin=str(script), restic_repository="rest:x")
+    services.secrets.set("restic_password", "pw")
+    return tmp_path / "pid"
+
+
+def _gone(pid_file) -> bool:
+    try:
+        os.kill(int(pid_file.read_text()), 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+async def test_restic_is_stopped_when_it_times_out_and_the_alert_says_why(services, tmp_path, monkeypatch):
+    """Audit (resource lifecycle, high): wait_for cancelled communicate() but left restic running with the lock, and
+    str(TimeoutError()) is empty, so the alert was blank."""
+    from clara.ops import backups as backups_module
+
+    pid = _restic_that(tmp_path, services, "exec sleep 300")
+    monkeypatch.setattr(backups_module, "RESTIC_TIMEOUT", 0.3)
+    with pytest.raises(RuntimeError, match="restic backup took more than .* minutes and was stopped"):
+        await backups_module.Backups(services)._restic("backup")
+    assert _gone(pid)
+
+
+async def test_restic_is_stopped_when_the_nightly_task_is_cancelled(services, tmp_path):
+    import asyncio
+
+    from clara.ops.backups import Backups
+
+    pid = _restic_that(tmp_path, services, "exec sleep 300")
+    task = asyncio.ensure_future(Backups(services)._restic("backup"))
+    for _ in range(100):
+        if pid.exists() and pid.read_text().strip():
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _gone(pid)
+
+
+async def test_restic_that_ignores_the_request_to_stop_is_killed(services, tmp_path, monkeypatch):
+    from clara.ops import backups as backups_module
+
+    pid = _restic_that(tmp_path, services, "trap '' TERM\nwhile :; do sleep 0.1; done")
+    monkeypatch.setattr(backups_module, "RESTIC_TIMEOUT", 0.3)
+    monkeypatch.setattr(backups_module, "RESTIC_GRACE", 0.3)
+    with pytest.raises(RuntimeError, match="was stopped"):
+        await backups_module.Backups(services)._restic("backup")
+    assert _gone(pid)
+
+
+async def test_restic_output_and_failures_are_reported_as_before(services, tmp_path):
+    from clara.ops.backups import Backups
+
+    _restic_that(tmp_path, services, "echo snapshot saved")
+    assert await Backups(services)._restic("backup") == "snapshot saved"
+    _restic_that(tmp_path, services, "echo 'repository is locked' >&2\nexit 1")
+    with pytest.raises(RuntimeError, match="repository is locked"):
+        await Backups(services)._restic("backup")
+
+
 async def test_the_drain_has_a_limit(services):
     import asyncio
 

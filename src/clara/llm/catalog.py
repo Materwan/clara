@@ -51,9 +51,18 @@ class ModelInfo:
     fit: Fit = Fit()  # whether Clara can use it: a model that does not work is never shown in the pickers
 
     def describe(self) -> dict:
-        return {"ref": self.ref, "provider": self.provider, "name": self.name, "local": self.local,
-                "shown": self.shown, "listed": self.listed, "size_b": self.size_b,
-                "capabilities": self.capabilities.describe(), "window": self.window, "fit": self.fit.describe()}
+        return {
+            "ref": self.ref,
+            "provider": self.provider,
+            "name": self.name,
+            "local": self.local,
+            "shown": self.shown,
+            "listed": self.listed,
+            "size_b": self.size_b,
+            "capabilities": self.capabilities.describe(),
+            "window": self.window,
+            "fit": self.fit.describe(),
+        }
 
 
 class Catalog:
@@ -152,10 +161,18 @@ class Catalog:
         provider_id, name = split_ref(ref)
         row = self._row(ref)
         provider = self.providers.get(provider_id)
-        return ModelInfo(ref, provider_id, name, provider.local, self._is_shown(ref, listed), listed,
-                         row["size_b"] if row else None,
-                         Capabilities.from_json(row["capabilities"]) if row else Capabilities(), self.window(ref),
-                         provider.fit(name))
+        return ModelInfo(
+            ref,
+            provider_id,
+            name,
+            provider.local,
+            self._is_shown(ref, listed),
+            listed,
+            row["size_b"] if row else None,
+            Capabilities.from_json(row["capabilities"]) if row else Capabilities(),
+            self.window(ref),
+            provider.fit(name),
+        )
 
     async def listing(self, force: bool = False) -> list[ModelInfo]:
         """Every model of every usable provider, plus the shown ones whose provider did not answer."""
@@ -175,8 +192,12 @@ class Catalog:
     def shown(self) -> list[ModelInfo]:
         """The models the pickers offer (shown, of a usable provider)."""
         refs = {row["ref"] for row in self.db.all("SELECT ref FROM models WHERE shown = 1")}
-        refs |= {make_ref(p, n) for p, names in self._listed.items() for n in names
-                 if self._is_free(p, n) and self._is_shown(make_ref(p, n), True)}
+        refs |= {
+            make_ref(p, n)
+            for p, names in self._listed.items()
+            for n in names
+            if self._is_free(p, n) and self._is_shown(make_ref(p, n), True)
+        }
         found = []
         for ref in refs:
             try:

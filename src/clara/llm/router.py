@@ -90,6 +90,10 @@ class Router:
             except NoModel:
                 pass
         if conversation_choice is not None:
-            return Choice(conversation_choice.ref, conversation_choice.provider, conversation_choice.model,
-                          conversation_choice.window)
+            return Choice(
+                conversation_choice.ref,
+                conversation_choice.provider,
+                conversation_choice.model,
+                conversation_choice.window,
+            )
         return self.choose(local_only=local_only)

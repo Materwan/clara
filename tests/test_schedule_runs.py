@@ -361,6 +361,20 @@ def test_the_days_of_the_earlier_recap_become_runs_of_the_schedule(s):
     assert not s.db.one("SELECT 1 FROM sqlite_master WHERE name = 'recaps_legacy'")
 
 
+def test_a_recap_with_an_unreadable_day_is_logged_and_the_table_is_kept(s, caplog):
+    """CODE_REVIEW E1: a row that cannot be moved must not be lost with the table."""
+    for day, zone_name in (("2026-10-15", PARIS), ("not-a-day", PARIS), ("2026-10-13", "Nowhere/Land")):
+        s.db.execute("INSERT INTO recaps_legacy (day, status, conversation_id, timezone, asked_at, finished_at, note_path, created_at)"
+                     " VALUES (?, 'written', NULL, ?, NULL, NULL, '', '2026-10-16T21:59:00+00:00')", (day, zone_name))
+    with caplog.at_level("WARNING", logger="clara.packs.daily_note"):
+        schedule_id = daily_note.seed(s)
+    assert [run["due_at"][:10] for run in s.schedules.runs(schedule_id)] == ["2026-10-15"]
+    assert s.db.one("SELECT 1 FROM sqlite_master WHERE name = 'recaps_legacy'")  # kept
+    assert len(s.db.all("SELECT day FROM recaps_legacy")) == 3
+    warning = next(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+    assert "2 earlier recap" in warning and "'not-a-day'" in warning and "'Nowhere/Land'" in warning
+
+
 async def test_the_daily_note_runs_end_to_end_at_23_59(s, llm, clock):
     daily_note.seed(s)
     llm.replies = [calls(("day_conversations", {}), ("day_activity", {}), ("files_created", {})),

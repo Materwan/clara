@@ -84,8 +84,12 @@ class Gate:
         decision = self.decide(action, situation, count_hit=False)
         matching = [rule.describe() for rule in self.rules.list() if rule.matches(action, situation)]
         return {
-            "effect": decision.effect, "reason": decision.reason, "rule": decision.rule_id, "floor": decision.floor,
-            "raised": list(decision.raised), "matching": matching,
+            "effect": decision.effect,
+            "reason": decision.reason,
+            "rule": decision.rule_id,
+            "floor": decision.floor,
+            "raised": list(decision.raised),
+            "matching": matching,
             "default": dict(zip(("interactive", "unattended", "description"), CLASSES[action.klass])),
         }
 
@@ -96,15 +100,37 @@ class Audit:
     def __init__(self, db: Database):
         self.db = db
 
-    def record(self, action: Action, situation: Situation, digest: str, decision: Decision, outcome: str, *,
-               conversation_id: str | None = None, turn_id: str = "", approval_id: int | None = None,
-               detail: str = "") -> None:
+    def record(
+        self,
+        action: Action,
+        situation: Situation,
+        digest: str,
+        decision: Decision,
+        outcome: str,
+        *,
+        conversation_id: str | None = None,
+        turn_id: str = "",
+        approval_id: int | None = None,
+        detail: str = "",
+    ) -> None:
         self.db.execute(
             "INSERT INTO audit_log (at, conversation_id, turn_id, tool, target, level, situation, args_digest, rule_id,"
             " effect, outcome, approval_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now_iso(), conversation_id, turn_id, action.tool, action.target[:500], action.level, situation.describe(),
-             digest, decision.rule_id, decision.effect, outcome, approval_id,
-             (detail or "; ".join((decision.reason, *decision.raised)))[:500]),
+            (
+                now_iso(),
+                conversation_id,
+                turn_id,
+                action.tool,
+                action.target[:500],
+                action.level,
+                situation.describe(),
+                digest,
+                decision.rule_id,
+                decision.effect,
+                outcome,
+                approval_id,
+                (detail or "; ".join((decision.reason, *decision.raised)))[:500],
+            ),
         )
 
     def recent(self, limit: int = 200, before_id: int | None = None) -> list[dict]:

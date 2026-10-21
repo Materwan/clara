@@ -53,9 +53,7 @@ class Settings:
     discord_token: str = field(repr=False)
     clara_token: str = field(repr=False)
     owner_id: int
-    channels: Mapping[
-        str, int
-    ]  # general, notification, approval, alerts -> a Discord channel id
+    channels: Mapping[str, int]  # general, notification, approval, alerts -> a Discord channel id
     clara_url: str
     timezone: str
     state_file: Path
@@ -65,9 +63,7 @@ class Settings:
         env = os.environ if env is None else env
         owner = env.get("CLARA_DISCORD_USER_ID", "").strip()
         if not owner.isdigit():
-            raise SettingsError(
-                "CLARA_DISCORD_USER_ID must be your Discord user id (a number): the only one answered."
-            )
+            raise SettingsError("CLARA_DISCORD_USER_ID must be your Discord user id (a number): the only one answered.")
         channels: dict[str, int] = {}
         problems = []
         for name, variable in CHANNEL_SETTINGS.items():
@@ -75,9 +71,7 @@ class Settings:
             if value.isdigit():
                 channels[name] = int(value)
             else:
-                problems.append(
-                    f"{variable} must be the id of your #{name} channel (a number)."
-                )
+                problems.append(f"{variable} must be the id of your #{name} channel (a number).")
         if problems:
             raise SettingsError("\n".join(problems))
         from clara.timeutil import system_zone_name, zone
@@ -91,8 +85,5 @@ class Settings:
             channels=channels,
             clara_url=(env.get("CLARA_URL") or "http://127.0.0.1:8765").rstrip("/"),
             timezone=timezone,
-            state_file=Path(
-                env.get("CLARA_DISCORD_STATE")
-                or env.get("STATE_DIRECTORY", ".") + "/discord-state.json"
-            ),
+            state_file=Path(env.get("CLARA_DISCORD_STATE") or env.get("STATE_DIRECTORY", ".") + "/discord-state.json"),
         )

@@ -40,8 +40,15 @@ class Line:
     text: str
 
     def describe(self) -> dict:
-        return {"type": "log", "id": self.id, "ts": self.ts, "source": self.source, "level": self.level,
-                "name": self.name, "text": self.text}
+        return {
+            "type": "log",
+            "id": self.id,
+            "ts": self.ts,
+            "source": self.source,
+            "level": self.level,
+            "name": self.name,
+            "text": self.text,
+        }
 
 
 def level_name(number: int) -> str:
@@ -59,9 +66,11 @@ def traffic_text(kind: str, fields: dict[str, Any]) -> tuple[str, str]:
     if kind == "model":
         outcome = fields.get("outcome", "?")
         used = f"{fields.get('prompt_tokens', 0)}+{fields.get('completion_tokens', 0)} tokens"
-        return ("INFO" if outcome == "ok" else "WARNING",
-                f"model {fields.get('provider', '?')}:{fields.get('model', '?')} ({fields.get('use', '?')}) "
-                f"{outcome} {fields.get('ms', 0)} ms · {used}")
+        return (
+            "INFO" if outcome == "ok" else "WARNING",
+            f"model {fields.get('provider', '?')}:{fields.get('model', '?')} ({fields.get('use', '?')}) "
+            f"{outcome} {fields.get('ms', 0)} ms · {used}",
+        )
     if kind == "auth_failure":
         return "WARNING", f"sign-in refused on {fields.get('path', '?')}"
     return "INFO", kind
@@ -123,7 +132,9 @@ class LogHub:
         with self._lock:
             return [line for line in self._lines if line.source in sources and LEVELS[line.level] >= minimum]
 
-    async def listen(self, sources: frozenset[str] = frozenset(SOURCES), minimum: int = logging.INFO) -> AsyncIterator[Line]:
+    async def listen(
+        self, sources: frozenset[str] = frozenset(SOURCES), minimum: int = logging.INFO
+    ) -> AsyncIterator[Line]:
         """The ring's lines that match, then each new one as it comes. The ring is read and the viewer registered
         under one lock, so no line is missed or doubled between the two."""
         queue: asyncio.Queue[Line] = asyncio.Queue(WATCH_QUEUE)

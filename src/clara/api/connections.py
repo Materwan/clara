@@ -38,7 +38,9 @@ def _redirect_uri(request: Request, provider: str = "google") -> str:
     s = services(request)
     base = s.settings.public_url or (s.tailscale.url if s.tailscale and s.tailscale.url else "")
     if not base:
-        raise ApiError(409, "Set CLARA_PUBLIC_URL (your https://<machine>.<tailnet>.ts.net address) for the sign-in's redirect.")
+        raise ApiError(
+            409, "Set CLARA_PUBLIC_URL (your https://<machine>.<tailnet>.ts.net address) for the sign-in's redirect."
+        )
     return f"{base.rstrip('/')}/v1/connections/{provider}/callback"
 
 
@@ -48,22 +50,37 @@ def status(request: Request) -> dict:
     github = s.connections.get("github")
     google = s.connections.get("google")
     return {
-        "github": {"connected": bool(github and s.secrets.has("github_token")), "account": github["account"] if github else "",
-                   "status": github["status"] if github else "", "repos": [r.describe() for r in s.connections.resources("github_repo")]},
-        "google": {"configured": connectors.google_auth() is not None, "connected": bool(google and s.secrets.has("google_refresh_token")),
-                   "account": google["account"] if google else "", "status": google["status"] if google else "",
-                   "picker": bool(s.settings.google_project_number and s.secrets.has("google_picker_api_key")),
-                   "files": [r.describe() for r in s.connections.resources() if r.kind.startswith("drive")]},
+        "github": {
+            "connected": bool(github and s.secrets.has("github_token")),
+            "account": github["account"] if github else "",
+            "status": github["status"] if github else "",
+            "repos": [r.describe() for r in s.connections.resources("github_repo")],
+        },
+        "google": {
+            "configured": connectors.google_auth() is not None,
+            "connected": bool(google and s.secrets.has("google_refresh_token")),
+            "account": google["account"] if google else "",
+            "status": google["status"] if google else "",
+            "picker": bool(s.settings.google_project_number and s.secrets.has("google_picker_api_key")),
+            "files": [r.describe() for r in s.connections.resources() if r.kind.startswith("drive")],
+        },
         "gmail": _mailbox_state(s, connectors, "gmail", connectors.google_auth() is not None),
-        "mail": {"notify": s.runtime.get("mail_notify"), "senders": s.runtime.get("mail_notify_senders"),
-                 "poll_seconds": s.settings.mail_poll_seconds},
+        "mail": {
+            "notify": s.runtime.get("mail_notify"),
+            "senders": s.runtime.get("mail_notify_senders"),
+            "poll_seconds": s.settings.mail_poll_seconds,
+        },
     }
 
 
 def _mailbox_state(s, connectors, provider: str, configured: bool) -> dict:
     found = s.connections.get(provider)
-    return {"configured": configured, "connected": connectors.mail_connected(provider),
-            "account": found["account"] if found else "", "status": found["status"] if found else ""}
+    return {
+        "configured": configured,
+        "connected": connectors.mail_connected(provider),
+        "account": found["account"] if found else "",
+        "status": found["status"] if found else "",
+    }
 
 
 # ----------------------------------------------------------------------
@@ -140,14 +157,24 @@ def google_start(request: Request) -> dict:
 
 
 @router.get("/google/callback", include_in_schema=False)
-def google_callback(request: Request, state: str = Query("", max_length=100), code: str = Query("", max_length=2000),
-                    error: str = Query("", max_length=200)) -> RedirectResponse:
+def google_callback(
+    request: Request,
+    state: str = Query("", max_length=100),
+    code: str = Query("", max_length=2000),
+    error: str = Query("", max_length=200),
+) -> RedirectResponse:
     """Google sends the browser here, for Drive or Gmail. Nothing is done: the signed-in web site finishes it (the
     connection is only named, so that the site calls the right route)."""
     connectors = services(request).connectors
     flow = connectors.flows.get(state) if connectors is not None else None
-    query = urlencode({"google_state": state, "google_code": code, "google_error": error,
-                       "flow": flow.provider if flow is not None else "drive"})
+    query = urlencode(
+        {
+            "google_state": state,
+            "google_code": code,
+            "google_error": error,
+            "flow": flow.provider if flow is not None else "drive",
+        }
+    )
     return RedirectResponse(f"/#/connections?{query}", status_code=303)
 
 
@@ -232,14 +259,18 @@ async def google_picker(request: Request) -> dict:
         token = await drive.access_token()
     except DriveError as error:
         raise ApiError(502, str(error)) from None
-    return {"api_key": key, "app_id": s.settings.google_project_number, "client_id": s.settings.google_client_id,
-            "token": token}
+    return {
+        "api_key": key,
+        "app_id": s.settings.google_project_number,
+        "client_id": s.settings.google_client_id,
+        "token": token,
+    }
 
 
 class Picked(BaseModel):
     id: str = Field(min_length=5, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=300)
-    mimeType: str = Field(default="", max_length=200)  # noqa: N815 - Google's name
+    mimeType: str = Field(default="", max_length=200)  # Google's name
 
 
 class PickedFiles(BaseModel):
@@ -249,8 +280,16 @@ class PickedFiles(BaseModel):
 @router.post("/google/picked", status_code=201)
 def google_picked(body: PickedFiles, request: Request) -> dict:
     s, _ = _connectors(request)
-    added = [s.connections.add("google", "drive_folder" if item.mimeType == FOLDER else "drive_file", item.id, item.name,
-                               mime=item.mimeType).describe() for item in body.files]
+    added = [
+        s.connections.add(
+            "google",
+            "drive_folder" if item.mimeType == FOLDER else "drive_file",
+            item.id,
+            item.name,
+            mime=item.mimeType,
+        ).describe()
+        for item in body.files
+    ]
     return {"added": added}
 
 
@@ -284,7 +323,9 @@ async def mail_finish(mailbox: Mailbox, body: Finish, request: Request) -> dict:
             raise ApiError(409, "Google is not configured.")
         tokens = await google.exchange(body.code, flow.verifier, _redirect_uri(request, "google"))
         if not tokens.get("refresh_token"):
-            raise ApiError(422, "Google gave no refresh token: remove Clara from your Google account's access, then retry.")
+            raise ApiError(
+                422, "Google gave no refresh token: remove Clara from your Google account's access, then retry."
+            )
         # the Gmail API itself says whose mailbox this is: it also proves the API is on and the permission given
         account = await Gmail(google, tokens["refresh_token"]).whoami() or email_of(tokens.get("id_token", ""))
     except (DriveError, MailError) as error:

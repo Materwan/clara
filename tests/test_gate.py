@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 
 from clara.agent.turn import ChatRequest
-from clara.gate import Action, RuleError, Situation
+from clara.gate import Action, ApprovalError, NoRuleError, RuleError, Situation
 from clara.tools.base import Tool, fixed
 from conftest import parse_sse
 from fakes import calls
@@ -129,6 +130,102 @@ async def test_a_chat_waits_for_the_answer_and_allow_always_writes_a_rule(client
     assert (rule.effect, rule.tool, rule.target, rule.origin) == ("allow", "ws_delete", "ws:old.txt", "approval")
     approval = services.approvals.list()[0]
     assert approval.status == "done" and approval.told
+
+
+def _counting_tool(services) -> list[str]:
+    """A tool the gate asks about, that records each time it really runs."""
+    ran: list[str] = []
+
+    async def send(context, text: str) -> str:
+        ran.append(text)
+        return "sent"
+
+    services.toolbox.add(
+        Tool(
+            "fake_send",
+            "s",
+            send,
+            fixed("ws_destroy", "destructive", "ws:x", "send"),
+            {"text": {"type": "string"}},
+            ("text",),
+        )
+    )
+    services.approvals.followup = None  # no follow-up turn: these tests look at the request itself
+    return ran
+
+
+async def _until(check, tries: int = 100) -> None:
+    for _ in range(tries):
+        if check():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("timed out")
+
+
+async def test_an_answer_that_comes_before_the_turn_waits_runs_the_action_once(services, llm):
+    """Audit (concurrency, high): the answer arrived while the turn still showed the request; `decide` ran the action
+    because nobody had registered as waiting, and the turn ran it again when it resumed."""
+    ran = _counting_tool(services)
+    tester = services.tokens.create("tester", "cli")[0]
+    llm.replies = [calls(("fake_send", {"text": "hello"})), "Sent."]
+    events = []
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="send it", client="cli"))) as stream:
+        async for event in stream:
+            events.append(event)
+            if event["type"] == "approval":  # the turn is suspended here, and has not started to wait
+                await services.approvals.decide(event["approval"]["id"], "allow_once", tester)
+    assert ran == ["hello"]
+    assert events[-1]["type"] == "done" and events[-1]["reply"] == "Sent."
+    assert services.approvals.list()[0].status == "done"
+
+
+async def test_a_turn_that_ends_before_the_answer_leaves_it_to_decide(services, llm):
+    ran = _counting_tool(services)
+    tester = services.tokens.create("tester", "cli")[0]
+    llm.replies = [calls(("fake_send", {"text": "hello"})), "Sent."]
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="send it", client="cli"))) as stream:
+        async for event in stream:
+            if event["type"] == "approval":
+                approval_id = event["approval"]["id"]
+                break  # the client goes away
+    await services.approvals.decide(approval_id, "allow_once", tester)
+    assert ran == ["hello"]
+    assert services.approvals.get(approval_id).status == "done"
+
+
+async def test_an_answer_the_ended_turn_never_took_is_still_carried_out(services, llm):
+    ran = _counting_tool(services)
+    tester = services.tokens.create("tester", "cli")[0]
+    llm.replies = [calls(("fake_send", {"text": "hello"})), "Sent."]
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="send it", client="cli"))) as stream:
+        async for event in stream:
+            if event["type"] == "approval":
+                approval_id = event["approval"]["id"]
+                await services.approvals.decide(approval_id, "allow_once", tester)  # handed to the turn...
+                break  # ...which ends before it takes it
+    await _until(lambda: services.approvals.get(approval_id).status == "done")
+    assert ran == ["hello"]
+
+
+async def test_an_always_answer_that_cannot_make_a_rule_leaves_the_request_pending(services):
+    """Audit (error paths, high): `approved` was committed before the rule was made, so a target over 400 characters
+    left a request that never ran and could not be answered again."""
+    from clara.tools.base import ToolContext, TurnState
+
+    tester = services.tokens.create("someone", "web")[0]
+    await services.workspace.write("x.txt", "x", overwrite=False, message="t")
+    context = ToolContext(services, TurnState("t3", "", "web", mode="unattended", timezone="Europe/Paris"))
+    result = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
+    approval_id = result.approval.id
+    services.db.execute("UPDATE approvals SET target = ? WHERE id = ?", ("ws:" + "a" * 500, approval_id))
+
+    with pytest.raises(NoRuleError):
+        await services.approvals.decide(approval_id, "allow_always", tester)
+    assert services.approvals.get(approval_id).status == "pending" and services.rules.list() == []
+    assert issubclass(NoRuleError, ApprovalError)
+
+    settled = await services.approvals.decide(approval_id, "allow_once", tester)  # it can still be answered
+    assert settled.status == "done" and not services.workspace.exists("x.txt")
 
 
 async def test_a_chat_that_gets_no_answer_does_not_run_it(client, services, llm):

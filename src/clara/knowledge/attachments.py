@@ -162,8 +162,10 @@ def prepare(message: str, files: Sequence[Attached]) -> Prepared:
     if len(files) > MAX_ATTACHMENTS:
         raise FileError(f"A message carries at most {MAX_ATTACHMENTS} files.")
     if sum(len(file.data) for file in files) > MAX_TOTAL_BYTES:
-        raise FileError(f"The files of one message may weigh {MAX_TOTAL_BYTES // 1_000_000} MB in all: send them in "
-                        "several messages.")
+        raise FileError(
+            f"The files of one message may weigh {MAX_TOTAL_BYTES // 1_000_000} MB in all: send them in "
+            "several messages."
+        )
     images: list[Image] = []
     labels: list[str] = []  # how the message names the pictures
     documents: list[ExtractedFile] = []

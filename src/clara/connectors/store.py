@@ -20,8 +20,15 @@ class Resource:
     created_at: str
 
     def describe(self) -> dict:
-        return {"id": self.id, "kind": self.kind, "locator": self.locator, "label": self.label, "branch": self.branch,
-                "mime": self.mime, "created_at": self.created_at}
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "locator": self.locator,
+            "label": self.label,
+            "branch": self.branch,
+            "mime": self.mime,
+            "created_at": self.created_at,
+        }
 
 
 def _resource(row) -> Resource:

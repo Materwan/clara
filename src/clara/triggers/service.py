@@ -89,16 +89,43 @@ class Trigger:
 
 
 def _trigger(row) -> Trigger:
-    return Trigger(row["id"], row["name"], bool(row["enabled"]), row["event_kind"], json.loads(row["filter"]), row["action"],
-                   row["prompt"], tuple(json.loads(row["tools"])), row["project_id"], row["model"], bool(row["local_only"]),
-                   row["catch_up"], row["max_per_hour"], row["max_age_hours"], bool(row["include_self"]),
-                   bool(row["rerun_interrupted"]), row["attempts"], bool(row["announce"]), row["created_at"], row["updated_at"])
+    return Trigger(
+        row["id"],
+        row["name"],
+        bool(row["enabled"]),
+        row["event_kind"],
+        json.loads(row["filter"]),
+        row["action"],
+        row["prompt"],
+        tuple(json.loads(row["tools"])),
+        row["project_id"],
+        row["model"],
+        bool(row["local_only"]),
+        row["catch_up"],
+        row["max_per_hour"],
+        row["max_age_hours"],
+        bool(row["include_self"]),
+        bool(row["rerun_interrupted"]),
+        row["attempts"],
+        bool(row["announce"]),
+        row["created_at"],
+        row["updated_at"],
+    )
 
 
 def _stored(row) -> StoredEvent:
-    return StoredEvent(source=row["source"], kind=row["kind"], key=row["key"], occurred_at=row["occurred_at"], actor=row["actor"],
-                       self_caused=bool(row["self_caused"]), title=row["title"], data=json.loads(row["data"]), id=row["id"],
-                       received_at=row["received_at"])
+    return StoredEvent(
+        source=row["source"],
+        kind=row["kind"],
+        key=row["key"],
+        occurred_at=row["occurred_at"],
+        actor=row["actor"],
+        self_caused=bool(row["self_caused"]),
+        title=row["title"],
+        data=json.loads(row["data"]),
+        id=row["id"],
+        received_at=row["received_at"],
+    )
 
 
 def summary_of(reply: str) -> str:
@@ -111,17 +138,34 @@ def summary_of(reply: str) -> str:
 Runner = Callable[[Trigger, int, list[StoredEvent]], Awaitable[str]]  # (trigger, run id, its events) -> Clara's answer
 
 DEFAULTS: dict[str, Any] = {
-    "enabled": True, "filter": None, "action": "run", "prompt": "", "tools": None, "model": "", "local_only": False,
-    "catch_up": "all", "max_per_hour": 20, "max_age_hours": 0, "include_self": False, "rerun_interrupted": False,
-    "attempts": MAX_ATTEMPTS, "announce": True,
+    "enabled": True,
+    "filter": None,
+    "action": "run",
+    "prompt": "",
+    "tools": None,
+    "model": "",
+    "local_only": False,
+    "catch_up": "all",
+    "max_per_hour": 20,
+    "max_age_hours": 0,
+    "include_self": False,
+    "rerun_interrupted": False,
+    "attempts": MAX_ATTEMPTS,
+    "announce": True,
 }
 
 
 class Triggers(DueLoop):
     name = "triggers"
 
-    def __init__(self, db: Database, events: Events, projects: Any, tool_names: Callable[[], frozenset[str]],
-                 clock: Callable[[], datetime] = utcnow):
+    def __init__(
+        self,
+        db: Database,
+        events: Events,
+        projects: Any,
+        tool_names: Callable[[], frozenset[str]],
+        clock: Callable[[], datetime] = utcnow,
+    ):
         super().__init__(clock)
         self.db = db
         self.events = events
@@ -183,16 +227,32 @@ class Triggers(DueLoop):
         if values["catch_up"] not in CATCH_UPS:
             raise TriggerError(f"catch_up must be one of {', '.join(CATCH_UPS)}.")
         for field, low, high in (("max_per_hour", 1, 600), ("max_age_hours", 0, 8760), ("attempts", 1, MAX_ATTEMPTS)):
-            if not isinstance(values[field], int) or isinstance(values[field], bool) or not low <= values[field] <= high:
+            if (
+                not isinstance(values[field], int)
+                or isinstance(values[field], bool)
+                or not low <= values[field] <= high
+            ):
                 raise TriggerError(f"{field} must be a whole number from {low} to {high}.")
         model = str(values["model"] or "").strip()
         if len(model) > 200 or (model and ":" not in model):
             raise TriggerError("A model is written provider:model.")
-        return {"name": name, "event_kind": kind.kind, "filter": json.dumps(filter_), "action": action, "prompt": prompt,
-                "tools": json.dumps(tools), "model": model, "catch_up": values["catch_up"],
-                "max_per_hour": values["max_per_hour"], "max_age_hours": values["max_age_hours"],
-                "attempts": values["attempts"], **{field: int(bool(values[field])) for field in (
-                    "enabled", "local_only", "include_self", "rerun_interrupted", "announce")}}
+        return {
+            "name": name,
+            "event_kind": kind.kind,
+            "filter": json.dumps(filter_),
+            "action": action,
+            "prompt": prompt,
+            "tools": json.dumps(tools),
+            "model": model,
+            "catch_up": values["catch_up"],
+            "max_per_hour": values["max_per_hour"],
+            "max_age_hours": values["max_age_hours"],
+            "attempts": values["attempts"],
+            **{
+                field: int(bool(values[field]))
+                for field in ("enabled", "local_only", "include_self", "rerun_interrupted", "announce")
+            },
+        }
 
     def _tools(self, raw: Any, action: str) -> list[str]:
         if raw in (None, ""):
@@ -216,8 +276,11 @@ class Triggers(DueLoop):
         if project == "auto":
             if not creating:
                 return None
-            return self.projects.create(f"Hook: {name}"[:200], f"The runs of the hook “{name}”: one conversation each. "
-                                        "Files and instructions put here are context for every run.").id
+            return self.projects.create(
+                f"Hook: {name}"[:200],
+                f"The runs of the hook “{name}”: one conversation each. "
+                "Files and instructions put here are context for every run.",
+            ).id
         if not isinstance(project, int) or isinstance(project, bool) or self.projects.get(project) is None:
             raise TriggerError(f"No project {project}.")
         return project
@@ -228,7 +291,9 @@ class Triggers(DueLoop):
             raise TriggerError(f"Unknown fields: {', '.join(sorted(unknown))}.")
         if int(self.db.value("SELECT COUNT(*) FROM triggers", (), 0)) >= MAX_TRIGGERS:
             raise TriggerError(f"At most {MAX_TRIGGERS} hooks.")
-        values = self._normal({**DEFAULTS, **{k: v for k, v in fields.items() if v is not None}, "name": name, "on": on})
+        values = self._normal(
+            {**DEFAULTS, **{k: v for k, v in fields.items() if v is not None}, "name": name, "on": on}
+        )
         if self.by_name(values["name"]) is not None:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
         values["project_id"] = self._project(project, values["name"], creating=True)
@@ -236,7 +301,8 @@ class Triggers(DueLoop):
         columns = list(values)
         trigger_id = self.db.insert(
             f"INSERT INTO triggers ({', '.join(columns)}, created_at, updated_at) VALUES ({', '.join('?' * len(columns))}, ?, ?)",
-            (*values.values(), now, now))
+            (*values.values(), now, now),
+        )
         return self.get(trigger_id)
 
     def update(self, trigger_id: int, **fields: Any) -> Trigger:
@@ -247,21 +313,41 @@ class Triggers(DueLoop):
         unknown = set(fields) - set(DEFAULTS) - {"name", "on"}
         if unknown:
             raise TriggerError(f"Unknown fields: {', '.join(sorted(unknown))}.")
-        merged = {"name": current.name, "on": current.on, "enabled": current.enabled, "filter": current.filter,
-                  "action": current.action, "prompt": current.prompt, "tools": list(current.tools), "model": current.model,
-                  "local_only": current.local_only, "catch_up": current.catch_up, "max_per_hour": current.max_per_hour,
-                  "max_age_hours": current.max_age_hours, "include_self": current.include_self,
-                  "rerun_interrupted": current.rerun_interrupted, "attempts": current.attempts, "announce": current.announce}
+        merged = {
+            "name": current.name,
+            "on": current.on,
+            "enabled": current.enabled,
+            "filter": current.filter,
+            "action": current.action,
+            "prompt": current.prompt,
+            "tools": list(current.tools),
+            "model": current.model,
+            "local_only": current.local_only,
+            "catch_up": current.catch_up,
+            "max_per_hour": current.max_per_hour,
+            "max_age_hours": current.max_age_hours,
+            "include_self": current.include_self,
+            "rerun_interrupted": current.rerun_interrupted,
+            "attempts": current.attempts,
+            "announce": current.announce,
+        }
         merged.update({key: value for key, value in fields.items() if value is not None or key == "filter"})
         values = self._normal(merged)
         other = self.by_name(values["name"])
         if other is not None and other.id != trigger_id:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
-        values["project_id"] = current.project_id if project == "keep" else self._project(project, values["name"], creating=False)
+        values["project_id"] = (
+            current.project_id if project == "keep" else self._project(project, values["name"], creating=False)
+        )
         assignments = ", ".join(f"{column} = ?" for column in values)
         with self.db.transaction():
-            self.db.execute(f"UPDATE triggers SET {assignments}, updated_at = ? WHERE id = ?", (*values.values(), now_iso(), trigger_id))
-            if current.enabled and not values["enabled"]:  # turned off: what waited does not wait for its turn to come back
+            self.db.execute(
+                f"UPDATE triggers SET {assignments}, updated_at = ? WHERE id = ?",
+                (*values.values(), now_iso(), trigger_id),
+            )
+            if (
+                current.enabled and not values["enabled"]
+            ):  # turned off: what waited does not wait for its turn to come back
                 self._skip_queued(trigger_id, "The hook was turned off.")
         self.wake()
         return self.get(trigger_id)
@@ -273,24 +359,51 @@ class Triggers(DueLoop):
         return self.db.execute("DELETE FROM triggers WHERE id = ?", (trigger_id,)).rowcount > 0
 
     def _skip_queued(self, trigger_id: int, note: str) -> None:
-        self.db.execute("UPDATE trigger_runs SET status = 'skipped', note = ?, finished_at = ? WHERE trigger_id = ? AND status = 'queued'",
-                        (note, now_iso(), trigger_id))
+        self.db.execute(
+            "UPDATE trigger_runs SET status = 'skipped', note = ?, finished_at = ? WHERE trigger_id = ? AND status = 'queued'",
+            (note, now_iso(), trigger_id),
+        )
 
     def describe(self, trigger: Trigger) -> dict:
-        last = self.db.one("SELECT * FROM trigger_runs WHERE trigger_id = ? AND status NOT IN ('queued', 'skipped') ORDER BY id DESC LIMIT 1",
-                           (trigger.id,))
+        last = self.db.one(
+            "SELECT * FROM trigger_runs WHERE trigger_id = ? AND status NOT IN ('queued', 'skipped') ORDER BY id DESC LIMIT 1",
+            (trigger.id,),
+        )
         return {
-            "id": trigger.id, "name": trigger.name, "enabled": trigger.enabled, "on": trigger.on, "filter": trigger.filter,
-            "action": trigger.action, "prompt": trigger.prompt, "tools": list(trigger.tools),
-            "effective_tools": list(trigger.effective_tools), "project": trigger.project_id, "model": trigger.model,
-            "local_only": trigger.local_only, "catch_up": trigger.catch_up, "max_per_hour": trigger.max_per_hour,
-            "max_age_hours": trigger.max_age_hours, "include_self": trigger.include_self,
-            "rerun_interrupted": trigger.rerun_interrupted, "attempts": trigger.attempts, "announce": trigger.announce,
-            "created_at": trigger.created_at, "updated_at": trigger.updated_at,
-            "queued": int(self.db.value("SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status = 'queued'", (trigger.id,), 0)),
+            "id": trigger.id,
+            "name": trigger.name,
+            "enabled": trigger.enabled,
+            "on": trigger.on,
+            "filter": trigger.filter,
+            "action": trigger.action,
+            "prompt": trigger.prompt,
+            "tools": list(trigger.tools),
+            "effective_tools": list(trigger.effective_tools),
+            "project": trigger.project_id,
+            "model": trigger.model,
+            "local_only": trigger.local_only,
+            "catch_up": trigger.catch_up,
+            "max_per_hour": trigger.max_per_hour,
+            "max_age_hours": trigger.max_age_hours,
+            "include_self": trigger.include_self,
+            "rerun_interrupted": trigger.rerun_interrupted,
+            "attempts": trigger.attempts,
+            "announce": trigger.announce,
+            "created_at": trigger.created_at,
+            "updated_at": trigger.updated_at,
+            "queued": int(
+                self.db.value(
+                    "SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status = 'queued'", (trigger.id,), 0
+                )
+            ),
             "running": trigger.id in self._running,
-            "runs": int(self.db.value("SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status NOT IN ('queued', 'skipped')",
-                                      (trigger.id,), 0)),
+            "runs": int(
+                self.db.value(
+                    "SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status NOT IN ('queued', 'skipped')",
+                    (trigger.id,),
+                    0,
+                )
+            ),
             "last": self._run_view(last) if last else None,
         }
 
@@ -313,10 +426,22 @@ class Triggers(DueLoop):
                 cursor = self.db.execute(
                     "INSERT OR IGNORE INTO trigger_events (source, kind, key, actor, self_caused, title, data, occurred_at, received_at)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (event.source, event.kind, event.key, event.actor, int(event.self_caused), event.title[:300],
-                     json.dumps(event.data, ensure_ascii=False), event.occurred_at, iso(now)))
+                    (
+                        event.source,
+                        event.kind,
+                        event.key,
+                        event.actor,
+                        int(event.self_caused),
+                        event.title[:300],
+                        json.dumps(event.data, ensure_ascii=False),
+                        event.occurred_at,
+                        iso(now),
+                    ),
+                )
                 if cursor.rowcount:
-                    stored.append(StoredEvent(**{**event.__dict__, "id": int(cursor.lastrowid or 0), "received_at": iso(now)}))
+                    stored.append(
+                        StoredEvent(**{**event.__dict__, "id": int(cursor.lastrowid or 0), "received_at": iso(now)})
+                    )
             for trigger in self.listing():
                 mine = [event for event in stored if trigger.enabled and self.wanted_by(trigger, event)]
                 if mine:
@@ -328,7 +453,10 @@ class Triggers(DueLoop):
                 also()
         for trigger in overflowed:
             if self.alert is not None:
-                self.alert(trigger, f"More than {MAX_QUEUED} runs of “{trigger.name}” are waiting: the newest events were recorded but not run.")
+                self.alert(
+                    trigger,
+                    f"More than {MAX_QUEUED} runs of “{trigger.name}” are waiting: the newest events were recorded but not run.",
+                )
         if planned:
             self.wake()
         return planned
@@ -337,7 +465,15 @@ class Triggers(DueLoop):
         now = now_iso()
         self.db.execute(
             "INSERT INTO trigger_runs (trigger_id, event_ids, status, note, queued_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (trigger_id, json.dumps([event.id for event in events]), status, note, now, now if status != "queued" else None))
+            (
+                trigger_id,
+                json.dumps([event.id for event in events]),
+                status,
+                note,
+                now,
+                now if status != "queued" else None,
+            ),
+        )
 
     def _plan(self, trigger: Trigger, events: list[StoredEvent], now: datetime) -> tuple[int, bool]:
         """The runs these events make for this trigger. Returns (runs queued, whether the queue was full)."""
@@ -354,12 +490,17 @@ class Triggers(DueLoop):
                 groups.append(stale)
             elif trigger.catch_up == "latest":
                 groups.append(stale[-1:])
-                skipped += [([event], "Found late (after a stop): only the newest of the backlog runs.") for event in stale[:-1]]
+                skipped += [
+                    ([event], "Found late (after a stop): only the newest of the backlog runs.") for event in stale[:-1]
+                ]
             else:
                 skipped += [([event], "Found late (after a stop): this hook skips a backlog.") for event in stale]
         groups += [[event] for event in fresh]
-        room = MAX_QUEUED - int(self.db.value("SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status = 'queued'",
-                                              (trigger.id,), 0))
+        room = MAX_QUEUED - int(
+            self.db.value(
+                "SELECT COUNT(*) FROM trigger_runs WHERE trigger_id = ? AND status = 'queued'", (trigger.id,), 0
+            )
+        )
         queued, overflow = 0, False
         for group in groups:
             if room <= 0:
@@ -377,19 +518,28 @@ class Triggers(DueLoop):
     # Working off the queue
     # ------------------------------------------------------------------
     def _started_since(self, trigger_id: int, since: datetime) -> list[str]:
-        return [row[0] for row in self.db.all("SELECT started_at FROM trigger_runs WHERE trigger_id = ? AND started_at > ?"
-                                              " ORDER BY started_at", (trigger_id, iso(since)))]
+        return [
+            row[0]
+            for row in self.db.all(
+                "SELECT started_at FROM trigger_runs WHERE trigger_id = ? AND started_at > ? ORDER BY started_at",
+                (trigger_id, iso(since)),
+            )
+        ]
 
     def _expire(self, now: datetime) -> None:
         for trigger in self.listing():
             if not trigger.max_age_hours:
                 continue
             limit = now - timedelta(hours=trigger.max_age_hours)
-            for row in self.db.all("SELECT * FROM trigger_runs WHERE trigger_id = ? AND status = 'queued' ORDER BY id", (trigger.id,)):
+            for row in self.db.all(
+                "SELECT * FROM trigger_runs WHERE trigger_id = ? AND status = 'queued' ORDER BY id", (trigger.id,)
+            ):
                 events = self._events_of(row)
                 if events and parse_iso(events[-1].occurred_at) < limit:  # even its newest event is too old
-                    self.db.execute("UPDATE trigger_runs SET status = 'expired', note = ?, finished_at = ? WHERE id = ?",
-                                    (f"Older than {trigger.max_age_hours} hours when its turn came.", iso(now), row["id"]))
+                    self.db.execute(
+                        "UPDATE trigger_runs SET status = 'expired', note = ?, finished_at = ? WHERE id = ?",
+                        (f"Older than {trigger.max_age_hours} hours when its turn came.", iso(now), row["id"]),
+                    )
 
     def fire_due(self) -> int:
         if self.stopping:
@@ -398,8 +548,10 @@ class Triggers(DueLoop):
         self._expire(now)
         started = 0
         seen: set[int] = set()
-        for row in self.db.all("SELECT r.* FROM trigger_runs r JOIN triggers t ON t.id = r.trigger_id"
-                               " WHERE r.status = 'queued' AND t.enabled = 1 ORDER BY r.id"):
+        for row in self.db.all(
+            "SELECT r.* FROM trigger_runs r JOIN triggers t ON t.id = r.trigger_id"
+            " WHERE r.status = 'queued' AND t.enabled = 1 ORDER BY r.id"
+        ):
             trigger_id = row["trigger_id"]
             if trigger_id in seen or trigger_id in self._running:
                 continue
@@ -418,8 +570,10 @@ class Triggers(DueLoop):
             return None  # nothing can start until a run ends, and its end wakes the loop (else the loop would spin)
         now = self._clock()
         soonest: datetime | None = None
-        for row in self.db.all("SELECT r.trigger_id FROM trigger_runs r JOIN triggers t ON t.id = r.trigger_id"
-                               " WHERE r.status = 'queued' AND t.enabled = 1 GROUP BY r.trigger_id"):
+        for row in self.db.all(
+            "SELECT r.trigger_id FROM trigger_runs r JOIN triggers t ON t.id = r.trigger_id"
+            " WHERE r.status = 'queued' AND t.enabled = 1 GROUP BY r.trigger_id"
+        ):
             if row["trigger_id"] in self._running:
                 continue  # its end wakes the loop
             trigger = self.get(row["trigger_id"])
@@ -431,7 +585,9 @@ class Triggers(DueLoop):
         return soonest
 
     def _start(self, trigger: Trigger, run_id: int) -> None:
-        self.db.execute("UPDATE trigger_runs SET status = 'running', started_at = ? WHERE id = ?", (iso(self._clock()), run_id))
+        self.db.execute(
+            "UPDATE trigger_runs SET status = 'running', started_at = ? WHERE id = ?", (iso(self._clock()), run_id)
+        )
         task = asyncio.create_task(self._execute(trigger, run_id))
         self._running[trigger.id] = task
         task.add_done_callback(lambda _: (self._running.pop(trigger.id, None), self.wake()))
@@ -440,7 +596,9 @@ class Triggers(DueLoop):
         ids = json.loads(row["event_ids"])
         if not ids:
             return []
-        found = self.db.all(f"SELECT * FROM trigger_events WHERE id IN ({', '.join('?' * len(ids))}) ORDER BY occurred_at, id", ids)
+        found = self.db.all(
+            f"SELECT * FROM trigger_events WHERE id IN ({', '.join('?' * len(ids))}) ORDER BY occurred_at, id", ids
+        )
         return [_stored(event) for event in found]
 
     async def pause_before_retry(self, attempt: int) -> None:
@@ -455,7 +613,12 @@ class Triggers(DueLoop):
         started afresh.)"""
         if not conversation_id:
             return False
-        return self.db.one("SELECT 1 FROM messages WHERE conversation_id = ? AND role != 'user' LIMIT 1", (conversation_id,)) is not None
+        return (
+            self.db.one(
+                "SELECT 1 FROM messages WHERE conversation_id = ? AND role != 'user' LIMIT 1", (conversation_id,)
+            )
+            is not None
+        )
 
     async def _execute(self, trigger: Trigger, run_id: int) -> None:
         row = self.db.one("SELECT * FROM trigger_runs WHERE id = ?", (run_id,))
@@ -476,7 +639,10 @@ class Triggers(DueLoop):
         except Exception as error:
             log.warning("hook %s: the run failed (%s: %s)", trigger.id, type(error).__name__, error)
             status, summary = "failed", f"Clara could not run it: {error or type(error).__name__}"
-        self.db.execute("UPDATE trigger_runs SET status = ?, finished_at = ?, summary = ? WHERE id = ?", (status, now_iso(), summary, run_id))
+        self.db.execute(
+            "UPDATE trigger_runs SET status = ?, finished_at = ?, summary = ? WHERE id = ?",
+            (status, now_iso(), summary, run_id),
+        )
         self._tell(trigger, run_id, status, summary)
 
     def _cut(self, trigger: Trigger, run_id: int) -> None:
@@ -484,10 +650,19 @@ class Triggers(DueLoop):
         row = self.db.one("SELECT conversation_id FROM trigger_runs WHERE id = ?", (run_id,))
         began = self.did_something(row["conversation_id"] if row else None)
         if not began or trigger.rerun_interrupted:
-            self.db.execute("UPDATE trigger_runs SET status = 'queued', started_at = NULL, conversation_id = NULL WHERE id = ?", (run_id,))
+            self.db.execute(
+                "UPDATE trigger_runs SET status = 'queued', started_at = NULL, conversation_id = NULL WHERE id = ?",
+                (run_id,),
+            )
         else:
-            self.db.execute("UPDATE trigger_runs SET status = 'interrupted', finished_at = ?, note = ? WHERE id = ?",
-                            (now_iso(), "The server stopped while it ran; it may have done part of its work, so it is not run again.", run_id))
+            self.db.execute(
+                "UPDATE trigger_runs SET status = 'interrupted', finished_at = ?, note = ? WHERE id = ?",
+                (
+                    now_iso(),
+                    "The server stopped while it ran; it may have done part of its work, so it is not run again.",
+                    run_id,
+                ),
+            )
 
     def recover(self) -> int:
         """At start: runs left `running` by a crash are put right as a stop would have."""
@@ -506,18 +681,24 @@ class Triggers(DueLoop):
             title = f"{trigger.name}: {len(events)} events"
             text = "\n".join(fill(template, {**event.data, "title": event.title}) for event in events[:10])
             text += f"\n…and {len(events) - 10} more." if len(events) > 10 else ""
-        self.events.publish("notification", title, text, source="triggers",
-                            targets=("web",) if trigger.local_only else None)
+        self.events.publish(
+            "notification", title, text, source="triggers", targets=("web",) if trigger.local_only else None
+        )
         return summary_of(text)
 
     def _tell(self, trigger: Trigger, run_id: int, status: str, summary: str) -> None:
         if trigger.action == "notify" or (status == "ok" and not trigger.announce):
             return
         row = self.db.one("SELECT conversation_id FROM trigger_runs WHERE id = ?", (run_id,))
-        self.events.publish("schedule", f"Hook: {trigger.name}", summary,
-                            payload={"trigger": trigger.id, "run": run_id, "status": status}, source="triggers",
-                            conversation_id=row["conversation_id"] if row else None,
-                            targets=("web",) if trigger.local_only else None)
+        self.events.publish(
+            "schedule",
+            f"Hook: {trigger.name}",
+            summary,
+            payload={"trigger": trigger.id, "run": run_id, "status": status},
+            source="triggers",
+            conversation_id=row["conversation_id"] if row else None,
+            targets=("web",) if trigger.local_only else None,
+        )
 
     async def wait_running(self) -> None:
         await asyncio.gather(*self._running.values(), return_exceptions=True)
@@ -538,15 +719,27 @@ class Triggers(DueLoop):
 
     def _run_view(self, row) -> dict:
         events = self._events_of(row)
-        return {"id": row["id"], "trigger": row["trigger_id"], "status": row["status"], "note": row["note"],
-                "summary": row["summary"], "queued_at": row["queued_at"], "started_at": row["started_at"],
-                "finished_at": row["finished_at"], "conversation": row["conversation_id"],
-                "events": [{"id": event.id, "title": event.title, "at": event.occurred_at} for event in events[:10]],
-                "event_count": len(json.loads(row["event_ids"]))}
+        return {
+            "id": row["id"],
+            "trigger": row["trigger_id"],
+            "status": row["status"],
+            "note": row["note"],
+            "summary": row["summary"],
+            "queued_at": row["queued_at"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "conversation": row["conversation_id"],
+            "events": [{"id": event.id, "title": event.title, "at": event.occurred_at} for event in events[:10]],
+            "event_count": len(json.loads(row["event_ids"])),
+        }
 
     def runs(self, trigger_id: int, limit: int = 20) -> list[dict]:
-        return [self._run_view(row) for row in self.db.all(
-            "SELECT * FROM trigger_runs WHERE trigger_id = ? ORDER BY id DESC LIMIT ?", (trigger_id, limit))]
+        return [
+            self._run_view(row)
+            for row in self.db.all(
+                "SELECT * FROM trigger_runs WHERE trigger_id = ? ORDER BY id DESC LIMIT ?", (trigger_id, limit)
+            )
+        ]
 
     def preview(self, trigger: Trigger, event: StoredEvent | SourceEvent) -> dict:
         """What would happen for this event, without doing it."""
@@ -561,10 +754,19 @@ class Triggers(DueLoop):
         elif not wanted:
             reason = "The filter does not match."
         shown = event if isinstance(event, StoredEvent) else StoredEvent(**{**event.__dict__, "id": 0})
-        message = (fill(trigger.prompt or DEFAULT_TEMPLATE, {**shown.data, "title": shown.title}) if trigger.action == "notify"
-                   else message_of(trigger.name, trigger.prompt, [shown]))
-        return {"matches": wanted, "why_not": reason, "action": trigger.action, "message": message,
-                "tools": list(trigger.effective_tools), "tainted": trigger.action == "run"}
+        message = (
+            fill(trigger.prompt or DEFAULT_TEMPLATE, {**shown.data, "title": shown.title})
+            if trigger.action == "notify"
+            else message_of(trigger.name, trigger.prompt, [shown])
+        )
+        return {
+            "matches": wanted,
+            "why_not": reason,
+            "action": trigger.action,
+            "message": message,
+            "tools": list(trigger.effective_tools),
+            "tainted": trigger.action == "run",
+        }
 
     def prune(self, retention_days: int) -> None:
         """Old events (30 days) not wanted by a run still waiting, and old runs (the audit retention)."""
@@ -572,9 +774,15 @@ class Triggers(DueLoop):
         for row in self.db.all("SELECT event_ids FROM trigger_runs WHERE status IN ('queued', 'running')"):
             active.update(json.loads(row["event_ids"]))
         cutoff = iso(self._clock() - timedelta(days=EVENTS_KEPT_DAYS))
-        old = [row[0] for row in self.db.all("SELECT id FROM trigger_events WHERE received_at < ?", (cutoff,)) if row[0] not in active]
+        old = [
+            row[0]
+            for row in self.db.all("SELECT id FROM trigger_events WHERE received_at < ?", (cutoff,))
+            if row[0] not in active
+        ]
         for start in range(0, len(old), 500):
-            batch = old[start:start + 500]
+            batch = old[start : start + 500]
             self.db.execute(f"DELETE FROM trigger_events WHERE id IN ({', '.join('?' * len(batch))})", batch)
-        self.db.execute("DELETE FROM trigger_runs WHERE finished_at IS NOT NULL AND finished_at < ?",
-                        (iso(self._clock() - timedelta(days=retention_days)),))
+        self.db.execute(
+            "DELETE FROM trigger_runs WHERE finished_at IS NOT NULL AND finished_at < ?",
+            (iso(self._clock() - timedelta(days=retention_days)),),
+        )

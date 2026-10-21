@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, RuleError, Situation
+from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, NoRuleError, RuleError, Situation
 from ..tools.base import ToolContext, ToolError, TurnState
 from .common import ApiError, caller, services
 
@@ -23,8 +23,10 @@ def rules(request: Request) -> dict:
     s = services(request)
     return {
         "rules": [rule.describe() for rule in s.rules.list()],
-        "defaults": [{"class": name, "interactive": chat, "unattended": alone, "description": what}
-                     for name, (chat, alone, what) in CLASSES.items()],
+        "defaults": [
+            {"class": name, "interactive": chat, "unattended": alone, "description": what}
+            for name, (chat, alone, what) in CLASSES.items()
+        ],
         "tainted_rule": s.runtime.get("tainted_rule"),
         "tools": sorted(s.toolbox.names),
     }
@@ -42,8 +44,18 @@ class NewRule(BaseModel):
 @router.post("/rules", status_code=201)
 def add_rule(body: NewRule, request: Request) -> dict:
     try:
-        return services(request).rules.add(body.effect, tool=body.tool, target=body.target, situation=body.situation,
-                                           level=body.level, note=body.note).describe()
+        return (
+            services(request)
+            .rules.add(
+                body.effect,
+                tool=body.tool,
+                target=body.target,
+                situation=body.situation,
+                level=body.level,
+                note=body.note,
+            )
+            .describe()
+        )
     except RuleError as error:
         raise ApiError(422, str(error)) from None
 
@@ -96,20 +108,39 @@ def test_rule(body: RuleTest, request: Request) -> dict:
     s = services(request)
     if s.toolbox.get(body.tool) is None:
         raise ApiError(404, f"No tool {body.tool}: {', '.join(sorted(s.toolbox.names))}.")
-    state = TurnState(turn_id="test", conversation_id="", client=caller(request).client, mode=body.situation,
-                      timezone=s.settings.timezone, tainted=body.tainted, local_only=body.local_only)
+    state = TurnState(
+        turn_id="test",
+        conversation_id="",
+        client=caller(request).client,
+        mode=body.situation,
+        timezone=s.settings.timezone,
+        tainted=body.tainted,
+        local_only=body.local_only,
+    )
     try:
         action = s.toolbox.action(body.tool, ToolContext(s, state), body.arguments)
     except (ToolError, ValueError, TypeError) as error:
         raise ApiError(422, f"These arguments do not describe a call: {error}") from None
     explained = s.gate.explain(action, Situation(body.situation, body.tainted, body.local_only))
-    return {"action": {"tool": action.tool, "level": action.level, "class": action.klass, "targets": list(action.targets),
-                       "summary": action.summary, "secrets": list(action.secret_kinds)}, **explained}
+    return {
+        "action": {
+            "tool": action.tool,
+            "level": action.level,
+            "class": action.klass,
+            "targets": list(action.targets),
+            "summary": action.summary,
+            "secrets": list(action.secret_kinds),
+        },
+        **explained,
+    }
 
 
 @router.get("/approvals")
-def approvals(request: Request, status: Literal["pending", "approved", "denied", "expired", "done", "failed", ""] = "",
-              limit: int = Query(100, ge=1, le=500)) -> dict:
+def approvals(
+    request: Request,
+    status: Literal["pending", "approved", "denied", "expired", "done", "failed", ""] = "",
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
     found = services(request).approvals.list(status or None, limit)
     who = caller(request)
     return {"approvals": [{**item.describe(), "may_answer": who.token.may_answer(item.level)} for item in found]}
@@ -125,6 +156,8 @@ async def decide(approval_id: int, body: Decision, request: Request) -> dict:
         approval = await services(request).approvals.decide(approval_id, body.answer, caller(request).token)
     except AlreadyAnswered as error:
         raise ApiError(409, str(error)) from None
+    except NoRuleError as error:
+        raise ApiError(400, str(error)) from None
     except ApprovalError as error:
         raise ApiError(403 if "may not answer" in str(error) else 404, str(error)) from None
     return approval.describe()

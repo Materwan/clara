@@ -18,7 +18,18 @@ from datetime import timedelta
 from ..db import Database
 from ..timeutil import iso, now_iso, utcnow
 
-KINDS = ("reminder", "notification", "approval", "approval_resolved", "alert", "server", "schedule", "task", "update", "ask")
+KINDS = (
+    "reminder",
+    "notification",
+    "approval",
+    "approval_resolved",
+    "alert",
+    "server",
+    "schedule",
+    "task",
+    "update",
+    "ask",
+)
 LISTENER_IDLE_DAYS = 30
 MAX_TEXT = 2_000
 MAX_TITLE = 100
@@ -41,15 +52,31 @@ class Event:
         return not self.targets or client in self.targets
 
     def describe(self) -> dict:
-        return {"id": self.id, "type": self.kind, "title": self.title, "text": self.text, "payload": self.payload,
-                "targets": list(self.targets), "source": self.source, "conversation": self.conversation_id,
-                "created_at": self.created_at}
+        return {
+            "id": self.id,
+            "type": self.kind,
+            "title": self.title,
+            "text": self.text,
+            "payload": self.payload,
+            "targets": list(self.targets),
+            "source": self.source,
+            "conversation": self.conversation_id,
+            "created_at": self.created_at,
+        }
 
 
 def _event(row) -> Event:
-    return Event(row["id"], row["kind"], row["title"], row["text"], json.loads(row["payload"] or "{}"),
-                 tuple(target for target in row["targets"].split("|") if target), row["source"],
-                 row["conversation_id"], row["created_at"])
+    return Event(
+        row["id"],
+        row["kind"],
+        row["title"],
+        row["text"],
+        json.loads(row["payload"] or "{}"),
+        tuple(target for target in row["targets"].split("|") if target),
+        row["source"],
+        row["conversation_id"],
+        row["created_at"],
+    )
 
 
 def clean_targets(targets: Iterable[str] | None) -> tuple[str, ...]:
@@ -72,15 +99,32 @@ class Events:
         self._listeners: set[asyncio.Queue] = set()
         self.closed = False
 
-    def publish(self, kind: str, title: str = "", text: str = "", *, payload: dict | None = None,
-                targets: Iterable[str] | None = None, source: str = "server", conversation_id: str | None = None) -> Event:
+    def publish(
+        self,
+        kind: str,
+        title: str = "",
+        text: str = "",
+        *,
+        payload: dict | None = None,
+        targets: Iterable[str] | None = None,
+        source: str = "server",
+        conversation_id: str | None = None,
+    ) -> Event:
         if kind not in KINDS:
             raise ValueError(f"unknown event kind {kind}")
         event_id = self.db.insert(
             "INSERT INTO events (kind, title, text, payload, targets, source, conversation_id, created_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (kind, title[:MAX_TITLE], text[:MAX_TEXT], json.dumps(payload or {}, ensure_ascii=False),
-             "|".join(clean_targets(targets)), source, conversation_id, now_iso()),
+            (
+                kind,
+                title[:MAX_TITLE],
+                text[:MAX_TEXT],
+                json.dumps(payload or {}, ensure_ascii=False),
+                "|".join(clean_targets(targets)),
+                source,
+                conversation_id,
+                now_iso(),
+            ),
         )
         event = self.get(event_id)
         assert event is not None

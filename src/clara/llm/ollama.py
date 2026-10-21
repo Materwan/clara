@@ -57,8 +57,15 @@ def record_of(show: dict) -> dict:
 
 
 class OllamaBackend:
-    def __init__(self, model: str, host: str, api_key: str | None = None, num_ctx: int | None = None,
-                 label: str = "Ollama", transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        model: str,
+        host: str,
+        api_key: str | None = None,
+        num_ctx: int | None = None,
+        label: str = "Ollama",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.model = model
         self.host = host.rstrip("/")
         self.label = label
@@ -82,13 +89,15 @@ class OllamaBackend:
             body["options"] = {"num_ctx": self._num_ctx}  # Ollama's own default window is tiny
         return body
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None,
-                     session: str | None = None) -> AsyncIterator[LlmChunk]:
+    async def stream(
+        self, messages: list[dict], tools: list[dict] | None, session: str | None = None
+    ) -> AsyncIterator[LlmChunk]:
         async with self._http.stream("POST", "/api/chat", json=self.body(messages, tools)) as response:
             if response.is_error:
                 await response.aread()
-                raise LlmError(f"{self.label} answered HTTP {response.status_code}: {_error_text(response)}",
-                               response.status_code)
+                raise LlmError(
+                    f"{self.label} answered HTTP {response.status_code}: {_error_text(response)}", response.status_code
+                )
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue
@@ -117,14 +126,20 @@ class OllamaBackend:
     async def _tags(self) -> list[dict]:
         response = await self._http.get("/api/tags", timeout=CONNECT_TIMEOUT)
         if response.is_error:
-            raise LlmError(f"{self.label} answered HTTP {response.status_code}: {_error_text(response)}",
-                           response.status_code)
+            raise LlmError(
+                f"{self.label} answered HTTP {response.status_code}: {_error_text(response)}", response.status_code
+            )
         models = response.json().get("models") or []
         return [model for model in models if isinstance(model, dict)]
 
     async def list_models(self) -> list[str]:
-        return sorted({str(model.get("model") or model.get("name")) for model in await self._tags()
-                       if model.get("model") or model.get("name")})
+        return sorted(
+            {
+                str(model.get("model") or model.get("name"))
+                for model in await self._tags()
+                if model.get("model") or model.get("name")
+            }
+        )
 
     async def model_sizes(self) -> dict[str, str]:
         """What the host says of each model's size ("7.6B"), for the models that say it."""

@@ -50,7 +50,7 @@ def healthy(port: int, boot_file: Path, boot: str, child: subprocess.Popen, limi
         if child.poll() is not None:
             return f"the new release exited at once (code {child.returncode})"
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as response:  # noqa: S310 - local
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as response:  # local address
                 ok = json.loads(response.read() or b"{}").get("status") == "ok"
         except (OSError, ValueError):
             ok = False
@@ -104,7 +104,7 @@ def main() -> int:
     child: subprocess.Popen | None = None
     stopping = False
 
-    def forward(signum, frame) -> None:  # noqa: ARG001
+    def forward(signum, frame) -> None:
         nonlocal stopping
         stopping = True
         if child is not None and child.poll() is None:
@@ -123,7 +123,7 @@ def main() -> int:
         env = {**os.environ, "CLARA_BOOT_ID": boot, "CLARA_RELEASE": release.name, "CLARA_LAUNCHED": "1"}
         (run_dir / "boot").unlink(missing_ok=True)
         log.info("starting %s (boot %s)", release.name, boot[:8])
-        child = subprocess.Popen([str(server)], env=env)  # noqa: S603
+        child = subprocess.Popen([str(server)], env=env)
         if checking is not None:
             problem = healthy(settings.port, run_dir / "boot", boot, child)
             plan, checking = checking, None
@@ -133,7 +133,9 @@ def main() -> int:
                 switch(link, Path(plan["from"]))
                 if schema_of(settings.database) > int(plan["schema_before"]):
                     restore(settings.database, Path(plan["backup"]))
-                (run_dir / RESULT).write_text(json.dumps({"result": "rolled_back", "tag": plan["tag"], "reason": problem}))
+                (run_dir / RESULT).write_text(
+                    json.dumps({"result": "rolled_back", "tag": plan["tag"], "reason": problem})
+                )
                 continue
             (run_dir / RESULT).write_text(json.dumps({"result": "ok", "tag": plan["tag"]}))
             log.info("%s is up", plan["tag"])

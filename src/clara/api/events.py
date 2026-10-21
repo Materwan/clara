@@ -1,11 +1,11 @@
 """The event stream (reminders, notifications, approvals, alerts, server states) and notifications sent by clients.
 
-    GET  /v1/events/stream     server-sent events: what this token missed since its cursor, then each new one.
-                               `Last-Event-ID` (or `after`) resumes from an event; a token that never listened
-                               starts from now. To the Discord bot each event also says its `channel`.
-    GET  /v1/events            the recent events (a client's inbox)
-    POST /v1/events/ack        moves this token's cursor (a client that shows events without streaming them)
-    POST /v1/notifications     a client notifies you (at most 10 a minute)
+GET  /v1/events/stream     server-sent events: what this token missed since its cursor, then each new one.
+                           `Last-Event-ID` (or `after`) resumes from an event; a token that never listened
+                           starts from now. To the Discord bot each event also says its `channel`.
+GET  /v1/events            the recent events (a client's inbox)
+POST /v1/events/ack        moves this token's cursor (a client that shows events without streaming them)
+POST /v1/notifications     a client notifies you (at most 10 a minute)
 """
 
 from __future__ import annotations
@@ -29,8 +29,11 @@ _sent: deque[float] = deque()
 
 
 @router.get("/events/stream")
-async def stream(request: Request, after: int | None = Query(None, ge=0),
-                 last_event_id: str | None = Header(None, alias="Last-Event-ID")):
+async def stream(
+    request: Request,
+    after: int | None = Query(None, ge=0),
+    last_event_id: str | None = Header(None, alias="Last-Event-ID"),
+):
     who = caller(request)
     s = services(request)
     start = after
@@ -41,7 +44,9 @@ async def stream(request: Request, after: int | None = Query(None, ge=0),
         yield {"type": "server", "state": s.lifecycle.state, "boot": s.boot_id}
         async for event in s.events.listen(who.token.id, who.client, start):
             item = {**event.describe(), "_id": event.id}
-            if who.client == "discord":  # the channel is told at delivery, so a change of routes applies to a stream already open
+            if (
+                who.client == "discord"
+            ):  # the channel is told at delivery, so a change of routes applies to a stream already open
                 channel = route(event, s.runtime.get("discord_routes"))
                 if channel is not None:
                     item["channel"] = channel
@@ -98,8 +103,9 @@ def notify(body: Notification, request: Request) -> dict:
         raise ApiError(429, f"At most {NOTIFICATIONS_PER_MINUTE} notifications a minute.")
     who = caller(request)
     try:
-        event = services(request).events.publish("notification", body.title or "Notification", body.text,
-                                                 targets=body.targets, source=f"client:{who.name}")
+        event = services(request).events.publish(
+            "notification", body.title or "Notification", body.text, targets=body.targets, source=f"client:{who.name}"
+        )
     except ValueError as error:
         raise ApiError(422, str(error)) from None
     _sent.append(now)

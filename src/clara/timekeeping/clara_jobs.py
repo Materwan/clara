@@ -81,13 +81,15 @@ def _moments(values: object, zone_name: str) -> list[datetime]:
 
 
 def _describe(task: Task, now: datetime, family: list[str]) -> str:
-    return "\n".join([
-        f"Task: {task.title}",
-        f"Description: {task.description or '(none)'}",
-        f"Deadline: {local_text(task.due_at, task.tz) if task.due_at else 'none'}",
-        *family,
-        f"Current time: {local_text(now, task.tz)}",
-    ])
+    return "\n".join(
+        [
+            f"Task: {task.title}",
+            f"Description: {task.description or '(none)'}",
+            f"Deadline: {local_text(task.due_at, task.tz) if task.due_at else 'none'}",
+            *family,
+            f"Current time: {local_text(now, task.tz)}",
+        ]
+    )
 
 
 class ClaraJobs:
@@ -101,9 +103,15 @@ class ClaraJobs:
         services = self.agent.s
         conversation = services.conversations.get(reminder.conversation_id) if reminder.conversation_id else None
         request = ChatRequest(
-            message=f"[Reminder due] {reminder.text}", client="server",
-            conversation=conversation.id if conversation else None, instructions=ANNOUNCE_INSTRUCTIONS,
-            timezone=reminder.timezone, no_tools=True, quiet=True, mode="unattended", kind="reminder",
+            message=f"[Reminder due] {reminder.text}",
+            client="server",
+            conversation=conversation.id if conversation else None,
+            instructions=ANNOUNCE_INSTRUCTIONS,
+            timezone=reminder.timezone,
+            no_tools=True,
+            quiet=True,
+            mode="unattended",
+            kind="reminder",
             store=conversation is not None,
         )
         try:
@@ -120,11 +128,14 @@ class ClaraJobs:
         services = self.agent.s
         conversation = services.conversations.get(task.conversation_id) if task.conversation_id else None
         try:
-            choice = services.router.choose(conversation.model if conversation else "",
-                                            conversation.local_only if conversation else False)
+            choice = services.router.choose(
+                conversation.model if conversation else "", conversation.local_only if conversation else False
+            )
             answer = await self.agent.runner.complete(
-                [{"role": "system", "content": instructions}, {"role": "user", "content": message}], choice,
-                kind="task", conversation_id=task.conversation_id,
+                [{"role": "system", "content": instructions}, {"role": "user", "content": message}],
+                choice,
+                kind="task",
+                conversation_id=task.conversation_id,
             )
         except Exception as error:
             raise AnnounceFailed(f"the model failed: {type(error).__name__}") from None
@@ -140,13 +151,15 @@ class ClaraJobs:
         tasks = self.agent.s.tasks
         sent = task.reminders_sent + 1
         queued = [local_text(at, task.tz) for at in task.next if at > now]
-        message = "\n".join([
-            _describe(task, now, family),
-            f"This is reminder number {sent} of at most {tasks.max_reminders}"
-            + (" (the last one)." if sent >= tasks.max_reminders else "."),
-            f"Reminders sent before this one: {task.reminders_sent}",
-            "Reminders still queued: " + (", ".join(queued) if queued else "none"),
-        ])
+        message = "\n".join(
+            [
+                _describe(task, now, family),
+                f"This is reminder number {sent} of at most {tasks.max_reminders}"
+                + (" (the last one)." if sent >= tasks.max_reminders else "."),
+                f"Reminders sent before this one: {task.reminders_sent}",
+                "Reminders still queued: " + (", ".join(queued) if queued else "none"),
+            ]
+        )
         answer = await asyncio.wait_for(self._ask(task, message, FOLLOW_INSTRUCTIONS), self.announce_timeout or 60)
         found = _object(answer)
         if found is None:
@@ -155,5 +168,7 @@ class ClaraJobs:
         reminders = found.get("next")
         moments = _moments(reminders, task.timezone)
         keep = not isinstance(reminders, list) or (bool(reminders) and not moments)
-        return Followup(" ".join(text.split())[:MAX_MESSAGE] if isinstance(text, str) and text.strip() else None,
-                        None if keep else moments)
+        return Followup(
+            " ".join(text.split())[:MAX_MESSAGE] if isinstance(text, str) and text.strip() else None,
+            None if keep else moments,
+        )

@@ -44,8 +44,13 @@ CATEGORIES = (
     Category("answers", "Answer ready", "A long answer is finished."),
     Category("notifications", "Other notifications", "Scripts and other clients that notify you."),
     Category("updates", "Updates", "Clara is updating, or has updated."),
-    Category("alerts", "Alerts", "Something needs your attention: the disk, a backup, a connection, a hook falling behind.",
-             default="alerts", can_be_off=False),
+    Category(
+        "alerts",
+        "Alerts",
+        "Something needs your attention: the disk, a backup, a connection, a hook falling behind.",
+        default="alerts",
+        can_be_off=False,
+    ),
 )
 BY_ID = {category.id: category for category in CATEGORIES}
 
@@ -66,7 +71,8 @@ def category_of(kind: str, source: str, payload: Mapping) -> str | None:
         return "schedules"
     if kind == "notification":
         return {"triggers": "hook_notices", "mail": "mail", "clara": "clara_notices", "server": "answers"}.get(
-            source, "notifications")
+            source, "notifications"
+        )
     return None
 
 

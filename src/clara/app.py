@@ -132,23 +132,53 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     audit = Audit(db)
     home = settings.timezone
     s = Services(
-        settings=settings, db=db, runtime=runtime, secrets=secrets, tokens=tokens, web_sessions=WebSessions(db, tokens),
-        limiter=FailureLimiter(), events=events, alerts=alerts, traffic=traffic, logs=logs, usage=UsageLog(db), facts=Facts(db),
-        conversations=Conversations(db), conversation_files=ConversationFiles(db),
-        projects=Projects(db, settings.project_max_chars, settings.project_max_files, settings.project_inline_percent,
-                          settings.project_inline_tokens),
-        reminders=Reminders(db, events, home), tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
-        schedules=Schedules(db, events, home), rules=rules, gate=Gate(db, rules, runtime, vault_push=settings.vault_push), audit=audit,
+        settings=settings,
+        db=db,
+        runtime=runtime,
+        secrets=secrets,
+        tokens=tokens,
+        web_sessions=WebSessions(db, tokens),
+        limiter=FailureLimiter(),
+        events=events,
+        alerts=alerts,
+        traffic=traffic,
+        logs=logs,
+        usage=UsageLog(db),
+        facts=Facts(db),
+        conversations=Conversations(db),
+        conversation_files=ConversationFiles(db),
+        projects=Projects(
+            db,
+            settings.project_max_chars,
+            settings.project_max_files,
+            settings.project_inline_percent,
+            settings.project_inline_tokens,
+        ),
+        reminders=Reminders(db, events, home),
+        tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
+        schedules=Schedules(db, events, home),
+        rules=rules,
+        gate=Gate(db, rules, runtime, vault_push=settings.vault_push),
+        audit=audit,
         approvals=Approvals(db, events, rules, audit, alerts, expire_after=settings.approval_expire),
-        providers=providers, catalog=catalog, router=Router(providers, catalog, runtime),
+        providers=providers,
+        catalog=catalog,
+        router=Router(providers, catalog, runtime),
     )
     s.github_snapshots = GitHubSnapshots()
     tools = memory_tools() + time_tools() + knowledge_tools()
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
-    runner = ModelRunner(providers, s.usage, traffic, alerts, chat_slots=settings.chat_slots,
-                         background_slots=settings.background_slots, first_token_timeout=settings.first_token_timeout,
-                         idle_timeout=settings.idle_timeout)
+    runner = ModelRunner(
+        providers,
+        s.usage,
+        traffic,
+        alerts,
+        chat_slots=settings.chat_slots,
+        background_slots=settings.background_slots,
+        first_token_timeout=settings.first_token_timeout,
+        idle_timeout=settings.idle_timeout,
+    )
     s.agent = Agent(s, runner, Persona(settings.persona_file))
     wire(s)
     s.lifecycle = Lifecycle(s, settings.drain_seconds)
@@ -176,11 +206,16 @@ def wire(s: Services) -> None:
 
     def approved_context(approval) -> ToolContext:
         conversation = s.conversations.get(approval.conversation_id) if approval.conversation_id else None
-        state = TurnState(turn_id=approval.turn_id or "approval", conversation_id=approval.conversation_id or "",
-                          client="server", mode="unattended", timezone=s.settings.timezone,
-                          project_id=conversation.project_id if conversation else None,
-                          incognito=bool(conversation and conversation.incognito),
-                          local_only=bool(conversation and conversation.local_only))
+        state = TurnState(
+            turn_id=approval.turn_id or "approval",
+            conversation_id=approval.conversation_id or "",
+            client="server",
+            mode="unattended",
+            timezone=s.settings.timezone,
+            project_id=conversation.project_id if conversation else None,
+            incognito=bool(conversation and conversation.incognito),
+            local_only=bool(conversation and conversation.local_only),
+        )
         return ToolContext(s, state)
 
     s.approvals.context_factory = approved_context
@@ -195,20 +230,38 @@ async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -
     if schedule.per_run:
         day = run.due.astimezone(zone(schedule.timezone)).date().isoformat()
         conversation_id = s.conversations.create(
-            "server", title=f"{schedule.name} — {day}", project_id=schedule.project_id, local_only=schedule.local_only,
-            model=schedule.model, packs=packs).id
+            "server",
+            title=f"{schedule.name} — {day}",
+            project_id=schedule.project_id,
+            local_only=schedule.local_only,
+            model=schedule.model,
+            packs=packs,
+        ).id
     else:
         conversation_id = schedule.conversation_id
         if conversation_id is None or s.conversations.get(conversation_id) is None:
-            conversation_id = s.conversations.create("server", kind="schedule", title=schedule.name,
-                                                     project_id=schedule.project_id, local_only=schedule.local_only).id
+            conversation_id = s.conversations.create(
+                "server",
+                kind="schedule",
+                title=schedule.name,
+                project_id=schedule.project_id,
+                local_only=schedule.local_only,
+            ).id
             s.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation_id, schedule.id))
         s.conversations.update(conversation_id, packs=packs, model=schedule.model)
     s.db.execute("UPDATE schedule_runs SET conversation_id = ? WHERE id = ?", (conversation_id, run.id))
-    request = ChatRequest(message=message_of(schedule), client="server", conversation=conversation_id,
-                          instructions=instructions_of(schedule), prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
-                          timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True,
-                          model=schedule.model or None)
+    request = ChatRequest(
+        message=message_of(schedule),
+        client="server",
+        conversation=conversation_id,
+        instructions=instructions_of(schedule),
+        prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
+        timezone=schedule.timezone,
+        mode="unattended",
+        kind="schedule",
+        quiet=True,
+        model=schedule.model or None,
+    )
     attempt = 1
     while True:
         before = s.conversations.message_count(conversation_id)
@@ -221,8 +274,13 @@ async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -
             done = s.conversations.message_count(conversation_id) != before
             if done or attempt >= schedule.attempts or not retryable(error):
                 raise
-            log.warning("schedule %s: attempt %d of %d failed (%s), trying again",
-                        schedule.id, attempt, schedule.attempts, error)
+            log.warning(
+                "schedule %s: attempt %d of %d failed (%s), trying again",
+                schedule.id,
+                attempt,
+                schedule.attempts,
+                error,
+            )
             await s.schedules.pause_before_retry(attempt)
             attempt += 1
 
@@ -232,9 +290,18 @@ async def close_run(s: Services, schedule: Schedule, run) -> None:
     from .agent.turn import ServerStopping
 
     try:
-        await s.agent.answer(ChatRequest(message=SCHEDULE_CLOSING, client="server", conversation=run["conversation_id"],
-                                         timezone=schedule.timezone, mode="unattended", kind="schedule", quiet=True,
-                                         model=schedule.model or None))
+        await s.agent.answer(
+            ChatRequest(
+                message=SCHEDULE_CLOSING,
+                client="server",
+                conversation=run["conversation_id"],
+                timezone=schedule.timezone,
+                mode="unattended",
+                kind="schedule",
+                quiet=True,
+                model=schedule.model or None,
+            )
+        )
     except ServerStopping:
         raise Stopping() from None
 
@@ -246,8 +313,14 @@ def recover(s: Services) -> None:
     interrupted = s.schedules.recover()
     cut = s.triggers.recover() if s.triggers is not None else 0
     if healed or failed or interrupted or cut:
-        log.warning("after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
-                    "%d scheduled run(s) to run again, %d hook run(s) put right", healed, failed, interrupted, cut)
+        log.warning(
+            "after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
+            "%d scheduled run(s) to run again, %d hook run(s) put right",
+            healed,
+            failed,
+            interrupted,
+            cut,
+        )
     if s.workspace is not None:
         s.workspace.recover()
 
@@ -274,7 +347,9 @@ def create_app(s: Services) -> FastAPI:
                     log.exception("could not start %s", type(part).__name__)
         tasks.append(asyncio.create_task(first_models(s), name="models"))
         s.reminders.ensure_system(RESTORE_DRILL, _first_of_next_month(s), "monthly")
-        s.events.publish("server", "Clara is running", f"Clara {__version__}", payload={"state": "running", "boot": s.boot_id})
+        s.events.publish(
+            "server", "Clara is running", f"Clara {__version__}", payload={"state": "running", "boot": s.boot_id}
+        )
         write_boot_record(s)
         notify("READY=1")
         try:
@@ -296,12 +371,28 @@ def create_app(s: Services) -> FastAPI:
             await s.providers.aclose()
             s.traffic.flush()
 
-    app = FastAPI(title="Clara", version=__version__, lifespan=lifespan,
-                  docs_url="/docs" if debug else None, redoc_url=None, openapi_url="/openapi.json" if debug else None)
+    app = FastAPI(
+        title="Clara",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/docs" if debug else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if debug else None,
+    )
     app.state.services = s
     install_error_handlers(app)
-    for router in (auth_api.router, chat_api.router, conversations_api.router, memory_api.router, time_api.router,
-                   events_api.router, projects_api.router, gate_api.router, models_api.router, admin_api.router):
+    for router in (
+        auth_api.router,
+        chat_api.router,
+        conversations_api.router,
+        memory_api.router,
+        time_api.router,
+        events_api.router,
+        projects_api.router,
+        gate_api.router,
+        models_api.router,
+        admin_api.router,
+    ):
         app.include_router(router)
     app.include_router(workspace_api.router)
     app.include_router(triggers_api.router)
@@ -373,7 +464,7 @@ class ClaraServer(uvicorn.Server):
             for sig, handler in original.items():
                 signal.signal(sig, handler)
 
-    def handle_exit(self, sig, frame) -> None:  # noqa: ARG002
+    def handle_exit(self, sig, frame) -> None:
         self.lifecycle.stop_threadsafe(force=self.lifecycle.stopping)
 
 
@@ -398,8 +489,11 @@ def prepare(settings: Settings) -> tuple[Database, InstanceLock]:
 
 
 def setup_logging(debug: bool) -> None:
-    logging.basicConfig(level=logging.DEBUG if debug else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stderr)
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -428,8 +522,15 @@ def main(argv: list[str] | None = None) -> int:
     seed_daily_note(services)
     services.logs.attach()
     app = create_app(services)
-    config = uvicorn.Config(app, host="127.0.0.1", port=settings.port, log_level="warning", proxy_headers=False,
-                            timeout_graceful_shutdown=3, server_header=False)
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=settings.port,
+        log_level="warning",
+        proxy_headers=False,
+        timeout_graceful_shutdown=3,
+        server_header=False,
+    )
     server = ClaraServer(config)
     server.lifecycle = services.lifecycle
 
@@ -461,4 +562,3 @@ def extend(s: Services) -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

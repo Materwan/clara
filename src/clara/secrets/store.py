@@ -136,7 +136,9 @@ class SecretsStore:
             return self._initialise(material)
         if (meta["kdf"] == "raw") != (material.raw is not None):
             kinds = {"raw": "a raw 32-byte key", "scrypt": "a passphrase"}
-            raise WrongKey(f"This store was made with {kinds[meta['kdf']]}, but {material.origin} gives the other kind.")
+            raise WrongKey(
+                f"This store was made with {kinds[meta['kdf']]}, but {material.origin} gives the other kind."
+            )
         key = _derive(material, meta["salt"], meta["n"] or SCRYPT_N, meta["r"] or SCRYPT_R, meta["p"] or SCRYPT_P)
         try:
             AESGCM(key).decrypt(meta["check_nonce"], meta["check_value"], b"check")
@@ -153,8 +155,16 @@ class SecretsStore:
         self.db.execute(
             "INSERT INTO secrets_meta (id, kdf, salt, n, r, p, check_nonce, check_value, created_at)"
             " VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (kdf, salt, SCRYPT_N if salt else None, SCRYPT_R if salt else None, SCRYPT_P if salt else None,
-             nonce, check, now_iso()),
+            (
+                kdf,
+                salt,
+                SCRYPT_N if salt else None,
+                SCRYPT_R if salt else None,
+                SCRYPT_P if salt else None,
+                nonce,
+                check,
+                now_iso(),
+            ),
         )
         return key
 
@@ -200,7 +210,12 @@ class SecretsStore:
         stored = {row["name"]: row["updated_at"] for row in self.db.all("SELECT name, updated_at FROM secrets")}
         names = list(KNOWN_SECRETS) + sorted(set(stored) - set(KNOWN_SECRETS))
         return [
-            {"name": name, "purpose": KNOWN_SECRETS.get(name, ""), "set": name in stored, "updated_at": stored.get(name)}
+            {
+                "name": name,
+                "purpose": KNOWN_SECRETS.get(name, ""),
+                "set": name in stored,
+                "updated_at": stored.get(name),
+            }
             for name in names
         ]
 
@@ -218,8 +233,16 @@ class SecretsStore:
             tx.execute(
                 "UPDATE secrets_meta SET kdf = ?, salt = ?, n = ?, r = ?, p = ?, check_nonce = ?, check_value = ?,"
                 " rotated_at = ? WHERE id = 1",
-                ("raw" if salt is None else "scrypt", salt, SCRYPT_N if salt else None, SCRYPT_R if salt else None,
-                 SCRYPT_P if salt else None, nonce, check, now),
+                (
+                    "raw" if salt is None else "scrypt",
+                    salt,
+                    SCRYPT_N if salt else None,
+                    SCRYPT_R if salt else None,
+                    SCRYPT_P if salt else None,
+                    nonce,
+                    check,
+                    now,
+                ),
             )
             for name, value in values.items():
                 assert value is not None

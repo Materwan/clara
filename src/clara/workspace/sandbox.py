@@ -46,20 +46,38 @@ class RunResult:
     commit: str
 
 
-def podman_args(settings: Settings, image: str, workspace: str, workdir: str, network: bool, timeout: int,
-                name: str) -> list[str]:
+def podman_args(
+    settings: Settings, image: str, workspace: str, workdir: str, network: bool, timeout: int, name: str
+) -> list[str]:
     uid, gid = os.getuid(), os.getgid()
     return [
-        settings.podman, "run", "--rm", "--name", name,
+        settings.podman,
+        "run",
+        "--rm",
+        "--name",
+        name,
         "--network=" + ("pasta" if network else "none"),
-        "--read-only", "--cap-drop=all", "--security-opt=no-new-privileges",
-        "--userns=keep-id", f"--user={uid}:{gid}",
-        f"--pids-limit={settings.run_pids}", f"--memory={settings.run_memory}", f"--memory-swap={settings.run_memory}",
-        f"--cpus={settings.run_cpus:g}", f"--timeout={timeout}",
-        "--http-proxy=false", "--env=HOME=/tmp", "--env=LANG=C.UTF-8",
-        f"--volume={workspace}:/workspace:rw", "--tmpfs=/workspace/.git:ro,size=64k,mode=000",
-        "--tmpfs=/tmp:rw,size=256m", f"--workdir=/workspace/{workdir}".rstrip("/"),
-        "--log-driver=none", image, "bash", "-c",
+        "--read-only",
+        "--cap-drop=all",
+        "--security-opt=no-new-privileges",
+        "--userns=keep-id",
+        f"--user={uid}:{gid}",
+        f"--pids-limit={settings.run_pids}",
+        f"--memory={settings.run_memory}",
+        f"--memory-swap={settings.run_memory}",
+        f"--cpus={settings.run_cpus:g}",
+        f"--timeout={timeout}",
+        "--http-proxy=false",
+        "--env=HOME=/tmp",
+        "--env=LANG=C.UTF-8",
+        f"--volume={workspace}:/workspace:rw",
+        "--tmpfs=/workspace/.git:ro,size=64k,mode=000",
+        "--tmpfs=/tmp:rw,size=256m",
+        f"--workdir=/workspace/{workdir}".rstrip("/"),
+        "--log-driver=none",
+        image,
+        "bash",
+        "-c",
     ]
 
 
@@ -87,8 +105,9 @@ class Sandbox:
 
     async def _exec(self, *args: str, timeout: float = CHECK_TIMEOUT) -> tuple[int, str]:
         try:
-            process = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
-                                                           stderr=asyncio.subprocess.STDOUT, env=_minimal_env())
+            process = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=_minimal_env()
+            )
         except FileNotFoundError:
             return 127, f"{args[0]} is not installed"
         try:
@@ -119,18 +138,37 @@ class Sandbox:
         controllers = set(host.get("cgroupControllers") or [])
         cgroup2 = host.get("cgroupVersion") == "v2"
         needed = {"memory", "pids", "cpu"}
-        results.append(("cgroups", cgroup2 and needed <= controllers,
-                        f"cgroup {host.get('cgroupVersion')}, delegated: {', '.join(sorted(controllers)) or 'none'}"))
+        results.append(
+            (
+                "cgroups",
+                cgroup2 and needed <= controllers,
+                f"cgroup {host.get('cgroupVersion')}, delegated: {', '.join(sorted(controllers)) or 'none'}",
+            )
+        )
         id_maps = host.get("idMappings", {})
         mapped = bool(id_maps.get("uidmap")) and bool(id_maps.get("gidmap"))
-        results.append(("subuid/subgid", mapped, "ranges found" if mapped else "add ranges to /etc/subuid and /etc/subgid"))
+        results.append(
+            ("subuid/subgid", mapped, "ranges found" if mapped else "add ranges to /etc/subuid and /etc/subgid")
+        )
         code, out = await self._exec(self.settings.podman, "image", "exists", self.image)
-        results.append(("image", code == 0, self.image if code == 0 else f"{self.image} is missing (clara doctor --pull)"))
+        results.append(
+            ("image", code == 0, self.image if code == 0 else f"{self.image} is missing (clara doctor --pull)")
+        )
         if all(ok for _, ok, _ in results):
-            code, out = await self._exec(self.settings.podman, "run", "--rm", "--network=none", "--read-only",
-                                         "--cap-drop=all", self.image, "bash", "-c",
-                                         "(getent hosts example.com || curl -sm3 http://1.1.1.1) >/dev/null 2>&1 && "
-                                         "echo NETWORK || echo ISOLATED", timeout=120)
+            code, out = await self._exec(
+                self.settings.podman,
+                "run",
+                "--rm",
+                "--network=none",
+                "--read-only",
+                "--cap-drop=all",
+                self.image,
+                "bash",
+                "-c",
+                "(getent hosts example.com || curl -sm3 http://1.1.1.1) >/dev/null 2>&1 && "
+                "echo NETWORK || echo ISOLATED",
+                timeout=120,
+            )
             isolated = code == 0 and "ISOLATED" in out
             results.append(("isolation", isolated, "no network inside" if isolated else out[:300]))
         return self._done(results)
@@ -146,8 +184,9 @@ class Sandbox:
     # ------------------------------------------------------------------
     # A run
     # ------------------------------------------------------------------
-    async def run(self, command: str, workdir: str, timeout: int, network: bool, *, conversation_id: str | None,
-                  turn_id: str) -> RunResult:
+    async def run(
+        self, command: str, workdir: str, timeout: int, network: bool, *, conversation_id: str | None, turn_id: str
+    ) -> RunResult:
         if not self.ready:
             raise WorkspaceError(f"Scripts cannot run: {self.problem}.")
         if not command.strip():
@@ -165,15 +204,19 @@ class Sandbox:
         stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
         log_name = f"runs/{stamp}-{run_id}.log"
         name = f"clara-run-{run_id}-{uuid.uuid4().hex[:6]}"
-        args = podman_args(self.settings, self.image, str(self.workspace.root), folder, network, timeout, name) + [command]
+        args = podman_args(self.settings, self.image, str(self.workspace.root), folder, network, timeout, name) + [
+            command
+        ]
         begun = time.monotonic()
         async with self._slots:
             exit_code, captured, total, timed_out = await self._spawn(args, timeout + 15, name)
         seconds = time.monotonic() - begun
         timed_out = timed_out or (exit_code not in (0, None) and seconds >= timeout)  # podman's own --timeout killed it
-        header = (f"$ {command}\n# workdir: /workspace/{folder}  network: {'on' if network else 'off'}  "
-                  f"timeout: {timeout}s\n# exit: {exit_code}{'  (timed out)' if timed_out else ''}  "
-                  f"took: {seconds:.1f}s  output: {total} bytes{' (log cut at 10 MB)' if total > LOG_MAX_BYTES else ''}\n\n")
+        header = (
+            f"$ {command}\n# workdir: /workspace/{folder}  network: {'on' if network else 'off'}  "
+            f"timeout: {timeout}s\n# exit: {exit_code}{'  (timed out)' if timed_out else ''}  "
+            f"took: {seconds:.1f}s  output: {total} bytes{' (log cut at 10 MB)' if total > LOG_MAX_BYTES else ''}\n\n"
+        )
         log_path = resolve(self.workspace.root, log_name)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_bytes(header.encode() + captured)
@@ -189,9 +232,13 @@ class Sandbox:
         return RunResult(run_id, exit_code, shown, total, timed_out, seconds, log_name, commit)
 
     async def _spawn(self, args: list[str], hard_limit: float, name: str) -> tuple[int | None, bytes, int, bool]:
-        process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
-                                                       stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                                                       env=_minimal_env())
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=_minimal_env(),
+        )
         assert process.stdout is not None
         captured = bytearray()
         total = 0
@@ -220,8 +267,9 @@ class Sandbox:
         return process.returncode, bytes(captured), total, timed_out
 
     def recover(self) -> int:
-        rows = self.db.execute("UPDATE ws_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
-                               (now_iso(),)).rowcount
+        rows = self.db.execute(
+            "UPDATE ws_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'", (now_iso(),)
+        ).rowcount
         return rows
 
     def runs(self, limit: int = 50) -> list[dict]:
@@ -231,6 +279,15 @@ class Sandbox:
 def _minimal_env() -> dict[str, str]:
     """What podman itself needs to find its runtime (never passed into the container: podman does not pass the
     environment unless asked)."""
-    keep = ("PATH", "HOME", "XDG_RUNTIME_DIR", "USER", "LOGNAME", "DBUS_SESSION_BUS_ADDRESS", "CONTAINERS_CONF",
-            "CONTAINERS_STORAGE_CONF", "TMPDIR")
+    keep = (
+        "PATH",
+        "HOME",
+        "XDG_RUNTIME_DIR",
+        "USER",
+        "LOGNAME",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "CONTAINERS_CONF",
+        "CONTAINERS_STORAGE_CONF",
+        "TMPDIR",
+    )
     return {key: value for key, value in os.environ.items() if key in keep}

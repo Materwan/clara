@@ -122,12 +122,29 @@ class Run:
 
 
 def _schedule(row) -> Schedule:
-    return Schedule(row["id"], row["name"], row["prompt"], tuple(json.loads(row["documents"])), row["conversation_id"],
-                    row["project_id"], row["repeat"], tuple(int(d) for d in row["weekdays"].split(",") if d),
-                    datetime.fromisoformat(row["local_at"]), row["timezone"],
-                    parse_iso(row["next_at"]) if row["next_at"] else None, bool(row["enabled"]), bool(row["local_only"]),
-                    row["created_at"], tuple(json.loads(row["packs"] or "[]")), bool(row["per_run"]), row["missed"],
-                    row["overlap"], row["model"], bool(row["in_history"]), row["attempts"])
+    return Schedule(
+        row["id"],
+        row["name"],
+        row["prompt"],
+        tuple(json.loads(row["documents"])),
+        row["conversation_id"],
+        row["project_id"],
+        row["repeat"],
+        tuple(int(d) for d in row["weekdays"].split(",") if d),
+        datetime.fromisoformat(row["local_at"]),
+        row["timezone"],
+        parse_iso(row["next_at"]) if row["next_at"] else None,
+        bool(row["enabled"]),
+        bool(row["local_only"]),
+        row["created_at"],
+        tuple(json.loads(row["packs"] or "[]")),
+        bool(row["per_run"]),
+        row["missed"],
+        row["overlap"],
+        row["model"],
+        bool(row["in_history"]),
+        row["attempts"],
+    )
 
 
 def _document(doc: dict) -> str:
@@ -241,7 +258,9 @@ class Schedules(DueLoop):
             raise ScheduleError(f"attempts must be a whole number from 1 to {MAX_ATTEMPTS} (1: no retry).")
         return value
 
-    def _timing(self, at: str, timezone: str | None, repeat: str, weekdays: list[int]) -> tuple[datetime, str, str, tuple[int, ...]]:
+    def _timing(
+        self, at: str, timezone: str | None, repeat: str, weekdays: list[int]
+    ) -> tuple[datetime, str, str, tuple[int, ...]]:
         repeat = (repeat or "").strip().lower()
         if repeat and repeat not in REPEATS:
             raise ScheduleError(f"repeat must be one of: {', '.join(REPEATS)} (or nothing).")
@@ -265,11 +284,26 @@ class Schedules(DueLoop):
             return moment
         return next_local(local, repeat, now - timedelta(seconds=1), tz, days)
 
-    def create(self, name: str, prompt: str, at: str, *, documents: list[dict] | None = None, timezone: str | None = None,
-               repeat: str = "", weekdays: list[int] | None = None, project_id: int | None = None,
-               local_only: bool = False, conversation_id: str | None = None, packs: list[str] | None = None,
-               per_run: bool = False, missed: str = "skip", overlap: str = "skip", model: str = "",
-               attempts: int = MAX_ATTEMPTS) -> Schedule:
+    def create(
+        self,
+        name: str,
+        prompt: str,
+        at: str,
+        *,
+        documents: list[dict] | None = None,
+        timezone: str | None = None,
+        repeat: str = "",
+        weekdays: list[int] | None = None,
+        project_id: int | None = None,
+        local_only: bool = False,
+        conversation_id: str | None = None,
+        packs: list[str] | None = None,
+        per_run: bool = False,
+        missed: str = "skip",
+        overlap: str = "skip",
+        model: str = "",
+        attempts: int = MAX_ATTEMPTS,
+    ) -> Schedule:
         if int(self.db.value("SELECT COUNT(*) FROM schedules", (), 0)) >= MAX_SCHEDULES:
             raise ScheduleError(f"At most {MAX_SCHEDULES} scheduled tasks: delete some first.")
         docs = self._documents(documents)
@@ -279,11 +313,27 @@ class Schedules(DueLoop):
             "INSERT INTO schedules (name, prompt, documents, conversation_id, project_id, repeat, weekdays, local_at,"
             " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self._name(name), self._prompt(prompt, docs), json.dumps(docs, ensure_ascii=False), conversation_id,
-             project_id, repeat, ",".join(map(str, days)), local.isoformat(timespec="minutes"), zone_name,
-             iso(self._first(local, zone_name, repeat, days)), int(local_only), self._packs(packs), int(per_run),
-             self._policy(missed, MISSED, "missed"), self._policy(overlap, OVERLAPS, "overlap"), model.strip(),
-             self._attempts(attempts), now, now),
+            (
+                self._name(name),
+                self._prompt(prompt, docs),
+                json.dumps(docs, ensure_ascii=False),
+                conversation_id,
+                project_id,
+                repeat,
+                ",".join(map(str, days)),
+                local.isoformat(timespec="minutes"),
+                zone_name,
+                iso(self._first(local, zone_name, repeat, days)),
+                int(local_only),
+                self._packs(packs),
+                int(per_run),
+                self._policy(missed, MISSED, "missed"),
+                self._policy(overlap, OVERLAPS, "overlap"),
+                model.strip(),
+                self._attempts(attempts),
+                now,
+                now,
+            ),
         )
         self.wake()
         return self.get(schedule_id)
@@ -307,7 +357,11 @@ class Schedules(DueLoop):
         if "name" in fields:
             columns["name"] = self._name(fields["name"])
         if "prompt" in fields or "documents" in fields:
-            docs = list(old.documents) if fields.get("documents") is None else self._documents(fields["documents"], old.documents)
+            docs = (
+                list(old.documents)
+                if fields.get("documents") is None
+                else self._documents(fields["documents"], old.documents)
+            )
             columns["documents"] = json.dumps(docs, ensure_ascii=False)
             columns["prompt"] = self._prompt(fields["prompt"] if "prompt" in fields else old.prompt, docs)
         if "project_id" in fields:
@@ -332,12 +386,19 @@ class Schedules(DueLoop):
         if {"at", "timezone", "repeat", "weekdays"} & fields.keys() or enabled != old.enabled:
             at = fields.get("at") or old.local_at.isoformat(timespec="minutes")
             local, zone_name, repeat, days = self._timing(
-                at, fields.get("timezone") or old.timezone, fields.get("repeat", old.repeat),
+                at,
+                fields.get("timezone") or old.timezone,
+                fields.get("repeat", old.repeat),
                 fields["weekdays"] if "weekdays" in fields else list(old.weekdays),
             )
-            columns.update(local_at=local.isoformat(timespec="minutes"), timezone=zone_name, repeat=repeat,
-                           weekdays=",".join(map(str, days)), enabled=int(enabled),
-                           next_at=iso(self._first(local, zone_name, repeat, days)) if enabled else None)
+            columns.update(
+                local_at=local.isoformat(timespec="minutes"),
+                timezone=zone_name,
+                repeat=repeat,
+                weekdays=",".join(map(str, days)),
+                enabled=int(enabled),
+                next_at=iso(self._first(local, zone_name, repeat, days)) if enabled else None,
+            )
         if columns:
             columns["updated_at"] = now_iso()
             assignments = ", ".join(f"{name} = ?" for name in columns)
@@ -352,36 +413,67 @@ class Schedules(DueLoop):
         return deleted
 
     def runs(self, schedule_id: int, limit: int = 20) -> list[dict]:
-        rows = self.db.all("SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?",
-                           (schedule_id, limit))
+        rows = self.db.all(
+            "SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY id DESC LIMIT ?", (schedule_id, limit)
+        )
         return [dict(row) for row in rows]
 
     def waiting_run(self, schedule_id: int):
-        return self.db.one("SELECT * FROM schedule_runs WHERE schedule_id = ? AND status = 'waiting' ORDER BY id DESC LIMIT 1",
-                           (schedule_id,))
+        return self.db.one(
+            "SELECT * FROM schedule_runs WHERE schedule_id = ? AND status = 'waiting' ORDER BY id DESC LIMIT 1",
+            (schedule_id,),
+        )
 
     def describe(self, schedule: Schedule) -> dict:
-        last = self.db.one("SELECT * FROM schedule_runs WHERE schedule_id = ? AND status != 'queued' ORDER BY id DESC LIMIT 1",
-                           (schedule.id,))
+        last = self.db.one(
+            "SELECT * FROM schedule_runs WHERE schedule_id = ? AND status != 'queued' ORDER BY id DESC LIMIT 1",
+            (schedule.id,),
+        )
         waiting = self.waiting_run(schedule.id)
         tz = zone(schedule.timezone)
         return {
-            "id": schedule.id, "name": schedule.name, "prompt": schedule.prompt,
+            "id": schedule.id,
+            "name": schedule.name,
+            "prompt": schedule.prompt,
             "documents": [{"name": d["name"], "chars": len(d["text"])} for d in schedule.documents],
-            "conversation": schedule.conversation_id, "project": schedule.project_id, "repeat": schedule.repeat,
-            "weekdays": list(schedule.weekdays), "local_at": schedule.local_at.isoformat(timespec="minutes"),
-            "timezone": schedule.timezone, "next_at": iso(schedule.next_at) if schedule.next_at else None,
+            "conversation": schedule.conversation_id,
+            "project": schedule.project_id,
+            "repeat": schedule.repeat,
+            "weekdays": list(schedule.weekdays),
+            "local_at": schedule.local_at.isoformat(timespec="minutes"),
+            "timezone": schedule.timezone,
+            "next_at": iso(schedule.next_at) if schedule.next_at else None,
             "next_local": local_text(schedule.next_at, tz) if schedule.next_at else None,
-            "enabled": schedule.enabled, "local_only": schedule.local_only, "running": schedule.id in self._running,
-            "packs": list(schedule.packs), "per_run": schedule.per_run, "missed": schedule.missed,
-            "overlap": schedule.overlap, "model": schedule.model, "in_history": schedule.in_history,
+            "enabled": schedule.enabled,
+            "local_only": schedule.local_only,
+            "running": schedule.id in self._running,
+            "packs": list(schedule.packs),
+            "per_run": schedule.per_run,
+            "missed": schedule.missed,
+            "overlap": schedule.overlap,
+            "model": schedule.model,
+            "in_history": schedule.in_history,
             "attempts": schedule.attempts,
-            "waiting_run": {"id": waiting["id"], "conversation": waiting["conversation_id"], "since": waiting["waiting_since"]}
-            if waiting else None,
-            "queued": int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'",
-                                        (schedule.id,), 0)),
-            "runs": int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ?"
-                                      " AND status NOT IN ('missed', 'queued', 'skipped')", (schedule.id,), 0)),
+            "waiting_run": {
+                "id": waiting["id"],
+                "conversation": waiting["conversation_id"],
+                "since": waiting["waiting_since"],
+            }
+            if waiting
+            else None,
+            "queued": int(
+                self.db.value(
+                    "SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'", (schedule.id,), 0
+                )
+            ),
+            "runs": int(
+                self.db.value(
+                    "SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ?"
+                    " AND status NOT IN ('missed', 'queued', 'skipped')",
+                    (schedule.id,),
+                    0,
+                )
+            ),
             "last": dict(last) if last else None,
         }
 
@@ -394,8 +486,7 @@ class Schedules(DueLoop):
 
     def busy(self, schedule_id: int) -> bool:
         """A run of this schedule is going, being closed, or waiting for an answer."""
-        return (schedule_id in self._running or schedule_id in self._closing
-                or self.waiting_run(schedule_id) is not None)
+        return schedule_id in self._running or schedule_id in self._closing or self.waiting_run(schedule_id) is not None
 
     def run_now(self, schedule_id: int) -> Schedule:
         schedule = self.get(schedule_id)
@@ -413,17 +504,22 @@ class Schedules(DueLoop):
         if run_id is None:
             run_id = self.db.insert(
                 "INSERT INTO schedule_runs (schedule_id, due_at, started_at, status, late_seconds) VALUES (?, ?, ?, 'running', ?)",
-                (schedule.id, iso(due), now_iso(), late))
+                (schedule.id, iso(due), now_iso(), late),
+            )
         else:
-            self.db.execute("UPDATE schedule_runs SET status = 'running', started_at = ?, late_seconds = ? WHERE id = ?",
-                            (now_iso(), late, run_id))
+            self.db.execute(
+                "UPDATE schedule_runs SET status = 'running', started_at = ?, late_seconds = ? WHERE id = ?",
+                (now_iso(), late, run_id),
+            )
         task = asyncio.create_task(self._execute(schedule, run_id, due))
         self._running[schedule.id] = task
         task.add_done_callback(lambda _: (self._running.pop(schedule.id, None), self.wake()))
 
     def _queued(self) -> list:
-        return self.db.all("SELECT r.* FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
-                           " WHERE r.status = 'queued' AND s.enabled = 1 ORDER BY r.due_at, r.id")
+        return self.db.all(
+            "SELECT r.* FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            " WHERE r.status = 'queued' AND s.enabled = 1 ORDER BY r.due_at, r.id"
+        )
 
     def _remind_instant(self, since: datetime, tz) -> datetime:
         """The next CLARA_WAITING_REMIND_AT after three hours of waiting."""
@@ -439,8 +535,10 @@ class Schedules(DueLoop):
         for run in self._queued():
             if not self.busy(run["schedule_id"]):
                 soon.append(self._clock())
-        for run in self.db.all("SELECT r.*, s.timezone FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
-                               " WHERE r.status = 'waiting' AND r.reminded_at IS NULL AND r.waiting_since IS NOT NULL"):
+        for run in self.db.all(
+            "SELECT r.*, s.timezone FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            " WHERE r.status = 'waiting' AND r.reminded_at IS NULL AND r.waiting_since IS NOT NULL"
+        ):
             soon.append(self._remind_instant(parse_iso(run["waiting_since"]), zone(run["timezone"])))
         return min(soon) if soon else None
 
@@ -460,13 +558,20 @@ class Schedules(DueLoop):
     def fire_due(self) -> int:
         now = self._clock()
         started = 0
-        for row in self.db.all("SELECT * FROM schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= ?"
-                               " ORDER BY next_at", (iso(now),)):
+        for row in self.db.all(
+            "SELECT * FROM schedules WHERE enabled = 1 AND next_at IS NOT NULL AND next_at <= ? ORDER BY next_at",
+            (iso(now),),
+        ):
             schedule = _schedule(row)
             dues = self._occurrences(schedule, now)
-            following = (next_local(schedule.local_at, schedule.repeat, now, zone(schedule.timezone), schedule.weekdays)
-                         if schedule.repeat else None)
-            self.db.execute("UPDATE schedules SET next_at = ? WHERE id = ?", (iso(following) if following else None, schedule.id))
+            following = (
+                next_local(schedule.local_at, schedule.repeat, now, zone(schedule.timezone), schedule.weekdays)
+                if schedule.repeat
+                else None
+            )
+            self.db.execute(
+                "UPDATE schedules SET next_at = ? WHERE id = ?", (iso(following) if following else None, schedule.id)
+            )
             old = [due for due in dues if (now - due).total_seconds() > LATE_SKIP_SECONDS]
             fresh = [due for due in dues if due not in old]
             if schedule.missed == "all":
@@ -476,7 +581,9 @@ class Schedules(DueLoop):
             else:
                 skipped, caught_up = old, []
             for due in skipped:
-                self._record(schedule, due, "missed", f"The server was not running at {iso(due)}: this run was skipped.")
+                self._record(
+                    schedule, due, "missed", f"The server was not running at {iso(due)}: this run was skipped."
+                )
             for due in caught_up:  # a backlog waits its turn, whatever `overlap` says
                 started += self._admit(schedule, due, backlog=True)
             for due in fresh:
@@ -500,27 +607,42 @@ class Schedules(DueLoop):
         if schedule.overlap == "skip" and not backlog:
             self._record(schedule, due, "skipped", "The previous run was still going or waiting: this one was skipped.")
         else:
-            if int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'",
-                                 (schedule.id,), 0)) >= MAX_BACKLOG:
+            if (
+                int(
+                    self.db.value(
+                        "SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'",
+                        (schedule.id,),
+                        0,
+                    )
+                )
+                >= MAX_BACKLOG
+            ):
                 self._record(schedule, due, "skipped", "Too many runs were waiting: this one was skipped.")
                 return 0
-            self.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (?, ?, 'queued')",
-                            (schedule.id, iso(due)))
+            self.db.execute(
+                "INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (?, ?, 'queued')",
+                (schedule.id, iso(due)),
+            )
             if schedule.overlap == "replace" and not backlog:
                 self.close_waiting(schedule.id)
         return 0
 
     def _queued_for(self, schedule_id: int) -> bool:
-        return self.db.one("SELECT 1 FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'", (schedule_id,)) is not None
+        return (
+            self.db.one("SELECT 1 FROM schedule_runs WHERE schedule_id = ? AND status = 'queued'", (schedule_id,))
+            is not None
+        )
 
     # ------------------------------------------------------------------
     # Waiting for an answer
     # ------------------------------------------------------------------
     def mark_waiting(self, run_id: int, question: str) -> None:
         """The run asked the person something: it waits (its turn goes on to its end, then the run stays `waiting`)."""
-        self.db.execute("UPDATE schedule_runs SET status = 'waiting', waiting_since = COALESCE(waiting_since, ?), summary = ?"
-                        " WHERE id = ? AND status IN ('running', 'waiting')",
-                        (iso(self._clock()), summary_of(question), run_id))
+        self.db.execute(
+            "UPDATE schedule_runs SET status = 'waiting', waiting_since = COALESCE(waiting_since, ?), summary = ?"
+            " WHERE id = ? AND status IN ('running', 'waiting')",
+            (iso(self._clock()), summary_of(question), run_id),
+        )
 
     def finish_run(self, run_id: int, summary: str, closed: bool = False) -> None:
         """The run is over (its tool `finish_run`, or the closing turn). One that waited ends with an `ask` event, which
@@ -530,16 +652,26 @@ class Schedules(DueLoop):
             return
         status = "closed" if closed else "ok"
         text = summary_of(summary) if summary.strip() else "Finished."
-        self.db.execute("UPDATE schedule_runs SET status = ?, finished_at = ?, summary = ? WHERE id = ?",
-                        (status, now_iso(), text, run_id))
+        self.db.execute(
+            "UPDATE schedule_runs SET status = ?, finished_at = ?, summary = ? WHERE id = ?",
+            (status, now_iso(), text, run_id),
+        )
         schedule = self.find(row["schedule_id"])
         if schedule is not None:
             if row["waiting_since"]:
                 self.events.publish(
-                    "ask", schedule.name, text, payload={"conversation": row["conversation_id"], "stage": "closed" if closed else "finished",
-                                                         "run": run_id},
-                    targets=("web",) if schedule.local_only else ("web", "discord"), source="schedules",
-                    conversation_id=row["conversation_id"])
+                    "ask",
+                    schedule.name,
+                    text,
+                    payload={
+                        "conversation": row["conversation_id"],
+                        "stage": "closed" if closed else "finished",
+                        "run": run_id,
+                    },
+                    targets=("web",) if schedule.local_only else ("web", "discord"),
+                    source="schedules",
+                    conversation_id=row["conversation_id"],
+                )
             else:
                 self._tell(schedule, status, text, 0)
         self.wake()
@@ -563,23 +695,31 @@ class Schedules(DueLoop):
         except Stopping:
             return
         except Exception as error:
-            log.warning("schedule %s: closing run %s failed (%s: %s)", schedule.id, run["id"], type(error).__name__, error)
+            log.warning(
+                "schedule %s: closing run %s failed (%s: %s)", schedule.id, run["id"], type(error).__name__, error
+            )
         current = self.db.one("SELECT * FROM schedule_runs WHERE id = ?", (run["id"],))
         if current is not None and current["status"] == "waiting":  # Clara did not finish it: it is closed all the same
             self.finish_run(run["id"], "Closed without an answer.", closed=True)
         self.wake()
 
     def _remind(self, now: datetime) -> None:
-        for run in self.db.all("SELECT r.*, s.timezone, s.name, s.local_only FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
-                               " WHERE r.status = 'waiting' AND r.reminded_at IS NULL AND r.waiting_since IS NOT NULL"):
+        for run in self.db.all(
+            "SELECT r.*, s.timezone, s.name, s.local_only FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            " WHERE r.status = 'waiting' AND r.reminded_at IS NULL AND r.waiting_since IS NOT NULL"
+        ):
             if self._remind_instant(parse_iso(run["waiting_since"]), zone(run["timezone"])) > now:
                 continue
             self.db.execute("UPDATE schedule_runs SET reminded_at = ? WHERE id = ?", (iso(now), run["id"]))
             self.events.publish(
-                "ask", run["name"], "Still waiting for your answer: answer in the conversation to finish.",
+                "ask",
+                run["name"],
+                "Still waiting for your answer: answer in the conversation to finish.",
                 payload={"conversation": run["conversation_id"], "stage": "reminder", "run": run["id"]},
-                targets=("web",) if run["local_only"] else ("web", "discord"), source="schedules",
-                conversation_id=run["conversation_id"])
+                targets=("web",) if run["local_only"] else ("web", "discord"),
+                source="schedules",
+                conversation_id=run["conversation_id"],
+            )
 
     # ------------------------------------------------------------------
     # A run
@@ -594,18 +734,27 @@ class Schedules(DueLoop):
             raise Stopping()
 
     async def _execute(self, schedule: Schedule, run_id: int, due: datetime) -> None:
-        number = int(self.db.value("SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ?"
-                                   " AND status NOT IN ('queued', 'skipped', 'missed')", (schedule.id,), 1))
+        number = int(
+            self.db.value(
+                "SELECT COUNT(*) FROM schedule_runs WHERE schedule_id = ?"
+                " AND status NOT IN ('queued', 'skipped', 'missed')",
+                (schedule.id,),
+                1,
+            )
+        )
         try:
             if self.runner is None:
                 raise ScheduleError("Clara cannot run it now.")
             status, summary = "ok", summary_of(await self.runner(schedule, number, Run(run_id, due)))
         except Stopping:
-            self.db.execute("UPDATE schedule_runs SET status = 'interrupted', finished_at = ? WHERE id = ?",
-                            (now_iso(), run_id))
+            self.db.execute(
+                "UPDATE schedule_runs SET status = 'interrupted', finished_at = ? WHERE id = ?", (now_iso(), run_id)
+            )
             if schedule.repeat or self.find(schedule.id):
-                self.db.execute("UPDATE schedules SET next_at = ? WHERE id = ? AND (next_at IS NULL OR next_at > ?)",
-                                (iso(due), schedule.id, iso(due)))
+                self.db.execute(
+                    "UPDATE schedules SET next_at = ? WHERE id = ? AND (next_at IS NULL OR next_at > ?)",
+                    (iso(due), schedule.id, iso(due)),
+                )
             return
         except Exception as error:
             log.warning("schedule %s: the run failed (%s: %s)", schedule.id, type(error).__name__, error)
@@ -616,8 +765,10 @@ class Schedules(DueLoop):
             return
         schedule = self.find(schedule.id) or schedule
         waiting = self.waiting(schedule.conversation_id) if schedule.conversation_id else 0
-        self.db.execute("UPDATE schedule_runs SET status = ?, finished_at = ?, summary = ?, waiting = ? WHERE id = ?",
-                        (status, now_iso(), summary, waiting, run_id))
+        self.db.execute(
+            "UPDATE schedule_runs SET status = ?, finished_at = ?, summary = ?, waiting = ? WHERE id = ?",
+            (status, now_iso(), summary, waiting, run_id),
+        )
         self._tell(schedule, status, summary, waiting)
         self.wake()
 
@@ -632,18 +783,26 @@ class Schedules(DueLoop):
         text = summary
         if waiting:
             text += f"\n{waiting} request{'s' if waiting > 1 else ''} wait for your permission."
-        self.events.publish("schedule", f"Scheduled task: {schedule.name}", text,
-                            payload={"schedule": schedule.id, "status": status, "waiting": waiting},
-                            source="schedules", conversation_id=schedule.conversation_id)
+        self.events.publish(
+            "schedule",
+            f"Scheduled task: {schedule.name}",
+            text,
+            payload={"schedule": schedule.id, "status": status, "waiting": waiting},
+            source="schedules",
+            conversation_id=schedule.conversation_id,
+        )
 
     def recover(self) -> int:
         """At start: runs left `running` by a crash are marked interrupted and their schedule is due again now."""
         rows = self.db.all("SELECT * FROM schedule_runs WHERE status = 'running'")
         for row in rows:
-            self.db.execute("UPDATE schedule_runs SET status = 'interrupted', finished_at = ? WHERE id = ?",
-                            (now_iso(), row["id"]))
-            self.db.execute("UPDATE schedules SET next_at = ? WHERE id = ? AND enabled = 1 AND (next_at IS NULL OR next_at > ?)",
-                            (row["due_at"], row["schedule_id"], row["due_at"]))
+            self.db.execute(
+                "UPDATE schedule_runs SET status = 'interrupted', finished_at = ? WHERE id = ?", (now_iso(), row["id"])
+            )
+            self.db.execute(
+                "UPDATE schedules SET next_at = ? WHERE id = ? AND enabled = 1 AND (next_at IS NULL OR next_at > ?)",
+                (row["due_at"], row["schedule_id"], row["due_at"]),
+            )
         return len(rows)
 
     async def wait_running(self) -> None:

@@ -27,8 +27,12 @@ def _check_ref(request: Request, ref: str) -> str:
 def pickers(request: Request) -> dict:
     """What a model picker shows: the models you chose to show, and the default."""
     s = services(request)
-    return {"models": [info.describe() for info in s.catalog.shown()], "default": s.runtime.get("default_model"),
-            "upkeep": s.runtime.get("upkeep_model"), "fallbacks": s.runtime.get("fallbacks")}
+    return {
+        "models": [info.describe() for info in s.catalog.shown()],
+        "default": s.runtime.get("default_model"),
+        "upkeep": s.runtime.get("upkeep_model"),
+        "fallbacks": s.runtime.get("fallbacks"),
+    }
 
 
 @router.get("/admin/providers")
@@ -67,9 +71,13 @@ async def check(provider_id: str, request: Request) -> dict:
 async def catalogue(request: Request, refresh: bool = False) -> dict:
     s = services(request)
     found = await s.catalog.listing(force=refresh)
-    return {"models": [info.describe() for info in found], "problems": s.catalog.problems,
-            "default": s.runtime.get("default_model"), "upkeep": s.runtime.get("upkeep_model"),
-            "fallbacks": s.runtime.get("fallbacks")}
+    return {
+        "models": [info.describe() for info in found],
+        "problems": s.catalog.problems,
+        "default": s.runtime.get("default_model"),
+        "upkeep": s.runtime.get("upkeep_model"),
+        "fallbacks": s.runtime.get("fallbacks"),
+    }
 
 
 class Shown(BaseModel):

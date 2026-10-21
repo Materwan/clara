@@ -26,7 +26,9 @@ CONNECT_TIMEOUT = 15.0
 READ_TIMEOUT = 600.0
 GEMINI_NOT_CHAT = ("tts", "image", "embedding", "transcribe", "audio", "live", "bidi")
 CODE = re.compile(r"[A-Za-z0-9][\w.-]{0,63}")  # what may pass for an error's name: a token, never a sentence
-UPSTREAM_CODE = re.compile(r"Upstream request failed:\s*\[([A-Za-z0-9][\w.-]{0,63})\]")  # OpenCode: "...: [invalid_value] ..."
+UPSTREAM_CODE = re.compile(
+    r"Upstream request failed:\s*\[([A-Za-z0-9][\w.-]{0,63})\]"
+)  # OpenCode: "...: [invalid_value] ..."
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,9 @@ class OpenAIFlavor:
     models_url: str = ""  # where the models are listed, when it is not `{host}/models` (OpenCode Go)
     headers: tuple[tuple[str, str], ...] = ()  # sent with every request (OpenCode wants a User-Agent of its own)
     session_header: str = ""  # the header naming the conversation, when the service insists on one (OpenCode)
-    known: Callable[[str], Known | None] | None = None  # what the service's lists say of a model: no question asked (OpenCode)
+    known: Callable[[str], Known | None] | None = (
+        None  # what the service's lists say of a model: no question asked (OpenCode)
+    )
 
 
 def google_record(model_id: str, model: dict) -> dict:
@@ -121,8 +125,15 @@ def _error_code(response: httpx.Response) -> str | None:
 
 
 class OpenAIBackend:
-    def __init__(self, model: str, host: str, api_key: str | None, flavor: OpenAIFlavor | None = None,
-                 label: str = "The provider", transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        model: str,
+        host: str,
+        api_key: str | None,
+        flavor: OpenAIFlavor | None = None,
+        label: str = "The provider",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.model = model
         self.host = host.rstrip("/")
         self._api_key = api_key
@@ -175,7 +186,8 @@ class OpenAIBackend:
                             "type": "function",
                             "function": {
                                 "name": function.get("name", ""),
-                                "arguments": arguments if isinstance(arguments, str)
+                                "arguments": arguments
+                                if isinstance(arguments, str)
                                 else json.dumps(arguments, ensure_ascii=False),
                             },
                         }
@@ -203,8 +215,9 @@ class OpenAIBackend:
             elif role == "user" and message.get("images"):
                 content: list[dict[str, Any]] = [{"type": "text", "text": message.get("content") or ""}]
                 for picture in message["images"]:
-                    content.append({"type": "image_url",
-                                    "image_url": {"url": f"data:{picture['mime']};base64,{picture['data']}"}})
+                    content.append(
+                        {"type": "image_url", "image_url": {"url": f"data:{picture['mime']};base64,{picture['data']}"}}
+                    )
                 converted.append({"role": role, "content": content})
             else:
                 converted.append({"role": role, "content": message.get("content") or ""})
@@ -219,14 +232,16 @@ class OpenAIBackend:
         body.update(dict(self._flavor.extra_body))
         return body
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None,
-                     session: str | None = None) -> AsyncIterator[LlmChunk]:
+    async def stream(
+        self, messages: list[dict], tools: list[dict] | None, session: str | None = None
+    ) -> AsyncIterator[LlmChunk]:
         calls: dict[int, dict[str, Any]] = {}
         written = TextCalls(tools) if tools else None  # LongCat sometimes writes its call as text
         counted = (0, 0, 0)
         named = {self._flavor.session_header: session or self._session} if self._flavor.session_header else None
-        request = self._http.stream("POST", f"{self.host}/chat/completions",
-                                    json=self.body(messages, tools), headers=named)
+        request = self._http.stream(
+            "POST", f"{self.host}/chat/completions", json=self.body(messages, tools), headers=named
+        )
         async with request as response:
             if response.is_error:
                 raise await self._refused(response)
@@ -246,16 +261,23 @@ class OpenAIBackend:
                     error = part["error"]
                     code = error.get("code") if isinstance(error, dict) else None
                     message = error.get("message", error) if isinstance(error, dict) else error
-                    raise LlmError(f"{self.label}: {message}", code if isinstance(code, int) else None,
-                                   code=_error_name(error))
+                    raise LlmError(
+                        f"{self.label}: {message}", code if isinstance(code, int) else None, code=_error_name(error)
+                    )
                 if usage := part.get("usage"):
                     # Gemini repeats its running count on every chunk, others give it once: pass on the increase
-                    said = (int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0),
-                            cached_tokens(usage))
+                    said = (
+                        int(usage.get("prompt_tokens") or 0),
+                        int(usage.get("completion_tokens") or 0),
+                        cached_tokens(usage),
+                    )
                     now = tuple(max(old, new) for old, new in zip(counted, said, strict=True))
                     if now != counted:
-                        yield LlmChunk(prompt_tokens=now[0] - counted[0], completion_tokens=now[1] - counted[1],
-                                       cached_tokens=now[2] - counted[2])
+                        yield LlmChunk(
+                            prompt_tokens=now[0] - counted[0],
+                            completion_tokens=now[1] - counted[1],
+                            cached_tokens=now[2] - counted[2],
+                        )
                         counted = now
                 chunk = LlmChunk()
                 for choice in part.get("choices") or []:
@@ -278,10 +300,13 @@ class OpenAIBackend:
         if rest:
             yield LlmChunk(text=rest)
         if calls:
-            yield LlmChunk(tool_calls=[
-                ToolCall(slot["name"], _arguments(slot["arguments"]), slot["extra"])
-                for _, slot in sorted(calls.items()) if slot["name"]
-            ])
+            yield LlmChunk(
+                tool_calls=[
+                    ToolCall(slot["name"], _arguments(slot["arguments"]), slot["extra"])
+                    for _, slot in sorted(calls.items())
+                    if slot["name"]
+                ]
+            )
         elif found:
             yield LlmChunk(tool_calls=found)
 

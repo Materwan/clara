@@ -151,15 +151,31 @@ def local(moment: str | None, zone_name: str) -> str:
 # Local tools (the client-side tools protocol)
 # ----------------------------------------------------------------------
 LOCAL_TOOLS = [
-    {"type": "function", "function": {
-        "name": "local_list", "description": "List a folder on the person's own machine (inside the folder clara-chat "
-        "was started in). The person confirms each call.",
-        "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Relative path."}}}}},
-    {"type": "function", "function": {
-        "name": "local_read", "description": "Read a text file on the person's own machine (inside the folder clara-chat "
-        "was started in), up to 40,000 characters from start_line. The person confirms each call.",
-        "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}},
-                       "required": ["path"]}}},
+    {
+        "type": "function",
+        "function": {
+            "name": "local_list",
+            "description": "List a folder on the person's own machine (inside the folder clara-chat "
+            "was started in). The person confirms each call.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Relative path."}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "local_read",
+            "description": "Read a text file on the person's own machine (inside the folder clara-chat "
+            "was started in), up to 40,000 characters from start_line. The person confirms each call.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}},
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
 
@@ -178,7 +194,9 @@ class LocalTools:
         try:
             path = self._path(str(arguments.get("path") or "."))
             if self.confirm:
-                answer = input(f"\n  Clara wants to {name.removeprefix('local_')} {path}. Allow? [y/N] ").strip().lower()
+                answer = (
+                    input(f"\n  Clara wants to {name.removeprefix('local_')} {path}. Allow? [y/N] ").strip().lower()
+                )
                 if answer not in ("y", "yes", "o", "oui"):
                     return "The person refused this."
             if name == "local_list":
@@ -243,8 +261,10 @@ def describe_event(event: dict) -> str | None:
         return f"\a⚠ {event.get('title')}: {event['text']}"
     if kind == "approval":
         approval = event["payload"]["approval"]
-        return (f"\a🔐 Clara asks: {approval['summary']} [{approval['level']}] — /allow {approval['id']}, "
-                f"/always {approval['id']}, /refuse {approval['id']} or /never {approval['id']}")
+        return (
+            f"\a🔐 Clara asks: {approval['summary']} [{approval['level']}] — /allow {approval['id']}, "
+            f"/always {approval['id']}, /refuse {approval['id']} or /never {approval['id']}"
+        )
     return None
 
 
@@ -257,8 +277,13 @@ def listen(api: Api, notices: Notices, stop: threading.Event) -> None:
                     new = event.get("state") or event.get("payload", {}).get("state", "")
                     if new and new != state:
                         if state:
-                            notices.say({"running": "Clara is running again.", "stopping": "Clara is stopping.",
-                                         "stopped": "Clara stopped."}.get(new, new))
+                            notices.say(
+                                {
+                                    "running": "Clara is running again.",
+                                    "stopping": "Clara is stopping.",
+                                    "stopped": "Clara stopped.",
+                                }.get(new, new)
+                            )
                         state = new
                     continue
                 text = describe_event(event)
@@ -276,8 +301,15 @@ def listen(api: Api, notices: Notices, stop: threading.Event) -> None:
 # The conversation
 # ----------------------------------------------------------------------
 class Chat:
-    def __init__(self, api: Api, zone_name: str, conversation: str | None, incognito: bool, local_only: bool,
-                 tools: LocalTools | None):
+    def __init__(
+        self,
+        api: Api,
+        zone_name: str,
+        conversation: str | None,
+        incognito: bool,
+        local_only: bool,
+        tools: LocalTools | None,
+    ):
         self.api = api
         self.zone = zone_name
         self.conversation = conversation
@@ -325,8 +357,10 @@ class Chat:
 
     def run_local(self, event: dict) -> None:
         assert self.tools is not None
-        results = [{"id": call["id"], "content": self.tools.run(call["name"], call.get("arguments") or {})}
-                   for call in event["calls"]]
+        results = [
+            {"id": call["id"], "content": self.tools.run(call["name"], call.get("arguments") or {})}
+            for call in event["calls"]
+        ]
         self.api.post(f"/v1/turns/{event['turn']}/tool-results", {"results": results})
 
 
@@ -342,7 +376,9 @@ def task_line(task: dict, zone_name: str) -> str:
         parts.append(f"due {local(task['due_at'], zone_name)}")
     parts.append(f"{task['reminders_sent']} reminder{'s' if task['reminders_sent'] != 1 else ''} sent")
     if task["status"] == "open":
-        parts.append(f"next {local(task['next_reminder'], zone_name)}" if task["next_reminder"] else "no reminder to come")
+        parts.append(
+            f"next {local(task['next_reminder'], zone_name)}" if task["next_reminder"] else "no reminder to come"
+        )
     return "  ·  ".join(parts)
 
 
@@ -358,7 +394,12 @@ def command(chat: Chat, line: str) -> bool:
         chat.conversation = None
         chat.incognito = "incognito" in argument.split()
         chat.local_only = "local" in argument.split()
-        print("New conversation" + (" (incognito)" if chat.incognito else "") + (" (local only)" if chat.local_only else "") + ".")
+        print(
+            "New conversation"
+            + (" (incognito)" if chat.incognito else "")
+            + (" (local only)" if chat.local_only else "")
+            + "."
+        )
     elif name == "/resume":
         if argument:
             api.get(f"/v1/conversations/{argument}")
@@ -366,13 +407,24 @@ def command(chat: Chat, line: str) -> bool:
             print(f"Going on with {argument}.")
         else:
             found = [c for c in api.get("/v1/conversations", limit=20)["conversations"] if c["client"] == CLIENT]
-            print("\n".join(f"{c['id']}  {c['updated_at'][:16]}  {c['title'] or c['preview'][:60]}" for c in found) or "(none)")
+            print(
+                "\n".join(f"{c['id']}  {c['updated_at'][:16]}  {c['title'] or c['preview'][:60]}" for c in found)
+                or "(none)"
+            )
     elif name == "/conversations":
         found = api.get("/v1/conversations", q=argument or None, limit=30)["conversations"]
-        print("\n".join(f"{c['id']}  {c['client']:<8} {c['updated_at'][:16]}  {c['title'] or c['preview'][:60]}" for c in found) or "(none)")
+        print(
+            "\n".join(
+                f"{c['id']}  {c['client']:<8} {c['updated_at'][:16]}  {c['title'] or c['preview'][:60]}" for c in found
+            )
+            or "(none)"
+        )
     elif name == "/facts":
         facts = api.get("/v1/memory/facts")["facts"]
-        print("\n".join(f"[{f['id']}] {f['text']}" + ("" if f["confirmed"] else "  (unconfirmed)") for f in facts) or "(nothing yet)")
+        print(
+            "\n".join(f"[{f['id']}] {f['text']}" + ("" if f["confirmed"] else "  (unconfirmed)") for f in facts)
+            or "(nothing yet)"
+        )
     elif name == "/remember" and argument:
         print("Stored." if api.post("/v1/memory/facts", {"text": argument})["new"] else "Already known.")
     elif name == "/forget" and argument.isdigit():
@@ -385,13 +437,20 @@ def command(chat: Chat, line: str) -> bool:
         due, rest = take_when(words, now)
         if not rest:
             raise ValueError("A reminder needs a text.")
-        reminder = api.post("/v1/reminders", {"text": " ".join(rest), "at": iso(due), "repeat": repeat,
-                                              "timezone": zone_name, "targets": targets})
+        reminder = api.post(
+            "/v1/reminders",
+            {"text": " ".join(rest), "at": iso(due), "repeat": repeat, "timezone": zone_name, "targets": targets},
+        )
         print(f"Reminder {reminder['id']} set for {local(reminder['due_at'], zone_name)}.")
     elif name == "/reminders":
         found = api.get("/v1/reminders")["reminders"]
-        print("\n".join(f"[{r['id']}] {local(r['due_at'], zone_name)}{' (' + r['repeat'] + ')' if r['repeat'] else ''}  {r['text']}"
-                        for r in found) or "(none)")
+        print(
+            "\n".join(
+                f"[{r['id']}] {local(r['due_at'], zone_name)}{' (' + r['repeat'] + ')' if r['repeat'] else ''}  {r['text']}"
+                for r in found
+            )
+            or "(none)"
+        )
     elif name == "/unremind" and argument.isdigit():
         api.delete(f"/v1/reminders/{argument}")
         print("Cancelled.")
@@ -420,7 +479,12 @@ def command(chat: Chat, line: str) -> bool:
         found = api.get("/v1/approvals", status="pending")["approvals"]
         print("\n".join(f"#{a['id']} [{a['level']}] {a['summary']}" for a in found) or "Nothing waits.")
     elif name in ("/allow", "/always", "/refuse", "/never") and argument.isdigit():
-        answer = {"/allow": "allow_once", "/always": "allow_always", "/refuse": "refuse_once", "/never": "refuse_always"}[name]
+        answer = {
+            "/allow": "allow_once",
+            "/always": "allow_always",
+            "/refuse": "refuse_once",
+            "/never": "refuse_always",
+        }[name]
         print(f"#{argument}: {api.post(f'/v1/approvals/{argument}/decide', {'answer': answer})['status']}")
     elif name == "/undo":
         print(api.post("/v1/workspace/undo", {}).get("message", "Done."))
@@ -445,10 +509,14 @@ def tools_text(chat: Chat, argument: str) -> str:
         if chat.conversation:
             api.patch(f"/v1/conversations/{chat.conversation}", {"packs": active})
         else:
-            chat.conversation = api.post("/v1/conversations", {"packs": active, "incognito": chat.incognito,
-                                                               "local_only": chat.local_only})["id"]
-    return "\n".join(f"{'[x]' if item['id'] in active else '[ ]'} {item['id']:<18} {item['label']}"
-                     + ("" if item["available"] else f"  ({item['reason']})") for item in listing)
+            chat.conversation = api.post(
+                "/v1/conversations", {"packs": active, "incognito": chat.incognito, "local_only": chat.local_only}
+            )["id"]
+    return "\n".join(
+        f"{'[x]' if item['id'] in active else '[ ]'} {item['id']:<18} {item['label']}"
+        + ("" if item["available"] else f"  ({item['reason']})")
+        for item in listing
+    )
 
 
 def task_command(chat: Chat, argument: str, now: datetime) -> None:
@@ -469,22 +537,35 @@ def task_command(chat: Chat, argument: str, now: datetime) -> None:
             parent, rest = int(number), rest.strip()
         targets, rest = take_targets(rest)
         title, description, due, reminders = parse_task(rest, now)
-        task = api.post("/v1/tasks", {"title": title, "description": description, "due": iso(due) if due else None,
-                                      "reminders": [iso(at) for at in reminders], "timezone": zone_name,
-                                      "targets": targets, "parent_id": parent})
+        task = api.post(
+            "/v1/tasks",
+            {
+                "title": title,
+                "description": description,
+                "due": iso(due) if due else None,
+                "reminders": [iso(at) for at in reminders],
+                "timezone": zone_name,
+                "targets": targets,
+                "parent_id": parent,
+            },
+        )
         print(("Sub task added: " if parent else "Task added: ") + task_line(task, zone_name))
     elif word in ("done", "reopen", "delete") and rest.isdigit():
         if word == "delete":
             api.delete(f"/v1/tasks/{rest}")
             print("Deleted.")
         else:
-            print(task_line(api.patch(f"/v1/tasks/{rest}", {"status": "done" if word == "done" else "open"}), zone_name))
+            print(
+                task_line(api.patch(f"/v1/tasks/{rest}", {"status": "done" if word == "done" else "open"}), zone_name)
+            )
     elif word == "move":
         number, _, under = rest.partition(" ")
         under = under.strip().lower()
         if not number.isdigit() or not (under.isdigit() or under == "none"):
             raise ValueError("Usage: /task move <id> <parent-id>|none")
-        print(task_line(api.patch(f"/v1/tasks/{number}", {"parent_id": int(under) if under.isdigit() else 0}), zone_name))
+        print(
+            task_line(api.patch(f"/v1/tasks/{number}", {"parent_id": int(under) if under.isdigit() else 0}), zone_name)
+        )
     elif word == "set":
         number, _, rest = rest.partition(" ")
         field, _, value = rest.strip().partition(" ")
@@ -513,7 +594,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true", help="go on with the last terminal conversation")
     parser.add_argument("--incognito", action="store_true", help="a conversation that remembers nothing")
     parser.add_argument("--local-only", action="store_true", help="a conversation that never leaves your machines")
-    parser.add_argument("--local-tools", action="store_true", help="let Clara list and read files here (you confirm each)")
+    parser.add_argument(
+        "--local-tools", action="store_true", help="let Clara list and read files here (you confirm each)"
+    )
     parser.add_argument("--yes", action="store_true", help="with --local-tools: do not ask before each call")
     parser.add_argument("message", nargs="*", help="one question, then exit")
     args = parser.parse_args(argv)

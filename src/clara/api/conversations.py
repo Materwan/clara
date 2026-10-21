@@ -25,10 +25,21 @@ def _get(request: Request, conversation_id: str):
 
 
 @router.get("")
-def listing(request: Request, q: str = Query("", max_length=200), project: str = Query(ANY, pattern=r"^(any|none|\d+)$"),
-            kind: Literal["chat", "schedule", "any"] = "chat", history: bool = False,
-            hide: str = Query("", max_length=100, pattern=r"^[a-z,]*$", description="Clients whose conversations are left out (the pinned ones stay)"),
-            limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0)) -> dict:
+def listing(
+    request: Request,
+    q: str = Query("", max_length=200),
+    project: str = Query(ANY, pattern=r"^(any|none|\d+)$"),
+    kind: Literal["chat", "schedule", "any"] = "chat",
+    history: bool = False,
+    hide: str = Query(
+        "",
+        max_length=100,
+        pattern=r"^[a-z,]*$",
+        description="Clients whose conversations are left out (the pinned ones stay)",
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
     hidden = tuple(client for client in dict.fromkeys(hide.split(",")) if client in CLIENTS)
     return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset, history, hidden)}
 
@@ -39,7 +50,9 @@ class NewConversation(BaseModel):
     model: str = Field(default="", max_length=200)
     incognito: bool = False
     local_only: bool = False
-    packs: list[str] | None = Field(default=None, max_length=20, description="The tool packs switched on (default: web)")
+    packs: list[str] | None = Field(
+        default=None, max_length=20, description="The tool packs switched on (default: web)"
+    )
 
 
 def _packs(s, packs: list[str]) -> list[str]:
@@ -54,9 +67,15 @@ def create(body: NewConversation, request: Request) -> dict:
     s = services(request)
     if body.project is not None and s.projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
-    conversation = s.conversations.create(caller(request).client, title=body.title, project_id=body.project,
-                                          model=body.model, incognito=body.incognito, local_only=body.local_only,
-                                          packs=_packs(s, body.packs) if body.packs is not None else None)
+    conversation = s.conversations.create(
+        caller(request).client,
+        title=body.title,
+        project_id=body.project,
+        model=body.model,
+        incognito=body.incognito,
+        local_only=body.local_only,
+        packs=_packs(s, body.packs) if body.packs is not None else None,
+    )
     return conversation.describe()
 
 
@@ -64,10 +83,14 @@ def create(body: NewConversation, request: Request) -> dict:
 def get(conversation_id: str, request: Request) -> dict:
     conversation = _get(request, conversation_id)
     s = services(request)
-    return {**conversation.describe(), "context": s.agent.context_info(conversation_id),
-            "answering": s.agent.answering(conversation_id), "subagents": s.conversations.subagents(conversation_id),
-            "files": [item.describe() for item in s.conversation_files.of(conversation_id)],
-            "approvals": [item.describe() for item in s.approvals.waiting(conversation_id)]}
+    return {
+        **conversation.describe(),
+        "context": s.agent.context_info(conversation_id),
+        "answering": s.agent.answering(conversation_id),
+        "subagents": s.conversations.subagents(conversation_id),
+        "files": [item.describe() for item in s.conversation_files.of(conversation_id)],
+        "approvals": [item.describe() for item in s.approvals.waiting(conversation_id)],
+    }
 
 
 class ConversationChange(BaseModel):
@@ -123,11 +146,14 @@ def messages(conversation_id: str, request: Request, calls: bool = False) -> dic
         if message["role"] == "assistant" and message.get("tool_calls"):
             forms = forms_in([{"function": call} for call in message["tool_calls"]])
             if forms:
-                later = [item["content"] for item in shown[index + 1:] if item["role"] == "user"]
+                later = [item["content"] for item in shown[index + 1 :] if item["role"] == "user"]
                 message["forms"] = with_answers(forms, later)
     if not calls:
-        shown = [{key: value for key, value in message.items() if key != "tool_calls"} for message in shown
-                 if message["role"] != "tool" and (message["content"] or message.get("forms"))]
+        shown = [
+            {key: value for key, value in message.items() if key != "tool_calls"}
+            for message in shown
+            if message["role"] != "tool" and (message["content"] or message.get("forms"))
+        ]
     return {"conversation": conversation_id, "messages": shown}
 
 

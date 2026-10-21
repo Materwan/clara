@@ -26,8 +26,11 @@ def _expiry(request: Request, text: str | None) -> str | None:
 
 
 @router.get("/facts")
-def listing(request: Request, state: Literal["live", "unconfirmed", "expired", "superseded", "all"] = "live",
-            q: str = Query("", max_length=200)) -> dict:
+def listing(
+    request: Request,
+    state: Literal["live", "unconfirmed", "expired", "superseded", "all"] = "live",
+    q: str = Query("", max_length=200),
+) -> dict:
     facts = services(request).facts
     found = facts.search(q, 200, include_old=state != "live") if q.strip() else facts.listing(state)
     return {"facts": [fact.describe() for fact in found], "live": facts.count_live()}
@@ -44,8 +47,14 @@ class NewFact(BaseModel):
 @router.post("/facts", status_code=201)
 def add(body: NewFact, request: Request) -> dict:
     try:
-        fact, new = services(request).facts.add(body.text, "you", category=body.category, pinned=body.pinned,
-                                                 expires_at=_expiry(request, body.expires_at), replaces=body.replaces)
+        fact, new = services(request).facts.add(
+            body.text,
+            "you",
+            category=body.category,
+            pinned=body.pinned,
+            expires_at=_expiry(request, body.expires_at),
+            replaces=body.replaces,
+        )
     except FactError as error:
         raise ApiError(422, str(error)) from None
     return {**fact.describe(), "new": new}
@@ -64,8 +73,11 @@ def change(fact_id: int, body: FactChange, request: Request) -> dict:
     if body.expires_at is not None:
         expires = _expiry(request, body.expires_at) if body.expires_at else None
     try:
-        return services(request).facts.update(fact_id, text=body.text, category=body.category, pinned=body.pinned,
-                                              expires_at=expires).describe()
+        return (
+            services(request)
+            .facts.update(fact_id, text=body.text, category=body.category, pinned=body.pinned, expires_at=expires)
+            .describe()
+        )
     except FactError as error:
         raise ApiError(404 if "No fact" in str(error) else 422, str(error)) from None
 

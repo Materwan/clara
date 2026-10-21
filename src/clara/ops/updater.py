@@ -1,17 +1,17 @@
 """Updates: tagged releases only, prepared while the old server still runs, with automatic rollback.
 
-    1. You pick a release tag (console /update, Admin page). Nothing installs before that.
-    2. Its assets are downloaded from GitHub Releases (CLARA_RELEASE_REPO): `clara-<tag>.tar.gz`, `SHA256SUMS`,
-       `manifest.json` and, when CLARA_RELEASE_PUBKEY is set, `SHA256SUMS.sig` (an Ed25519 signature, then required).
-       Every file is checked against its sum.
-    3. The tarball is unpacked (no absolute path, no `..`, no link) into `<releases>/<tag>`, and a virtualenv is built
-       with uv from the release's hash-pinned `requirements.lock` and its wheel. The web site comes built inside it.
-    4. A preflight runs the new code against a *copy* of the database: settings, migrations, the secrets key.
-    5. The sandbox image the release pins (by digest) is pulled.
-    6. A backup is taken, the plan is written to `run/update.json`, and the server stops (drain, bounded) with exit
-       code 75. The launcher switches the `current` link, starts the new release and waits up to 60 s for `/health` and
-       the new boot id; if that fails it switches back, restores the database if a migration ran, starts the old
-       release again and records why: the restarted server raises an alert.
+1. You pick a release tag (console /update, Admin page). Nothing installs before that.
+2. Its assets are downloaded from GitHub Releases (CLARA_RELEASE_REPO): `clara-<tag>.tar.gz`, `SHA256SUMS`,
+   `manifest.json` and, when CLARA_RELEASE_PUBKEY is set, `SHA256SUMS.sig` (an Ed25519 signature, then required).
+   Every file is checked against its sum.
+3. The tarball is unpacked (no absolute path, no `..`, no link) into `<releases>/<tag>`, and a virtualenv is built
+   with uv from the release's hash-pinned `requirements.lock` and its wheel. The web site comes built inside it.
+4. A preflight runs the new code against a *copy* of the database: settings, migrations, the secrets key.
+5. The sandbox image the release pins (by digest) is pulled.
+6. A backup is taken, the plan is written to `run/update.json`, and the server stops (drain, bounded) with exit
+   code 75. The launcher switches the `current` link, starts the new release and waits up to 60 s for `/health` and
+   the new boot id; if that fails it switches back, restores the database if a migration ran, starts the old
+   release again and records why: the restarted server raises an alert.
 """
 
 from __future__ import annotations
@@ -72,7 +72,9 @@ def check_signature(sums: bytes, signature: bytes, public_key: str) -> None:
         key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
         key.verify(base64.b64decode(signature.strip()), sums)
     except (InvalidSignature, ValueError) as error:
-        raise UpdateError(f"The release's signature does not match CLARA_RELEASE_PUBKEY ({type(error).__name__}).") from None
+        raise UpdateError(
+            f"The release's signature does not match CLARA_RELEASE_PUBKEY ({type(error).__name__})."
+        ) from None
 
 
 def safe_extract(archive: Path, destination: Path) -> None:
@@ -97,9 +99,14 @@ class Updater:
         self._task: asyncio.Task | None = None
 
     def describe(self) -> dict:
-        return {"launched": self.launched, "current": self.current or f"source {__version__}", "state": self.state,
-                "detail": self.detail, "repo": self.s.settings.release_repo,
-                "signed": bool(self.s.settings.release_pubkey)}
+        return {
+            "launched": self.launched,
+            "current": self.current or f"source {__version__}",
+            "state": self.state,
+            "detail": self.detail,
+            "repo": self.s.settings.release_repo,
+            "signed": bool(self.s.settings.release_pubkey),
+        }
 
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/vnd.github+json", "User-Agent": "clara-updater"}
@@ -120,10 +127,17 @@ class Updater:
         for release in response.json():
             if release.get("draft") or not TAG.match(str(release.get("tag_name", ""))):
                 continue
-            found.append({"tag": release["tag_name"], "name": release.get("name") or release["tag_name"],
-                          "published_at": release.get("published_at"), "prerelease": bool(release.get("prerelease")),
-                          "notes": str(release.get("body") or "")[:6000], "current": release["tag_name"] == self.current,
-                          "assets": {asset["name"]: asset["browser_download_url"] for asset in release.get("assets", [])}})
+            found.append(
+                {
+                    "tag": release["tag_name"],
+                    "name": release.get("name") or release["tag_name"],
+                    "published_at": release.get("published_at"),
+                    "prerelease": bool(release.get("prerelease")),
+                    "notes": str(release.get("body") or "")[:6000],
+                    "current": release["tag_name"] == self.current,
+                    "assets": {asset["name"]: asset["browser_download_url"] for asset in release.get("assets", [])},
+                }
+            )
         return found
 
     async def start(self, tag: str) -> str:
@@ -152,14 +166,17 @@ class Updater:
             if release is None:
                 raise UpdateError(f"No release {tag}.")
             archive_name = f"clara-{tag}.tar.gz"
-            wanted = [archive_name, "SHA256SUMS", "manifest.json"] + (["SHA256SUMS.sig"] if settings.release_pubkey else [])
+            wanted = [archive_name, "SHA256SUMS", "manifest.json"] + (
+                ["SHA256SUMS.sig"] if settings.release_pubkey else []
+            )
             missing = [name for name in wanted if name not in release["assets"]]
             if missing:
                 raise UpdateError(f"The release lacks {', '.join(missing)}.")
             shutil.rmtree(staging, ignore_errors=True)
             staging.mkdir(parents=True, mode=0o700)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(20, read=300), headers=self._headers(),
-                                         follow_redirects=True) as http:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(20, read=300), headers=self._headers(), follow_redirects=True
+            ) as http:
                 for name in wanted:
                     await self._download(http, release["assets"][name], staging / name)
             self._progress("checking", "checksums and signature")
@@ -188,14 +205,23 @@ class Updater:
             stamp = utcnow().strftime("%Y%m%d-%H%M%S")
             backup = backup_database(self.s.db.connection, settings.backups_dir / "pre-update" / f"clara-{stamp}.db")
             current = (releases.parent / "current").resolve()
-            plan = {"from": str(current), "to": str(target), "tag": tag, "backup": str(backup),
-                    "schema_before": schema_version(self.s.db.connection), "at": utcnow().isoformat(timespec="seconds")}
+            plan = {
+                "from": str(current),
+                "to": str(target),
+                "tag": tag,
+                "backup": str(backup),
+                "schema_before": schema_version(self.s.db.connection),
+                "at": utcnow().isoformat(timespec="seconds"),
+            }
             plan_path = settings.run_dir / PLAN
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
             os.chmod(plan_path, 0o600)
             self._progress("ready", f"restarting into {tag}")
-            self.s.events.publish("update", f"Updating to {tag}", "Clara restarts now; she checks herself and rolls "
-                                  "back on her own if the new release does not come up.")
+            self.s.events.publish(
+                "update",
+                f"Updating to {tag}",
+                "Clara restarts now; she checks herself and rolls back on her own if the new release does not come up.",
+            )
             self.s.lifecycle.stop(exit_code=EXIT_UPDATE)
         except Exception as error:
             self._progress("failed", str(error))
@@ -216,8 +242,9 @@ class Updater:
                     handle.write(chunk)
 
     async def _run(self, *args: str, timeout: float = 900, env: dict | None = None) -> str:
-        process = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.STDOUT, env=env)
+        process = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env
+        )
         try:
             out, _ = await asyncio.wait_for(process.communicate(), timeout)
         except TimeoutError:
@@ -234,7 +261,9 @@ class Updater:
         python = manifest.get("python", "3.12")
         await self._run(uv, "venv", "--python", python, str(root / ".venv"))
         interpreter = str(root / ".venv" / "bin" / "python")
-        await self._run(uv, "pip", "install", "--python", interpreter, "--require-hashes", "-r", str(root / "requirements.lock"))
+        await self._run(
+            uv, "pip", "install", "--python", interpreter, "--require-hashes", "-r", str(root / "requirements.lock")
+        )
         wheels = sorted(root.glob("clara-*.whl"))  # noqa: ASYNC240 - a folder of a few files
         if not wheels:
             raise UpdateError("The release has no wheel.")
@@ -245,7 +274,9 @@ class Updater:
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         copy = backup_database(self.s.db.connection, folder / "clara.db")
         env = dict(os.environ)
-        await self._run(str(root / ".venv" / "bin" / "clara"), "preflight", "--database", str(copy), timeout=300, env=env)
+        await self._run(
+            str(root / ".venv" / "bin" / "clara"), "preflight", "--database", str(copy), timeout=300, env=env
+        )
 
     def report(self) -> None:
         """At start: what the launcher found after the last update (a success, or a rollback and why)."""
@@ -261,5 +292,9 @@ class Updater:
             self.s.events.publish("update", f"Updated to {result.get('tag')}", "The new release is running.")
             self.s.alerts.clear("update")
         elif result:
-            self.s.alerts.raise_("update", f"The update to {result.get('tag')} was rolled back",
-                                 str(result.get("reason") or "the new release did not come up"), cooldown=60)
+            self.s.alerts.raise_(
+                "update",
+                f"The update to {result.get('tag')} was rolled back",
+                str(result.get("reason") or "the new release did not come up"),
+                cooldown=60,
+            )

@@ -73,14 +73,28 @@ class Rule:
 
     def specificity(self) -> tuple[int, int, int, int]:
         fields = sum(bool(value) for value in (self.tool, self.target, self.situation, self.level))
-        return (fields, literal_length(normal_target(self.target)) if self.target else -1,
-                literal_length(self.tool) if self.tool else -1, STRICTNESS[self.effect])
+        return (
+            fields,
+            literal_length(normal_target(self.target)) if self.target else -1,
+            literal_length(self.tool) if self.tool else -1,
+            STRICTNESS[self.effect],
+        )
 
     def describe(self) -> dict:
-        return {"id": self.id, "effect": self.effect, "tool": self.tool, "target": self.target,
-                "situation": self.situation, "level": self.level, "origin": self.origin, "note": self.note,
-                "enabled": self.enabled, "hits": self.hits, "last_hit_at": self.last_hit_at,
-                "created_at": self.created_at}
+        return {
+            "id": self.id,
+            "effect": self.effect,
+            "tool": self.tool,
+            "target": self.target,
+            "situation": self.situation,
+            "level": self.level,
+            "origin": self.origin,
+            "note": self.note,
+            "enabled": self.enabled,
+            "hits": self.hits,
+            "last_hit_at": self.last_hit_at,
+            "created_at": self.created_at,
+        }
 
     def line(self) -> str:
         parts = [f"#{self.id} {self.effect}"]
@@ -96,8 +110,20 @@ class Rule:
 
 
 def _rule(row) -> Rule:
-    return Rule(row["id"], row["effect"], row["tool"], row["target"], row["situation"], row["level"], row["origin"],
-                row["note"], bool(row["enabled"]), row["hits"], row["last_hit_at"], row["created_at"])
+    return Rule(
+        row["id"],
+        row["effect"],
+        row["tool"],
+        row["target"],
+        row["situation"],
+        row["level"],
+        row["origin"],
+        row["note"],
+        bool(row["enabled"]),
+        row["hits"],
+        row["last_hit_at"],
+        row["created_at"],
+    )
 
 
 def check_fields(effect: str, tool: str, target: str, situation: str, level: str) -> None:
@@ -124,8 +150,17 @@ class Rules:
         row = self.db.one("SELECT * FROM rules WHERE id = ?", (rule_id,))
         return _rule(row) if row else None
 
-    def add(self, effect: str, *, tool: str = "", target: str = "", situation: str = "", level: str = "",
-            origin: str = "console", note: str = "") -> Rule:
+    def add(
+        self,
+        effect: str,
+        *,
+        tool: str = "",
+        target: str = "",
+        situation: str = "",
+        level: str = "",
+        origin: str = "console",
+        note: str = "",
+    ) -> Rule:
         tool, target, situation, level = tool.strip(), target.strip(), situation.strip(), level.strip()
         check_fields(effect, tool, target, situation, level)
         if origin not in ORIGINS:
@@ -149,13 +184,23 @@ class Rules:
         if unknown:
             raise RuleError(f"Unknown fields: {', '.join(sorted(unknown))}")
         merged = {**rule.describe(), **{key: value for key, value in fields.items() if value is not None}}
-        check_fields(merged["effect"], merged["tool"].strip(), merged["target"].strip(), merged["situation"],
-                     merged["level"])
+        check_fields(
+            merged["effect"], merged["tool"].strip(), merged["target"].strip(), merged["situation"], merged["level"]
+        )
         self.db.execute(
             "UPDATE rules SET effect = ?, tool = ?, target = ?, situation = ?, level = ?, note = ?, enabled = ?,"
             " updated_at = ? WHERE id = ?",
-            (merged["effect"], merged["tool"].strip(), merged["target"].strip(), merged["situation"], merged["level"],
-             str(merged["note"]).strip()[:200], int(bool(merged["enabled"])), now_iso(), rule_id),
+            (
+                merged["effect"],
+                merged["tool"].strip(),
+                merged["target"].strip(),
+                merged["situation"],
+                merged["level"],
+                str(merged["note"]).strip()[:200],
+                int(bool(merged["enabled"])),
+                now_iso(),
+                rule_id,
+            ),
         )
         updated = self.get(rule_id)
         assert updated is not None

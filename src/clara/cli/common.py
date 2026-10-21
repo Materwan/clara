@@ -99,8 +99,10 @@ class Api:
         """Server-sent events, as dicts."""
         timeout = httpx.Timeout(10.0, read=read_timeout)
         try:
-            with httpx.Client(base_url=self.url, headers=self.headers, timeout=timeout) as http, \
-                    http.stream(method, path, json=body) as response:
+            with (
+                httpx.Client(base_url=self.url, headers=self.headers, timeout=timeout) as http,
+                http.stream(method, path, json=body) as response,
+            ):
                 if response.is_error:
                     response.read()
                     raise ClientError(problem(response))

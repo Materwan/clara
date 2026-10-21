@@ -78,9 +78,13 @@ class TriggerChange(BaseModel):
 @router.get("/triggers")
 def triggers(request: Request) -> dict:
     service = _service(request)
-    return {"triggers": [service.describe(item) for item in service.listing()],
-            "kinds": [{"kind": kind.kind, "label": kind.label, "fields": kind.fields, "read_tools": list(kind.read_tools)}
-                      for kind in KINDS.values()]}
+    return {
+        "triggers": [service.describe(item) for item in service.listing()],
+        "kinds": [
+            {"kind": kind.kind, "label": kind.label, "fields": kind.fields, "read_tools": list(kind.read_tools)}
+            for kind in KINDS.values()
+        ],
+    }
 
 
 @router.post("/triggers", status_code=201)
@@ -103,7 +107,9 @@ def get_trigger(trigger_id: int, request: Request) -> dict:
 
 
 @router.patch("/triggers/{trigger_id}")
-async def change_trigger(trigger_id: int, body: TriggerChange, request: Request) -> dict:  # async: it wakes the server's loop
+async def change_trigger(
+    trigger_id: int, body: TriggerChange, request: Request
+) -> dict:  # async: it wakes the server's loop
     service = _service(request)
     try:
         return service.describe(service.update(trigger_id, **body.model_dump(exclude_unset=True)))
@@ -119,8 +125,11 @@ async def delete_trigger(trigger_id: int, request: Request) -> dict:  # async: i
 
 
 class Probe(BaseModel):
-    event: int | dict | None = Field(default=None, description="A stored event's id, or a sample {data: {...}, self_caused: false}; "
-                                                              "left out: the latest stored event of the trigger's kind")
+    event: int | dict | None = Field(
+        default=None,
+        description="A stored event's id, or a sample {data: {...}, self_caused: false}; "
+        "left out: the latest stored event of the trigger's kind",
+    )
 
 
 @router.post("/triggers/{trigger_id}/test")
@@ -132,9 +141,16 @@ def test_trigger(trigger_id: int, body: Probe, request: Request) -> dict:
         raise _problem(error) from None
     if isinstance(body.event, dict):
         sample = body.event
-        event = SourceEvent(source=found.on.split(".")[0], kind=found.on, key="sample", occurred_at="", actor=str(sample.get("actor", "")),
-                            self_caused=bool(sample.get("self_caused")), title=str(sample.get("title", "A sample event")),
-                            data=dict(sample.get("data") or {}))
+        event = SourceEvent(
+            source=found.on.split(".")[0],
+            kind=found.on,
+            key="sample",
+            occurred_at="",
+            actor=str(sample.get("actor", "")),
+            self_caused=bool(sample.get("self_caused")),
+            title=str(sample.get("title", "A sample event")),
+            data=dict(sample.get("data") or {}),
+        )
     elif isinstance(body.event, int):
         event = service.event(body.event)
         if event is None:
@@ -156,5 +172,7 @@ def trigger_runs(trigger_id: int, request: Request, limit: int = Query(20, ge=1,
 
 
 @router.get("/trigger-events")
-def trigger_events(request: Request, limit: int = Query(20, ge=1, le=200), kind: str = Query("", max_length=50)) -> dict:
+def trigger_events(
+    request: Request, limit: int = Query(20, ge=1, le=200), kind: str = Query("", max_length=50)
+) -> dict:
     return {"events": [event.describe() for event in _service(request).recent_events(limit, kind)]}

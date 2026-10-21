@@ -44,17 +44,35 @@ def mail_event(provider: str, address: str, item: Summary) -> SourceEvent:
     from_address = (found.group(1) if found else item.sender).strip().lower()
     occurred = iso(datetime.fromtimestamp(item.received_ms / 1000, UTC))
     return SourceEvent(
-        source="mail", kind="mail.received", key=f"{provider}:{item.id}", occurred_at=occurred, actor=from_address,
-        self_caused=bool(address) and from_address == address.lower(), title=f"{item.sender}: {item.subject}"[:300],
-        data={"account": provider, "mailbox": address, "message": item.id, "thread": item.thread, "from": item.sender,
-              "from_address": from_address, "subject": item.subject, "snippet": item.snippet,
-              "has_attachment": item.attachments, "unread": item.unread, "received": occurred})
+        source="mail",
+        kind="mail.received",
+        key=f"{provider}:{item.id}",
+        occurred_at=occurred,
+        actor=from_address,
+        self_caused=bool(address) and from_address == address.lower(),
+        title=f"{item.sender}: {item.subject}"[:300],
+        data={
+            "account": provider,
+            "mailbox": address,
+            "message": item.id,
+            "thread": item.thread,
+            "from": item.sender,
+            "from_address": from_address,
+            "subject": item.subject,
+            "snippet": item.snippet,
+            "has_attachment": item.attachments,
+            "unread": item.unread,
+            "received": occurred,
+        },
+    )
 
 
 class MailWatch:
     def __init__(self, services: Services):
         self.s = services
-        self._last_error: dict[str, str] = {}  # what was last logged for a mailbox: a long outage is one line, not one a poll
+        self._last_error: dict[
+            str, str
+        ] = {}  # what was last logged for a mailbox: a long outage is one line, not one a poll
 
     # ------------------------------------------------------------------
     def cursor(self, provider: str) -> tuple[int, list[str]] | None:
@@ -66,7 +84,8 @@ class MailWatch:
             "INSERT INTO mail_cursors (provider, received_ms, seen, updated_at) VALUES (?, ?, ?, ?)"
             " ON CONFLICT (provider) DO UPDATE SET received_ms = excluded.received_ms, seen = excluded.seen,"
             " updated_at = excluded.updated_at",
-            (provider, received_ms, json.dumps(seen[-REMEMBERED:]), now_iso()))
+            (provider, received_ms, json.dumps(seen[-REMEMBERED:]), now_iso()),
+        )
 
     def forget(self, provider: str) -> None:
         """A mailbox is connected or disconnected: the next poll starts afresh."""
@@ -148,4 +167,6 @@ class MailWatch:
             self.s.events.publish("notification", f"{len(items)} new emails ({label})", names, source="mail")
             return
         for item in items:
-            self.s.events.publish("notification", f"New email ({label})", f"{item.sender}: {item.subject}", source="mail")
+            self.s.events.publish(
+                "notification", f"New email ({label})", f"{item.sender}: {item.subject}", source="mail"
+            )

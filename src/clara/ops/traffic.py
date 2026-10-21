@@ -38,9 +38,13 @@ def _private(path: str, flags: int) -> int:
 
 
 class TrafficLog:
-    def __init__(self, directory: Path, retention_days: int = 7, debug_until: Callable[[], datetime | None] = lambda: None):
+    def __init__(
+        self, directory: Path, retention_days: int = 7, debug_until: Callable[[], datetime | None] = lambda: None
+    ):
         self.directory = directory
-        self.sink: Callable[[str, dict[str, Any]], None] | None = None  # the live log's tap (metadata only, never `content`)
+        self.sink: Callable[[str, dict[str, Any]], None] | None = (
+            None  # the live log's tap (metadata only, never `content`)
+        )
         self.retention_days = retention_days
         self._debug_until = debug_until
         self._queue: queue.Queue[tuple[str, str] | None] = queue.Queue()

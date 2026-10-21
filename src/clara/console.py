@@ -78,9 +78,11 @@ def _provider(s: Services, args: list[str], token: TokenInfo) -> str | Awaitable
             s.providers.forget_backends(provider_id)
             return f"Enabled providers: {', '.join(enabled) or '(none)'}"
         if action == "check":
+
             async def checked() -> str:
                 problem = await s.providers.check(provider_id)
                 return f"{provider_id}: {'OK' if problem is None else problem}"
+
             return checked()
     except ProviderError as error:
         return str(error)
@@ -111,9 +113,12 @@ async def _models(s: Services, args: list[str], token: TokenInfo) -> str:
             return str(error)
         return f"{'Shown' if args[0] == 'show' else 'Hidden'} in the pickers: {', '.join(args[1:])}"
     found = await s.catalog.listing(force=bool(args and args[0] == "refresh"))
-    lines = [f"{'*' if info.shown else ' '} {info.ref:<50} {'local' if info.local else 'hosted':<6} window {info.window:,}"
-             + ("" if info.listed else " (not listed now)")
-             + (f" (does not work: {info.fit.why})" if info.fit.works is False else "") for info in found]
+    lines = [
+        f"{'*' if info.shown else ' '} {info.ref:<50} {'local' if info.local else 'hosted':<6} window {info.window:,}"
+        + ("" if info.listed else " (not listed now)")
+        + (f" (does not work: {info.fit.why})" if info.fit.works is False else "")
+        for info in found
+    ]
     lines += [f"! {provider}: {problem}" for provider, problem in s.catalog.problems.items()]
     return "\n".join(lines) or "No model found: is a provider enabled and reachable?"
 
@@ -144,7 +149,8 @@ def _tokens(s: Services, args: list[str], token: TokenInfo) -> str:
     if not args or args[0] == "list":
         return "\n".join(
             f"{t.name:<20} {t.client:<8} approvals={t.approvals:<5} last used {t.last_used_at or 'never'}"
-            + (f" REVOKED {t.revoked_at}" if t.revoked_at else "") for t in s.tokens.list()
+            + (f" REVOKED {t.revoked_at}" if t.revoked_at else "")
+            for t in s.tokens.list()
         )
     action, *rest = args
     try:
@@ -159,13 +165,17 @@ def _tokens(s: Services, args: list[str], token: TokenInfo) -> str:
             return f"{s.tokens.set_approvals(rest[0], rest[1]).name} may answer: {rest[1]}"
     except TokenError as error:
         return str(error)
-    return (f"Usage: /tokens [list] | create <name> <{'|'.join(CLIENTS)}> [{'|'.join(APPROVALS)}] | revoke <name> | "
-            "approvals <name> <scope>")
+    return (
+        f"Usage: /tokens [list] | create <name> <{'|'.join(CLIENTS)}> [{'|'.join(APPROVALS)}] | revoke <name> | "
+        "approvals <name> <scope>"
+    )
 
 
 def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
     if not args or args[0] == "list":
-        return "\n".join(f"{item['name']:<24} {'set' if item['set'] else '-':<4} {item['purpose']}" for item in s.secrets.status())
+        return "\n".join(
+            f"{item['name']:<24} {'set' if item['set'] else '-':<4} {item['purpose']}" for item in s.secrets.status()
+        )
     if args[0] == "unset" and len(args) == 2:
         removed = s.secrets.unset(args[1])
         s.providers.forget_backends()
@@ -207,9 +217,11 @@ def _rules(s: Services, args: list[str], token: TokenInfo) -> str:
             state = TurnState(turn_id="test", conversation_id="", client="console", timezone=s.settings.timezone)
             action_ = s.toolbox.action(rest[0], ToolContext(s, state), arguments)
             explained = s.gate.explain(action_, Situation("interactive"))
-            return (f"{action_.tool} [{action_.klass}, {action_.level}] {' '.join(action_.targets)}\n"
-                    f"→ {explained['effect']} ({explained['reason']})"
-                    + (f"; raised: {', '.join(explained['raised'])}" if explained["raised"] else ""))
+            return (
+                f"{action_.tool} [{action_.klass}, {action_.level}] {' '.join(action_.targets)}\n"
+                f"→ {explained['effect']} ({explained['reason']})"
+                + (f"; raised: {', '.join(explained['raised'])}" if explained["raised"] else "")
+            )
     except (RuleError, ValueError, KeyError) as error:
         return f"Error: {error}"
     return "Usage: /rules [list] | add <allow|ask|refuse> tool=… target=… situation=… level=… note=… | del <id> | on|off <id> | test <tool> <json>"
@@ -227,8 +239,10 @@ def _hook(s: Services, ref: str):
 def _hook_line(s: Services, item) -> str:
     info = s.triggers.describe(item)
     last = info["last"]
-    return (f"#{item.id} {item.name}  {item.on} {item.action}{'' if item.enabled else ' (off)'}  catch-up {item.catch_up}, "
-            f"{item.max_per_hour}/h  queued {info['queued']}  last: {last['status'] + ' ' + (last['finished_at'] or '')[:16] if last else 'never'}")
+    return (
+        f"#{item.id} {item.name}  {item.on} {item.action}{'' if item.enabled else ' (off)'}  catch-up {item.catch_up}, "
+        f"{item.max_per_hour}/h  queued {info['queued']}  last: {last['status'] + ' ' + (last['finished_at'] or '')[:16] if last else 'never'}"
+    )
 
 
 def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
@@ -236,11 +250,14 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
 
     if s.triggers is None:
         return "Hooks are not available."
-    usage = ("Usage: /triggers [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
-             "del <id|name> | test <id|name> [event id] | runs <id|name> [n] | events [n]")
+    usage = (
+        "Usage: /triggers [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
+        "del <id|name> | test <id|name> [event id] | runs <id|name> [n] | events [n]"
+    )
     if not args or args[0] == "list":
         return "\n".join(_hook_line(s, item) for item in s.triggers.listing()) or (
-            f"(no hooks) Kinds of event: {', '.join(KINDS)}. {usage}")
+            f"(no hooks) Kinds of event: {', '.join(KINDS)}. {usage}"
+        )
     action, *rest = args
     try:
         if action == "show" and rest:
@@ -250,7 +267,7 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
             try:
                 fields = json.loads(" ".join(rest[1:]))
             except ValueError as error:
-                return f"The fields are not JSON ({error}). Quote them: '{{\"on\": \"mail.received\", ...}}'."
+                return f'The fields are not JSON ({error}). Quote them: \'{{"on": "mail.received", ...}}\'.'
             if not isinstance(fields, dict):
                 return "The fields are a JSON object."
             if action == "add":
@@ -264,20 +281,36 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
             return "Deleted." if s.triggers.delete(_hook(s, rest[0]).id) else "Nothing deleted."
         if action == "test" and rest:
             item = _hook(s, rest[0])
-            event = s.triggers.event(int(rest[1])) if len(rest) > 1 else (s.triggers.recent_events(1, item.on) or [None])[0]
+            event = (
+                s.triggers.event(int(rest[1])) if len(rest) > 1 else (s.triggers.recent_events(1, item.on) or [None])[0]
+            )
             if event is None:
                 return "No event of this kind was stored yet (/triggers events)."
             shown = s.triggers.preview(item, event)
-            return (f"Event #{event.id}: {event.title}\n{'MATCHES' if shown['matches'] else 'does not match: ' + shown['why_not']}\n"
-                    f"Action: {shown['action']}; tools: {', '.join(shown['tools']) or '(none)'}\n--- what Clara would receive ---\n{shown['message']}")
+            return (
+                f"Event #{event.id}: {event.title}\n{'MATCHES' if shown['matches'] else 'does not match: ' + shown['why_not']}\n"
+                f"Action: {shown['action']}; tools: {', '.join(shown['tools']) or '(none)'}\n--- what Clara would receive ---\n{shown['message']}"
+            )
         if action == "runs" and rest:
             item = _hook(s, rest[0])
             runs = s.triggers.runs(item.id, int(rest[1]) if len(rest) > 1 else 10)
-            return "\n".join(f"run {r['id']} {r['status']:<11} {r['queued_at'][:16]}  {r['event_count']} event(s)  "
-                             f"{(r['summary'] or r['note'])[:90]}" for r in runs) or "No run yet."
+            return (
+                "\n".join(
+                    f"run {r['id']} {r['status']:<11} {r['queued_at'][:16]}  {r['event_count']} event(s)  "
+                    f"{(r['summary'] or r['note'])[:90]}"
+                    for r in runs
+                )
+                or "No run yet."
+            )
         if action == "events":
             found = s.triggers.recent_events(int(rest[0]) if rest else 10)
-            return "\n".join(f"#{e.id} {e.kind} {e.occurred_at[:16]}{' (self)' if e.self_caused else ''}  {e.title[:90]}" for e in found) or "No event yet."
+            return (
+                "\n".join(
+                    f"#{e.id} {e.kind} {e.occurred_at[:16]}{' (self)' if e.self_caused else ''}  {e.title[:90]}"
+                    for e in found
+                )
+                or "No event yet."
+            )
     except (TriggerError, ValueError) as error:
         return f"Error: {error}"
     return usage
@@ -292,7 +325,10 @@ def _tainted(s: Services, args: list[str], token: TokenInfo) -> str:
 async def _approvals(s: Services, args: list[str], token: TokenInfo) -> str:
     if not args or args[0] == "list":
         found = s.approvals.list("pending")
-        return "\n".join(f"#{a.id} [{a.level}] {a.summary} ({a.reason}; expires {a.expires_at})" for a in found) or "Nothing waits."
+        return (
+            "\n".join(f"#{a.id} [{a.level}] {a.summary} ({a.reason}; expires {a.expires_at})" for a in found)
+            or "Nothing waits."
+        )
     words = {"allow": "allow_once", "always": "allow_always", "refuse": "refuse_once", "never": "refuse_always"}
     answer = words.get(args[0], args[0])
     if answer not in ANSWERS or len(args) != 2:
@@ -321,7 +357,10 @@ def _usage(s: Services, args: list[str], token: TokenInfo) -> str:
         stats = s.usage.stats(period, group)
     except ValueError as error:
         return str(error)
-    lines = [f"{row['key']:<45} {row['calls']:>6} calls {row['prompt']:>12,} in {row['completion']:>10,} out" for row in stats["rows"]]
+    lines = [
+        f"{row['key']:<45} {row['calls']:>6} calls {row['prompt']:>12,} in {row['completion']:>10,} out"
+        for row in stats["rows"]
+    ]
     totals = stats["totals"]
     lines.append(f"{'total':<45} {totals['calls']:>6} calls {totals['prompt']:>12,} in {totals['completion']:>10,} out")
     return "\n".join(lines)
@@ -354,7 +393,10 @@ async def _backup(s: Services, args: list[str], token: TokenInfo) -> str:
     if args and args[0] == "now":
         result = await s.backups.run(manual=True)
         return result
-    return "\n".join(f"{item['name']}  {item['size_mb']} MB  {item['kind']}" for item in s.backups.listing()) or "No backup yet."
+    return (
+        "\n".join(f"{item['name']}  {item['size_mb']} MB  {item['kind']}" for item in s.backups.listing())
+        or "No backup yet."
+    )
 
 
 async def _update(s: Services, args: list[str], token: TokenInfo) -> str:
@@ -362,8 +404,13 @@ async def _update(s: Services, args: list[str], token: TokenInfo) -> str:
         return "Updates are not available."
     if not args or args[0] == "list":
         releases = await s.updater.releases()
-        return "\n".join(f"{r['tag']:<12} {r['published_at'] or ''}  {r['name']}" + ("  (installed)" if r["current"] else "")
-                         for r in releases) or "No release found."
+        return (
+            "\n".join(
+                f"{r['tag']:<12} {r['published_at'] or ''}  {r['name']}" + ("  (installed)" if r["current"] else "")
+                for r in releases
+            )
+            or "No release found."
+        )
     return await s.updater.start(args[0])
 
 
@@ -390,22 +437,39 @@ async def _vault(s: Services, args: list[str], token: TokenInfo) -> str:
 
 def _audit(s: Services, args: list[str], token: TokenInfo) -> str:
     limit = int(args[0]) if args and args[0].isdigit() else 20
-    return "\n".join(f"{e['at']} {e['tool']:<16} {e['effect']:<6} {e['outcome']:<8} {e['target'][:60]}" for e in s.audit.recent(limit)) or "Empty."
+    return (
+        "\n".join(
+            f"{e['at']} {e['tool']:<16} {e['effect']:<6} {e['outcome']:<8} {e['target'][:60]}"
+            for e in s.audit.recent(limit)
+        )
+        or "Empty."
+    )
 
 
 COMMANDS: list[Command] = [
     Command("status", "/status", "Version, state, models, storage, Tailscale, backups, alerts.", _status),
     Command("provider", "/provider [list] | enable|disable|check <id>", "Model providers.", _provider),
     Command("model", "/model [provider:model]", "Show or set the default model.", _model),
-    Command("models", "/models [refresh] | show|hide <ref>...", "The catalogue; * marks models shown in pickers.", _models),
+    Command(
+        "models", "/models [refresh] | show|hide <ref>...", "The catalogue; * marks models shown in pickers.", _models
+    ),
     Command("fallbacks", "/fallbacks [<ref>... | clear]", "Models asked in turn when one fails.", _fallbacks),
     Command("upkeep", "/upkeep [<ref> | none]", "The model of titles and summaries.", _upkeep),
-    Command("tokens", "/tokens [list] | create | revoke | approvals", "Client tokens (revoking works at once).", _tokens),
+    Command(
+        "tokens", "/tokens [list] | create | revoke | approvals", "Client tokens (revoking works at once).", _tokens
+    ),
     Command("secrets", "/secrets [list] | set <name> <value> | unset <name>", "The encrypted secrets store.", _secrets),
     Command("rules", "/rules [list] | add | del | on | off | test", "The rule gate.", _rules),
     Command("tainted", "/tainted [on|off]", "The tainted-turn rule.", _tainted),
-    Command("triggers", "/triggers [list] | show | add | edit | on | off | del | test | runs | events", "Hooks: what Clara does when something happens (a mail arrives).", _triggers),
-    Command("approvals", "/approvals [list] | allow|always|refuse|never <id>", "Pending approval requests.", _approvals),
+    Command(
+        "triggers",
+        "/triggers [list] | show | add | edit | on | off | del | test | runs | events",
+        "Hooks: what Clara does when something happens (a mail arrives).",
+        _triggers,
+    ),
+    Command(
+        "approvals", "/approvals [list] | allow|always|refuse|never <id>", "Pending approval requests.", _approvals
+    ),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),
     Command("usage", "/usage [24h|7d|30d|90d|365d|all] [day|model|kind|provider|client]", "Token statistics.", _usage),
     Command("alerts", "/alerts [clear <key>]", "Active and recent alerts.", _alerts),
@@ -413,7 +477,9 @@ COMMANDS: list[Command] = [
     Command("undo", "/undo [commit]", "Revert the last workspace change (or a given commit).", _undo),
     Command("vault", "/vault [status|sync|reindex]", "The Obsidian vault.", _vault),
     Command("backup", "/backup [now]", "Local backups (and the remote copy).", _backup),
-    Command("update", "/update [list | <tag>]", "Tagged releases: list, or install one (preflight, then restart).", _update),
+    Command(
+        "update", "/update [list | <tag>]", "Tagged releases: list, or install one (preflight, then restart).", _update
+    ),
     Command("restart", "/restart [now]", "Stop and start again (the same release).", _restart),
     Command("stop", "/stop [now]", "Graceful stop (now: cut running answers).", _stop),
 ]

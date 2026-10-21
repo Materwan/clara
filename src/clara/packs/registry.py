@@ -54,21 +54,70 @@ def _discord_needed(s: Services) -> str:
 
 
 PACKS: tuple[Pack, ...] = (
-    Pack("web", "Web search", "Search the web and read pages.", frozenset({"web_search", "web_fetch"}), default=True, icon="globe"),
-    Pack(SECOND_BRAIN, "Second brain", "Open your Obsidian vault: search and read notes, write them, and put a block in a "
-         "day's daily note.", frozenset(), icon="book", check=_vault_needed),
-    Pack("day_conversations", "Day conversations", "Read what was said on a day, with the context of conversations begun "
-         "earlier, or one conversation in full.", frozenset({"day_conversations", "read_conversation"}), icon="chat"),
-    Pack("day_activity", "Day activity", "Tasks done and open, reminders fired, scheduled runs and what Clara did on a "
-         "day.", frozenset({"day_activity"}), icon="tasks"),
-    Pack("files_created", "Files created", "The files of a day (workspace, vault, Drive, files you sent) as a short list; "
-         "read one, or only its diff, when needed.", frozenset({"files_created", "read_created_file"}), icon="file"),
-    Pack("daily_notes", "Daily notes", "Read a week or a month of daily notes of the vault.", frozenset({"daily_notes"}),
-         icon="calendar", check=_vault_needed),
-    Pack("ask_person", "Ask you", "Ask you a question on the web site and Discord, wait for your answer in the "
-         "conversation, then finish the run.", frozenset({"ask_person", "finish_run"}), where="schedule", icon="bell"),
-    Pack("discord_thread", "Discord thread", "Open, write in and remove a Discord thread, whose replies come back to the "
-         "run.", frozenset({"discord_thread"}), where="schedule", icon="chat", check=_discord_needed),
+    Pack(
+        "web",
+        "Web search",
+        "Search the web and read pages.",
+        frozenset({"web_search", "web_fetch"}),
+        default=True,
+        icon="globe",
+    ),
+    Pack(
+        SECOND_BRAIN,
+        "Second brain",
+        "Open your Obsidian vault: search and read notes, write them, and put a block in a day's daily note.",
+        frozenset(),
+        icon="book",
+        check=_vault_needed,
+    ),
+    Pack(
+        "day_conversations",
+        "Day conversations",
+        "Read what was said on a day, with the context of conversations begun earlier, or one conversation in full.",
+        frozenset({"day_conversations", "read_conversation"}),
+        icon="chat",
+    ),
+    Pack(
+        "day_activity",
+        "Day activity",
+        "Tasks done and open, reminders fired, scheduled runs and what Clara did on a day.",
+        frozenset({"day_activity"}),
+        icon="tasks",
+    ),
+    Pack(
+        "files_created",
+        "Files created",
+        "The files of a day (workspace, vault, Drive, files you sent) as a short list; "
+        "read one, or only its diff, when needed.",
+        frozenset({"files_created", "read_created_file"}),
+        icon="file",
+    ),
+    Pack(
+        "daily_notes",
+        "Daily notes",
+        "Read a week or a month of daily notes of the vault.",
+        frozenset({"daily_notes"}),
+        icon="calendar",
+        check=_vault_needed,
+    ),
+    Pack(
+        "ask_person",
+        "Ask you",
+        "Ask you a question on the web site and Discord, wait for your answer in the "
+        "conversation, then finish the run.",
+        frozenset({"ask_person", "finish_run"}),
+        where="schedule",
+        icon="bell",
+    ),
+    Pack(
+        "discord_thread",
+        "Discord thread",
+        "Open, write in and remove a Discord thread, whose replies come back to the run.",
+        frozenset({"discord_thread"}),
+        where="schedule",
+        icon="chat",
+        check=_discord_needed,
+    ),
 )
 BY_ID = {pack.id: pack for pack in PACKS}
 DEFAULT = tuple(pack.id for pack in PACKS if pack.default)
@@ -83,10 +132,21 @@ class Packs:
 
     def listing(self, where: str | None = None) -> list[dict]:
         """The packs for a place (`chat` or `schedule`; None: all), with why one cannot be used right now."""
-        return [{"id": pack.id, "label": pack.label, "description": pack.description, "icon": pack.icon,
-                 "where": pack.where, "default": pack.default, "tools": sorted(pack.tools),
-                 "available": not self.unavailable(pack), "reason": self.unavailable(pack)}
-                for pack in PACKS if where is None or pack.where in (where, "both")]
+        return [
+            {
+                "id": pack.id,
+                "label": pack.label,
+                "description": pack.description,
+                "icon": pack.icon,
+                "where": pack.where,
+                "default": pack.default,
+                "tools": sorted(pack.tools),
+                "available": not self.unavailable(pack),
+                "reason": self.unavailable(pack),
+            }
+            for pack in PACKS
+            if where is None or pack.where in (where, "both")
+        ]
 
     def check(self, ids, where: str) -> list[str]:
         """These pack ids, in the registry's order, without repeats; PackError for one that does not exist or does not
@@ -123,7 +183,9 @@ class Packs:
             return None
         return self.s.db.one(
             "SELECT r.*, s.name AS schedule_name FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
-            " WHERE r.conversation_id = ? ORDER BY r.id DESC LIMIT 1", (conversation_id,))
+            " WHERE r.conversation_id = ? ORDER BY r.id DESC LIMIT 1",
+            (conversation_id,),
+        )
 
     # ------------------------------------------------------------------
     # What is offered

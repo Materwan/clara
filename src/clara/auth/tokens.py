@@ -50,8 +50,13 @@ class TokenInfo:
 
     def describe(self) -> dict:
         return {
-            "id": self.id, "name": self.name, "client": self.client, "approvals": self.approvals,
-            "created_at": self.created_at, "last_used_at": self.last_used_at, "revoked_at": self.revoked_at,
+            "id": self.id,
+            "name": self.name,
+            "client": self.client,
+            "approvals": self.approvals,
+            "created_at": self.created_at,
+            "last_used_at": self.last_used_at,
+            "revoked_at": self.revoked_at,
         }
 
 
@@ -60,8 +65,15 @@ def _hash(secret: str) -> str:
 
 
 def _info(row) -> TokenInfo:
-    return TokenInfo(row["id"], row["name"], row["client"], row["approvals"], row["created_at"], row["last_used_at"],
-                     row["revoked_at"])
+    return TokenInfo(
+        row["id"],
+        row["name"],
+        row["client"],
+        row["approvals"],
+        row["created_at"],
+        row["last_used_at"],
+        row["revoked_at"],
+    )
 
 
 class Tokens:

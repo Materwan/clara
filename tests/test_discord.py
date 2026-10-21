@@ -420,6 +420,26 @@ async def test_command_results_are_ephemeral_but_errors_stay_visible(bot, monkey
         assert len(said) == 1 and said[0][0].startswith("⚠️") and said[0][1] is False, name
 
 
+async def test_tasks_show_their_deadline_on_their_own_clock_not_in_utc(bot, monkeypatch):
+    """Audit (data integrity, high): `due_at[:16]` showed the stored UTC time as if it were local."""
+    found = [
+        {"id": 1, "title": "Taxes", "due_at": "2026-10-21T19:30:00+00:00", "timezone": "Europe/Paris"},
+        {"id": 2, "title": "Call", "due_at": "2026-01-05T12:00:00+00:00", "timezone": "Not/AZone"},
+        {"id": 3, "title": "Idle", "due_at": None, "timezone": "Europe/Paris"},
+    ]
+
+    async def call(method, path, **options):
+        return {"tasks": found}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    ok, said = interaction(42, GUILD)
+    await bot.tree.get_command("tasks").callback(ok)
+    lines = said[0][0].splitlines()
+    assert lines[0] == "[1] Taxes — due Wed 2026-10-21 21:30 CEST"  # 19:30 UTC is 21:30 in Paris
+    assert lines[1] == "[2] Call — due Mon 2026-01-05 13:00 CET"  # an unknown zone: the bot's own (Paris)
+    assert lines[2] == "[3] Idle"
+
+
 # ----------------------------------------------------------------------
 # Running it
 # ----------------------------------------------------------------------

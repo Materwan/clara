@@ -44,7 +44,7 @@ from typing import Literal
 import discord
 from discord import app_commands
 
-from clara.timeutil import parse_iso
+from clara.timeutil import ZoneError, human, parse_iso, zone
 
 from .api import Clara, ClaraError
 from .settings import Settings, SettingsError
@@ -60,20 +60,40 @@ TEST_MAX_AGE = 120.0  # a test message older than this (the bot was away) is dro
 RETRY = (2, 5, 15, 30, 60)
 EXIT_SETTINGS = 2
 EXIT_RUNNING = 3
-ANSWERS = (("allow_once", "Allow once", discord.ButtonStyle.success), ("allow_always", "Allow always", discord.ButtonStyle.primary),
-           ("refuse_once", "Refuse once", discord.ButtonStyle.secondary), ("refuse_always", "Refuse always", discord.ButtonStyle.danger))
+ANSWERS = (
+    ("allow_once", "Allow once", discord.ButtonStyle.success),
+    ("allow_always", "Allow always", discord.ButtonStyle.primary),
+    ("refuse_once", "Refuse once", discord.ButtonStyle.secondary),
+    ("refuse_always", "Refuse always", discord.ButtonStyle.danger),
+)
 THREADS_KEPT = 30
 THREAD_ARCHIVE_MINUTES = 1440
 ICONS = {"reminder": "⏰", "notification": "🔔", "task": "📋", "schedule": "🗓", "alert": "⚠️", "update": "⬆️"}
 # event kind -> channel (approvals have their own path: buttons in #approval; replies to you go to #general)
-ROUTES = {"reminder": "notification", "notification": "notification", "task": "notification",
-          "schedule": "notification", "update": "notification", "alert": "alerts"}
+ROUTES = {
+    "reminder": "notification",
+    "notification": "notification",
+    "task": "notification",
+    "schedule": "notification",
+    "update": "notification",
+    "alert": "alerts",
+}
 CHOICES = ("general", "notification", "alerts")  # the channels the server may send an event to (or "off")
 TEST_SOURCE = "discord-test"
 
 
 class ChannelError(RuntimeError):
     """A configured channel is missing, is not a text channel, or the four are not in one server."""
+
+
+def due_text(task: dict, fallback_zone: str) -> str:
+    """A task's deadline on the clock of its own time zone. The server sends it in UTC: cut as it came, it would read
+    as local time, hours off."""
+    try:
+        tz = zone(task.get("timezone") or fallback_zone)
+    except ZoneError:
+        tz = zone(fallback_zone)
+    return human(parse_iso(task["due_at"]), tz)
 
 
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
@@ -89,11 +109,15 @@ def split_message(text: str, limit: int = LIMIT) -> list[str]:
     return parts
 
 
-class ApprovalButton(discord.ui.DynamicItem[discord.ui.Button],
-                     template=r"clara:approval:(?P<id>[0-9]+):(?P<answer>allow_once|allow_always|refuse_once|refuse_always)"):
+class ApprovalButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"clara:approval:(?P<id>[0-9]+):(?P<answer>allow_once|allow_always|refuse_once|refuse_always)",
+):
     def __init__(self, approval_id: int, answer: str):
         label, style = next((label, style) for key, label, style in ANSWERS if key == answer)
-        super().__init__(discord.ui.Button(label=label, style=style, custom_id=f"clara:approval:{approval_id}:{answer}"))
+        super().__init__(
+            discord.ui.Button(label=label, style=style, custom_id=f"clara:approval:{approval_id}:{answer}")
+        )
         self.approval_id = approval_id
         self.answer = answer
 
@@ -108,7 +132,9 @@ class ApprovalButton(discord.ui.DynamicItem[discord.ui.Button],
             return
         await interaction.response.defer()
         try:
-            settled = await bot.clara.call("POST", f"/v1/approvals/{self.approval_id}/decide", json={"answer": self.answer})
+            settled = await bot.clara.call(
+                "POST", f"/v1/approvals/{self.approval_id}/decide", json={"answer": self.answer}
+            )
             text = f"🔐 #{self.approval_id} {settled['summary']}: **{settled['status']}**"
         except ClaraError as error:
             text = f"🔐 #{self.approval_id}: {error}"
@@ -137,7 +163,9 @@ class ClaraBot(discord.Client):
         self.guild_id: int | None = None
         self.asked: dict[int, discord.Message] = {}  # approval id -> its message in #approval
         self.answering: set[str] = set()  # conversations an answer is being written in
-        self.finished: dict[str, dict] = {}  # conversation -> its "recap written" event, held until that answer is posted
+        self.finished: dict[
+            str, dict
+        ] = {}  # conversation -> its "recap written" event, held until that answer is posted
         self._tasks: list[asyncio.Task] = []
         self._register_commands()
 
@@ -175,7 +203,11 @@ class ClaraBot(discord.Client):
         self._save(threads={key: value for key, value in self.threads().items() if key != str(thread_id)})
 
     def thread_of(self, conversation: str | None) -> int | None:
-        return next((int(key) for key, value in self.threads().items() if value == conversation), None) if conversation else None
+        return (
+            next((int(key) for key, value in self.threads().items() if value == conversation), None)
+            if conversation
+            else None
+        )
 
     async def resolve_channels(self) -> None:
         """Find the four channels by id. A missing one is refused: there is no direct-message fallback."""
@@ -191,7 +223,9 @@ class ClaraBot(discord.Client):
                 continue
             self.channels[name] = channel
         if wrong:
-            raise ChannelError("; ".join(wrong) + ". Check the CLARA_DISCORD_CHANNEL_* ids and that the bot is in the server.")
+            raise ChannelError(
+                "; ".join(wrong) + ". Check the CLARA_DISCORD_CHANNEL_* ids and that the bot is in the server."
+            )
         guilds = {channel.guild.id for channel in self.channels.values()}
         if len(guilds) != 1:
             raise ChannelError("The four channels must all be in one server.")
@@ -242,8 +276,13 @@ class ClaraBot(discord.Client):
         await super().close()
 
     async def on_ready(self) -> None:
-        log.info("connected as %s; answering only Discord user %s, in #general (%s) of server %s", self.user,
-                 self.settings.owner_id, self.settings.channels["general"], self.guild_id)
+        log.info(
+            "connected as %s; answering only Discord user %s, in #general (%s) of server %s",
+            self.user,
+            self.settings.owner_id,
+            self.settings.channels["general"],
+            self.guild_id,
+        )
         self.check_permissions()
 
     async def beat(self, test: dict | None = None) -> None:
@@ -253,7 +292,9 @@ class ClaraBot(discord.Client):
         body: dict = {"state": "connected" if ready else "disconnected"}
         if ready:
             body["bot"] = str(self.user)
-            body["channels"] = {name: {"name": found, "missing": lacking} for name, (found, lacking) in self.lacking_rights().items()}
+            body["channels"] = {
+                name: {"name": found, "missing": lacking} for name, (found, lacking) in self.lacking_rights().items()
+            }
             if test is not None:
                 body["test"] = test
         try:
@@ -317,7 +358,9 @@ class ClaraBot(discord.Client):
                         self.set_conversation(event["conversation"])
                     elif kind == "approval":
                         if await self.show_approval(event["approval"]):
-                            await channel.send(f"🔐 Waiting for your answer in <#{self.settings.channels['approval']}>.")
+                            await channel.send(
+                                f"🔐 Waiting for your answer in <#{self.settings.channels['approval']}>."
+                            )
                     elif kind == "done":
                         done = event
                         reply = event.get("reply") or ""
@@ -360,8 +403,11 @@ class ClaraBot(discord.Client):
                 made = await self.clara.call("POST", "/v1/conversations", json={"packs": active})
                 self.set_conversation(made["id"])
                 note = "\n(A new conversation was started for it.)"
-        lines = [f"{'✅' if item['id'] in active else '▫️'} `{item['id']}` — {item['label']}"
-                 + ("" if item["available"] else f" ({item['reason']})") for item in listing]
+        lines = [
+            f"{'✅' if item['id'] in active else '▫️'} `{item['id']}` — {item['label']}"
+            + ("" if item["available"] else f" ({item['reason']})")
+            for item in listing
+        ]
         return "\n".join(lines) + note + "\n`/tools pack:<id> state:on|off` switches one."
 
     async def show_approval(self, approval: dict) -> bool:
@@ -373,7 +419,9 @@ class ClaraBot(discord.Client):
             text += f"\n_{approval['reason']}_"
         channel = self.channels["approval"]
         if approval["level"] == "destructive":
-            self.asked[approval["id"]] = await channel.send(text + "\nThis one is answered on the web site or with clara-admin.")
+            self.asked[approval["id"]] = await channel.send(
+                text + "\nThis one is answered on the web site or with clara-admin."
+            )
         else:
             self.asked[approval["id"]] = await channel.send(text, view=approval_view(approval["id"]))
         return True
@@ -414,7 +462,9 @@ class ClaraBot(discord.Client):
             message = self.asked.pop(approval["id"], None)
             if message is not None:
                 with contextlib.suppress(discord.HTTPException):
-                    await message.edit(content=f"🔐 #{approval['id']} {approval['summary']}: **{approval['status']}**", view=None)
+                    await message.edit(
+                        content=f"🔐 #{approval['id']} {approval['summary']}: **{approval['status']}**", view=None
+                    )
             return
         if kind == "ask":
             await self.deliver_ask(event)
@@ -424,11 +474,17 @@ class ClaraBot(discord.Client):
             return
         icon = ICONS.get(str(kind))
         told = event.get("channel")
-        route = told if told in (*CHOICES, "off") else ROUTES.get(str(kind))  # the server's word, else the fallback table
+        route = (
+            told if told in (*CHOICES, "off") else ROUTES.get(str(kind))
+        )  # the server's word, else the fallback table
         if icon is None or route is None or route == "off":
             return
         title = event.get("title") or ""
-        text = f"{icon} **{title}**\n{event.get('text', '')}" if title and kind != "reminder" else f"{icon} {event.get('text', '')}"
+        text = (
+            f"{icon} **{title}**\n{event.get('text', '')}"
+            if title and kind != "reminder"
+            else f"{icon} {event.get('text', '')}"
+        )
         for part in split_message(text):
             await self.channels[route].send(part)
 
@@ -494,7 +550,9 @@ class ClaraBot(discord.Client):
                 return
         if stage in ("asked", "thread_open"):  # no thread: your next message answers it
             self.set_conversation(conversation)
-            await self.channels["general"].send("↩️ Réponds ici : cette conversation est maintenant la conversation courante.")
+            await self.channels["general"].send(
+                "↩️ Réponds ici : cette conversation est maintenant la conversation courante."
+            )
 
     async def close_ask(self, event: dict) -> None:
         """A run ended: say so in #general (unless the event only removes the thread), then remove its thread (archive it
@@ -548,7 +606,9 @@ class ClaraBot(discord.Client):
         async def new(interaction: discord.Interaction) -> None:
             if await only_you(interaction):
                 self.set_conversation(None)
-                await interaction.response.send_message("New conversation: your next message starts it.", ephemeral=True)
+                await interaction.response.send_message(
+                    "New conversation: your next message starts it.", ephemeral=True
+                )
 
         @tree.command(name="status", description="Clara's state")
         @here
@@ -557,8 +617,10 @@ class ClaraBot(discord.Client):
                 return
             try:
                 info = await self.clara.call("GET", "/v1/admin/status")
-                lines = [f"Clara {info['version']}, {info['state']}; model {info['models']['default'] or '(none)'}",
-                         f"pending approvals: {info['approvals_pending']}"]
+                lines = [
+                    f"Clara {info['version']}, {info['state']}; model {info['models']['default'] or '(none)'}",
+                    f"pending approvals: {info['approvals_pending']}",
+                ]
                 lines += [f"⚠️ {text}" for text in info["alerts"].values()]
                 await interaction.response.send_message("\n".join(lines), ephemeral=True)
             except ClaraError as error:
@@ -571,8 +633,14 @@ class ClaraBot(discord.Client):
                 return
             try:
                 found = (await self.clara.call("GET", "/v1/tasks"))["tasks"]
-                text = "\n".join(f"[{t['id']}] {t['title']}" + (f" — due {t['due_at'][:16]}" if t["due_at"] else "")
-                                 for t in found) or "No open task."
+                text = (
+                    "\n".join(
+                        f"[{t['id']}] {t['title']}"
+                        + (f" — due {due_text(t, self.settings.timezone)}" if t["due_at"] else "")
+                        for t in found
+                    )
+                    or "No open task."
+                )
                 await interaction.response.send_message(split_message(text)[0], ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
@@ -590,9 +658,13 @@ class ClaraBot(discord.Client):
                 await interaction.response.send_message(f"⚠️ {error}")
 
         @tree.command(name="tools", description="The special tools of the current conversation (switch one on or off)")
-        @app_commands.describe(pack="The tool to switch (its id, as listed)", state="on or off (default: the other one)")
+        @app_commands.describe(
+            pack="The tool to switch (its id, as listed)", state="on or off (default: the other one)"
+        )
         @here
-        async def tools(interaction: discord.Interaction, pack: str | None = None, state: Literal["on", "off"] | None = None) -> None:
+        async def tools(
+            interaction: discord.Interaction, pack: str | None = None, state: Literal["on", "off"] | None = None
+        ) -> None:
             if not await only_you(interaction):
                 return
             try:
@@ -610,7 +682,9 @@ class ClaraBot(discord.Client):
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
                 return
-            await interaction.response.send_message(f"{len(found)} waiting." if found else "Nothing waits.", ephemeral=True)
+            await interaction.response.send_message(
+                f"{len(found)} waiting." if found else "Nothing waits.", ephemeral=True
+            )
             for approval in found:
                 self.asked.pop(approval["id"], None)
                 await self.show_approval(approval)
@@ -628,7 +702,10 @@ def main() -> int:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        log.error("another clara-discord already runs with the state file %s: two bots would answer twice", settings.state_file)
+        log.error(
+            "another clara-discord already runs with the state file %s: two bots would answer twice",
+            settings.state_file,
+        )
         return EXIT_RUNNING
     bot = ClaraBot(settings)
     try:

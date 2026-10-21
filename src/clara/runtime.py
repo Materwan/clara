@@ -62,12 +62,21 @@ KNOBS: dict[str, Knob] = {
     "tainted_rule": Knob(True, _bool, "After untrusted content, raise outside-world writes and networked runs to ask."),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),
-    "hidden_tools": Knob({}, lambda value: {str(k): _names(v) for k, v in dict(value).items()},
-                         "Tools not offered to some clients: {client: [tool, ...]}."),
-    "discord_routes": Knob({}, check_routes, "Where Discord posts each kind of message: {category: notification|general|alerts|off}; "
-                           "a category not named keeps its default."),
+    "hidden_tools": Knob(
+        {},
+        lambda value: {str(k): _names(v) for k, v in dict(value).items()},
+        "Tools not offered to some clients: {client: [tool, ...]}.",
+    ),
+    "discord_routes": Knob(
+        {},
+        check_routes,
+        "Where Discord posts each kind of message: {category: notification|general|alerts|off}; "
+        "a category not named keeps its default.",
+    ),
     "mail_notify": Knob(False, _bool, "Notify you of new mail in the inbox of a connected Gmail mailbox."),
-    "mail_notify_senders": Knob([], _names, "Only for senders whose name or address contains one of these words ([]: all)."),
+    "mail_notify_senders": Knob(
+        [], _names, "Only for senders whose name or address contains one of these words ([]: all)."
+    ),
 }
 
 

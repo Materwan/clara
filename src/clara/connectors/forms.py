@@ -102,7 +102,9 @@ def _question(raw: Any, number: int) -> dict:
             raise ValueError(f"{where}: a text question has no options.")
         question["answer"] = _note(raw.get("answer"), f"{where}: answer")
         return question
-    options = [_line(option, f"{where}: an option", MAX_OPTION) for option in _list(raw.get("options"), f"{where}: options")]
+    options = [
+        _line(option, f"{where}: an option", MAX_OPTION) for option in _list(raw.get("options"), f"{where}: options")
+    ]
     if not MIN_OPTIONS <= len(options) <= MAX_OPTIONS:
         raise ValueError(f"{where}: {MIN_OPTIONS} to {MAX_OPTIONS} options are needed, not {len(options)}.")
     if len({option.casefold() for option in options}) != len(options):
@@ -198,7 +200,9 @@ def parse_answers(form: dict, message: str) -> list | None:
         if question["type"] == TEXT:
             answers.append(given)
         else:
-            answers.append([index for index in range(len(question["options"])) if _chosen(_token(question, index), given)])
+            answers.append(
+                [index for index in range(len(question["options"])) if _chosen(_token(question, index), given)]
+            )
     return answers
 
 

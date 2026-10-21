@@ -98,18 +98,27 @@ class GitSync:
         env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true", "LC_ALL": "C", "GIT_EDITOR": "true"})
         if self._token:  # an access token for https remotes, passed in the environment (not visible in `ps`)
             credentials = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
-            env.update({
-                "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraheader",
-                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
-            })
+            env.update(
+                {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.extraheader",
+                    "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+                }
+            )
         return env
 
     def git(self, *args: str, check: bool = True, timeout: float = TIMEOUT) -> str:
         identity = ["-c", f"user.name={self.author}", "-c", f"user.email={self.email}", "-c", "core.quotepath=off"]
+        identity += ["-c", "core.fsmonitor=false"]  # a repository nested in the vault must not make git run a command
         try:
             done = self._run(
-                ["git", *identity, *args], cwd=self.root, env=self._env(), capture_output=True, text=True,
-                timeout=timeout, check=False,
+                ["git", *identity, *args],
+                cwd=self.root,
+                env=self._env(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             raise GitError(f"git {args[0]} took more than {int(timeout)} s") from None
@@ -121,9 +130,10 @@ class GitSync:
 
     def is_repository(self) -> bool:
         try:
-            return self.git("rev-parse", "--is-inside-work-tree", check=False).strip() == "true" and (
-                self.root / ".git"
-            ).exists()
+            return (
+                self.git("rev-parse", "--is-inside-work-tree", check=False).strip() == "true"
+                and (self.root / ".git").exists()
+            )
         except GitError:
             return False
 
@@ -198,7 +208,8 @@ class GitSync:
         """Commit these paths (new, changed or deleted) as one commit. False when there was nothing to commit."""
         with self.lock:
             known = [
-                path for path in dict.fromkeys(paths)
+                path
+                for path in dict.fromkeys(paths)
                 if (self.root / path).exists() or self.git("ls-files", "--", path, check=False).strip()
             ]
             if not known:
@@ -271,7 +282,13 @@ class GitSync:
     def log(self, path: str, limit: int = 15) -> list[tuple[str, str, str, str]]:
         """(commit, date, author, subject) of the changes of one file, newest first."""
         out = self.git(
-            "log", f"-n{int(limit)}", "--follow", "--date=short", "--format=%h%x09%ad%x09%an%x09%s", "--", path,
+            "log",
+            f"-n{int(limit)}",
+            "--follow",
+            "--date=short",
+            "--format=%h%x09%ad%x09%an%x09%s",
+            "--",
+            path,
             check=False,
         )
         rows = []
@@ -286,7 +303,12 @@ class GitSync:
         `{"path", "status" (created, changed, deleted), "authors", "subject", "at"}`. A file added and changed in the span is
         `created`; one added and deleted is left out."""
         out = self.git(
-            "log", f"--since={since}", f"--until={until}", "--no-merges", "--name-status", "--format=%x01%an%x09%aI%x09%s",
+            "log",
+            f"--since={since}",
+            f"--until={until}",
+            "--no-merges",
+            "--name-status",
+            "--format=%x01%an%x09%aI%x09%s",
             check=False,
         )
         found: dict[str, dict] = {}
@@ -299,8 +321,10 @@ class GitSync:
             if len(parts) < 2 or not parts[0]:
                 continue
             code, path = parts[0][0], parts[-1]
-            row = found.setdefault(path, {"path": path, "status": "", "authors": [], "subject": subject, "added": False,
-                                          "last": code, "at": at})
+            row = found.setdefault(
+                path,
+                {"path": path, "status": "", "authors": [], "subject": subject, "added": False, "last": code, "at": at},
+            )
             if code == "A":
                 row["added"] = True
             if author not in row["authors"]:
@@ -313,13 +337,22 @@ class GitSync:
                 row["status"] = "deleted"
             else:
                 row["status"] = "created" if row["added"] else "changed"
-            rows.append({"path": row["path"], "status": row["status"], "authors": tuple(row["authors"]),
-                         "subject": row["subject"], "at": row["at"]})
+            rows.append(
+                {
+                    "path": row["path"],
+                    "status": row["status"],
+                    "authors": tuple(row["authors"]),
+                    "subject": row["subject"],
+                    "at": row["at"],
+                }
+            )
         return rows
 
     def numstat(self, since: str, until: str) -> dict[str, tuple[int, int]]:
         """Lines added and removed per file by the commits made from `since` to `until`."""
-        out = self.git("log", f"--since={since}", f"--until={until}", "--no-merges", "--numstat", "--format=", check=False)
+        out = self.git(
+            "log", f"--since={since}", f"--until={until}", "--no-merges", "--numstat", "--format=", check=False
+        )
         found: dict[str, tuple[int, int]] = {}
         for line in out.splitlines():
             parts = line.split("\t")
@@ -331,8 +364,17 @@ class GitSync:
 
     def diff(self, path: str, since: str, until: str) -> str:
         """What the commits made from `since` to `until` changed in one file (newest first)."""
-        return self.git("log", f"--since={since}", f"--until={until}", "--no-merges", "-p", "--format=--- %h %an: %s", "--",
-                        path, check=False)
+        return self.git(
+            "log",
+            f"--since={since}",
+            f"--until={until}",
+            "--no-merges",
+            "-p",
+            "--format=--- %h %an: %s",
+            "--",
+            path,
+            check=False,
+        )
 
     def deleted_path(self, name: str) -> str:
         """The path a note called `name` had when it was deleted (the latest), or ''."""

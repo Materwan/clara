@@ -48,8 +48,12 @@ class Upkeep:
         ):
             self._tasks.append(asyncio.create_task(self._loop(name, seconds, job), name=f"upkeep-{name}"))
         if self.s.settings.mail_poll_seconds > 0:
-            self._tasks.append(asyncio.create_task(
-                self._loop("mail", float(self.s.settings.mail_poll_seconds), self.mail, watched=False), name="upkeep-mail"))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._loop("mail", float(self.s.settings.mail_poll_seconds), self.mail, watched=False),
+                    name="upkeep-mail",
+                )
+            )
         interval = watchdog_seconds()
         if interval:
             self._tasks.append(asyncio.create_task(self._watchdog(interval), name="watchdog"))
@@ -89,14 +93,21 @@ class Upkeep:
             s.traffic.end_debug()
         percent = disk_percent(s.settings.data_dir)
         if percent >= s.settings.disk_alert_percent:
-            s.alerts.raise_("disk", "The disk is nearly full", f"{percent}% of the disk holding {s.settings.data_dir} is used.")
+            s.alerts.raise_(
+                "disk", "The disk is nearly full", f"{percent}% of the disk holding {s.settings.data_dir} is used."
+            )
         else:
             s.alerts.clear("disk")
-        if (s.settings.discord_expected or s.settings.discord_autostart) and time.monotonic() - s.started > DISCORD_SILENCE:
+        if (
+            s.settings.discord_expected or s.settings.discord_autostart
+        ) and time.monotonic() - s.started > DISCORD_SILENCE:
             seen = s.clients.get("discord")
             if seen is None or time.monotonic() - seen > DISCORD_SILENCE:
-                s.alerts.raise_("discord", "The Discord bot is gone",
-                                "clara-discord has not checked in for 5 minutes (the server's log, or systemctl status clara-discord).")
+                s.alerts.raise_(
+                    "discord",
+                    "The Discord bot is gone",
+                    "clara-discord has not checked in for 5 minutes (the server's log, or systemctl status clara-discord).",
+                )
 
     def incognito(self) -> None:
         deleted = self.s.conversations.sweep_incognito(self.s.settings.incognito_hours)
@@ -129,7 +140,11 @@ def late_alert(services: Services):
 
     def late(what: str, seconds: float) -> None:
         minutes = int(seconds // 60)
-        services.alerts.raise_(f"late:{what}", "Something ran late",
-                               f"{what} ran {minutes} min late (was the server stopped?).", cooldown=600)
+        services.alerts.raise_(
+            f"late:{what}",
+            "Something ran late",
+            f"{what} ran {minutes} min late (was the server stopped?).",
+            cooldown=600,
+        )
 
     return late

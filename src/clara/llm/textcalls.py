@@ -16,8 +16,11 @@ from .types import ToolCall
 OPEN = re.compile(r"<\s*longcat_tool_call\s*>")
 CLOSE = re.compile(r"<\s*/\s*longcat_tool_call\s*>")
 NAME = re.compile(r"\s*([\w.-]+)")
-ARG = re.compile(r"<\s*longcat_arg_key\s*>(.*?)<\s*/\s*longcat_arg_key\s*>\s*"
-                 r"<\s*longcat_arg_value\s*>(.*?)<\s*/\s*longcat_arg_value\s*>", re.S)
+ARG = re.compile(
+    r"<\s*longcat_arg_key\s*>(.*?)<\s*/\s*longcat_arg_key\s*>\s*"
+    r"<\s*longcat_arg_value\s*>(.*?)<\s*/\s*longcat_arg_value\s*>",
+    re.S,
+)
 HOLD = 32  # a tail this short, from a `<`, may be the start of the marker: wait for more before showing it
 
 
@@ -39,8 +42,8 @@ class TextCalls:
         buffer = self.held + text
         found = OPEN.search(buffer)
         if found:
-            self.held, self.caught = "", buffer[found.start():]
-            return buffer[:found.start()]
+            self.held, self.caught = "", buffer[found.start() :]
+            return buffer[: found.start()]
         cut = buffer.rfind("<")
         if cut >= 0 and len(buffer) - cut < HOLD and ">" not in buffer[cut:]:
             self.held = buffer[cut:]

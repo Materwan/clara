@@ -1,16 +1,16 @@
 """`clara`: operations on this machine, run as the service user (`sudo -u clara clara …`).
 
-    clara token create <name> <client> [--approvals all|safe|none]    a client token (shown once)
-    clara token list | revoke <name>
-    clara secrets new-key                       a fresh raw key for the systemd credential
-    clara secrets list | set <name> | unset <name>
-    clara secrets rotate --new-key-file <path>  re-encrypt every secret under a new key
-    clara doctor [--pull]                       check what Clara needs (rootless Podman, Tailscale, providers…)
-    clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
-    clara restore --verify <file>               open a backup, check it, count its rows
-    clara restore <file>                        put a backup back (the server must be stopped)
-    clara migrate | purge                       bring the schema up to date | vacuum the file (server stopped)
-    clara preflight --database <copy>           what the updater runs on a copy before switching releases
+clara token create <name> <client> [--approvals all|safe|none]    a client token (shown once)
+clara token list | revoke <name>
+clara secrets new-key                       a fresh raw key for the systemd credential
+clara secrets list | set <name> | unset <name>
+clara secrets rotate --new-key-file <path>  re-encrypt every secret under a new key
+clara doctor [--pull]                       check what Clara needs (rootless Podman, Tailscale, providers…)
+clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
+clara restore --verify <file>               open a backup, check it, count its rows
+clara restore <file>                        put a backup back (the server must be stopped)
+clara migrate | purge                       bring the schema up to date | vacuum the file (server stopped)
+clara preflight --database <copy>           what the updater runs on a copy before switching releases
 """
 
 from __future__ import annotations
@@ -101,7 +101,9 @@ def secrets(args: argparse.Namespace) -> int:
         if args.name not in KNOWN_SECRETS:
             print(f"Unknown secret {args.name}: {', '.join(KNOWN_SECRETS)}", file=sys.stderr)
             return 1
-        value = sys.stdin.read().strip() if not sys.stdin.isatty() else getpass.getpass(f"{args.name} (hidden): ").strip()
+        value = (
+            sys.stdin.read().strip() if not sys.stdin.isatty() else getpass.getpass(f"{args.name} (hidden): ").strip()
+        )
         store.set(args.name, value)
         print(f"{args.name}: set (a running server reads it at its next use).")
     elif args.action == "unset":
@@ -122,8 +124,13 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
     problems = check_private(settings.env_file, settings.data_dir, settings.secret_key_file)
     results.append(("permissions", FAIL if problems else OK, "; ".join(problems) or "private"))
     for tool in ("git", "uv"):
-        results.append((tool, OK if shutil.which(tool) else (FAIL if tool == "git" else WARN),
-                        shutil.which(tool) or f"{tool} not found"))
+        results.append(
+            (
+                tool,
+                OK if shutil.which(tool) else (FAIL if tool == "git" else WARN),
+                shutil.which(tool) or f"{tool} not found",
+            )
+        )
     try:
         material = load_key_material(settings.secret_key_file, settings.secret_key)
         results.append(("secret key", OK, f"from {material.origin}"))
@@ -137,7 +144,9 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
         sandbox = Sandbox(settings, workspace, None, settings.sandbox_image)  # type: ignore[arg-type]
         if pull and shutil.which(settings.podman):
             code, out = await sandbox._exec(settings.podman, "pull", settings.sandbox_image, timeout=1200)
-            results.append(("image pull", OK if code == 0 else FAIL, out.splitlines()[-1] if out else settings.sandbox_image))
+            results.append(
+                ("image pull", OK if code == 0 else FAIL, out.splitlines()[-1] if out else settings.sandbox_image)
+            )
         for name, ok, detail in await sandbox.check():
             results.append((f"sandbox: {name}", OK if ok else FAIL, detail))
     else:
@@ -162,13 +171,30 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
                 results.append((f"ollama {host.id}", WARN, f"{host.url}: {type(error).__name__}"))
         try:
             response = await http.get(f"{settings.searxng_url}/search", params={"q": "clara", "format": "json"})
-            results.append(("searxng", OK if response.status_code == 200 else WARN,
-                            f"HTTP {response.status_code}" + ("" if response.status_code == 200 else " (enable the json format)")))
+            results.append(
+                (
+                    "searxng",
+                    OK if response.status_code == 200 else WARN,
+                    f"HTTP {response.status_code}"
+                    + ("" if response.status_code == 200 else " (enable the json format)"),
+                )
+            )
         except httpx.HTTPError as error:
-            results.append(("searxng", WARN, f"{settings.searxng_url}: {type(error).__name__} (web search is off until it answers)"))
+            results.append(
+                (
+                    "searxng",
+                    WARN,
+                    f"{settings.searxng_url}: {type(error).__name__} (web search is off until it answers)",
+                )
+            )
     if settings.restic_repository:
-        results.append(("restic", OK if shutil.which(settings.restic_bin) else FAIL,
-                        shutil.which(settings.restic_bin) or "restic not found"))
+        results.append(
+            (
+                "restic",
+                OK if shutil.which(settings.restic_bin) else FAIL,
+                shutil.which(settings.restic_bin) or "restic not found",
+            )
+        )
     usage = shutil.disk_usage(settings.data_dir if settings.data_dir.exists() else "/")
     percent = 100 * usage.used / usage.total
     results.append(("disk", OK if percent < settings.disk_alert_percent else WARN, f"{percent:.0f}% used"))
@@ -190,8 +216,11 @@ def backup(args: argparse.Namespace) -> int:
         from ..ops.backups import Backups
 
         db = _database(settings)
-        holder = type("S", (), {"settings": settings, "secrets": _store(settings, db), "db": db, "workspace": None,
-                                "alerts": None})()
+        holder = type(
+            "S",
+            (),
+            {"settings": settings, "secrets": _store(settings, db), "db": db, "workspace": None, "alerts": None},
+        )()
         print(asyncio.run(Backups(holder).init_remote()))  # type: ignore[arg-type]
         return 0
     db = _database(settings)
@@ -252,8 +281,10 @@ def purge(args: argparse.Namespace) -> int:
         db.execute("VACUUM")
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         db.close()
-        print(f"Vacuumed: {before / 1e6:.1f} MB -> {settings.database.stat().st_size / 1e6:.1f} MB "
-              "(deleted text is gone from the file).")
+        print(
+            f"Vacuumed: {before / 1e6:.1f} MB -> {settings.database.stat().st_size / 1e6:.1f} MB "
+            "(deleted text is gone from the file)."
+        )
     finally:
         lock.release()
     return 0

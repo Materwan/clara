@@ -30,9 +30,18 @@ USER_AGENT = "Mozilla/5.0 (compatible; Clara personal agent)"
 TIMEOUT = httpx.Timeout(10.0, read=20.0)
 MAX_REDIRECTS = 5
 MAX_LINKS = 40
-TEXT_TYPES = ("text/html", "text/plain", "application/xhtml+xml", "application/json", "text/markdown", "text/csv",
-              "application/xml", "text/xml", "application/pdf",
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+TEXT_TYPES = (
+    "text/html",
+    "text/plain",
+    "application/xhtml+xml",
+    "application/json",
+    "text/markdown",
+    "text/csv",
+    "application/xml",
+    "text/xml",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+)
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
 
@@ -46,8 +55,9 @@ def public_address(address: str) -> bool:
         ip = ip.ipv4_mapped
     if ip.version == 4 and ip in TAILNET:
         return False
-    return ip.is_global and not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
-                                 or ip.is_reserved or ip.is_unspecified)
+    return ip.is_global and not (
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
 
 
 async def resolve_public(host: str, port: int) -> str:
@@ -76,8 +86,29 @@ async def resolve_public(host: str, port: int) -> str:
 
 class _Text(HTMLParser):
     SKIP = {"script", "style", "noscript", "svg", "template", "iframe", "head"}
-    BLOCK = {"p", "div", "section", "article", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "pre",
-             "blockquote", "header", "footer", "main", "table", "ul", "ol"}
+    BLOCK = {
+        "p",
+        "div",
+        "section",
+        "article",
+        "br",
+        "li",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "pre",
+        "blockquote",
+        "header",
+        "footer",
+        "main",
+        "table",
+        "ul",
+        "ol",
+    }
 
     def __init__(self, base: str):
         super().__init__(convert_charrefs=True)
@@ -145,8 +176,9 @@ class Page:
 
 
 class Web:
-    def __init__(self, searxng_url: str, max_bytes: int, transport: httpx.AsyncBaseTransport | None = None,
-                 resolver=None):
+    def __init__(
+        self, searxng_url: str, max_bytes: int, transport: httpx.AsyncBaseTransport | None = None, resolver=None
+    ):
         self.searxng_url = searxng_url.rstrip("/")
         self.max_bytes = max_bytes
         self._transport = transport
@@ -157,16 +189,25 @@ class Web:
             raise WebError("The query is empty.")
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
-                response = await http.get(f"{self.searxng_url}/search", params={"q": query, "format": "json"},
-                                          headers={"User-Agent": USER_AGENT})
+                response = await http.get(
+                    f"{self.searxng_url}/search",
+                    params={"q": query, "format": "json"},
+                    headers={"User-Agent": USER_AGENT},
+                )
         except httpx.HTTPError as error:
             raise WebError(f"The search service (SearXNG) could not be reached: {error}") from None
         if response.is_error:
             raise WebError(f"The search service answered HTTP {response.status_code} (is the JSON format enabled?).")
         results = response.json().get("results") or []
-        return [{"title": str(item.get("title") or "")[:200], "url": str(item.get("url") or ""),
-                 "snippet": " ".join(str(item.get("content") or "").split())[:400]}
-                for item in results[: max(1, min(count, 10))] if item.get("url")]
+        return [
+            {
+                "title": str(item.get("title") or "")[:200],
+                "url": str(item.get("url") or ""),
+                "snippet": " ".join(str(item.get("content") or "").split())[:400],
+            }
+            for item in results[: max(1, min(count, 10))]
+            if item.get("url")
+        ]
 
     async def fetch(self, url: str) -> Page:
         current = url.strip()
@@ -178,14 +219,30 @@ class Web:
                 raise WebError("Addresses with a user name or password are not fetched.")
             port = parts.port or (443 if parts.scheme == "https" else 80)
             address = await self._resolve(parts.hostname, port)
-            pinned = urlunsplit((parts.scheme, f"[{address}]:{port}" if ":" in address else f"{address}:{port}",
-                                 parts.path or "/", parts.query, ""))
-            headers = {"Host": parts.netloc.rsplit("@", 1)[-1], "User-Agent": USER_AGENT,
-                       "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5"}
+            pinned = urlunsplit(
+                (
+                    parts.scheme,
+                    f"[{address}]:{port}" if ":" in address else f"{address}:{port}",
+                    parts.path or "/",
+                    parts.query,
+                    "",
+                )
+            )
+            headers = {
+                "Host": parts.netloc.rsplit("@", 1)[-1],
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+            }
             try:
-                async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport, follow_redirects=False) as http, \
-                        http.stream("GET", pinned, headers=headers,
-                                    extensions={"sni_hostname": parts.hostname} if parts.scheme == "https" else {}) as response:
+                async with (
+                    httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport, follow_redirects=False) as http,
+                    http.stream(
+                        "GET",
+                        pinned,
+                        headers=headers,
+                        extensions={"sni_hostname": parts.hostname} if parts.scheme == "https" else {},
+                    ) as response,
+                ):
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:

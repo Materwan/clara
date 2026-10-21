@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 RESTIC_TIMEOUT = 3600
+RESTIC_GRACE = 20  # seconds restic gets to release the repository lock after it is asked to stop
 
 
 def verify(path: Path) -> dict:
@@ -39,9 +40,13 @@ def verify(path: Path) -> dict:
     try:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        tables = [row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%'"
-            " ORDER BY name")]
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%'"
+                " ORDER BY name"
+            )
+        ]
         counts = {table: connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in tables}
     finally:
         connection.close()
@@ -60,16 +65,27 @@ class Backups:
 
     def describe(self) -> dict:
         newest = self.listing()[:1]
-        return {"last": self.last or (newest[0]["name"] if newest else None), "remote": self.s.settings.restic_repository,
-                "last_remote": self.last_remote, "problem": self.problem}
+        return {
+            "last": self.last or (newest[0]["name"] if newest else None),
+            "remote": self.s.settings.restic_repository,
+            "last_remote": self.last_remote,
+            "problem": self.problem,
+        }
 
     def listing(self) -> list[dict]:
         found = []
         for kind in ("daily", "weekly", "manual", "pre-update", ""):
             folder = self.dir / kind if kind else self.dir
             for path in folder.glob("*.db") if folder.is_dir() else []:
-                found.append({"name": path.name, "kind": kind or "migration", "path": str(path),
-                              "size_mb": round(path.stat().st_size / 1_000_000, 1), "mtime": path.stat().st_mtime})
+                found.append(
+                    {
+                        "name": path.name,
+                        "kind": kind or "migration",
+                        "path": str(path),
+                        "size_mb": round(path.stat().st_size / 1_000_000, 1),
+                        "mtime": path.stat().st_mtime,
+                    }
+                )
         return sorted(found, key=lambda item: item["mtime"], reverse=True)
 
     # ------------------------------------------------------------------
@@ -153,13 +169,46 @@ class Backups:
         return env
 
     async def _restic(self, *args: str) -> str:
-        process = await asyncio.create_subprocess_exec(self.s.settings.restic_bin, *args, env=self._restic_env(),
-                                                       stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(process.communicate(), RESTIC_TIMEOUT)
+        process = await asyncio.create_subprocess_exec(
+            self.s.settings.restic_bin,
+            *args,
+            env=self._restic_env(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(process.communicate(), RESTIC_TIMEOUT)
+        except TimeoutError:
+            await self._stop(process)
+            raise RuntimeError(
+                f"restic {args[0]} took more than {RESTIC_TIMEOUT // 60} minutes and was stopped"
+            ) from None
+        except BaseException:  # the nightly task is cancelled at shutdown
+            await self._stop(process)
+            raise
         text = out.decode(errors="replace").strip()
         if process.returncode != 0:
             raise RuntimeError(text.splitlines()[-1] if text else f"restic exited {process.returncode}")
         return text
+
+    @staticmethod
+    async def _stop(process: asyncio.subprocess.Process) -> None:
+        """Restic left running would keep the repository locked, and the next backup would fail on it. It is asked to
+        stop (it then removes its lock), and killed if it does not."""
+        if process.returncode is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), RESTIC_GRACE)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+        except BaseException:  # cancelled again while it was being stopped
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            raise
 
     async def remote(self, database: Path) -> None:
         files = [str(database)]
@@ -169,8 +218,16 @@ class Backups:
             os.chmod(bundle, 0o600)
             files.append(str(bundle))
         await self._restic("backup", "--tag", "clara", "--host", "clara", *files)
-        await self._restic("forget", "--tag", "clara", "--keep-daily", str(self.s.settings.backup_keep_daily),
-                           "--keep-weekly", str(self.s.settings.backup_keep_weekly), "--prune")
+        await self._restic(
+            "forget",
+            "--tag",
+            "clara",
+            "--keep-daily",
+            str(self.s.settings.backup_keep_daily),
+            "--keep-weekly",
+            str(self.s.settings.backup_keep_weekly),
+            "--prune",
+        )
         self.last_remote = utcnow().isoformat(timespec="seconds")
 
     async def init_remote(self) -> str:

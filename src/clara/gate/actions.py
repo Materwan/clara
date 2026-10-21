@@ -51,13 +51,27 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
 }
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
-RAISED_WHEN_TAINTED = frozenset({"github_write", "drive_write", "mail_send", "vault_write", "vault_destroy", "run_network"})
+RAISED_WHEN_TAINTED = frozenset(
+    {"github_write", "drive_write", "mail_send", "vault_write", "vault_destroy", "run_network"}
+)
 # Classes whose content leaves the machine: content that looks like a secret raises them to `ask`
-OUTSIDE = frozenset({"github_write", "drive_write", "mail_draft", "mail_send", "vault_write", "run_network", "fetch_other",
-                     "fetch_trusted"})
+OUTSIDE = frozenset(
+    {
+        "github_write",
+        "drive_write",
+        "mail_draft",
+        "mail_send",
+        "vault_write",
+        "run_network",
+        "fetch_other",
+        "fetch_trusted",
+    }
+)
 # Classes whose call sends something off the machine (a query, an address, content): refused in a local-only turn.
 # The vault's are there because its changes are pushed to its remote (not when CLARA_VAULT_PUSH is off).
-LEAVES_MACHINE = OUTSIDE | frozenset({"web_search", "github_read", "drive_read", "mail_read", "vault_destroy", "discord"})
+LEAVES_MACHINE = OUTSIDE | frozenset(
+    {"web_search", "github_read", "drive_read", "mail_read", "vault_destroy", "discord"}
+)
 
 PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:")
 SPECIAL_TARGETS = ("net", "search", "memory", "reminders", "tasks", "notify", "forms", "history", "discord")
@@ -126,7 +140,7 @@ def glob_regex(pattern: str) -> re.Pattern[str]:
             if end == -1:
                 out.append(re.escape(char))
             else:
-                out.append(fnmatch.translate(pattern[index:end + 1])[4:-3])
+                out.append(fnmatch.translate(pattern[index : end + 1])[4:-3])
                 index = end
         else:
             out.append(re.escape(char))

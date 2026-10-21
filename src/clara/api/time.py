@@ -20,7 +20,9 @@ router = APIRouter(prefix="/v1", tags=["time"])
 # ----------------------------------------------------------------------
 class NewReminder(BaseModel):
     text: str = Field(min_length=1, max_length=500)
-    at: str = Field(min_length=1, max_length=40, description="Local 2026-10-05T09:00 (in `timezone`), or with an offset")
+    at: str = Field(
+        min_length=1, max_length=40, description="Local 2026-10-05T09:00 (in `timezone`), or with an offset"
+    )
     repeat: Literal["", "daily", "weekly", "monthly"] = ""
     timezone: str | None = Field(default=None, max_length=64)
     targets: list[str] = Field(default_factory=list, max_length=5)
@@ -35,9 +37,15 @@ def reminders(request: Request) -> dict:
 @router.post("/reminders", status_code=201)
 def add_reminder(body: NewReminder, request: Request) -> dict:
     try:
-        reminder = services(request).reminders.create(body.text, body.at, repeat=body.repeat, timezone=body.timezone,
-                                                      targets=body.targets, conversation_id=body.conversation,
-                                                      client=caller(request).client)
+        reminder = services(request).reminders.create(
+            body.text,
+            body.at,
+            repeat=body.repeat,
+            timezone=body.timezone,
+            targets=body.targets,
+            conversation_id=body.conversation,
+            client=caller(request).client,
+        )
     except ReminderError as error:
         raise ApiError(422, str(error)) from None
     return reminder.describe()
@@ -74,8 +82,15 @@ def tasks(request: Request, status: Literal["open", "done", "all"] = "open") -> 
 async def add_task(body: NewTask, request: Request) -> dict:
     service = services(request).tasks
     try:
-        task = await service.create(body.title, body.description, body.due, body.reminders, timezone=body.timezone,
-                                    targets=body.targets, parent_id=body.parent_id)
+        task = await service.create(
+            body.title,
+            body.description,
+            body.due,
+            body.reminders,
+            timezone=body.timezone,
+            targets=body.targets,
+            parent_id=body.parent_id,
+        )
     except TaskError as error:
         raise ApiError(422, str(error)) from None
     return service.describe(task)
@@ -108,17 +123,27 @@ async def change_task(task_id: int, body: TaskChange, request: Request) -> dict:
     given = body.model_fields_set
     try:
         task = service.get(task_id)
-        if given & {"title", "description", "due", "reminders", "targets"} and not (body.status == "open" and task.status == "done"):
-            service.update(task_id, title=body.title, description=body.description,
-                           due=body.due if "due" in given else NO_DUE, reminders=body.reminders, targets=body.targets)
+        if given & {"title", "description", "due", "reminders", "targets"} and not (
+            body.status == "open" and task.status == "done"
+        ):
+            service.update(
+                task_id,
+                title=body.title,
+                description=body.description,
+                due=body.due if "due" in given else NO_DUE,
+                reminders=body.reminders,
+                targets=body.targets,
+            )
         if body.status == "done":
             service.complete(task_id)
         elif body.status == "open" and task.status == "done":
             await service.reopen(task_id, body.reminders)
         if "parent_id" in given or "before_id" in given:
-            service.move(task_id,
-                         (body.parent_id or None) if "parent_id" in given else NO_PARENT,
-                         (body.before_id or None) if "before_id" in given else NO_PARENT)
+            service.move(
+                task_id,
+                (body.parent_id or None) if "parent_id" in given else NO_PARENT,
+                (body.before_id or None) if "before_id" in given else NO_PARENT,
+            )
         return service.describe(service.get(task_id))
     except TaskError as error:
         raise ApiError(404 if "No task" in str(error) else 422, str(error)) from None
@@ -175,11 +200,23 @@ def schedules(request: Request) -> dict:
 def add_schedule(body: NewSchedule, request: Request) -> dict:
     service = services(request).schedules
     try:
-        schedule = service.create(body.name, body.prompt, body.at, documents=[d.model_dump() for d in body.documents],
-                                  timezone=body.timezone, repeat=body.repeat, weekdays=body.weekdays,
-                                  project_id=body.project, local_only=body.local_only, packs=body.packs,
-                                  per_run=body.per_run, missed=body.missed, overlap=body.overlap, model=_model(body.model),
-                                  attempts=body.attempts)
+        schedule = service.create(
+            body.name,
+            body.prompt,
+            body.at,
+            documents=[d.model_dump() for d in body.documents],
+            timezone=body.timezone,
+            repeat=body.repeat,
+            weekdays=body.weekdays,
+            project_id=body.project,
+            local_only=body.local_only,
+            packs=body.packs,
+            per_run=body.per_run,
+            missed=body.missed,
+            overlap=body.overlap,
+            model=_model(body.model),
+            attempts=body.attempts,
+        )
     except ScheduleError as error:
         raise ApiError(422, str(error)) from None
     return service.describe(schedule)
@@ -230,7 +267,9 @@ def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) ->
 
 
 @router.post("/schedules/{schedule_id}/run")
-async def run_schedule(schedule_id: int, request: Request) -> dict:  # async: starting a run needs the server's event loop
+async def run_schedule(
+    schedule_id: int, request: Request
+) -> dict:  # async: starting a run needs the server's event loop
     service = services(request).schedules
     try:
         return service.describe(service.run_now(schedule_id))

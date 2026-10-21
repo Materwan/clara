@@ -42,11 +42,15 @@ class Clara:
             raise ClaraError(response.status_code, "cannot read the file")
         return response.content
 
-    async def stream(self, method: str, path: str, body: dict | None = None, read: float = 900.0) -> AsyncIterator[dict]:
+    async def stream(
+        self, method: str, path: str, body: dict | None = None, read: float = 900.0
+    ) -> AsyncIterator[dict]:
         timeout = httpx.Timeout(10.0, read=read)
         try:
-            async with httpx.AsyncClient(base_url=self.url, headers=self.headers, timeout=timeout) as http, \
-                    http.stream(method, path, json=body) as response:
+            async with (
+                httpx.AsyncClient(base_url=self.url, headers=self.headers, timeout=timeout) as http,
+                http.stream(method, path, json=body) as response,
+            ):
                 if response.is_error:
                     await response.aread()
                     try:

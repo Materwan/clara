@@ -20,41 +20,214 @@ MAX_FILE_CHARS = 1_000_000  # characters of text one file may give (a bigger one
 MAX_RAW_BYTES = 30_000_000  # a file in an archive bigger than this is not even read
 MAX_UNPACKED_BYTES = 600_000_000  # what one archive may unpack to, in all (a zip bomb stops here)
 MAX_PATH = 300
+READ_CHUNK = 1_000_000  # what is decompressed at a time: a bomb never takes more than this much memory beyond the cap
 
 # Folders that hold no source of one's own: dependencies, caches, build output, version control
-IGNORED_DIRS = frozenset({
-    ".git", ".hg", ".svn", "node_modules", "bower_components", "__pycache__", ".venv", "venv", ".tox", ".nox",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".cache", ".gradle", ".idea", ".next", ".nuxt", ".svelte-kit",
-    ".parcel-cache", ".turbo", "dist", "build", "target", "out", "coverage", "htmlcov", ".terraform",
-    ".dart_tool", "Pods", "DerivedData", ".eggs",
-})
-IGNORED_FILES = frozenset({
-    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "Cargo.lock", "composer.lock", "Gemfile.lock",
-    "uv.lock", "Pipfile.lock", "go.sum", ".DS_Store", "Thumbs.db", "desktop.ini",
-})
+IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "bower_components",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".cache",
+        ".gradle",
+        ".idea",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
+        ".parcel-cache",
+        ".turbo",
+        "dist",
+        "build",
+        "target",
+        "out",
+        "coverage",
+        "htmlcov",
+        ".terraform",
+        ".dart_tool",
+        "Pods",
+        "DerivedData",
+        ".eggs",
+    }
+)
+IGNORED_FILES = frozenset(
+    {
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "Cargo.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "uv.lock",
+        "Pipfile.lock",
+        "go.sum",
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
+    }
+)
 IGNORED_SUFFIXES = (".min.js", ".min.css", ".map", ".egg-info", ".pyc", ".pyo", ".lock")
 # Not text, whatever their bytes look like at first: skipped without being read
-BINARY_EXTENSIONS = frozenset({
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tif", "tiff", "psd", "heic", "avif",
-    "mp3", "wav", "ogg", "flac", "m4a", "aac", "mp4", "mkv", "avi", "mov", "webm", "wmv",
-    "exe", "dll", "so", "dylib", "bin", "o", "a", "lib", "obj", "class", "jar", "war", "apk", "msi", "dmg", "iso",
-    "woff", "woff2", "ttf", "otf", "eot", "7z", "rar", "gz", "tgz", "bz2", "xz", "tar", "zst",
-    "sqlite", "sqlite3", "db", "pkl", "pickle", "npy", "npz", "pt", "pth", "onnx", "h5", "parquet",
-    "doc", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "key", "pages", "numbers",
-})
+BINARY_EXTENSIONS = frozenset(
+    {
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "bmp",
+        "ico",
+        "webp",
+        "tif",
+        "tiff",
+        "psd",
+        "heic",
+        "avif",
+        "mp3",
+        "wav",
+        "ogg",
+        "flac",
+        "m4a",
+        "aac",
+        "mp4",
+        "mkv",
+        "avi",
+        "mov",
+        "webm",
+        "wmv",
+        "exe",
+        "dll",
+        "so",
+        "dylib",
+        "bin",
+        "o",
+        "a",
+        "lib",
+        "obj",
+        "class",
+        "jar",
+        "war",
+        "apk",
+        "msi",
+        "dmg",
+        "iso",
+        "woff",
+        "woff2",
+        "ttf",
+        "otf",
+        "eot",
+        "7z",
+        "rar",
+        "gz",
+        "tgz",
+        "bz2",
+        "xz",
+        "tar",
+        "zst",
+        "sqlite",
+        "sqlite3",
+        "db",
+        "pkl",
+        "pickle",
+        "npy",
+        "npz",
+        "pt",
+        "pth",
+        "onnx",
+        "h5",
+        "parquet",
+        "doc",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "odt",
+        "ods",
+        "odp",
+        "key",
+        "pages",
+        "numbers",
+    }
+)
 
 LANGUAGES = {
-    "py": "python", "pyw": "python", "pyi": "python", "c": "c", "h": "c", "cpp": "cpp", "cc": "cpp", "cxx": "cpp",
-    "hpp": "cpp", "md": "markdown", "markdown": "markdown", "rst": "rst", "tex": "latex", "json": "json",
-    "yaml": "yaml", "yml": "yaml", "toml": "toml", "ini": "ini", "cfg": "ini", "csv": "csv", "xml": "xml",
-    "html": "html", "htm": "html", "css": "css", "scss": "scss", "sql": "sql", "js": "javascript",
-    "mjs": "javascript", "cjs": "javascript", "ts": "typescript", "tsx": "tsx", "jsx": "jsx", "java": "java",
-    "kt": "kotlin", "go": "go", "rs": "rust", "rb": "ruby", "php": "php", "sh": "bash", "bash": "bash",
-    "ps1": "powershell", "bat": "batch", "cs": "csharp", "swift": "swift", "lua": "lua", "r": "r", "scala": "scala",
-    "vue": "vue", "svelte": "svelte", "dart": "dart", "m": "objectivec", "zig": "zig", "ex": "elixir",
-    "exs": "elixir", "erl": "erlang", "hs": "haskell", "ml": "ocaml", "fs": "fsharp", "clj": "clojure",
-    "gradle": "groovy", "groovy": "groovy", "dockerfile": "dockerfile", "makefile": "makefile", "proto": "protobuf",
-    "graphql": "graphql", "tf": "hcl", "nix": "nix", "svg": "xml",
+    "py": "python",
+    "pyw": "python",
+    "pyi": "python",
+    "c": "c",
+    "h": "c",
+    "cpp": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+    "hpp": "cpp",
+    "md": "markdown",
+    "markdown": "markdown",
+    "rst": "rst",
+    "tex": "latex",
+    "json": "json",
+    "yaml": "yaml",
+    "yml": "yaml",
+    "toml": "toml",
+    "ini": "ini",
+    "cfg": "ini",
+    "csv": "csv",
+    "xml": "xml",
+    "html": "html",
+    "htm": "html",
+    "css": "css",
+    "scss": "scss",
+    "sql": "sql",
+    "js": "javascript",
+    "mjs": "javascript",
+    "cjs": "javascript",
+    "ts": "typescript",
+    "tsx": "tsx",
+    "jsx": "jsx",
+    "java": "java",
+    "kt": "kotlin",
+    "go": "go",
+    "rs": "rust",
+    "rb": "ruby",
+    "php": "php",
+    "sh": "bash",
+    "bash": "bash",
+    "ps1": "powershell",
+    "bat": "batch",
+    "cs": "csharp",
+    "swift": "swift",
+    "lua": "lua",
+    "r": "r",
+    "scala": "scala",
+    "vue": "vue",
+    "svelte": "svelte",
+    "dart": "dart",
+    "m": "objectivec",
+    "zig": "zig",
+    "ex": "elixir",
+    "exs": "elixir",
+    "erl": "erlang",
+    "hs": "haskell",
+    "ml": "ocaml",
+    "fs": "fsharp",
+    "clj": "clojure",
+    "gradle": "groovy",
+    "groovy": "groovy",
+    "dockerfile": "dockerfile",
+    "makefile": "makefile",
+    "proto": "protobuf",
+    "graphql": "graphql",
+    "tf": "hcl",
+    "nix": "nix",
+    "svg": "xml",
 }
 
 
@@ -142,6 +315,21 @@ def pdf_text(data: bytes) -> tuple[str, int]:
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
+def read_capped(archive: zipfile.ZipFile, entry: zipfile.ZipInfo | str, limit: int) -> bytes | None:
+    """The bytes of one archive entry, or None as soon as it unpacks to more than `limit`. The size in the archive's
+    header is written by whoever made the archive, so it is not trusted: `ZipFile.read` decompresses everything
+    before it looks at it. Here the bytes are decompressed in chunks and counted."""
+    chunks: list[bytes] = []
+    total = 0
+    with archive.open(entry) as source:
+        while chunk := source.read(READ_CHUNK):
+            total += len(chunk)
+            if total > limit:
+                return None
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _paragraph(element: ElementTree.Element) -> str:
     out = []
     for node in element.iter():
@@ -158,11 +346,11 @@ def docx_text(data: bytes) -> str:
     """The text of a Word document: its paragraphs, and its tables as rows of cells separated by `|`."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            if archive.getinfo("word/document.xml").file_size > MAX_RAW_BYTES:  # a bomb: it would unpack in memory
-                raise IngestError("This Word document is too big to read.")
-            xml = archive.read("word/document.xml")
+            xml = read_capped(archive, "word/document.xml", MAX_RAW_BYTES)  # a bomb would unpack in memory
     except (zipfile.BadZipFile, KeyError, OSError):
         raise IngestError("This file could not be read as a Word document (.docx).") from None
+    if xml is None:
+        raise IngestError("This Word document is too big to read.")
     try:
         # document.xml is size-capped above; expat (>= 2.4) caps entity amplification, and ElementTree never
         # fetches external entities
@@ -233,8 +421,9 @@ def unpack(data: bytes, folder: str = "", strip_root: bool = False) -> tuple[lis
             if all(name.startswith(first + "/") for name in names):
                 root = first + "/"
         unpacked = 0
+        exhausted = False
         for info, name in zip(entries, names):
-            name = name[len(root):]
+            name = name[len(root) :]
             try:
                 path = clean_path(posixpath.join(folder, name) if folder else name)
             except IngestError as error:
@@ -245,13 +434,21 @@ def unpack(data: bytes, folder: str = "", strip_root: bool = False) -> tuple[lis
                 reason = "an archive inside the archive"
             if reason is None and info.file_size > MAX_RAW_BYTES:
                 reason = f"too big ({info.file_size // 1_000_000} MB)"
-            if reason is None and unpacked + info.file_size > MAX_UNPACKED_BYTES:
+            if reason is None and (exhausted or unpacked + info.file_size > MAX_UNPACKED_BYTES):
                 reason = "the archive unpacks to too much"
             if reason is not None:
                 skipped.append(Skipped(path, reason))
                 continue
             try:
-                raw = archive.read(info)
+                budget = MAX_UNPACKED_BYTES - unpacked
+                raw = read_capped(archive, info, min(MAX_RAW_BYTES, budget))
+                if raw is None:  # the header understated its size
+                    if budget < MAX_RAW_BYTES:
+                        exhausted = True
+                        skipped.append(Skipped(path, "the archive unpacks to too much"))
+                    else:
+                        skipped.append(Skipped(path, f"too big (over {MAX_RAW_BYTES // 1_000_000} MB)"))
+                    continue
                 unpacked += len(raw)
                 files.append(extract(path, raw))
             except IngestError as error:

@@ -49,7 +49,7 @@ from .mail import (
 log = logging.getLogger(__name__)
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
-SCOPES = ("https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose openid email")
+SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose openid email"
 LABELS = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "trash": "TRASH", "spam": "SPAM"}
 METADATA = ("From", "To", "Subject", "Date")
 PARALLEL = 5
@@ -60,11 +60,23 @@ ATTACHMENT_LIMIT = 7_000_000  # raw bytes in all: the message travels as base64 
 def authorize_url(client_id: str, redirect_uri: str, state: str, challenge: str) -> str:
     """Like Drive's, with the mail scopes. `include_granted_scopes` is left out on purpose: this token carries mail
     scopes only, and the Drive token carries Drive's only."""
-    return AUTH_URL + "?" + urlencode({
-        "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "scope": SCOPES,
-        "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": challenge,
-        "code_challenge_method": "S256",
-    })
+    return (
+        AUTH_URL
+        + "?"
+        + urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": SCOPES,
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+    )
 
 
 def _b64decode(data: str) -> bytes:
@@ -97,28 +109,40 @@ def _walk(part: dict, depth: int = 0):
 
 
 def _headers(raw: dict) -> dict[str, str]:
-    return {str(h.get("name", "")).lower(): decode_header_value(str(h.get("value", "")))
-            for h in (raw.get("payload") or {}).get("headers", []) or []}
+    return {
+        str(h.get("name", "")).lower(): decode_header_value(str(h.get("value", "")))
+        for h in (raw.get("payload") or {}).get("headers", []) or []
+    }
 
 
 def summary_of(raw: dict) -> Summary:
     headers = _headers(raw)
     mime = str((raw.get("payload") or {}).get("mimeType", ""))
     return Summary(
-        id=str(raw["id"]), thread=str(raw.get("threadId", "")),
-        subject=clean_line(headers.get("subject", "")) or "(no subject)", sender=clean_line(headers.get("from", "")),
-        received_ms=int(raw.get("internalDate") or 0), snippet=clean_line(html.unescape(str(raw.get("snippet", ""))), 160),
+        id=str(raw["id"]),
+        thread=str(raw.get("threadId", "")),
+        subject=clean_line(headers.get("subject", "")) or "(no subject)",
+        sender=clean_line(headers.get("from", "")),
+        received_ms=int(raw.get("internalDate") or 0),
+        snippet=clean_line(html.unescape(str(raw.get("snippet", ""))), 160),
         unread="UNREAD" in (raw.get("labelIds") or []),
         # `metadata` carries no parts: a "multipart/mixed" message is, nearly always, one with attachments
-        attachments=mime.startswith("multipart/mixed"))
+        attachments=mime.startswith("multipart/mixed"),
+    )
 
 
 def attachments_of(raw: dict) -> list[Attachment]:
     found = []
     for part in _walk(raw.get("payload") or {}):
         if part.get("filename") and part.get("partId"):
-            found.append(Attachment(str(part["partId"]), clean_line(part["filename"], 120), str(part.get("mimeType", "")),
-                                    int((part.get("body") or {}).get("size") or 0)))
+            found.append(
+                Attachment(
+                    str(part["partId"]),
+                    clean_line(part["filename"], 120),
+                    str(part.get("mimeType", "")),
+                    int((part.get("body") or {}).get("size") or 0),
+                )
+            )
     return found
 
 
@@ -135,8 +159,14 @@ def message_of(raw: dict) -> Message:
         elif kind == "text/html" and (part.get("body") or {}).get("data"):
             markup.append(_decode(part))
     body = clean_text("\n\n".join(plain)) if plain else html_to_text("\n".join(markup))
-    return Message(summary_of(raw), to=clean_line(headers.get("to", ""), 500), cc=clean_line(headers.get("cc", ""), 500),
-                   reply_to=clean_line(headers.get("reply-to", "")), body=body, attachments=tuple(attachments_of(raw)))
+    return Message(
+        summary_of(raw),
+        to=clean_line(headers.get("to", ""), 500),
+        cc=clean_line(headers.get("cc", ""), 500),
+        reply_to=clean_line(headers.get("reply-to", "")),
+        body=body,
+        attachments=tuple(attachments_of(raw)),
+    )
 
 
 class Gmail(MailClient):
@@ -169,8 +199,10 @@ class Gmail(MailClient):
             if code in ("accessNotConfigured", "SERVICE_DISABLED") or "has not been used in project" in detail:
                 return MailError("The Gmail API is not turned on in your Google Cloud project.")
             if code in ("insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"):
-                return MailError("Gmail says the permission is missing: connect Gmail again and allow reading and "
-                                 "writing drafts.", True)
+                return MailError(
+                    "Gmail says the permission is missing: connect Gmail again and allow reading and writing drafts.",
+                    True,
+                )
             if code in ("rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"):
                 return MailError("Google says too many requests for now: try again later.")
         if status == 404:
@@ -194,8 +226,12 @@ class Gmail(MailClient):
         async def one(http: httpx.AsyncClient, message: str) -> Summary | None:
             async with gate:
                 try:
-                    raw = await self.json("GET", f"{API}/messages/{quote(message, safe='')}", http=http,
-                                          params={"format": "metadata", "metadataHeaders": list(METADATA)})
+                    raw = await self.json(
+                        "GET",
+                        f"{API}/messages/{quote(message, safe='')}",
+                        http=http,
+                        params={"format": "metadata", "metadataHeaders": list(METADATA)},
+                    )
                 except MailError as error:
                     if "cannot find" in str(error):
                         return None
@@ -242,14 +278,17 @@ class Gmail(MailClient):
             if str(part.get("partId", "")) != attachment or not part.get("filename"):
                 continue
             body = part.get("body") or {}
-            found = Attachment(attachment, clean_line(part["filename"], 120), str(part.get("mimeType", "")),
-                               int(body.get("size") or 0))
+            found = Attachment(
+                attachment, clean_line(part["filename"], 120), str(part.get("mimeType", "")), int(body.get("size") or 0)
+            )
             if found.size > MAX_DOWNLOAD:
                 raise MailError(f"{found.name} is too big to fetch.")
             if body.get("attachmentId"):
                 # the id of an attachment is not stable between calls, so it is read from the message just fetched
-                data = await self.json("GET", f"{API}/messages/{quote(message, safe='')}/attachments/"
-                                       f"{quote(str(body['attachmentId']), safe='')}")
+                data = await self.json(
+                    "GET",
+                    f"{API}/messages/{quote(message, safe='')}/attachments/{quote(str(body['attachmentId']), safe='')}",
+                )
                 return found, _b64decode(str(data.get("data", "")))
             return found, _b64decode(str(body.get("data", "")))
         raise MailError("That message has no such attachment (list them with mail_read).")
@@ -260,14 +299,24 @@ class Gmail(MailClient):
         extra: dict[str, str] = {}
         thread = ""
         if mail.reply_to:
-            original = await self.json("GET", f"{API}/messages/{quote(mail.reply_to, safe='')}",
-                                       params={"format": "metadata", "metadataHeaders": ["Message-ID", "References", "Subject"]})
+            original = await self.json(
+                "GET",
+                f"{API}/messages/{quote(mail.reply_to, safe='')}",
+                params={"format": "metadata", "metadataHeaders": ["Message-ID", "References", "Subject"]},
+            )
             headers = _headers(original)
             thread = str(original.get("threadId", ""))
             extra = threading_headers(headers.get("message-id", ""), headers.get("references", ""))
             if not mail.subject:
-                mail = Outgoing(mail.to, mail.cc, mail.bcc, reply_subject(headers.get("subject", "")), mail.body,
-                                mail.reply_to, mail.files)
+                mail = Outgoing(
+                    mail.to,
+                    mail.cc,
+                    mail.bcc,
+                    reply_subject(headers.get("subject", "")),
+                    mail.body,
+                    mail.reply_to,
+                    mail.files,
+                )
         try:
             return build_mime(sender, mail, extra), thread
         except (ValueError, TypeError) as error:
@@ -293,7 +342,9 @@ class Gmail(MailClient):
         """The oldest `limit` inbox messages received since `received_ms`. Gmail lists newest first, so every id since then is
         listed (ids only: 500 a page, cheap), and the details are fetched for the oldest `limit` of them alone. A backlog
         thus comes in order across polls, and nothing is skipped however many mails arrived while Clara was off."""
-        seconds = max(0, received_ms // 1000 - 1)  # `after:` counts whole seconds: look a little back, the caller dedupes
+        seconds = max(
+            0, received_ms // 1000 - 1
+        )  # `after:` counts whole seconds: look a little back, the caller dedupes
         ids: list[str] = []
         token = ""
         while len(ids) < LISTING_MAX:

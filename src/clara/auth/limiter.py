@@ -30,8 +30,13 @@ class Blocked(Exception):
 
 
 class FailureLimiter:
-    def __init__(self, max_failures: int = 10, window: float = 60.0, block: float = 300.0,
-                 clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        max_failures: int = 10,
+        window: float = 60.0,
+        block: float = 300.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.max_failures = max_failures
         self.window = window
         self.block = block

@@ -66,8 +66,7 @@ class GitHub:
         self._transport = transport  # tests answer from here
 
     def _client(self, token: str | None = None) -> httpx.AsyncClient:
-        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-                   "User-Agent": "clara"}
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "clara"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         return httpx.AsyncClient(headers=headers, timeout=TIMEOUT, follow_redirects=True, transport=self._transport)
@@ -119,7 +118,9 @@ class GitHub:
                     async for chunk in download.aiter_bytes():
                         size += len(chunk)
                         if size > MAX_ARCHIVE_BYTES:
-                            raise GitHubError(f"{repo} is too big to download (over {MAX_ARCHIVE_BYTES // 1_000_000} MB).")
+                            raise GitHubError(
+                                f"{repo} is too big to download (over {MAX_ARCHIVE_BYTES // 1_000_000} MB)."
+                            )
                         chunks.append(chunk)
         except httpx.HTTPError as error:
             raise GitHubError(f"GitHub could not be reached: {error}") from None

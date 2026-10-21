@@ -32,7 +32,9 @@ def web_login(body: WebLogin, request: Request, response: Response) -> dict:
         s.traffic.record("auth_failure", path="/v1/auth/web-login", address=address)
         raise ApiError(401, "This token is not valid (or was revoked).")
     cookie = s.web_sessions.start(token)
-    response.set_cookie(COOKIE, cookie, max_age=MAX_DAYS * 86400, httponly=True, secure=True, samesite="strict", path="/")
+    response.set_cookie(
+        COOKIE, cookie, max_age=MAX_DAYS * 86400, httponly=True, secure=True, samesite="strict", path="/"
+    )
     return {"token": token.name, "client": token.client, "approvals": token.approvals}
 
 
@@ -48,5 +50,9 @@ def logout(request: Request, response: Response) -> dict:
 @router.get("/me")
 def me(request: Request) -> dict:
     who = caller(request)
-    return {"token": who.token.name, "client": who.client, "approvals": who.token.approvals,
-            "web": who.web_session is not None}
+    return {
+        "token": who.token.name,
+        "client": who.client,
+        "approvals": who.token.approvals,
+        "web": who.web_session is not None,
+    }

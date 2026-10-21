@@ -33,13 +33,29 @@ class SavedFile:
     data: bytes = field(default=b"", repr=False)
 
     def describe(self) -> dict:
-        return {"id": self.id, "name": self.name, "mime": self.mime, "kind": self.kind, "size": self.size,
-                "client": self.client, "created_at": self.created_at}
+        return {
+            "id": self.id,
+            "name": self.name,
+            "mime": self.mime,
+            "kind": self.kind,
+            "size": self.size,
+            "client": self.client,
+            "created_at": self.created_at,
+        }
 
 
 def _saved(row, with_data: bool = False) -> SavedFile:
-    return SavedFile(row["id"], row["name"], row["mime"], row["kind"], row["size"], row["client"], row["created_at"],
-                     row["digest"], bytes(row["data"]) if with_data else b"")
+    return SavedFile(
+        row["id"],
+        row["name"],
+        row["mime"],
+        row["kind"],
+        row["size"],
+        row["client"],
+        row["created_at"],
+        row["digest"],
+        bytes(row["data"]) if with_data else b"",
+    )
 
 
 class ConversationFiles:
@@ -109,6 +125,7 @@ class ConversationFiles:
     def readable(self, conversation_id: str) -> dict[str, int]:
         """The digest of each kept document's text -> its number: those blocks can be shortened in the history."""
         rows = self.db.all(
-            "SELECT id, digest FROM conversation_files WHERE conversation_id = ? AND kind != 'picture'", (conversation_id,)
+            "SELECT id, digest FROM conversation_files WHERE conversation_id = ? AND kind != 'picture'",
+            (conversation_id,),
         )
         return {row["digest"]: row["id"] for row in rows}

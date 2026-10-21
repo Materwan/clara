@@ -29,14 +29,22 @@ def _remember(context: ToolContext, fact: str, replaces: Any = None, expires: st
     source = "tool" if context.turn.tainted else "model"
     try:
         stored, new = services.facts.add(
-            str(fact), source, category=str(category or ""), conversation_id=context.turn.conversation_id,
-            expires_at=expires_at, replaces=optional_number(replaces, "replaces"),
+            str(fact),
+            source,
+            category=str(category or ""),
+            conversation_id=context.turn.conversation_id,
+            expires_at=expires_at,
+            replaces=optional_number(replaces, "replaces"),
         )
     except FactError as error:
         raise ToolError(str(error)) from None
     if not new:
         return f"Already known (id {stored.id})."
-    note = " It is marked unconfirmed until the person confirms it (this turn read outside content)." if not stored.confirmed else ""
+    note = (
+        " It is marked unconfirmed until the person confirms it (this turn read outside content)."
+        if not stored.confirmed
+        else ""
+    )
     replaced = f" It replaces fact {replaces}." if replaces not in (None, "") else ""
     return f"Remembered (id {stored.id}).{replaced}{note}"
 

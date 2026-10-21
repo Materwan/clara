@@ -78,9 +78,7 @@ def make_ref(provider: str, model: str) -> str:
 def split_ref(ref: str) -> tuple[str, str]:
     provider, separator, model = (ref or "").strip().partition(":")
     if not separator or not provider or not model.strip():
-        raise ProviderError(
-            f"{ref!r} is not a model: write it provider:model, e.g. local:qwen3:8b."
-        )
+        raise ProviderError(f"{ref!r} is not a model: write it provider:model, e.g. local:qwen3:8b.")
     return provider, model.strip()
 
 
@@ -129,11 +127,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
         context["deepseek"],
         OpenAIFlavor(
             reasoning_back=True,
-            extra_body=(
-                ()
-                if settings.deepseek_thinking
-                else (("thinking", {"type": "disabled"}),)
-            ),
+            extra_body=(() if settings.deepseek_thinking else (("thinking", {"type": "disabled"}),)),
         ),
     )
     providers["mistral"] = Provider(
@@ -173,9 +167,7 @@ BackendFactory = Callable[[Provider, str, str | None, int | None], Backend]
 def default_factory(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> BackendFactory:
-    def make(
-        provider: Provider, model: str, key: str | None, num_ctx: int | None
-    ) -> Backend:
+    def make(provider: Provider, model: str, key: str | None, num_ctx: int | None) -> Backend:
         if provider.kind == "ollama":
             return OllamaBackend(
                 model,
@@ -185,9 +177,7 @@ def default_factory(
                 provider.label,
                 transport,
             )
-        return OpenAIBackend(
-            model, provider.host, key, provider.flavor, provider.label, transport
-        )
+        return OpenAIBackend(model, provider.host, key, provider.flavor, provider.label, transport)
 
     return make
 
@@ -214,9 +204,7 @@ class Providers:
     def get(self, provider_id: str) -> Provider:
         provider = self.all.get(provider_id)
         if provider is None:
-            raise ProviderError(
-                f"Unknown provider {provider_id!r}: {', '.join(self.all)}."
-            )
+            raise ProviderError(f"Unknown provider {provider_id!r}: {', '.join(self.all)}.")
         return provider
 
     def enabled_ids(self) -> list[str]:
@@ -230,11 +218,7 @@ class Providers:
 
     def usable(self, provider_id: str) -> bool:
         provider = self.all.get(provider_id)
-        return (
-            provider is not None
-            and provider_id in self.enabled_ids()
-            and self.has_key(provider)
-        )
+        return provider is not None and provider_id in self.enabled_ids() and self.has_key(provider)
 
     def why_not(self, provider_id: str) -> str:
         provider = self.get(provider_id)
@@ -249,9 +233,7 @@ class Providers:
         current = set(self.enabled_ids())
         if enabled:
             if not self.has_key(provider):
-                raise ProviderError(
-                    f"{provider.label} needs its key first: clara secrets set {provider.key_secret}."
-                )
+                raise ProviderError(f"{provider.label} needs its key first: clara secrets set {provider.key_secret}.")
             current.add(provider_id)
         else:
             current.discard(provider_id)
@@ -281,18 +263,12 @@ class Providers:
         backend = self._backends.get(slot)
         if backend is None:
             key = self.secrets.get(provider.key_secret) if provider.key_secret else None
-            backend = self._backends[slot] = self._factory(
-                provider, model, key, num_ctx
-            )
+            backend = self._backends[slot] = self._factory(provider, model, key, num_ctx)
         return backend
 
     def forget_backends(self, provider_id: str | None = None) -> None:
         """Drop the backends of a provider (its key changed): the next call builds them again."""
-        for slot in [
-            slot
-            for slot in self._backends
-            if provider_id is None or slot[0] == provider_id
-        ]:
+        for slot in [slot for slot in self._backends if provider_id is None or slot[0] == provider_id]:
             self._retired.append(self._backends.pop(slot))
 
     def _lister(self, provider_id: str) -> Backend:
@@ -300,25 +276,17 @@ class Providers:
         return self.backend(make_ref(provider_id, "_list"))
 
     async def list_models(self, provider_id: str) -> list[str]:
-        return await asyncio.wait_for(
-            self._lister(provider_id).list_models(), CHECK_TIMEOUT
-        )
+        return await asyncio.wait_for(self._lister(provider_id).list_models(), CHECK_TIMEOUT)
 
     async def sizes(self, provider_id: str) -> dict[str, str]:
         backend = self._lister(provider_id)
         method = getattr(backend, "model_sizes", None)
         return await asyncio.wait_for(method(), CHECK_TIMEOUT) if method else {}
 
-    async def capabilities(
-        self, provider_id: str, names: list[str]
-    ) -> dict[str, Capabilities]:
+    async def capabilities(self, provider_id: str, names: list[str]) -> dict[str, Capabilities]:
         backend = self._lister(provider_id)
         method = getattr(backend, "model_capabilities", None)
-        return (
-            await asyncio.wait_for(method(names), CAPABILITIES_TIMEOUT)
-            if method
-            else {}
-        )
+        return await asyncio.wait_for(method(names), CAPABILITIES_TIMEOUT) if method else {}
 
     async def check(self, provider_id: str) -> str | None:
         """None when the provider answers and accepts its key, else a short reason."""

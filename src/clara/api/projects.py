@@ -1,16 +1,16 @@
 """Projects: files given once (uploads, folders, zips, GitHub snapshots) that the project's conversations use.
 
-    GET    /v1/projects                         the projects
-    POST   /v1/projects                         {name, description?, instructions?}
-    GET    /v1/projects/{id}                    one project, its repositories and its files (paths and sizes)
-    PATCH  /v1/projects/{id}                    {name?, description?, instructions?, pinned?, in_history?}
-    DELETE /v1/projects/{id}                    its files go; its conversations stay, in no project
-    POST   /v1/projects/{id}/files              {files: [{path, data (base64)}]}: text, code, PDF, .docx, .zip
-    GET    /v1/projects/{id}/file?path=         a file's text
-    DELETE /v1/projects/{id}/files?path=&folder= a file, or all the files of a folder
-    POST   /v1/projects/{id}/github             {repo, ref?}: a snapshot of a repository's text files
-    POST   /v1/projects/{id}/sources/{sid}/sync download it again
-    DELETE /v1/projects/{id}/sources/{sid}      remove it and its files
+GET    /v1/projects                         the projects
+POST   /v1/projects                         {name, description?, instructions?}
+GET    /v1/projects/{id}                    one project, its repositories and its files (paths and sizes)
+PATCH  /v1/projects/{id}                    {name?, description?, instructions?, pinned?, in_history?}
+DELETE /v1/projects/{id}                    its files go; its conversations stay, in no project
+POST   /v1/projects/{id}/files              {files: [{path, data (base64)}]}: text, code, PDF, .docx, .zip
+GET    /v1/projects/{id}/file?path=         a file's text
+DELETE /v1/projects/{id}/files?path=&folder= a file, or all the files of a folder
+POST   /v1/projects/{id}/github             {repo, ref?}: a snapshot of a repository's text files
+POST   /v1/projects/{id}/sources/{sid}/sync download it again
+DELETE /v1/projects/{id}/sources/{sid}      remove it and its files
 """
 
 from __future__ import annotations
@@ -54,25 +54,50 @@ def _window(request: Request) -> int:
 def describe(project: Project, projects: Projects, window: int) -> dict:
     tokens = projects.weight(project.id) if project.files else 0
     return {
-        "id": project.id, "name": project.name, "description": project.description,
-        "instructions": project.instructions, "created_at": project.created_at, "updated_at": project.updated_at,
-        "pinned": project.pinned, "in_history": project.in_history, "files": project.files, "size": project.size, "conversations": project.conversations,
-        "context": {"tokens": tokens, "window": window, "percent": round(100 * tokens / window, 1) if window else 0,
-                    "inline": tokens <= projects.inline_budget(window)},
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "instructions": project.instructions,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "pinned": project.pinned,
+        "in_history": project.in_history,
+        "files": project.files,
+        "size": project.size,
+        "conversations": project.conversations,
+        "context": {
+            "tokens": tokens,
+            "window": window,
+            "percent": round(100 * tokens / window, 1) if window else 0,
+            "inline": tokens <= projects.inline_budget(window),
+        },
         "limits": {"size": projects.max_bytes, "files": projects.max_files},
     }
 
 
 def describe_source(source: Source) -> dict:
-    return {"id": source.id, "kind": source.kind, "repo": source.repo, "ref": source.ref, "folder": source.folder,
-            "commit": source.commit_sha, "synced_at": source.synced_at, "files": source.files, "size": source.size,
-            "skipped": source.skipped, "problem": source.problem}
+    return {
+        "id": source.id,
+        "kind": source.kind,
+        "repo": source.repo,
+        "ref": source.ref,
+        "folder": source.folder,
+        "commit": source.commit_sha,
+        "synced_at": source.synced_at,
+        "files": source.files,
+        "size": source.size,
+        "skipped": source.skipped,
+        "problem": source.problem,
+    }
 
 
 def describe_added(result: Added) -> dict:
-    return {"added": result.added, "replaced": result.replaced,
-            "skipped": [{"path": s.path, "reason": s.reason} for s in result.skipped[:SKIPPED_SHOWN]],
-            "skipped_count": len(result.skipped)}
+    return {
+        "added": result.added,
+        "replaced": result.replaced,
+        "skipped": [{"path": s.path, "reason": s.reason} for s in result.skipped[:SKIPPED_SHOWN]],
+        "skipped_count": len(result.skipped),
+    }
 
 
 def _project(request: Request, project_id: int) -> Project:
@@ -88,8 +113,10 @@ def _details(request: Request, project_id: int) -> dict:
     return {
         **describe(project, projects, _window(request)),
         "sources": [describe_source(s) for s in projects.sources(project.id)],
-        "file_list": [{"path": f.path, "kind": f.kind, "size": f.size, "source": f.source_id, "added_at": f.added_at}
-                      for f in projects.files(project.id)],
+        "file_list": [
+            {"path": f.path, "kind": f.kind, "size": f.size, "source": f.source_id, "added_at": f.added_at}
+            for f in projects.files(project.id)
+        ],
     }
 
 

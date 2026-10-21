@@ -69,8 +69,13 @@ class Settings:
     opencode_go_host: str = "https://opencode.ai/inference/go"  # chat is under /openai/v1, the model list under /v1
     deepseek_thinking: bool = True
     hosted_context: Mapping[str, int] = field(
-        default_factory=lambda: {"cloud": 131_072, "gemini": 1_048_576, "deepseek": 131_072, "mistral": 131_072,
-                                 "opencode-go": 131_072}
+        default_factory=lambda: {
+            "cloud": 131_072,
+            "gemini": 1_048_576,
+            "deepseek": 131_072,
+            "mistral": 131_072,
+            "opencode-go": 131_072,
+        }
     )
 
     # --- conversation engine --------------------------------------------------------------------------------
@@ -284,7 +289,9 @@ def _ollama_hosts(reader: _Reader) -> tuple[OllamaHost, ...]:
         name, separator, url = part.partition("=")
         name, url = name.strip().lower(), url.strip().rstrip("/")
         if not separator or not PROVIDER_ID.match(name):
-            reader.problems.append(f"CLARA_OLLAMA_HOSTS: {part!r} must be id=url, the id in lower case (local=http://127.0.0.1:11434).")
+            reader.problems.append(
+                f"CLARA_OLLAMA_HOSTS: {part!r} must be id=url, the id in lower case (local=http://127.0.0.1:11434)."
+            )
             continue
         if name in RESERVED_PROVIDER_IDS:
             reader.problems.append(f"CLARA_OLLAMA_HOSTS: {name!r} is the id of a hosted provider; choose another.")
@@ -314,7 +321,9 @@ def default_env_file(environ: Mapping[str, str] | None = None) -> Path:
     return Path(environ.get("CLARA_ENV_FILE") or ".env").expanduser()
 
 
-def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | None = None, *, use_file: bool = True) -> Settings:
+def load_settings(
+    environ: Mapping[str, str] | None = None, env_file: Path | None = None, *, use_file: bool = True
+) -> Settings:
     """Settings from the environment over the `.env` file. SettingsError lists every problem found."""
     environ = dict(os.environ if environ is None else environ)
     env_file = env_file or default_env_file(environ)
@@ -324,7 +333,9 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
     merged = {**file_values, **environ}
     r = _Reader(merged)
 
-    data_dir = r.path("CLARA_DATA_DIR") or (Path(environ["STATE_DIRECTORY"]) if environ.get("STATE_DIRECTORY") else Path("/var/lib/clara"))
+    data_dir = r.path("CLARA_DATA_DIR") or (
+        Path(environ["STATE_DIRECTORY"]) if environ.get("STATE_DIRECTORY") else Path("/var/lib/clara")
+    )
     timezone = r.text("CLARA_TIMEZONE", "") or system_zone_name()
     try:
         zone(timezone)
@@ -332,10 +343,15 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         r.problems.append(f"CLARA_TIMEZONE: {error}")
         timezone = "UTC"
     for name, value in merged.items():
-        if (name.startswith("CLARA_") and any(word in name for word in ("_API_KEY", "_PASSWORD", "_SECRET"))
-                and name not in ("CLARA_SECRET_KEY", "CLARA_SECRET_KEY_FILE")):
+        if (
+            name.startswith("CLARA_")
+            and any(word in name for word in ("_API_KEY", "_PASSWORD", "_SECRET"))
+            and name not in ("CLARA_SECRET_KEY", "CLARA_SECRET_KEY_FILE")
+        ):
             if value.strip():
-                r.problems.append(f"{name}: secrets do not belong in the environment; store it with `clara secrets set`.")
+                r.problems.append(
+                    f"{name}: secrets do not belong in the environment; store it with `clara secrets set`."
+                )
 
     hosted_context = dict(Settings.__dataclass_fields__["hosted_context"].default_factory())  # type: ignore[misc]
     for provider in HOSTED_PROVIDERS:
@@ -368,7 +384,9 @@ def load_settings(environ: Mapping[str, str] | None = None, env_file: Path | Non
         r.problems.append("CLARA_RUN_TIMEOUT cannot be above CLARA_RUN_MAX_TIMEOUT.")
     secret_key = environ.get("CLARA_SECRET_KEY") or file_values.get("CLARA_SECRET_KEY")
     if secret_key and "CLARA_SECRET_KEY" in file_values:
-        r.problems.append("CLARA_SECRET_KEY must not be written in the .env file: use a systemd credential or CLARA_SECRET_KEY_FILE.")
+        r.problems.append(
+            "CLARA_SECRET_KEY must not be written in the .env file: use a systemd credential or CLARA_SECRET_KEY_FILE."
+        )
 
     settings = Settings(
         data_dir=data_dir,

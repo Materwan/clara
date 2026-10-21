@@ -158,8 +158,11 @@ async def command(body: CommandLine, request: Request) -> dict:
 # Usage
 # ----------------------------------------------------------------------
 @router.get("/admin/usage")
-def usage(request: Request, period: Literal["24h", "7d", "30d", "90d", "365d", "all"] = "30d",
-          group: Literal["day", "model", "kind", "provider", "client"] = "day") -> dict:
+def usage(
+    request: Request,
+    period: Literal["24h", "7d", "30d", "90d", "365d", "all"] = "30d",
+    group: Literal["day", "model", "kind", "provider", "client"] = "day",
+) -> dict:
     return services(request).usage.stats(period, group)
 
 
@@ -172,8 +175,11 @@ def usage_history(request: Request, limit: int = Query(100, ge=1, le=1000), befo
 # The live log
 # ----------------------------------------------------------------------
 @router.get("/admin/logs/stream")
-async def logs_stream(request: Request, source: Literal["all", "app", "traffic"] = "all",
-                      level: Literal["INFO", "WARNING", "ERROR"] = "INFO"):
+async def logs_stream(
+    request: Request,
+    source: Literal["all", "app", "traffic"] = "all",
+    level: Literal["INFO", "WARNING", "ERROR"] = "INFO",
+):
     """The last lines of the server's log and traffic log, then each new one (server-sent events, `log` events; the
     first event is `open`). Filtering is done here, so a line the page did not ask for is not sent."""
     hub = services(request).logs
@@ -290,8 +296,11 @@ def heartbeat(body: Heartbeat, request: Request) -> dict:
         s.clients[who.client] = time.monotonic()
         s.alerts.clear(who.client)
         if who.client == "discord":
-            s.discord_report.update(body.bot, {name: (found.name, found.missing) for name, found in body.channels.items()},
-                                    (body.test.event, body.test.ok, body.test.error) if body.test else None)
+            s.discord_report.update(
+                body.bot,
+                {name: (found.name, found.missing) for name, found in body.channels.items()},
+                (body.test.event, body.test.ok, body.test.error) if body.test else None,
+            )
     else:
         s.clients.pop(who.client, None)
         if who.client == "discord":
@@ -312,17 +321,36 @@ def discord_page(request: Request) -> dict:
     report = s.discord_report
     autostart = bool(s.settings.discord_autostart)
     return {
-        "bot": {"state": "not seen" if age is None else "silent" if age >= DISCORD_SILENCE else "connected",
-                "seen_seconds": age, "name": report.bot, "started_by_server": autostart,
-                "expected": autostart or bool(s.settings.discord_expected),
-                "problem": getattr(s.discord, "problem", "") if s.discord is not None else "",
-                "alert": s.alerts.active.get("discord", "")},
-        "channels": [{"id": name, "known": name in report.channels, "name": report.channels.get(name, {}).get("name", ""),
-                      "missing": report.channels.get(name, {}).get("missing", []), "carries": carries[name]}
-                     for name in CHANNELS],
-        "categories": [{"id": category.id, "label": category.label, "about": category.about, "default": category.default,
-                        "channel": channel_of(category.id, routes), "can_be_off": category.can_be_off}
-                       for category in CATEGORIES],
+        "bot": {
+            "state": "not seen" if age is None else "silent" if age >= DISCORD_SILENCE else "connected",
+            "seen_seconds": age,
+            "name": report.bot,
+            "started_by_server": autostart,
+            "expected": autostart or bool(s.settings.discord_expected),
+            "problem": getattr(s.discord, "problem", "") if s.discord is not None else "",
+            "alert": s.alerts.active.get("discord", ""),
+        },
+        "channels": [
+            {
+                "id": name,
+                "known": name in report.channels,
+                "name": report.channels.get(name, {}).get("name", ""),
+                "missing": report.channels.get(name, {}).get("missing", []),
+                "carries": carries[name],
+            }
+            for name in CHANNELS
+        ],
+        "categories": [
+            {
+                "id": category.id,
+                "label": category.label,
+                "about": category.about,
+                "default": category.default,
+                "channel": channel_of(category.id, routes),
+                "can_be_off": category.can_be_off,
+            }
+            for category in CATEGORIES
+        ],
         "choices": list(CHOICES),
         "test": report.test,
     }
@@ -342,6 +370,12 @@ def discord_test(body: DiscordTest, request: Request) -> dict:
     if not s.discord_report.allow_test():
         raise ApiError(429, f"At most {TESTS_PER_MINUTE} test messages a minute.")
     carries = carried(s.runtime.get("discord_routes"))[body.channel]
-    event = s.events.publish("notification", "Test from Clara's web site", f"This is #{body.channel}. It receives: {', '.join(carries) or 'nothing at the moment'}.",
-                             payload={"discord_test": body.channel}, targets=("discord",), source=TEST_SOURCE)
+    event = s.events.publish(
+        "notification",
+        "Test from Clara's web site",
+        f"This is #{body.channel}. It receives: {', '.join(carries) or 'nothing at the moment'}.",
+        payload={"discord_test": body.channel},
+        targets=("discord",),
+        source=TEST_SOURCE,
+    )
     return {"event": event.id, "channel": body.channel}

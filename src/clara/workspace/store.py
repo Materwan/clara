@@ -50,6 +50,9 @@ class Change:
     commit: str
 
 
+_SURROGATES = re.compile("[\ud800-\udfff]")
+
+
 def looks_binary(data: bytes) -> bool:
     return b"\x00" in data[:TEXT_PEEK]
 
@@ -82,22 +85,30 @@ class Workspace:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null",
             "GIT_TERMINAL_PROMPT": "0",
-            "GIT_AUTHOR_NAME": AUTHOR[0], "GIT_AUTHOR_EMAIL": AUTHOR[1],
-            "GIT_COMMITTER_NAME": AUTHOR[0], "GIT_COMMITTER_EMAIL": AUTHOR[1],
+            "GIT_AUTHOR_NAME": AUTHOR[0],
+            "GIT_AUTHOR_EMAIL": AUTHOR[1],
+            "GIT_COMMITTER_NAME": AUTHOR[0],
+            "GIT_COMMITTER_EMAIL": AUTHOR[1],
             "LC_ALL": "C",
         }
 
+    def _argv(self, *args: str) -> list[str]:
+        """The git command line. Scripts write into this tree, so a repository they plant inside it must not be able
+        to make git run a command: `core.fsmonitor` in a nested `.git/config` is run by the outer `add` and `status`."""
+        return [self.git_bin, "-C", str(self.root), "-c", "core.fsmonitor=false", *args]
+
     def git_sync(self, *args: str, check: bool = True) -> str:
-        result = subprocess.run([self.git_bin, "-C", str(self.root), *args], capture_output=True, text=True,
-                                env=self._env(), timeout=120)
+        result = subprocess.run(self._argv(*args), capture_output=True, text=True, env=self._env(), timeout=120)
         if check and result.returncode != 0:
             raise WorkspaceError(f"git {args[0]} failed: {(result.stderr or result.stdout).strip()[:500]}")
         return result.stdout
 
     async def git(self, *args: str, check: bool = True) -> str:
         process = await asyncio.create_subprocess_exec(
-            self.git_bin, "-C", str(self.root), *args, env=self._env(),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *self._argv(*args),
+            env=self._env(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         out, err = await asyncio.wait_for(process.communicate(), 120)
         if check and process.returncode != 0:
@@ -115,7 +126,9 @@ class Workspace:
             (self.root / "notes").mkdir(exist_ok=True)
             (self.root / "README.md").write_text(
                 "# Clara's workspace\n\nEvery change here is a git commit. `notes/` holds the documents Clara writes for "
-                "you; `runs/` the logs of the scripts she ran.\n", encoding="utf-8")
+                "you; `runs/` the logs of the scripts she ran.\n",
+                encoding="utf-8",
+            )
             self.git_sync("add", "-A")
             self.git_sync("commit", "--quiet", "-m", "Workspace created")
 
@@ -167,7 +180,9 @@ class Workspace:
         if adding > self.max_file_bytes:
             raise WorkspaceError(f"A file is {human_size(self.max_file_bytes)} at most.")
         if self.size_bytes() - replacing + adding > self.max_bytes:
-            raise WorkspaceError(f"The workspace is full ({human_size(self.max_bytes)} at most): delete something first.")
+            raise WorkspaceError(
+                f"The workspace is full ({human_size(self.max_bytes)} at most): delete something first."
+            )
 
     # ------------------------------------------------------------------
     # Reading
@@ -184,13 +199,22 @@ class Workspace:
         except PathError:
             return False
 
+    @staticmethod
+    def _read(path: Path, limit: int) -> bytes | None:
+        """The bytes of a regular file, or None when it is longer than `limit` (read no further than that)."""
+        with os.fdopen(open_read(path), "rb") as handle:
+            data = handle.read(limit + 1)
+        return data if len(data) <= limit else None
+
     def read_bytes(self, relative: str) -> bytes:
+        """A file's bytes. A script can write files bigger than the limit for a file, so a read has that limit too."""
         path = resolve(self.root, relative, must_exist=True)
         if path.is_dir():
             raise WorkspaceError(f"{clean(relative)} is a folder.")
-        descriptor = open_read(path)
-        with os.fdopen(descriptor, "rb") as handle:
-            return handle.read()
+        data = self._read(path, self.max_file_bytes)
+        if data is None:
+            raise WorkspaceError(f"{clean(relative)} is bigger than {human_size(self.max_file_bytes)}: it is not read.")
+        return data
 
     def read_text(self, relative: str) -> str:
         data = self.read_bytes(relative)
@@ -207,7 +231,9 @@ class Workspace:
 
         def walk(folder: Path, level: int) -> None:
             try:
-                entries = sorted(os.scandir(folder), key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
+                entries = sorted(
+                    os.scandir(folder), key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower())
+                )
             except OSError:
                 return
             for entry in entries:
@@ -218,8 +244,15 @@ class Workspace:
                 path = Path(entry.path)
                 info = entry.stat(follow_symlinks=False)
                 kind = "link" if stat.S_ISLNK(info.st_mode) else "dir" if stat.S_ISDIR(info.st_mode) else "file"
-                found.append({"path": "/".join(path.parts[start:]), "kind": kind, "size": info.st_size,
-                              "modified": info.st_mtime, "depth": level})
+                found.append(
+                    {
+                        "path": "/".join(path.parts[start:]),
+                        "kind": kind,
+                        "size": info.st_size,
+                        "modified": info.st_mtime,
+                        "depth": level,
+                    }
+                )
                 if kind == "dir" and level + 1 < depth:
                     walk(path, level + 1)
 
@@ -236,25 +269,32 @@ class Workspace:
         base = resolve(self.root, relative, must_exist=True)
         matches: list[str] = []
         for folder, dirs, files in os.walk(base):
-            dirs[:] = sorted(name for name in dirs if not (Path(folder) == self.root and name == ".git")
-                             and not os.path.islink(os.path.join(folder, name)))
+            dirs[:] = sorted(
+                name
+                for name in dirs
+                if not (Path(folder) == self.root and name == ".git") and not os.path.islink(os.path.join(folder, name))
+            )
             for name in sorted(files):
                 path = Path(folder, name)
-                shown = "/".join(path.parts[len(self.root.parts):])
+                shown = "/".join(path.parts[len(self.root.parts) :])
                 if glob and not fnmatch.fnmatch(shown, glob) and not fnmatch.fnmatch(name, glob):
                     continue
                 try:
-                    if path.is_symlink() or path.stat().st_size > SEARCH_MAX_FILE:
+                    if path.is_symlink():
                         continue
-                    data = path.read_bytes()
-                except OSError:
+                    data = self._read(path, SEARCH_MAX_FILE)  # a named pipe has size 0: it is the open that refuses it
+                except (OSError, PathError):
+                    continue
+                if data is None:
                     continue
                 if looks_binary(data):
                     continue
                 for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
                     if pattern.search(line):
                         text = line.strip()
-                        matches.append(f"{shown}:{number}: {text if len(text) <= SEARCH_LINE else text[:SEARCH_LINE - 1] + '…'}")
+                        matches.append(
+                            f"{shown}:{number}: {text if len(text) <= SEARCH_LINE else text[: SEARCH_LINE - 1] + '…'}"
+                        )
                         if len(matches) >= SEARCH_MAX_MATCHES:
                             return matches
         return matches
@@ -314,7 +354,14 @@ class Workspace:
     async def edit(self, relative: str, old: str, new: str, *, replace_all: bool, message: str) -> tuple[Change, int]:
         name = clean(relative)
         async with self._lock:
-            text = self.read_text(name)
+            raw = self.read_bytes(name)
+            if looks_binary(raw):
+                raise WorkspaceError(f"{name} is not a text file ({human_size(len(raw))}).")
+            if _SURROGATES.search(old) or _SURROGATES.search(new):
+                raise WorkspaceError("old_text and new_text must be plain text.")
+            # Bytes that are not UTF-8 come back as lone surrogates and go out as the same bytes, so what the edit does
+            # not touch stays as it was (decoding with "replace" and writing back would turn them into U+FFFD).
+            text = raw.decode("utf-8", errors="surrogateescape")
             if not old:
                 raise WorkspaceError("old_text is empty: give the exact passage to replace.")
             count = text.count(old)
@@ -323,8 +370,8 @@ class Workspace:
             if count > 1 and not replace_all:
                 raise WorkspaceError(f"old_text is in {name} {count} times: add the lines around it, or replace_all.")
             updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
-            data = updated.encode("utf-8")
-            self._room(len(data), len(text.encode("utf-8")))
+            data = updated.encode("utf-8", errors="surrogateescape")
+            self._room(len(data), len(raw))
             path = resolve(self.root, name, must_exist=True)
             descriptor = open_write(path)
             with os.fdopen(descriptor, "wb") as handle:

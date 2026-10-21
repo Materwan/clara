@@ -55,10 +55,21 @@ class Conversation:
 
     def describe(self) -> dict:
         return {
-            "id": self.id, "title": self.title, "titled_by": self.titled_by, "client": self.client, "kind": self.kind,
-            "pinned": self.pinned, "project": self.project_id, "model": self.model, "incognito": self.incognito,
-            "local_only": self.local_only, "created_at": self.created_at, "updated_at": self.updated_at,
-            "summarised": bool(self.summary), "packs": self.active_packs(), "parent": self.parent_id,
+            "id": self.id,
+            "title": self.title,
+            "titled_by": self.titled_by,
+            "client": self.client,
+            "kind": self.kind,
+            "pinned": self.pinned,
+            "project": self.project_id,
+            "model": self.model,
+            "incognito": self.incognito,
+            "local_only": self.local_only,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "summarised": bool(self.summary),
+            "packs": self.active_packs(),
+            "parent": self.parent_id,
         }
 
 
@@ -98,18 +109,40 @@ def _packs(text: str) -> tuple[str, ...]:
 
 def _conversation(row) -> Conversation:
     return Conversation(
-        row["id"], row["title"], row["titled_by"], row["client"], row["kind"], bool(row["pinned"]), row["project_id"],
-        row["model"], bool(row["incognito"]), bool(row["local_only"]), bool(row["vault_open"]), row["summary"],
-        row["summary_upto"], row["context_tokens"], row["created_at"], row["updated_at"], _packs(row["packs"]),
+        row["id"],
+        row["title"],
+        row["titled_by"],
+        row["client"],
+        row["kind"],
+        bool(row["pinned"]),
+        row["project_id"],
+        row["model"],
+        bool(row["incognito"]),
+        bool(row["local_only"]),
+        bool(row["vault_open"]),
+        row["summary"],
+        row["summary_upto"],
+        row["context_tokens"],
+        row["created_at"],
+        row["updated_at"],
+        _packs(row["packs"]),
         row["parent_id"],
     )
 
 
 def _message(row) -> StoredMessage:
     return StoredMessage(
-        row["id"], row["parent_id"], row["role"], row["content"], row["prefix"],
-        json.loads(row["tool_calls"]) if row["tool_calls"] else None, row["tool_name"], row["thinking"],
-        row["client"], row["turn_id"], row["created_at"],
+        row["id"],
+        row["parent_id"],
+        row["role"],
+        row["content"],
+        row["prefix"],
+        json.loads(row["tool_calls"]) if row["tool_calls"] else None,
+        row["tool_name"],
+        row["thinking"],
+        row["client"],
+        row["turn_id"],
+        row["created_at"],
     )
 
 
@@ -128,16 +161,39 @@ class Conversations:
     # ------------------------------------------------------------------
     # Conversations
     # ------------------------------------------------------------------
-    def create(self, client: str, *, kind: str = "chat", title: str = "", project_id: int | None = None, model: str = "",
-               incognito: bool = False, local_only: bool = False, conversation_id: str | None = None,
-               packs: list[str] | None = None, parent_id: str | None = None) -> Conversation:
+    def create(
+        self,
+        client: str,
+        *,
+        kind: str = "chat",
+        title: str = "",
+        project_id: int | None = None,
+        model: str = "",
+        incognito: bool = False,
+        local_only: bool = False,
+        conversation_id: str | None = None,
+        packs: list[str] | None = None,
+        parent_id: str | None = None,
+    ) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
         self.db.execute(
             "INSERT INTO conversations (id, title, titled_by, client, kind, project_id, model, incognito, local_only,"
             " parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (conversation_id, title[:MAX_TITLE], "you" if title else "", client, kind, project_id, model,
-             int(incognito), int(local_only), parent_id, now, now),
+            (
+                conversation_id,
+                title[:MAX_TITLE],
+                "you" if title else "",
+                client,
+                kind,
+                project_id,
+                model,
+                int(incognito),
+                int(local_only),
+                parent_id,
+                now,
+                now,
+            ),
         )
         if packs is not None:
             self.update(conversation_id, packs=packs)
@@ -156,15 +212,27 @@ class Conversations:
         return conversation
 
     # The schedule a conversation belongs to: the one that owns it, or the one whose run made it (one per run).
-    _SCHEDULE = ("COALESCE((SELECT s.id FROM schedules s WHERE s.conversation_id = c.id),"
-                 " (SELECT r.schedule_id FROM schedule_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))")
+    _SCHEDULE = (
+        "COALESCE((SELECT s.id FROM schedules s WHERE s.conversation_id = c.id),"
+        " (SELECT r.schedule_id FROM schedule_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))"
+    )
     # Whether the group of a conversation shows it in the history: its schedule's say, else its project's, else yes. A
     # schedule's own conversation whose schedule is gone has no group to switch on, so it stays out.
-    _SHOWN = (f"COALESCE((SELECT s.in_history FROM schedules s WHERE s.id = {_SCHEDULE}),"
-              " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)")
+    _SHOWN = (
+        f"COALESCE((SELECT s.in_history FROM schedules s WHERE s.id = {_SCHEDULE}),"
+        " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)"
+    )
 
-    def listing(self, q: str = "", project: str = ANY, kind: str = "chat", limit: int = 50, offset: int = 0,
-                history: bool = False, hide_clients: tuple[str, ...] = ()) -> list[dict]:
+    def listing(
+        self,
+        q: str = "",
+        project: str = ANY,
+        kind: str = "chat",
+        limit: int = 50,
+        offset: int = 0,
+        history: bool = False,
+        hide_clients: tuple[str, ...] = (),
+    ) -> list[dict]:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
         `group` (its schedule, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
         leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
@@ -189,8 +257,12 @@ class Conversations:
             like = f"%{q.strip()}%"
             where.append(
                 "(c.title LIKE ? OR c.summary LIKE ?"
-                + (" OR c.id IN (SELECT m.conversation_id FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
-                   " WHERE messages_fts MATCH ?))" if match else ")")
+                + (
+                    " OR c.id IN (SELECT m.conversation_id FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
+                    " WHERE messages_fts MATCH ?))"
+                    if match
+                    else ")"
+                )
             )
             params += [like, like] + ([match] if match else [])
         rows = self.db.all(
@@ -201,7 +273,10 @@ class Conversations:
             f" FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
         )
-        return [{**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)} for row in rows]
+        return [
+            {**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)}
+            for row in rows
+        ]
 
     def subagents(self, conversation_id: str) -> list[dict]:
         """The conversations of the sub agents the conversation started, oldest first, each with the `prompt` it was given
@@ -254,7 +329,8 @@ class Conversations:
         """Clara's title, unless the conversation got one meanwhile (yours is never replaced)."""
         title = " ".join(title.split())[:MAX_TITLE]
         self.db.execute(
-            "UPDATE conversations SET title = ?, titled_by = 'clara' WHERE id = ? AND title = ''", (title, conversation_id)
+            "UPDATE conversations SET title = ?, titled_by = 'clara' WHERE id = ? AND title = ''",
+            (title, conversation_id),
         )
         return self.require(conversation_id).title
 
@@ -310,31 +386,48 @@ class Conversations:
 
     def messages_after(self, conversation_id: str, after_id: int = 0) -> list[StoredMessage]:
         rows = self.db.all(
-            f"{self._COLUMNS} WHERE conversation_id = ? AND id > ? AND active = 1 ORDER BY id", (conversation_id, after_id)
+            f"{self._COLUMNS} WHERE conversation_id = ? AND id > ? AND active = 1 ORDER BY id",
+            (conversation_id, after_id),
         )
         return [_message(row) for row in rows]
 
     def turns_after(self, conversation_id: str, after_id: int = 0) -> int:
-        return int(self.db.value(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1",
-            (conversation_id, after_id), 0,
-        ))
+        return int(
+            self.db.value(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1",
+                (conversation_id, after_id),
+                0,
+            )
+        )
 
     def message_count(self, conversation_id: str, after_id: int = 0) -> int:
-        return int(self.db.value(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND id > ? AND active = 1",
-            (conversation_id, after_id), 0,
-        ))
+        return int(
+            self.db.value(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND id > ? AND active = 1",
+                (conversation_id, after_id),
+                0,
+            )
+        )
 
     def first_exchange(self, conversation_id: str) -> tuple[str, str]:
-        first = ("SELECT content FROM messages WHERE conversation_id = ? AND role = ? AND content != '' AND active = 1"
-                 " ORDER BY id LIMIT 1")
+        first = (
+            "SELECT content FROM messages WHERE conversation_id = ? AND role = ? AND content != '' AND active = 1"
+            " ORDER BY id LIMIT 1"
+        )
         question = self.db.one(first, (conversation_id, "user"))
         answer = self.db.one(first, (conversation_id, "assistant"))
         return (question[0] if question else "", answer[0] if answer else "")
 
-    def add_turn(self, conversation_id: str, question: str, rows: list[TurnRow], *, prefix: str = "", client: str = "",
-                 turn_id: str | None = None) -> int:
+    def add_turn(
+        self,
+        conversation_id: str,
+        question: str,
+        rows: list[TurnRow],
+        *,
+        prefix: str = "",
+        client: str = "",
+        turn_id: str | None = None,
+    ) -> int:
         """Store a question and what followed it after the end of the path. Returns the question's id."""
         now = now_iso()
         with self.db.transaction() as tx:
@@ -350,9 +443,17 @@ class Conversations:
                 parent = tx.execute(
                     "INSERT INTO messages (conversation_id, parent_id, role, content, tool_calls, tool_name, thinking,"
                     " turn_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (conversation_id, parent, row.role, row.content,
-                     json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
-                     row.tool_name, row.thinking or None, turn_id, now),
+                    (
+                        conversation_id,
+                        parent,
+                        row.role,
+                        row.content,
+                        json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
+                        row.tool_name,
+                        row.thinking or None,
+                        turn_id,
+                        now,
+                    ),
                 ).lastrowid
             tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         return int(question_id or 0)
@@ -377,10 +478,13 @@ class Conversations:
     def detach_from(self, conversation_id: str, message_id: int) -> list[int]:
         """Take this message and everything after it off the path; returns their ids, for `reattach`."""
         with self.db.transaction() as tx:
-            ids = [row[0] for row in tx.execute(
-                "SELECT id FROM messages WHERE conversation_id = ? AND active = 1 AND id >= ? ORDER BY id",
-                (conversation_id, message_id),
-            ).fetchall()]
+            ids = [
+                row[0]
+                for row in tx.execute(
+                    "SELECT id FROM messages WHERE conversation_id = ? AND active = 1 AND id >= ? ORDER BY id",
+                    (conversation_id, message_id),
+                ).fetchall()
+            ]
             tx.executemany("UPDATE messages SET active = 0 WHERE id = ?", [(i,) for i in ids])
         return ids
 
@@ -392,11 +496,14 @@ class Conversations:
         """For each question, the ids of all its versions (oldest first), for questions with more than one."""
         found: dict[int, list[int]] = {}
         for message_id in message_ids:
-            siblings = [row[0] for row in self.db.all(
-                "SELECT s.id FROM messages m JOIN messages s ON s.conversation_id = m.conversation_id"
-                " AND s.parent_id IS m.parent_id AND s.role = 'user' WHERE m.id = ? AND m.conversation_id = ? ORDER BY s.id",
-                (message_id, conversation_id),
-            )]
+            siblings = [
+                row[0]
+                for row in self.db.all(
+                    "SELECT s.id FROM messages m JOIN messages s ON s.conversation_id = m.conversation_id"
+                    " AND s.parent_id IS m.parent_id AND s.role = 'user' WHERE m.id = ? AND m.conversation_id = ? ORDER BY s.id",
+                    (message_id, conversation_id),
+                )
+            ]
             if len(siblings) > 1:
                 found[message_id] = siblings
         return found
@@ -420,13 +527,16 @@ class Conversations:
             if min(message_id, current["id"] if current else message_id) <= conversation.summary_upto:
                 raise ConversationError("This part of the conversation was summarised: it cannot go another way.")
             if current is not None:
-                tx.execute("UPDATE messages SET active = 0 WHERE conversation_id = ? AND active = 1 AND id >= ?",
-                           (conversation_id, current["id"]))
+                tx.execute(
+                    "UPDATE messages SET active = 0 WHERE conversation_id = ? AND active = 1 AND id >= ?",
+                    (conversation_id, current["id"]),
+                )
             node: int | None = message_id
             while node is not None:
                 tx.execute("UPDATE messages SET active = 1 WHERE id = ?", (node,))
-                node = tx.execute("SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?",
-                                  (conversation_id, node)).fetchone()[0]
+                node = tx.execute(
+                    "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?", (conversation_id, node)
+                ).fetchone()[0]
 
     def heal_versions(self) -> int:
         """A server that stopped while a question was asked again left the old version off the path and the new one
@@ -442,8 +552,10 @@ class Conversations:
             node: int | None = row["newest"]
             while node is not None:
                 self.db.execute("UPDATE messages SET active = 1 WHERE id = ?", (node,))
-                node = self.db.value("SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?",
-                                     (row["conversation_id"], node))
+                node = self.db.value(
+                    "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?",
+                    (row["conversation_id"], node),
+                )
         return len(rows)
 
     # ------------------------------------------------------------------
@@ -459,8 +571,12 @@ class Conversations:
         for message in messages:
             if message.role == "tool" and not calls:
                 continue
-            entry: dict = {"id": message.id, "role": message.role, "content": message.content,
-                           "created_at": message.created_at}
+            entry: dict = {
+                "id": message.id,
+                "role": message.role,
+                "content": message.content,
+                "created_at": message.created_at,
+            }
             if message.role == "user":
                 entry["client"] = message.client
                 if message.id in versions:

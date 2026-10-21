@@ -11,7 +11,9 @@ from .base import Tool, ToolContext, ToolError, fixed, texts, whole_number
 
 NOTIFY_PER_TURN = 3
 TARGETS_HELP = f"Clients to show it on ({', '.join(TARGETS)}); omit for every client."
-TASK_DESCRIPTION_HELP = "What to do beyond the title: where, with whom, the steps. Omit only when the title says it all."
+TASK_DESCRIPTION_HELP = (
+    "What to do beyond the title: where, with whom, the steps. Omit only when the title says it all."
+)
 
 
 def _targets(value: Any) -> list[str]:
@@ -21,8 +23,13 @@ def _targets(value: Any) -> list[str]:
 def _remind(context: ToolContext, text: str, when: str, repeat: str = "", targets: Any = None) -> str:
     try:
         reminder = context.services.reminders.create(
-            str(text), str(when), repeat=str(repeat or ""), timezone=context.turn.timezone, targets=_targets(targets),
-            conversation_id=None if context.turn.incognito else context.turn.conversation_id, client=context.turn.client,
+            str(text),
+            str(when),
+            repeat=str(repeat or ""),
+            timezone=context.turn.timezone,
+            targets=_targets(targets),
+            conversation_id=None if context.turn.incognito else context.turn.conversation_id,
+            client=context.turn.client,
         )
     except ReminderError as error:
         raise ToolError(str(error)) from None
@@ -52,7 +59,11 @@ def _notify(context: ToolContext, text: str, title: str = "", targets: Any = Non
         raise ToolError("The notification is empty.")
     try:
         event = context.services.events.publish(
-            "notification", str(title or "Clara")[:100], text[:2000], targets=_targets(targets), source="clara",
+            "notification",
+            str(title or "Clara")[:100],
+            text[:2000],
+            targets=_targets(targets),
+            source="clara",
             conversation_id=context.turn.conversation_id,
         )
     except ValueError as error:
@@ -66,13 +77,24 @@ def _task_number(value: Any) -> int:
     return whole_number(value, "task_id must be the number shown in brackets.")
 
 
-async def _add_task(context: ToolContext, title: str, description: str = "", due: str = "", reminders: Any = None,
-                    targets: Any = None, parent_id: Any = None) -> str:
+async def _add_task(
+    context: ToolContext,
+    title: str,
+    description: str = "",
+    due: str = "",
+    reminders: Any = None,
+    targets: Any = None,
+    parent_id: Any = None,
+) -> str:
     tasks = context.services.tasks
     try:
         task = await tasks.create(
-            str(title), str(description or ""), str(due) if due else None, texts(reminders),
-            timezone=context.turn.timezone, targets=_targets(targets),
+            str(title),
+            str(description or ""),
+            str(due) if due else None,
+            texts(reminders),
+            timezone=context.turn.timezone,
+            targets=_targets(targets),
             parent_id=None if parent_id in (None, "", 0) else _task_number(parent_id),
             conversation_id=None if context.turn.incognito else context.turn.conversation_id,
         )
@@ -94,8 +116,16 @@ def _list_tasks(context: ToolContext, task_id: Any = None, status: str = OPEN) -
     return "\n".join(tasks.line(task) for task in found)
 
 
-async def _update_task(context: ToolContext, task_id: Any, title: Any = None, description: Any = None, due: Any = NO_DUE,
-                       reminders: Any = None, status: Any = None, parent_id: Any = None) -> str:
+async def _update_task(
+    context: ToolContext,
+    task_id: Any,
+    title: Any = None,
+    description: Any = None,
+    due: Any = NO_DUE,
+    reminders: Any = None,
+    status: Any = None,
+    parent_id: Any = None,
+) -> str:
     tasks = context.services.tasks
     number = _task_number(task_id)
     if status not in (None, "", *STATUSES):
@@ -108,10 +138,14 @@ async def _update_task(context: ToolContext, task_id: Any, title: Any = None, de
         settling = status in STATUSES and (status == OPEN) != (current.status == OPEN)
         edits = any(value is not None for value in (title, description)) or (times is not None and not settling)
         if edits or due is not NO_DUE:
-            tasks.update(number, title=None if title is None else str(title),
-                         description=None if description is None else str(description),
-                         due=due if due is NO_DUE or not due else str(due), reminders=None if settling else times,
-                         timezone=None)
+            tasks.update(
+                number,
+                title=None if title is None else str(title),
+                description=None if description is None else str(description),
+                due=due if due is NO_DUE or not due else str(due),
+                reminders=None if settling else times,
+                timezone=None,
+            )
         if settling and status == DONE:
             tasks.complete(number)
         elif settling:
@@ -136,7 +170,9 @@ def time_tools() -> list[Tool]:
             name="remind",
             description="Set a reminder for the person: at that time it is shown to them as a notification.",
             function=_remind,
-            describe=fixed("memory", "write", "reminders", lambda a: f"Reminder at {a.get('when')}: {str(a.get('text', ''))[:100]}"),
+            describe=fixed(
+                "memory", "write", "reminders", lambda a: f"Reminder at {a.get('when')}: {str(a.get('text', ''))[:100]}"
+            ),
             parameters={
                 "text": {"type": "string", "description": "What to announce, written to make sense on its own."},
                 "when": {"type": "string", "description": local},
@@ -198,8 +234,10 @@ def time_tools() -> list[Tool]:
             description="The person's tasks with reminders sent and the next one; with task_id, one task in full.",
             function=_list_tasks,
             describe=fixed("read", "read", "tasks", "List tasks"),
-            parameters={"task_id": {"type": "integer"},
-                        "status": {"type": "string", "enum": [*STATUSES, "all"], "description": "Default: open."}},
+            parameters={
+                "task_id": {"type": "integer"},
+                "status": {"type": "string", "enum": [*STATUSES, "all"], "description": "Default: open."},
+            },
             parallel=True,
         ),
         Tool(

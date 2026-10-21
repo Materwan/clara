@@ -61,9 +61,15 @@ class GitHub:
         self.token = token
         self._transport = transport
 
-    async def request(self, method: str, url: str, *, accept: str = "application/vnd.github+json", **options: Any) -> httpx.Response:
-        headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "clara",
-                   "Authorization": f"Bearer {self.token}"}
+    async def request(
+        self, method: str, url: str, *, accept: str = "application/vnd.github+json", **options: Any
+    ) -> httpx.Response:
+        headers = {
+            "Accept": accept,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "clara",
+            "Authorization": f"Bearer {self.token}",
+        }
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport, follow_redirects=True) as http:
                 response = await http.request(method, f"{API}{url}", headers=headers, **options)
@@ -81,7 +87,9 @@ class GitHub:
         except ValueError:
             detail = response.reason_phrase
         if status == 401:
-            return GitHubError("GitHub refused the token (expired or revoked): set it again on the Connections page.", True)
+            return GitHubError(
+                "GitHub refused the token (expired or revoked): set it again on the Connections page.", True
+            )
         if status in (403, 429) and response.headers.get("x-ratelimit-remaining") == "0":
             return GitHubError("GitHub says too many requests for now: try again later.")
         if status == 403:
@@ -116,19 +124,26 @@ class GitHub:
         if not isinstance(found, list):
             raise GitHubError(f"{path or '/'} is a file, not a folder.")
         found.sort(key=lambda item: (item.get("type") != "dir", str(item.get("name", "")).lower()))
-        lines = [f"{item['name']}/" if item.get("type") == "dir" else f"{item['name']} ({item.get('size', 0):,} bytes)"
-                 for item in found[:LIST_LIMIT]]
+        lines = [
+            f"{item['name']}/" if item.get("type") == "dir" else f"{item['name']} ({item.get('size', 0):,} bytes)"
+            for item in found[:LIST_LIMIT]
+        ]
         if len(found) > LIST_LIMIT:
             lines.append(f"[{len(found) - LIST_LIMIT} more]")
         return "\n".join(lines) or "(empty)"
 
-    async def read(self, repo: str, path: str, branch: str = "", start: int = 1, end: int | None = None,
-                   max_chars: int = 20_000) -> str:
+    async def read(
+        self, repo: str, path: str, branch: str = "", start: int = 1, end: int | None = None, max_chars: int = 20_000
+    ) -> str:
         path = repo_path(path)
         if not path:
             raise GitHubError("Give the path of a file.")
-        response = await self.request("GET", self.contents_url(repo, path), accept="application/vnd.github.raw+json",
-                                      params={"ref": branch} if branch else {})
+        response = await self.request(
+            "GET",
+            self.contents_url(repo, path),
+            accept="application/vnd.github.raw+json",
+            params={"ref": branch} if branch else {},
+        )
         if response.headers.get("content-type", "").startswith("application/json"):
             raise GitHubError(f"{path} is a folder: list it.")
         if len(response.content) > MAX_FILE_BYTES:
@@ -143,8 +158,9 @@ class GitHub:
         query = text(query, "query", 256)
         folder = repo_path(path)
         q = f"{query} repo:{repo}" + (f" path:{folder}" if folder else "")
-        response = await self.request("GET", "/search/code", accept="application/vnd.github.text-match+json",
-                                      params={"q": q, "per_page": 30})
+        response = await self.request(
+            "GET", "/search/code", accept="application/vnd.github.text-match+json", params={"q": q, "per_page": 30}
+        )
         items = response.json().get("items", [])
         if not items:
             return f"No match for {query!r} (GitHub searches the default branch only)."
@@ -162,19 +178,25 @@ class GitHub:
     async def issues(self, repo: str, pulls: bool) -> str:
         if pulls:
             found = await self.get_json(f"/repos/{repo}/pulls", params={"state": "open", "per_page": 30})
-            return "\n".join(f"#{p['number']} {p['title']} ({p['head']['ref']} -> {p['base']['ref']})" for p in found) \
+            return (
+                "\n".join(f"#{p['number']} {p['title']} ({p['head']['ref']} -> {p['base']['ref']})" for p in found)
                 or "No open pull request."
+            )
         found = await self.get_json(f"/repos/{repo}/issues", params={"state": "open", "per_page": 30})
         return "\n".join(f"#{i['number']} {i['title']}" for i in found if "pull_request" not in i) or "No open issue."
 
     async def thread(self, repo: str, number: int) -> str:
         issue = await self.get_json(f"/repos/{repo}/issues/{number}")
         comments = await self.get_json(f"/repos/{repo}/issues/{number}/comments", params={"per_page": 50})
-        lines = [f"#{number} {issue.get('title')} ({issue.get('state')}) by {issue.get('user', {}).get('login')}",
-                 str(issue.get("body") or "")[:MAX_BODY]]
+        lines = [
+            f"#{number} {issue.get('title')} ({issue.get('state')}) by {issue.get('user', {}).get('login')}",
+            str(issue.get("body") or "")[:MAX_BODY],
+        ]
         for comment in comments:
-            lines.append(f"\n--- {comment.get('user', {}).get('login')} ({comment.get('created_at', '')[:10]}):\n"
-                         f"{str(comment.get('body') or '')[:4000]}")
+            lines.append(
+                f"\n--- {comment.get('user', {}).get('login')} ({comment.get('created_at', '')[:10]}):\n"
+                f"{str(comment.get('body') or '')[:4000]}"
+            )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -200,11 +222,15 @@ class GitHub:
         if mode == "create" and current is not None:
             raise GitHubError(f"{path} already exists on {branch}: use overwrite or append.")
         if mode == "append" and current is not None:
-            old = await self.request("GET", self.contents_url(repo, path), accept="application/vnd.github.raw+json",
-                                     params={"ref": branch})
+            old = await self.request(
+                "GET", self.contents_url(repo, path), accept="application/vnd.github.raw+json", params={"ref": branch}
+            )
             content = old.text + content
-        body: dict[str, Any] = {"message": text(message or f"Clara: {mode} {path}", "message"),
-                                "content": base64.b64encode(content.encode("utf-8")).decode(), "branch": branch}
+        body: dict[str, Any] = {
+            "message": text(message or f"Clara: {mode} {path}", "message"),
+            "content": base64.b64encode(content.encode("utf-8")).decode(),
+            "branch": branch,
+        }
         if current is not None:
             body["sha"] = current["sha"]
         response = await self.request("PUT", self.contents_url(repo, path), json=body)
@@ -217,9 +243,15 @@ class GitHub:
         current = await self.existing(repo, path, branch)
         if current is None:
             raise GitHubError(f"No such file on {branch}: {path}.")
-        response = await self.request("DELETE", self.contents_url(repo, path),
-                                      json={"message": text(message or f"Clara: delete {path}", "message"),
-                                            "sha": current["sha"], "branch": branch})
+        response = await self.request(
+            "DELETE",
+            self.contents_url(repo, path),
+            json={
+                "message": text(message or f"Clara: delete {path}", "message"),
+                "sha": current["sha"],
+                "branch": branch,
+            },
+        )
         return f"Deleted {path} from {branch} (commit {response.json().get('commit', {}).get('sha', '')[:7]})."
 
     async def branch(self, repo: str, action: str, name: str, source: str = "") -> str:
@@ -227,7 +259,9 @@ class GitHub:
         if action == "create":
             base = branch_name(source) if source else await self.default_branch(repo)
             head = await self.get_json(f"/repos/{repo}/git/ref/heads/{quote(base, safe='/')}")
-            await self.request("POST", f"/repos/{repo}/git/refs", json={"ref": f"refs/heads/{name}", "sha": head["object"]["sha"]})
+            await self.request(
+                "POST", f"/repos/{repo}/git/refs", json={"ref": f"refs/heads/{name}", "sha": head["object"]["sha"]}
+            )
             return f"Created the branch {name} from {base}."
         if action == "delete":
             if name == await self.default_branch(repo):
@@ -238,17 +272,23 @@ class GitHub:
 
     async def pull_request(self, repo: str, action: str, args: dict) -> str:
         if action == "open":
-            body = {"title": text(args.get("title"), "title"), "head": branch_name(args.get("head"), "head branch"),
-                    "base": branch_name(args["base"]) if args.get("base") else await self.default_branch(repo),
-                    "body": str(args.get("body") or "")[:MAX_BODY]}
+            body = {
+                "title": text(args.get("title"), "title"),
+                "head": branch_name(args.get("head"), "head branch"),
+                "base": branch_name(args["base"]) if args.get("base") else await self.default_branch(repo),
+                "body": str(args.get("body") or "")[:MAX_BODY],
+            }
             made = (await self.request("POST", f"/repos/{repo}/pulls", json=body)).json()
             return f"Opened pull request #{made['number']}: {made['html_url']}"
         number = int(args.get("number") or 0)
         if number <= 0:
             raise GitHubError("number is needed.")
         if action == "comment":
-            await self.request("POST", f"/repos/{repo}/issues/{number}/comments",
-                               json={"body": text(args.get("body"), "body", MAX_BODY)})
+            await self.request(
+                "POST",
+                f"/repos/{repo}/issues/{number}/comments",
+                json={"body": text(args.get("body"), "body", MAX_BODY)},
+            )
             return f"Commented on #{number}."
         if action == "merge":
             await self.request("PUT", f"/repos/{repo}/pulls/{number}/merge", json={})
@@ -267,8 +307,11 @@ class GitHub:
         if number <= 0:
             raise GitHubError("number is needed.")
         if action == "comment":
-            await self.request("POST", f"/repos/{repo}/issues/{number}/comments",
-                               json={"body": text(args.get("body"), "body", MAX_BODY)})
+            await self.request(
+                "POST",
+                f"/repos/{repo}/issues/{number}/comments",
+                json={"body": text(args.get("body"), "body", MAX_BODY)},
+            )
             return f"Commented on #{number}."
         if action == "close":
             await self.request("PATCH", f"/repos/{repo}/issues/{number}", json={"state": "closed"})

@@ -389,8 +389,13 @@ on the machine. It is a git repository: every change by a tool is one commit (to
 script makes are one commit after the run, and any commit can be undone (`/undo`, the Workspace page, `/v1/workspace/undo`).
 
 - **Paths:** joined to the root and resolved; absolute paths, `..`, symlinks and anything under `.git` are refused;
-  files are opened without following links. 400 characters per path.
-- **Limits:** `CLARA_WORKSPACE_MAX_SIZE` (5 GB) and `CLARA_WORKSPACE_MAX_FILE` (100 MB).
+  files are opened without following links, and only regular files are opened (a named pipe or socket a script left
+  behind is refused, never waited for). 400 characters per path.
+- **Limits:** `CLARA_WORKSPACE_MAX_SIZE` (5 GB) and `CLARA_WORKSPACE_MAX_FILE` (100 MB); a file bigger than that
+  (a script can write one) is not read. `ws_edit` leaves bytes that are not UTF-8 as they were; the web editor does not
+  open such a file (download only).
+- **Git:** every git command on the workspace runs with `core.fsmonitor=false`, so a repository a script plants inside
+  it cannot make the host's git run a command.
 - **Scripts (`ws_run`):** one rootless Podman container per run, removed afterwards: no network (`--network=none`;
   with `network=true`, Podman's user-mode network, and the gate asks), read-only root, all capabilities dropped,
   `no-new-privileges`, your user mapped in (`keep-id`), `--pids-limit`, memory and CPU limits, a wall-clock timeout,
@@ -493,7 +498,8 @@ counted.
   token scope `all`). Its targets are the recipients, one `mail:to:<address>` each, so `allow mail_send mail:to:*@example.com`
   opens one domain and a message with any other address stays closed (an allow rule must match every target). An
   "always" answer to a message with several recipients writes a rule that matches nothing: write one rule per address
-  on the Rules page. In a local-only conversation the mail tools are not offered and the gate refuses them.
+  on the Rules page (an "always" answer whose rule cannot be written, a target over 400 characters, is refused with
+  HTTP 400 and the request stays pending: answer it once). In a local-only conversation the mail tools are not offered and the gate refuses them.
 - **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
   Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `vault_write`, `vault_destroy`) and networked
   scripts (`run_network`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the

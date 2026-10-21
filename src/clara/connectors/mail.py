@@ -43,7 +43,9 @@ MAX_DOWNLOAD = 25_000_000  # an attachment bigger than this is not fetched
 TIMEOUT = httpx.Timeout(20.0, read=90.0)
 SHOWN_FIELD = 200  # a subject or a sender in a list, cut here
 NEW_BATCH = 100  # messages `new_since` returns at once
-LISTING_MAX = 5_000  # ids looked at to find the oldest new messages (Gmail lists newest first); more is logged, not lost silently
+LISTING_MAX = (
+    5_000  # ids looked at to find the oldest new messages (Gmail lists newest first); more is logged, not lost silently
+)
 
 
 class MailError(ValueError):
@@ -70,7 +72,11 @@ class Summary:
 
     @property
     def when(self) -> str:
-        return datetime.fromtimestamp(self.received_ms / 1000, UTC).strftime("%Y-%m-%d %H:%MZ") if self.received_ms else "?"
+        return (
+            datetime.fromtimestamp(self.received_ms / 1000, UTC).strftime("%Y-%m-%d %H:%MZ")
+            if self.received_ms
+            else "?"
+        )
 
 
 @dataclass(frozen=True)
@@ -146,15 +152,18 @@ class Sent:
 _INVISIBLE = re.compile("[­​‎‏‪-‮⁠-⁤⁦-⁩﻿\U000e0000-\U000e007f]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _BLANKS = re.compile(r"\n{3,}")
-_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|%)?\s*(?:;|$)|"
-                           r"mso-hide\s*:\s*all|opacity\s*:\s*0(?:\.0+)?\s*(?:;|$)", re.IGNORECASE)
+_HIDDEN_STYLE = re.compile(
+    r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|%)?\s*(?:;|$)|"
+    r"mso-hide\s*:\s*all|opacity\s*:\s*0(?:\.0+)?\s*(?:;|$)",
+    re.IGNORECASE,
+)
 
 
 def clean_text(text: str) -> str:
     """Text from a message, without what hides in it. Line breaks are kept; runs of blank lines are shortened."""
     text = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     text = _CONTROL.sub("", _INVISIBLE.sub("", text))
-    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = "\n".join(line.rstrip(" \t") for line in text.split("\n"))  # not a regex: a long run of spaces is quadratic
     return _BLANKS.sub("\n\n", text).strip()
 
 
@@ -172,8 +181,30 @@ def decode_header_value(value: str) -> str:
         return value
 
 
-_BLOCKS = frozenset({"p", "div", "tr", "li", "ul", "ol", "table", "blockquote", "section", "article", "header", "footer",
-                     "h1", "h2", "h3", "h4", "h5", "h6", "pre", "hr"})
+_BLOCKS = frozenset(
+    {
+        "p",
+        "div",
+        "tr",
+        "li",
+        "ul",
+        "ol",
+        "table",
+        "blockquote",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "pre",
+        "hr",
+    }
+)
 _SKIPPED = frozenset({"script", "style", "head", "title", "template", "noscript", "svg", "object", "embed"})
 _VOID = frozenset({"br", "img", "input", "hr", "meta", "link", "area", "base", "col", "source", "wbr"})
 
@@ -246,15 +277,17 @@ def html_to_text(markup: str) -> str:
         parser.feed(markup)
         parser.close()
     text = "".join(parser.out)
-    text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+    text = "\n".join(line.strip(" \t") for line in text.split("\n"))
     return clean_text(text)
 
 
 # ----------------------------------------------------------------------
 # What may be sent, and how
 # ----------------------------------------------------------------------
-_ADDRESS = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-                      r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+_ADDRESS = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
 _ID = re.compile(r"^[A-Za-z0-9_=+/-]{1,600}$")
 
 
@@ -263,7 +296,7 @@ def parse_address(text: Any) -> str:
     what a rule matches and what you read in the approval, so it must be exactly one."""
     value = str(text or "").strip()
     if "<" in value and value.endswith(">"):
-        value = value[value.rindex("<") + 1:-1].strip()
+        value = value[value.rindex("<") + 1 : -1].strip()
     if len(value) > 254 or not _ADDRESS.match(value) or ".." in value or value.startswith(".") or "@." in value:
         raise MailError(f"{str(text)[:80]!r} is not an email address (give plain addresses such as name@example.com).")
     return value.lower()
@@ -322,8 +355,9 @@ def build_mime(sender: str, mail: Outgoing, extra: dict[str, str] | None = None)
     message.set_content(mail.body)
     for file in mail.files:
         maintype, _, subtype = (file.mime or "application/octet-stream").partition("/")
-        message.add_attachment(file.data, maintype=maintype or "application", subtype=subtype or "octet-stream",
-                               filename=file.name)
+        message.add_attachment(
+            file.data, maintype=maintype or "application", subtype=subtype or "octet-stream", filename=file.name
+        )
     return message.as_bytes()
 
 
@@ -377,17 +411,22 @@ class MailClient:
         async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
             yield http
 
-    async def request(self, method: str, url: str, *, http: httpx.AsyncClient | None = None, **options: Any) -> httpx.Response:
+    async def request(
+        self, method: str, url: str, *, http: httpx.AsyncClient | None = None, **options: Any
+    ) -> httpx.Response:
         extra = options.pop("headers", {})
         for attempt in (1, 2, 3):
             access = await self.access_token()
             try:
                 if http is not None:
-                    response = await http.request(method, url, headers={**extra, "Authorization": f"Bearer {access}"}, **options)
+                    response = await http.request(
+                        method, url, headers={**extra, "Authorization": f"Bearer {access}"}, **options
+                    )
                 else:
                     async with self.session() as once:
-                        response = await once.request(method, url, headers={**extra, "Authorization": f"Bearer {access}"},
-                                                      **options)
+                        response = await once.request(
+                            method, url, headers={**extra, "Authorization": f"Bearer {access}"}, **options
+                        )
             except httpx.HTTPError as error:
                 raise MailError(f"{self.label} could not be reached: {error}") from None
             if response.status_code == 401 and attempt == 1:

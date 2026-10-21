@@ -125,7 +125,9 @@ def add_months(local: datetime, months: int, day: int) -> datetime:
     return local.replace(year=year, month=month, day=min(day, last))
 
 
-def next_local(anchor: datetime, repeat: str, after: datetime, tz: ZoneInfo, weekdays: tuple[int, ...] = ()) -> datetime:
+def next_local(
+    anchor: datetime, repeat: str, after: datetime, tz: ZoneInfo, weekdays: tuple[int, ...] = ()
+) -> datetime:
     """The first occurrence of a repeating wall-clock moment that falls strictly after the instant `after`.
 
     `anchor` is the naive local first occurrence: it gives the time of day, the weekday (weekly) and the day of the

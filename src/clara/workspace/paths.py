@@ -7,6 +7,7 @@ and the workspace's own git history is out of reach.
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import unicodedata
@@ -57,10 +58,27 @@ def resolve(root: Path, relative: str, *, must_exist: bool = False) -> Path:
     return current
 
 
+def _open_regular(path: Path, flags: int, mode: int = 0o777) -> int:
+    """Open a regular file. A script can leave a named pipe in the workspace, and opening one that nobody is on the
+    other end of blocks for good: O_NONBLOCK makes the open return (or fail with ENXIO) at once, and anything that is
+    not a file is refused."""
+    refused = PathError(f"{path.name} is not a regular file (a named pipe, a socket or a device): it is not opened.")
+    try:
+        descriptor = os.open(path, flags | os.O_NONBLOCK, mode)
+    except OSError as error:
+        if error.errno == errno.ENXIO:  # a pipe with no reader, or a socket
+            raise refused from None
+        raise
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise refused
+    return descriptor
+
+
 def open_read(path: Path) -> int:
-    return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    return _open_regular(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
 
 
 def open_write(path: Path, *, create_only: bool = False) -> int:
     flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | (os.O_EXCL if create_only else os.O_TRUNC)
-    return os.open(path, flags, 0o644)
+    return _open_regular(path, flags, 0o644)

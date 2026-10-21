@@ -133,8 +133,16 @@ def valid_reminders(moments: Iterable[datetime], now: datetime) -> list[datetime
 class Tasks(DueLoop):
     name = "tasks"
 
-    def __init__(self, db: Database, events: Events, home_zone: str, *, max_reminders: int = 10,
-                 plan_timeout: float = PLAN_TIMEOUT, clock: Callable[[], datetime] = utcnow):
+    def __init__(
+        self,
+        db: Database,
+        events: Events,
+        home_zone: str,
+        *,
+        max_reminders: int = 10,
+        plan_timeout: float = PLAN_TIMEOUT,
+        clock: Callable[[], datetime] = utcnow,
+    ):
         super().__init__(clock)
         self.db = db
         self.events = events
@@ -160,10 +168,23 @@ class Tasks(DueLoop):
             ):
                 queued.setdefault(reminder["task_id"], []).append(parse_iso(reminder["at"]))
         return [
-            Task(row["id"], row["parent_id"], row["position"], row["title"], row["description"], _moment(row["due_at"]),
-                 row["status"], row["reminders_sent"], row["timezone"],
-                 tuple(t for t in row["targets"].split("|") if t), row["conversation_id"], parse_iso(row["created_at"]),
-                 parse_iso(row["updated_at"]), _moment(row["done_at"]), tuple(queued.get(row["id"], ())))
+            Task(
+                row["id"],
+                row["parent_id"],
+                row["position"],
+                row["title"],
+                row["description"],
+                _moment(row["due_at"]),
+                row["status"],
+                row["reminders_sent"],
+                row["timezone"],
+                tuple(t for t in row["targets"].split("|") if t),
+                row["conversation_id"],
+                parse_iso(row["created_at"]),
+                parse_iso(row["updated_at"]),
+                _moment(row["done_at"]),
+                tuple(queued.get(row["id"], ())),
+            )
             for row in rows
         ]
 
@@ -183,8 +204,10 @@ class Tasks(DueLoop):
             raise TaskError("status must be open, done or all.")
         rows = self.db.all("SELECT * FROM tasks" + (" WHERE status = ?" if status else ""), (status,) if status else ())
         far = datetime.max.replace(tzinfo=UTC)
-        return sorted(self._tasks(rows), key=lambda t: (t.status != OPEN, t.next_reminder or t.due_at or far,
-                                                        t.due_at or far, t.id))
+        return sorted(
+            self._tasks(rows),
+            key=lambda t: (t.status != OPEN, t.next_reminder or t.due_at or far, t.due_at or far, t.id),
+        )
 
     def children(self, task_id: int) -> list[Task]:
         return self._tasks(self.db.all("SELECT * FROM tasks WHERE parent_id = ? ORDER BY position, id", (task_id,)))
@@ -194,12 +217,14 @@ class Tasks(DueLoop):
         return sorted(found, key=(lambda t: (t.position, t.id)) if parent_id is not None else (lambda t: t.position))
 
     def descendants(self, task_id: int) -> list[Task]:
-        return self._tasks(self.db.all(
-            "WITH RECURSIVE sub(id) AS (SELECT id FROM tasks WHERE parent_id = ?"
-            " UNION SELECT t.id FROM tasks t JOIN sub ON t.parent_id = sub.id)"
-            " SELECT * FROM tasks WHERE id IN (SELECT id FROM sub) ORDER BY id",
-            (task_id,),
-        ))
+        return self._tasks(
+            self.db.all(
+                "WITH RECURSIVE sub(id) AS (SELECT id FROM tasks WHERE parent_id = ?"
+                " UNION SELECT t.id FROM tasks t JOIN sub ON t.parent_id = sub.id)"
+                " SELECT * FROM tasks WHERE id IN (SELECT id FROM sub) ORDER BY id",
+                (task_id,),
+            )
+        )
 
     def ancestors(self, task: Task) -> list[Task]:
         found: list[Task] = []
@@ -223,13 +248,25 @@ class Tasks(DueLoop):
         limit = self.limit_for(task)[0]
         when = lambda moment: iso(moment) if moment else None  # noqa: E731
         return {
-            "id": task.id, "parent_id": task.parent_id, "position": task.position,
-            "subtasks": {"total": total, "done": done}, "due_limit": when(limit), "title": task.title,
-            "description": task.description, "status": task.status, "due_at": when(task.due_at),
-            "reminders_sent": task.reminders_sent, "max_reminders": self.max_reminders,
-            "next_reminder": when(task.next_reminder), "reminders": [when(at) for at in task.next],
-            "timezone": task.timezone, "targets": list(task.targets), "conversation": task.conversation_id,
-            "created_at": when(task.created_at), "updated_at": when(task.updated_at), "done_at": when(task.done_at),
+            "id": task.id,
+            "parent_id": task.parent_id,
+            "position": task.position,
+            "subtasks": {"total": total, "done": done},
+            "due_limit": when(limit),
+            "title": task.title,
+            "description": task.description,
+            "status": task.status,
+            "due_at": when(task.due_at),
+            "reminders_sent": task.reminders_sent,
+            "max_reminders": self.max_reminders,
+            "next_reminder": when(task.next_reminder),
+            "reminders": [when(at) for at in task.next],
+            "timezone": task.timezone,
+            "targets": list(task.targets),
+            "conversation": task.conversation_id,
+            "created_at": when(task.created_at),
+            "updated_at": when(task.updated_at),
+            "done_at": when(task.done_at),
         }
 
     def line(self, task: Task) -> str:
@@ -250,7 +287,9 @@ class Tasks(DueLoop):
         limit, owner = self.limit_for(task)
         lines = [self.line(task), f"Description: {task.description or '(none)'}"]
         if limit and owner:
-            lines.append(f"Nothing of it may be later than {local_text(limit, task.tz)} (the deadline of “{owner.title}”).")
+            lines.append(
+                f"Nothing of it may be later than {local_text(limit, task.tz)} (the deadline of “{owner.title}”)."
+            )
         lines.extend(f"Sub task: {self.line(kid)}" for kid in self.children(task.id))
         if len(task.next) > 1:
             lines.append("Reminders to come: " + ", ".join(local_text(at, task.tz) for at in task.next))
@@ -269,8 +308,10 @@ class Tasks(DueLoop):
             lines.append(f"No reminder may be after {local_text(limit, task.tz)} (the deadline of “{owner.title}”)")
         kids = self.children(task.id)
         if kids:
-            lines.append(f"Its sub tasks ({sum(k.status == DONE for k in kids)} of {len(kids)} done): "
-                         + "; ".join(f"{k.title} ({k.status})" for k in kids[:10]))
+            lines.append(
+                f"Its sub tasks ({sum(k.status == DONE for k in kids)} of {len(kids)} done): "
+                + "; ".join(f"{k.title} ({k.status})" for k in kids[:10])
+            )
         return lines
 
     # ------------------------------------------------------------------
@@ -289,8 +330,13 @@ class Tasks(DueLoop):
         return owner.due_at, owner
 
     @staticmethod
-    def _inside(limit: datetime | None, owner: Task | None, zone_name: str, due_at: datetime | None,
-                moments: Iterable[datetime] = ()) -> None:
+    def _inside(
+        limit: datetime | None,
+        owner: Task | None,
+        zone_name: str,
+        due_at: datetime | None,
+        moments: Iterable[datetime] = (),
+    ) -> None:
         if limit is None or owner is None:
             return
         tz = zone(zone_name)
@@ -299,20 +345,26 @@ class Tasks(DueLoop):
             raise TaskError(f"A sub task cannot be due after the task it is part of: the limit is {when}.")
         late = [m for m in moments if m > limit]
         if late:
-            raise TaskError(f"A reminder of a sub task cannot be after the deadline of the task it is part of: "
-                            f"{local_text(min(late), tz)} is too late, the limit is {when}.")
+            raise TaskError(
+                f"A reminder of a sub task cannot be after the deadline of the task it is part of: "
+                f"{local_text(min(late), tz)} is too late, the limit is {when}."
+            )
 
     def _inside_subtasks(self, task: Task, due_at: datetime) -> None:
         for sub in self.descendants(task.id):
             if (sub.due_at is not None and sub.due_at > due_at) or any(at > due_at for at in sub.next):
-                raise TaskError(f"The sub task [{sub.id}] “{sub.title}” is due or reminded after "
-                                f"{local_text(due_at, task.tz)}: change it first.")
+                raise TaskError(
+                    f"The sub task [{sub.id}] “{sub.title}” is due or reminded after "
+                    f"{local_text(due_at, task.tz)}: change it first."
+                )
 
     @staticmethod
     def _before(limit: datetime | None, moments: Iterable[datetime]) -> list[datetime]:
         return [m for m in moments if limit is None or m <= limit]
 
-    def _default_queue(self, due: datetime | None, now: datetime, zone_name: str, limit: datetime | None) -> list[datetime]:
+    def _default_queue(
+        self, due: datetime | None, now: datetime, zone_name: str, limit: datetime | None
+    ) -> list[datetime]:
         queue = self._before(limit, default_reminders(due, now, zone_name))
         if not queue and limit is not None and limit > now + timedelta(minutes=1):
             queue = [limit]
@@ -374,8 +426,10 @@ class Tasks(DueLoop):
 
     def _queue(self, tx, task_id: int, reminders: Iterable[datetime]) -> None:
         tx.execute("DELETE FROM task_reminders WHERE task_id = ?", (task_id,))
-        tx.executemany("INSERT INTO task_reminders (task_id, at) VALUES (?, ?)",
-                       [(task_id, iso(at)) for at in sorted(set(reminders))])
+        tx.executemany(
+            "INSERT INTO task_reminders (task_id, at) VALUES (?, ?)",
+            [(task_id, iso(at)) for at in sorted(set(reminders))],
+        )
 
     def _set_reminders(self, task_id: int, reminders: Iterable[datetime], now: datetime) -> None:
         with self.db.transaction() as tx:
@@ -386,13 +440,23 @@ class Tasks(DueLoop):
         with self.db.transaction() as tx:
             if status == DONE:
                 tx.execute("DELETE FROM task_reminders WHERE task_id = ?", (task_id,))
-            tx.execute("UPDATE tasks SET status = ?, done_at = ?, updated_at = ? WHERE id = ?",
-                       (status, iso(now) if status == DONE else None, iso(now), task_id))
+            tx.execute(
+                "UPDATE tasks SET status = ?, done_at = ?, updated_at = ? WHERE id = ?",
+                (status, iso(now) if status == DONE else None, iso(now), task_id),
+            )
 
-    async def create(self, title: str, description: str = "", due: str | None = None,
-                     reminders: Iterable[str] | None = None, *, timezone: str | None = None,
-                     targets: Iterable[str] | None = None, parent_id: int | None = None,
-                     conversation_id: str | None = None) -> Task:
+    async def create(
+        self,
+        title: str,
+        description: str = "",
+        due: str | None = None,
+        reminders: Iterable[str] | None = None,
+        *,
+        timezone: str | None = None,
+        targets: Iterable[str] | None = None,
+        parent_id: int | None = None,
+        conversation_id: str | None = None,
+    ) -> Task:
         title, description, shown = self._title(title), self._description(description), self._targets(targets)
         now = self._clock()
         parent = None
@@ -426,17 +490,35 @@ class Tasks(DueLoop):
             task_id = tx.execute(
                 "INSERT INTO tasks (parent_id, position, title, description, due_at, timezone, targets, conversation_id,"
                 " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (parent_id, last + 1 if last else 0, title, description, iso(due_at) if due_at else None, zone_name,
-                 "|".join(shown), conversation_id, iso(now), iso(now)),
+                (
+                    parent_id,
+                    last + 1 if last else 0,
+                    title,
+                    description,
+                    iso(due_at) if due_at else None,
+                    zone_name,
+                    "|".join(shown),
+                    conversation_id,
+                    iso(now),
+                    iso(now),
+                ),
             ).lastrowid
             self._queue(tx, int(task_id or 0), queue)
         self.wake()
         task = self.get(int(task_id or 0))
         return task if given else await self._plan(task)
 
-    def update(self, task_id: int, *, title: str | None = None, description: str | None = None, due: Any = NO_DUE,
-               reminders: Iterable[str] | None = None, targets: Iterable[str] | None = None,
-               timezone: str | None = None) -> Task:
+    def update(
+        self,
+        task_id: int,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        due: Any = NO_DUE,
+        reminders: Iterable[str] | None = None,
+        targets: Iterable[str] | None = None,
+        timezone: str | None = None,
+    ) -> Task:
         """Change only what is given. `due` "" or None removes the deadline; `reminders` replaces the queue ([]: stop)."""
         task = self.get(task_id)
         now = self._clock()
@@ -473,8 +555,10 @@ class Tasks(DueLoop):
         with self.db.transaction() as tx:
             if fields:
                 assignments = ", ".join(f"{name} = ?" for name in fields)
-                tx.execute(f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ?",
-                           (*fields.values(), iso(now), task_id))
+                tx.execute(
+                    f"UPDATE tasks SET {assignments}, updated_at = ? WHERE id = ?",
+                    (*fields.values(), iso(now), task_id),
+                )
             if queue is not None:
                 self._queue(tx, task_id, queue)
                 tx.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (iso(now), task_id))
@@ -502,8 +586,9 @@ class Tasks(DueLoop):
         above = [a for a in self.ancestors(task) if a.status == DONE]
         for parent in reversed(above):
             self._set_status(parent.id, OPEN, now)
-            self._set_reminders(parent.id, self._default_queue(parent.due_at, now, parent.timezone,
-                                                               self.limit_for(parent)[0]), now)
+            self._set_reminders(
+                parent.id, self._default_queue(parent.due_at, now, parent.timezone, self.limit_for(parent)[0]), now
+            )
         self._set_status(task.id, OPEN, now)
         self._set_reminders(task.id, given or self._default_queue(task.due_at, now, task.timezone, limit), now)
         self.wake()
@@ -545,10 +630,13 @@ class Tasks(DueLoop):
             order.insert(order.index(before), task.id)
         now = self._clock()
         with self.db.transaction() as tx:
-            tx.execute("UPDATE tasks SET parent_id = ?, updated_at = ? WHERE id = ? AND parent_id IS NOT ?",
-                       (new_parent_id, iso(now), task.id, new_parent_id))
-            tx.executemany("UPDATE tasks SET position = ? WHERE id = ?",
-                           [(number, other) for number, other in enumerate(order, 1)])
+            tx.execute(
+                "UPDATE tasks SET parent_id = ?, updated_at = ? WHERE id = ? AND parent_id IS NOT ?",
+                (new_parent_id, iso(now), task.id, new_parent_id),
+            )
+            tx.executemany(
+                "UPDATE tasks SET position = ? WHERE id = ?", [(number, other) for number, other in enumerate(order, 1)]
+            )
         if changing:
             self._settle(task.parent_id, now)
         self.wake()
@@ -587,15 +675,18 @@ class Tasks(DueLoop):
     # ------------------------------------------------------------------
     def next_due(self) -> datetime | None:
         value = self.db.value(
-            "SELECT MIN(r.at) FROM task_reminders r JOIN tasks t ON t.id = r.task_id WHERE t.status = 'open'")
+            "SELECT MIN(r.at) FROM task_reminders r JOIN tasks t ON t.id = r.task_id WHERE t.status = 'open'"
+        )
         return parse_iso(value) if value else None
 
     def _due(self, now: datetime) -> list[Task]:
-        return self._tasks(self.db.all(
-            "SELECT t.* FROM tasks t JOIN task_reminders r ON r.task_id = t.id WHERE t.status = 'open' AND r.at <= ?"
-            " GROUP BY t.id ORDER BY MIN(r.at), t.id",
-            (iso(now),),
-        ))
+        return self._tasks(
+            self.db.all(
+                "SELECT t.* FROM tasks t JOIN task_reminders r ON r.task_id = t.id WHERE t.status = 'open' AND r.at <= ?"
+                " GROUP BY t.id ORDER BY MIN(r.at), t.id",
+                (iso(now),),
+            )
+        )
 
     async def fire_due(self) -> int:
         started = self._clock()
@@ -650,11 +741,18 @@ class Tasks(DueLoop):
             text += " This was the last reminder of this task: mark it done, or ask me to remind you again."
         with self.db.transaction() as tx:
             self._queue(tx, task.id, remaining)
-            tx.execute("UPDATE tasks SET reminders_sent = reminders_sent + 1, updated_at = ? WHERE id = ?",
-                       (iso(now), task.id))
-        self.events.publish("task", f"Task: {task.title}", text[:NOTIFICATION_TEXT],
-                            payload={"task": self.describe(self.get(task.id)), "last": last},
-                            targets=task.targets, source="tasks", conversation_id=task.conversation_id)
+            tx.execute(
+                "UPDATE tasks SET reminders_sent = reminders_sent + 1, updated_at = ? WHERE id = ?", (iso(now), task.id)
+            )
+        self.events.publish(
+            "task",
+            f"Task: {task.title}",
+            text[:NOTIFICATION_TEXT],
+            payload={"task": self.describe(self.get(task.id)), "last": last},
+            targets=task.targets,
+            source="tasks",
+            conversation_id=task.conversation_id,
+        )
 
     @staticmethod
     def _plain_text(task: Task, sent: int) -> str:

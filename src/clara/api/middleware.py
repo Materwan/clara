@@ -44,9 +44,17 @@ def limit_for(path: str) -> int:
 
 async def _json(send: Callable, status: int, body: dict, headers: list | None = None) -> None:
     data = json.dumps(body).encode()
-    await send({"type": "http.response.start", "status": status,
-                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(data)).encode()),
-                            *(headers or [])]})
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(data)).encode()),
+                *(headers or []),
+            ],
+        }
+    )
     await send({"type": "http.response.body", "body": data})
 
 
@@ -82,12 +90,17 @@ class AuthMiddleware:
         if found is None:
             self.s.limiter.fail(address)
             self.s.traffic.record("auth_failure", path=path, address=address)
-            await _json(send, 401, error_body(401, "Sign in first: send Authorization: Bearer <token>."),
-                        [(b"www-authenticate", b"Bearer")])
+            await _json(
+                send,
+                401,
+                error_body(401, "Sign in first: send Authorization: Bearer <token>."),
+                [(b"www-authenticate", b"Bearer")],
+            )
             return
         token, session_id = found
-        scope.setdefault("state", {})["caller"] = Caller(token, client_label(headers.get("x-clara-client"), token),
-                                                         session_id)
+        scope.setdefault("state", {})["caller"] = Caller(
+            token, client_label(headers.get("x-clara-client"), token), session_id
+        )
         await self.app(scope, receive, send)
 
     def authenticate(self, headers: dict[str, str]):
@@ -144,7 +157,9 @@ class BodyLimitMiddleware:
                 if seen > limit and not refused:
                     refused = True
                     if not started:
-                        await _json(send, 413, error_body(413, f"This request is too big: at most {limit // MEGABYTE} MB."))
+                        await _json(
+                            send, 413, error_body(413, f"This request is too big: at most {limit // MEGABYTE} MB.")
+                        )
                     return {"type": "http.disconnect"}
             return message
 
@@ -193,13 +208,23 @@ class TrafficMiddleware:
         finally:
             caller = scope.get("state", {}).get("caller")
             self.s.traffic.record(
-                "http", method=scope["method"], path=_route(scope["path"]), status=status,
-                ms=int((time.monotonic() - begun) * 1000), client=caller.name if caller else None,
-                label=caller.client if caller else None, bytes_in=received, bytes_out=sent,
+                "http",
+                method=scope["method"],
+                path=_route(scope["path"]),
+                status=status,
+                ms=int((time.monotonic() - begun) * 1000),
+                client=caller.name if caller else None,
+                label=caller.client if caller else None,
+                bytes_in=received,
+                bytes_out=sent,
             )
             if caller is not None and self.s.traffic.debugging:
-                self.s.traffic.content("http", method=scope["method"], path=scope["path"],
-                                       query=scope.get("query_string", b"").decode("latin-1"))
+                self.s.traffic.content(
+                    "http",
+                    method=scope["method"],
+                    path=scope["path"],
+                    query=scope.get("query_string", b"").decode("latin-1"),
+                )
 
 
 _ID = re.compile(r"/(?:c[0-9a-f]{16}|\d+|[0-9a-f]{32})(?=/|$)")
@@ -231,8 +256,13 @@ class SecurityHeadersMiddleware:
         async def with_headers(message: dict) -> None:
             if message["type"] == "http.response.start":
                 names = {name for name, _ in message.get("headers", [])}
-                message = {**message, "headers": [*message.get("headers", []),
-                                                  *(header for header in SECURITY_HEADERS if header[0] not in names)]}
+                message = {
+                    **message,
+                    "headers": [
+                        *message.get("headers", []),
+                        *(header for header in SECURITY_HEADERS if header[0] not in names),
+                    ],
+                }
             await send(message)
 
         await self.app(scope, receive, with_headers)

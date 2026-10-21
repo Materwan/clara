@@ -41,8 +41,9 @@ class LlmError(Exception):
     short name for the failure (`FreeTierError`, `invalid_value`), a plain token that cannot carry what you wrote, which
     is why it may be logged where the message may not."""
 
-    def __init__(self, message: str, status: int | None = None, retry_after: float | None = None,
-                 code: str | None = None):
+    def __init__(
+        self, message: str, status: int | None = None, retry_after: float | None = None, code: str | None = None
+    ):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
@@ -84,8 +85,12 @@ class Capabilities:
 
 
 CHAT = "chat"  # OpenAI's Chat Completions: the only protocol of a hosted model that Clara speaks
-PROTOCOLS = {CHAT: "Chat Completions", "responses": "OpenAI Responses", "messages": "Anthropic Messages",
-             "google": "Google Gemini"}
+PROTOCOLS = {
+    CHAT: "Chat Completions",
+    "responses": "OpenAI Responses",
+    "messages": "Anthropic Messages",
+    "google": "Google Gemini",
+}
 
 
 @dataclass(frozen=True)
@@ -117,8 +122,9 @@ class Backend(Protocol):
 
     model: str
 
-    def stream(self, messages: list[dict], tools: list[dict] | None,
-               session: str | None = None) -> AsyncIterator[LlmChunk]:
+    def stream(
+        self, messages: list[dict], tools: list[dict] | None, session: str | None = None
+    ) -> AsyncIterator[LlmChunk]:
         """`session` names the conversation, for the providers that route on it (OpenCode)."""
         ...
 

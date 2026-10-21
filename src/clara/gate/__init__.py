@@ -1,7 +1,7 @@
 """The rule gate: rules, decisions, approvals and the audit log."""
 
 from .actions import CLASSES, EFFECTS, LEVELS, SITUATIONS, Action, Decision, Situation
-from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals
+from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals, NoRuleError
 from .engine import Audit, Gate, args_digest
 from .rules import Rule, RuleError, Rules
 
@@ -19,6 +19,7 @@ __all__ = [
     "Audit",
     "Decision",
     "Gate",
+    "NoRuleError",
     "Rule",
     "RuleError",
     "Rules",

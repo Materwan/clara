@@ -50,7 +50,7 @@ def check(kind: EventKind, raw: Any) -> dict:
         if type_ == "bool":
             wanted = spec.get("eq") if isinstance(spec, dict) else spec
             if not isinstance(wanted, bool) or (isinstance(spec, dict) and set(spec) != {"eq"}):
-                raise FilterError(f"{name}: true or false ({{\"eq\": true}}).")
+                raise FilterError(f'{name}: true or false ({{"eq": true}}).')
             clean[name] = {"eq": wanted}
             continue
         operators = spec if isinstance(spec, dict) else {"contains": spec}

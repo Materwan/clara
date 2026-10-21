@@ -59,9 +59,17 @@ class Fact:
 
     def describe(self) -> dict:
         return {
-            "id": self.id, "text": self.text, "category": self.category, "pinned": self.pinned, "source": self.source,
-            "confirmed": self.confirmed, "conversation": self.conversation_id, "created_at": self.created_at,
-            "confirmed_at": self.confirmed_at, "expires_at": self.expires_at, "superseded_by": self.superseded_by,
+            "id": self.id,
+            "text": self.text,
+            "category": self.category,
+            "pinned": self.pinned,
+            "source": self.source,
+            "confirmed": self.confirmed,
+            "conversation": self.conversation_id,
+            "created_at": self.created_at,
+            "confirmed_at": self.confirmed_at,
+            "expires_at": self.expires_at,
+            "superseded_by": self.superseded_by,
         }
 
 
@@ -79,8 +87,19 @@ def fts_query(text: str) -> str:
 
 
 def _fact(row) -> Fact:
-    return Fact(row["id"], row["text"], row["category"], bool(row["pinned"]), row["source"], bool(row["confirmed"]),
-                row["conversation_id"], row["created_at"], row["confirmed_at"], row["expires_at"], row["superseded_by"])
+    return Fact(
+        row["id"],
+        row["text"],
+        row["category"],
+        bool(row["pinned"]),
+        row["source"],
+        bool(row["confirmed"]),
+        row["conversation_id"],
+        row["created_at"],
+        row["confirmed_at"],
+        row["expires_at"],
+        row["superseded_by"],
+    )
 
 
 LIVE = "superseded_by IS NULL AND (expires_at IS NULL OR expires_at > ?)"
@@ -90,8 +109,17 @@ class Facts:
     def __init__(self, db: Database):
         self.db = db
 
-    def add(self, text: str, source: str, *, category: str = "", pinned: bool = False, conversation_id: str | None = None,
-            expires_at: str | None = None, replaces: int | None = None) -> tuple[Fact, bool]:
+    def add(
+        self,
+        text: str,
+        source: str,
+        *,
+        category: str = "",
+        pinned: bool = False,
+        conversation_id: str | None = None,
+        expires_at: str | None = None,
+        replaces: int | None = None,
+    ) -> tuple[Fact, bool]:
         """Store a fact. (the fact, True) when new; (the live fact with the same text, False) when known already."""
         text = " ".join(str(text).split())
         if not text:
@@ -121,11 +149,23 @@ class Facts:
             fact_id = tx.execute(
                 "INSERT INTO facts (text, text_key, category, pinned, source, confirmed, conversation_id, created_at,"
                 " confirmed_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (text, key, category, int(pinned), source, int(confirmed), conversation_id, now,
-                 now if confirmed else None, expires_at),
+                (
+                    text,
+                    key,
+                    category,
+                    int(pinned),
+                    source,
+                    int(confirmed),
+                    conversation_id,
+                    now,
+                    now if confirmed else None,
+                    expires_at,
+                ),
             ).lastrowid
             if replaces is not None:
-                tx.execute("UPDATE facts SET superseded_by = ?, superseded_at = ? WHERE id = ?", (fact_id, now, replaces))
+                tx.execute(
+                    "UPDATE facts SET superseded_by = ?, superseded_at = ? WHERE id = ?", (fact_id, now, replaces)
+                )
         fact = self.get(int(fact_id or 0))
         assert fact is not None
         return fact, True
@@ -136,7 +176,9 @@ class Facts:
 
     def live(self, limit: int = 500) -> list[Fact]:
         """The facts that hold now: pinned first, then newest first."""
-        rows = self.db.all(f"SELECT * FROM facts WHERE {LIVE} ORDER BY pinned DESC, id DESC LIMIT ?", (now_iso(), limit))
+        rows = self.db.all(
+            f"SELECT * FROM facts WHERE {LIVE} ORDER BY pinned DESC, id DESC LIMIT ?", (now_iso(), limit)
+        )
         return [_fact(row) for row in rows]
 
     def count_live(self) -> int:
@@ -170,8 +212,15 @@ class Facts:
         )
         return [_fact(row) for row in rows]
 
-    def update(self, fact_id: int, *, text: str | None = None, category: str | None = None, pinned: bool | None = None,
-               expires_at: str | None | bool = False) -> Fact:
+    def update(
+        self,
+        fact_id: int,
+        *,
+        text: str | None = None,
+        category: str | None = None,
+        pinned: bool | None = None,
+        expires_at: str | None | bool = False,
+    ) -> Fact:
         """Your edit of a fact (the Memory page): it becomes yours, and confirmed. `expires_at` False: unchanged."""
         fact = self.get(fact_id)
         if fact is None:
@@ -205,8 +254,13 @@ class Facts:
         return updated
 
     def confirm(self, fact_id: int) -> Fact:
-        if self.db.execute("UPDATE facts SET confirmed = 1, confirmed_at = ? WHERE id = ? AND confirmed = 0",
-                           (now_iso(), fact_id)).rowcount == 0 and self.get(fact_id) is None:
+        if (
+            self.db.execute(
+                "UPDATE facts SET confirmed = 1, confirmed_at = ? WHERE id = ? AND confirmed = 0", (now_iso(), fact_id)
+            ).rowcount
+            == 0
+            and self.get(fact_id) is None
+        ):
             raise FactError(f"No fact {fact_id}.")
         fact = self.get(fact_id)
         assert fact is not None
@@ -220,12 +274,18 @@ class Facts:
         with self.db.transaction() as tx:
             chain = [fact_id]
             while True:
-                older = [row[0] for row in tx.execute(
-                    f"SELECT id FROM facts WHERE superseded_by IN ({','.join('?' * len(chain))})", chain).fetchall()
-                    if row[0] not in chain]
+                older = [
+                    row[0]
+                    for row in tx.execute(
+                        f"SELECT id FROM facts WHERE superseded_by IN ({','.join('?' * len(chain))})", chain
+                    ).fetchall()
+                    if row[0] not in chain
+                ]
                 if not older:
                     break
                 chain.extend(older)
-            tx.execute("INSERT OR REPLACE INTO forgotten (text_key, forgotten_at) VALUES (?, ?)", (fold(fact.text), now_iso()))
+            tx.execute(
+                "INSERT OR REPLACE INTO forgotten (text_key, forgotten_at) VALUES (?, ?)", (fold(fact.text), now_iso())
+            )
             tx.execute(f"DELETE FROM facts WHERE id IN ({','.join('?' * len(chain))})", chain)
         return True

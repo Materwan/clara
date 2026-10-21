@@ -42,22 +42,45 @@ def _legacy(s: Services, schedule_id: int, packs: list[str]) -> int:
     if not s.db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'recaps_legacy'"):
         return 0
     moved = 0
+    unreadable: list[str] = []
     for row in s.db.all("SELECT * FROM recaps_legacy ORDER BY day"):
         status = LEGACY.get(row["status"])
         if status is None:
+            log.info("recap of %s not moved: it was only being asked (status %s)", row["day"], row["status"])
             continue
         try:
-            due = iso(resolve_local(datetime.combine(datetime.fromisoformat(row["day"]).date(), time(23, 59)), zone(row["timezone"])))
+            due = iso(
+                resolve_local(
+                    datetime.combine(datetime.fromisoformat(row["day"]).date(), time(23, 59)), zone(row["timezone"])
+                )
+            )
         except ValueError:
+            unreadable.append(f"{row['day']!r} ({row['timezone']!r})")
             continue
         s.db.execute(
             "INSERT INTO schedule_runs (schedule_id, due_at, started_at, finished_at, status, summary, conversation_id,"
             " waiting_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (schedule_id, due, row["asked_at"], row["finished_at"], status, row["note_path"] or row["error"],
-             row["conversation_id"], row["asked_at"] if status == "waiting" else None))
+            (
+                schedule_id,
+                due,
+                row["asked_at"],
+                row["finished_at"],
+                status,
+                row["note_path"] or row["error"],
+                row["conversation_id"],
+                row["asked_at"] if status == "waiting" else None,
+            ),
+        )
         if row["conversation_id"] and s.conversations.get(row["conversation_id"]):
             s.conversations.update(row["conversation_id"], packs=packs)
         moved += 1
+    if unreadable:  # the table is the only copy of these days: it stays, so nothing is lost without a trace
+        log.warning(
+            "%d earlier recap(s) could not be moved (unreadable day or time zone: %s); the table recaps_legacy is kept",
+            len(unreadable),
+            ", ".join(unreadable),
+        )
+        return moved
     s.db.execute("DROP TABLE recaps_legacy")
     return moved
 
@@ -68,9 +91,25 @@ def seed(s: Services) -> int | None:
         return None
     tz = s.settings.timezone
     today = s.schedules.local_now(tz).date()
-    schedule = s.schedules.create(NAME, PROMPT, f"{today.isoformat()}T{AT}", timezone=tz, repeat="daily", packs=PACKS,
-                                  per_run=True, missed="latest", overlap="replace")
+    schedule = s.schedules.create(
+        NAME,
+        PROMPT,
+        f"{today.isoformat()}T{AT}",
+        timezone=tz,
+        repeat="daily",
+        packs=PACKS,
+        per_run=True,
+        missed="latest",
+        overlap="replace",
+    )
     moved = _legacy(s, schedule.id, PACKS)
-    s.db.execute("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (SEED_KEY, json.dumps(schedule.id), now_iso()))
-    log.info("made the schedule “%s” (every day at %s)%s", NAME, AT, f"; {moved} earlier day(s) moved into it" if moved else "")
+    s.db.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (SEED_KEY, json.dumps(schedule.id), now_iso())
+    )
+    log.info(
+        "made the schedule “%s” (every day at %s)%s",
+        NAME,
+        AT,
+        f"; {moved} earlier day(s) moved into it" if moved else "",
+    )
     return schedule.id

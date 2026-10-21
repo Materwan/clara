@@ -22,8 +22,12 @@ def install(s: Services) -> None:
     if not path.is_dir():
         s.alerts.raise_("vault", "The vault is missing", f"CLARA_VAULT_PATH={path} is not a folder.")
         return
-    git = GitSync(path, push=s.settings.vault_push, pull_every=float(s.settings.vault_pull_seconds),
-                  token=s.secrets.get("vault_git_token") or "")
+    git = GitSync(
+        path,
+        push=s.settings.vault_push,
+        pull_every=float(s.settings.vault_pull_seconds),
+        token=s.secrets.get("vault_git_token") or "",
+    )
     git.on_problem = lambda text: s.alerts.raise_("vault_push", "The vault could not be synced", text)
     git.on_success = lambda: s.alerts.clear("vault_push")
     vault = Vault(path, s.db, git, s.settings.timezone)

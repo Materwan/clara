@@ -35,9 +35,14 @@ def _problem(error: Exception) -> ApiError:
 def status(request: Request) -> dict:
     s = services(request)
     workspace = _workspace(request)
-    return {"root": str(workspace.root), "size": workspace.size_bytes(), "max_size": workspace.max_bytes,
-            "max_file": workspace.max_file_bytes, "run_ready": bool(s.sandbox and s.sandbox.ready),
-            "run_problem": s.sandbox.problem if s.sandbox else "no sandbox"}
+    return {
+        "root": str(workspace.root),
+        "size": workspace.size_bytes(),
+        "max_size": workspace.max_bytes,
+        "max_file": workspace.max_file_bytes,
+        "run_ready": bool(s.sandbox and s.sandbox.ready),
+        "run_problem": s.sandbox.problem if s.sandbox else "no sandbox",
+    }
 
 
 @router.get("/tree")
@@ -60,11 +65,19 @@ def read(request: Request, path: str = Query(min_length=1, max_length=400), raw:
         media = mimetypes.guess_type(name)[0] or "application/octet-stream"
         safe = "".join(char if char.isalnum() or char in "._- " else "_" for char in name.rsplit("/", 1)[-1])[:100]
         # always a download, never rendered: a file Clara wrote must not run as a page of this site
-        return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{safe}"',
-                                                         "Content-Security-Policy": "sandbox"})
+        return Response(
+            data,
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{safe}"', "Content-Security-Policy": "sandbox"},
+        )
     if looks_binary(data):
         return JSONResponse({"path": name, "binary": True, "size": len(data)})
-    return JSONResponse({"path": name, "binary": False, "size": len(data), "content": data.decode("utf-8", "replace")})
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        # shown as text, it would lose the bytes that are not UTF-8 when saved back: offered as a download only
+        return JSONResponse({"path": name, "binary": True, "size": len(data), "encoding": "not UTF-8"})
+    return JSONResponse({"path": name, "binary": False, "size": len(data), "content": text})
 
 
 class Upload(BaseModel):
@@ -81,8 +94,9 @@ async def upload(body: Upload, request: Request) -> dict:
     except (binascii.Error, ValueError):
         raise ApiError(422, "The file is not base64.") from None
     try:
-        change = await workspace.write(body.path, data, overwrite=body.overwrite,
-                                       message=f"upload by {caller(request).name}: {clean(body.path)}")
+        change = await workspace.write(
+            body.path, data, overwrite=body.overwrite, message=f"upload by {caller(request).name}: {clean(body.path)}"
+        )
     except (WorkspaceError, PathError) as error:
         raise _problem(error) from None
     return {"path": change.path, "action": change.action, "size": change.size, "commit": change.commit}
@@ -96,8 +110,9 @@ class TextFile(BaseModel):
 @router.put("/file")
 async def write(body: TextFile, request: Request) -> dict:
     try:
-        change = await _workspace(request).write(body.path, body.content, overwrite=True,
-                                                 message=f"edit by {caller(request).name}: {clean(body.path)}")
+        change = await _workspace(request).write(
+            body.path, body.content, overwrite=True, message=f"edit by {caller(request).name}: {clean(body.path)}"
+        )
     except (WorkspaceError, PathError) as error:
         raise _problem(error) from None
     return {"path": change.path, "action": change.action, "size": change.size, "commit": change.commit}

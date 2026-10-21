@@ -43,6 +43,7 @@ class TurnState:
     conversation_id: str
     client: str
     mode: str = "interactive"  # or unattended
+    waits_for_approvals: bool = False  # the turn holds the requests it asks for until they are answered
     timezone: str = "UTC"
     project_id: int | None = None
     incognito: bool = False
@@ -92,7 +93,9 @@ class Tool:
         }
 
 
-def fixed(klass: str, level: str, target: str | Callable[[ToolContext, dict], str], summary: str | Callable[[dict], str]) -> Describe:
+def fixed(
+    klass: str, level: str, target: str | Callable[[ToolContext, dict], str], summary: str | Callable[[dict], str]
+) -> Describe:
     """A describe function for tools whose class and level do not depend on their arguments."""
 
     def describe(context: ToolContext, arguments: dict) -> Action:
@@ -146,7 +149,9 @@ class Toolbox:
         """What a call would do, named after its tool whatever the describe function said."""
         return replace(self._tools[name].describe(context, arguments), tool=name)
 
-    async def call(self, name: str, context: ToolContext, arguments: dict, offered: frozenset[str] | set[str]) -> CallResult:
+    async def call(
+        self, name: str, context: ToolContext, arguments: dict, offered: frozenset[str] | set[str]
+    ) -> CallResult:
         """One call of the model: described, decided by the gate, then run, refused, or held for your answer."""
         tool = self._tools.get(name)
         if tool is None or name not in offered:
@@ -163,10 +168,16 @@ class Toolbox:
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
         if decision.effect == "refuse":
             self.audit.record(action, situation, digest, decision, "floor" if decision.floor else "refused", **common)
-            return CallResult(REFUSED.format(reason=decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"))
+            return CallResult(
+                REFUSED.format(
+                    reason=decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
+                )
+            )
         if decision.effect == "ask":
             if self.approvals is None:
-                self.audit.record(action, situation, digest, decision, "refused", detail="no approval service", **common)
+                self.audit.record(
+                    action, situation, digest, decision, "refused", detail="no approval service", **common
+                )
                 return CallResult(REFUSED.format(reason="it needs your approval and approvals are not available"))
             approval = self.approvals.create(action, situation, context, arguments, decision)
             self.audit.record(action, situation, digest, decision, "asked", approval_id=approval.id, **common)

@@ -71,12 +71,19 @@ def problem_with(path: Path, what: str) -> str | None:
 
 def check_private(env_file: Path | None, data_dir: Path, key_file: Path | None) -> list[str]:
     problems = []
-    for path, what in ((env_file, "The settings file"), (data_dir, "The data folder"), (key_file, "The secret key file")):
+    for path, what in (
+        (env_file, "The settings file"),
+        (data_dir, "The data folder"),
+        (key_file, "The secret key file"),
+    ):
         if path is None:
             continue
         # systemd hands credentials in a folder of its own, private to the service: nothing to check there
-        if what == "The secret key file" and os.environ.get("CREDENTIALS_DIRECTORY") and \
-                str(path).startswith(os.environ["CREDENTIALS_DIRECTORY"]):
+        if (
+            what == "The secret key file"
+            and os.environ.get("CREDENTIALS_DIRECTORY")
+            and str(path).startswith(os.environ["CREDENTIALS_DIRECTORY"])
+        ):
             continue
         found = problem_with(path, what)
         if found:
@@ -84,6 +91,8 @@ def check_private(env_file: Path | None, data_dir: Path, key_file: Path | None) 
     if key_file is not None:
         with contextlib.suppress(ValueError, OSError):
             if key_file.resolve().is_relative_to(data_dir.resolve()):
-                problems.append(f"The secret key file {key_file} is inside the data folder: keep it elsewhere "
-                                "(a systemd credential), or a copy of the data folder carries its own key.")
+                problems.append(
+                    f"The secret key file {key_file} is inside the data folder: keep it elsewhere "
+                    "(a systemd credential), or a copy of the data folder carries its own key."
+                )
     return problems

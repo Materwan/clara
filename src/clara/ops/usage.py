@@ -20,14 +20,38 @@ class UsageLog:
     def __init__(self, db: Database):
         self.db = db
 
-    def record(self, *, kind: str, client: str, conversation_id: str | None, provider: str, model: str,
-               prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0, duration_ms: int = 0,
-               outcome: str = "ok", estimated: bool = False) -> None:
+    def record(
+        self,
+        *,
+        kind: str,
+        client: str,
+        conversation_id: str | None,
+        provider: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cached_tokens: int = 0,
+        duration_ms: int = 0,
+        outcome: str = "ok",
+        estimated: bool = False,
+    ) -> None:
         self.db.execute(
             "INSERT INTO usage_log (at, kind, client, conversation_id, provider, model, prompt_tokens, completion_tokens,"
             " cached_tokens, duration_ms, outcome, estimated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now_iso(), kind, client, conversation_id, provider, model, prompt_tokens, completion_tokens,
-             min(cached_tokens, prompt_tokens), duration_ms, outcome, int(estimated)),
+            (
+                now_iso(),
+                kind,
+                client,
+                conversation_id,
+                provider,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                min(cached_tokens, prompt_tokens),
+                duration_ms,
+                outcome,
+                int(estimated),
+            ),
         )
 
     def stats(self, period: str = "30d", group: str = "day") -> dict:
@@ -37,8 +61,13 @@ class UsageLog:
             raise ValueError(f"group must be one of {', '.join(GROUPS)}")
         days = PERIODS[period]
         since = iso(utcnow() - timedelta(days=days)) if days else ""
-        key = {"day": "substr(at, 1, 10)", "model": "provider || ':' || model", "kind": "kind", "provider": "provider",
-               "client": "client"}[group]
+        key = {
+            "day": "substr(at, 1, 10)",
+            "model": "provider || ':' || model",
+            "kind": "kind",
+            "provider": "provider",
+            "client": "client",
+        }[group]
         rows = self.db.all(
             f"SELECT {key} AS key, COUNT(*) AS calls, SUM(prompt_tokens) AS prompt, SUM(completion_tokens) AS completion,"
             " SUM(cached_tokens) AS cached, SUM(duration_ms) AS duration_ms, SUM(estimated) AS estimated,"
@@ -53,9 +82,7 @@ class UsageLog:
         return {"period": period, "group": group, "rows": [dict(row) for row in rows], "totals": dict(totals or {})}
 
     def history(self, limit: int = 100, before_id: int | None = None) -> list[dict]:
-        rows = self.db.all(
-            "SELECT * FROM usage_log WHERE id < ? ORDER BY id DESC LIMIT ?", (before_id or 2**62, limit)
-        )
+        rows = self.db.all("SELECT * FROM usage_log WHERE id < ? ORDER BY id DESC LIMIT ?", (before_id or 2**62, limit))
         return [dict(row) for row in rows]
 
     def prune(self, days: int) -> int:

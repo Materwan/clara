@@ -56,11 +56,23 @@ def pkce() -> tuple[str, str]:
 
 
 def authorize_url(client_id: str, redirect_uri: str, state: str, challenge: str) -> str:
-    return AUTH_URL + "?" + urlencode({
-        "client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "scope": SCOPES,
-        "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": challenge,
-        "code_challenge_method": "S256",
-    })
+    return (
+        AUTH_URL
+        + "?"
+        + urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": SCOPES,
+                "access_type": "offline",
+                "prompt": "consent",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+    )
 
 
 def email_of(id_token: str) -> str:
@@ -86,8 +98,9 @@ class GoogleAuth:
     async def token(self, data: dict) -> dict:
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
-                response = await http.post(TOKEN_URL, data={**data, "client_id": self.client_id,
-                                                            "client_secret": self.client_secret})
+                response = await http.post(
+                    TOKEN_URL, data={**data, "client_id": self.client_id, "client_secret": self.client_secret}
+                )
         except httpx.HTTPError as error:
             raise DriveError(f"Google could not be reached: {error}") from None
         try:
@@ -96,14 +109,20 @@ class GoogleAuth:
             found = {}
         if response.is_error:
             if found.get("error") == "invalid_grant":
-                raise DriveError("Google no longer accepts this connection (access removed, or the Google app is still "
-                                 "in 'Testing' mode, where it ends after 7 days): connect it again.", True)
-            raise DriveError(f"Google refused: {found.get('error_description') or found.get('error') or response.status_code}")
+                raise DriveError(
+                    "Google no longer accepts this connection (access removed, or the Google app is still "
+                    "in 'Testing' mode, where it ends after 7 days): connect it again.",
+                    True,
+                )
+            raise DriveError(
+                f"Google refused: {found.get('error_description') or found.get('error') or response.status_code}"
+            )
         return found
 
     async def exchange(self, code: str, verifier: str, redirect_uri: str) -> dict:
-        return await self.token({"grant_type": "authorization_code", "code": code, "code_verifier": verifier,
-                                 "redirect_uri": redirect_uri})
+        return await self.token(
+            {"grant_type": "authorization_code", "code": code, "code_verifier": verifier, "redirect_uri": redirect_uri}
+        )
 
     async def revoke(self, token: str) -> bool:
         try:
@@ -134,8 +153,9 @@ class Drive:
             access = await self.access_token()
             try:
                 async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport, follow_redirects=True) as http:
-                    response = await http.request(method, url, headers={**extra, "Authorization": f"Bearer {access}"},
-                                                  **options)
+                    response = await http.request(
+                        method, url, headers={**extra, "Authorization": f"Bearer {access}"}, **options
+                    )
             except httpx.HTTPError as error:
                 raise DriveError(f"Google could not be reached: {error}") from None
             if response.status_code == 401 and attempt == 1:
@@ -174,21 +194,33 @@ class Drive:
         return await self.get(f"{API}/files/{file_id}", fields=FIELDS, supportsAllDrives="true")
 
     async def ensure_folder(self, name: str = "Clara") -> dict:
-        found = await self.get(f"{API}/files", q=f"name = {quoted(name)} and mimeType = {quoted(FOLDER)} and trashed = false",
-                               fields=f"files({FIELDS})", pageSize=10)
+        found = await self.get(
+            f"{API}/files",
+            q=f"name = {quoted(name)} and mimeType = {quoted(FOLDER)} and trashed = false",
+            fields=f"files({FIELDS})",
+            pageSize=10,
+        )
         if found.get("files"):
             return found["files"][0]
-        made = await self.request("POST", f"{API}/files", params={"fields": FIELDS},
-                                  json={"name": name, "mimeType": FOLDER})
+        made = await self.request(
+            "POST", f"{API}/files", params={"fields": FIELDS}, json={"name": name, "mimeType": FOLDER}
+        )
         return made.json()
 
     async def children(self, folder_id: str) -> list[dict]:
         found: list[dict] = []
         token = None
         while len(found) < 1000:
-            page = await self.get(f"{API}/files", q=f"{quoted(folder_id)} in parents and trashed = false",
-                                  fields=f"nextPageToken,files({FIELDS})", pageSize=200, pageToken=token,
-                                  orderBy="folder,name", supportsAllDrives="true", includeItemsFromAllDrives="true")
+            page = await self.get(
+                f"{API}/files",
+                q=f"{quoted(folder_id)} in parents and trashed = false",
+                fields=f"nextPageToken,files({FIELDS})",
+                pageSize=200,
+                pageToken=token,
+                orderBy="folder,name",
+                supportsAllDrives="true",
+                includeItemsFromAllDrives="true",
+            )
             found += page.get("files", [])
             token = page.get("nextPageToken")
             if not token:
@@ -199,9 +231,14 @@ class Drive:
         if not query.strip():
             raise DriveError("The query is empty.")
         text = quoted(query.strip()[:200])
-        found = await self.get(f"{API}/files", q=f"(name contains {text} or fullText contains {text}) and trashed = false",
-                               fields=f"files({FIELDS})", pageSize=50, supportsAllDrives="true",
-                               includeItemsFromAllDrives="true")
+        found = await self.get(
+            f"{API}/files",
+            q=f"(name contains {text} or fullText contains {text}) and trashed = false",
+            fields=f"files({FIELDS})",
+            pageSize=50,
+            supportsAllDrives="true",
+            includeItemsFromAllDrives="true",
+        )
         return found.get("files", [])
 
     async def read(self, file_id: str, start: int, max_chars: int) -> str:
@@ -229,18 +266,35 @@ class Drive:
         if google_doc:
             metadata["mimeType"] = DOC
         boundary = "clara" + base64.urlsafe_b64encode(os.urandom(12)).decode().rstrip("=")
-        body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(metadata)}\r\n"
-                f"--{boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n").encode() + content.encode("utf-8") \
+        body = (
+            (
+                f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{json.dumps(metadata)}\r\n"
+                f"--{boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"
+            ).encode()
+            + content.encode("utf-8")
             + f"\r\n--{boundary}--".encode()
-        response = await self.request("POST", f"{UPLOAD}/files", params={"uploadType": "multipart", "fields": FIELDS},
-                                      headers={"Content-Type": f"multipart/related; boundary={boundary}"}, content=body)
+        )
+        response = await self.request(
+            "POST",
+            f"{UPLOAD}/files",
+            params={"uploadType": "multipart", "fields": FIELDS},
+            headers={"Content-Type": f"multipart/related; boundary={boundary}"},
+            content=body,
+        )
         return response.json()
 
     async def update(self, file_id: str, content: str) -> dict:
-        response = await self.request("PATCH", f"{UPLOAD}/files/{file_id}", params={"uploadType": "media", "fields": FIELDS},
-                                      headers={"Content-Type": "text/plain; charset=UTF-8"}, content=content.encode("utf-8"))
+        response = await self.request(
+            "PATCH",
+            f"{UPLOAD}/files/{file_id}",
+            params={"uploadType": "media", "fields": FIELDS},
+            headers={"Content-Type": "text/plain; charset=UTF-8"},
+            content=content.encode("utf-8"),
+        )
         return response.json()
 
     async def trash(self, file_id: str) -> dict:
-        response = await self.request("PATCH", f"{API}/files/{file_id}", params={"fields": FIELDS}, json={"trashed": True})
+        response = await self.request(
+            "PATCH", f"{API}/files/{file_id}", params={"fields": FIELDS}, json={"trashed": True}
+        )
         return response.json()

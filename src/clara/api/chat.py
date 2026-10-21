@@ -1,9 +1,9 @@
 """Chat: one question, streamed as server-sent events or answered as one JSON object.
 
-    POST /v1/chat/stream                  the events of the turn, as they come
-    POST /v1/chat                         the `done` event only (approvals are not waited for: they are pushed)
-    POST /v1/turns/{id}/tool-results      a client's answers to `tool_requests` (only the token that opened the turn)
-    POST /v1/documents/extract            the text of a PDF or Word file, for a client that puts documents in messages
+POST /v1/chat/stream                  the events of the turn, as they come
+POST /v1/chat                         the `done` event only (approvals are not waited for: they are pushed)
+POST /v1/turns/{id}/tool-results      a client's answers to `tool_requests` (only the token that opened the turn)
+POST /v1/documents/extract            the text of a PDF or Word file, for a client that puts documents in messages
 """
 
 from __future__ import annotations
@@ -55,8 +55,11 @@ class ChatBody(BaseModel):
     instructions: str = Field(default="", max_length=20_000)
     incognito: bool = False
     local_only: bool = False
-    parent: str | None = Field(default=None, pattern=r"^c[0-9a-f]{16}$",
-                               description="With a new conversation: the one it is shown in (a sub agent's)")
+    parent: str | None = Field(
+        default=None,
+        pattern=r"^c[0-9a-f]{16}$",
+        description="With a new conversation: the one it is shown in (a sub agent's)",
+    )
 
 
 def _files(body: ChatBody) -> tuple[Attached, ...]:
@@ -81,10 +84,22 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
     if body.project is not None and services(request).projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
     return ChatRequest(
-        message=prepared.message, client=who.client, token_id=who.token.id, conversation=body.conversation,
-        tools=tuple(body.tools), instructions=body.instructions, timezone=body.timezone, images=prepared.images,
-        files=files, project=body.project, model=body.model, fork_of=body.fork_of, incognito=body.incognito,
-        local_only=body.local_only, parent=body.parent, wait_for_approvals=wait,
+        message=prepared.message,
+        client=who.client,
+        token_id=who.token.id,
+        conversation=body.conversation,
+        tools=tuple(body.tools),
+        instructions=body.instructions,
+        timezone=body.timezone,
+        images=prepared.images,
+        files=files,
+        project=body.project,
+        model=body.model,
+        fork_of=body.fork_of,
+        incognito=body.incognito,
+        local_only=body.local_only,
+        parent=body.parent,
+        wait_for_approvals=wait,
     )
 
 

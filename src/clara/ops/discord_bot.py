@@ -56,9 +56,15 @@ def bot_environment(settings: Settings, environ: Mapping[str, str] | None = None
 
 
 class DiscordBot:
-    def __init__(self, settings: Settings, alert: Callable[[str, str, str], object], *,
-                 command: Sequence[str] | None = None, retry: Sequence[float] = RETRY,
-                 environ: Mapping[str, str] | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        alert: Callable[[str, str, str], object],
+        *,
+        command: Sequence[str] | None = None,
+        retry: Sequence[float] = RETRY,
+        environ: Mapping[str, str] | None = None,
+    ):
         self.settings = settings
         self._alert = alert  # the bot's heartbeat clears it once the bot is up
         self.command = list(command or (sys.executable, "-m", "clara_discord.bot"))
@@ -103,7 +109,8 @@ class DiscordBot:
             started = time.monotonic()
             try:
                 self.process = await asyncio.create_subprocess_exec(
-                    *self.command, stdin=asyncio.subprocess.DEVNULL, env=bot_environment(self.settings, self._environ))
+                    *self.command, stdin=asyncio.subprocess.DEVNULL, env=bot_environment(self.settings, self._environ)
+                )
             except OSError as error:
                 self._fail(f"cannot start it: {error}")
                 return

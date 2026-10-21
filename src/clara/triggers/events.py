@@ -30,9 +30,18 @@ class StoredEvent(SourceEvent):
     received_at: str = ""
 
     def describe(self) -> dict:
-        return {"id": self.id, "source": self.source, "kind": self.kind, "key": self.key, "actor": self.actor,
-                "self_caused": self.self_caused, "title": self.title, "data": self.data, "occurred_at": self.occurred_at,
-                "received_at": self.received_at}
+        return {
+            "id": self.id,
+            "source": self.source,
+            "kind": self.kind,
+            "key": self.key,
+            "actor": self.actor,
+            "self_caused": self.self_caused,
+            "title": self.title,
+            "data": self.data,
+            "occurred_at": self.occurred_at,
+            "received_at": self.received_at,
+        }
 
 
 @dataclass(frozen=True)
@@ -45,9 +54,19 @@ class EventKind:
 
 KINDS: dict[str, EventKind] = {
     "mail.received": EventKind(
-        "mail.received", "A new message in the inbox of a connected Gmail mailbox",
-        {"account": "text", "mailbox": "text", "from": "text", "from_address": "text", "subject": "text", "snippet": "text",
-         "has_attachment": "bool", "unread": "bool"},
-        ("mail_search", "mail_read", "mail_attachment_read")),
+        "mail.received",
+        "A new message in the inbox of a connected Gmail mailbox",
+        {
+            "account": "text",
+            "mailbox": "text",
+            "from": "text",
+            "from_address": "text",
+            "subject": "text",
+            "snippet": "text",
+            "has_attachment": "bool",
+            "unread": "bool",
+        },
+        ("mail_search", "mail_read", "mail_attachment_read"),
+    ),
 }
 NOTIFY = "notify"

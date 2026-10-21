@@ -17,12 +17,16 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 router = APIRouter(include_in_schema=False)
 
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; "
-       "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
-PICKER_CSP = ("default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com; "
-              "style-src 'self' 'unsafe-inline' https://www.gstatic.com; img-src 'self' data: https:; "
-              "frame-src https://docs.google.com https://drive.google.com; connect-src 'self' https://www.googleapis.com; "
-              "frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+)
+PICKER_CSP = (
+    "default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com; "
+    "style-src 'self' 'unsafe-inline' https://www.gstatic.com; img-src 'self' data: https:; "
+    "frame-src https://docs.google.com https://drive.google.com; connect-src 'self' https://www.googleapis.com; "
+    "frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+)
 MISSING = """<!doctype html><meta charset="utf-8"><title>Clara</title>
 <p>The web site is not built in this tree. Build it with <code>scripts/build-web.sh</code> (releases ship it built).</p>"""
 
@@ -33,8 +37,11 @@ def dist() -> Path:
 
 def _file(path: Path, cache: str, csp: str = CSP) -> Response:
     media, _ = mimetypes.guess_type(path.name)
-    return FileResponse(path, media_type=media or "application/octet-stream",
-                        headers={"Cache-Control": cache, "Content-Security-Policy": csp})
+    return FileResponse(
+        path,
+        media_type=media or "application/octet-stream",
+        headers={"Cache-Control": cache, "Content-Security-Policy": csp},
+    )
 
 
 @router.get("/health")

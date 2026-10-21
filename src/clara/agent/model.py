@@ -88,7 +88,9 @@ async def with_idle_timeout(stream: AsyncIterator[LlmChunk], first: float, idle:
             except TimeoutError:
                 if wait == first:
                     raise ModelSilent(f"The model took more than {wait:g} seconds to start answering.") from None
-                raise ModelTimeout(f"The model took more than {wait:g} seconds between two pieces of its answer.") from None
+                raise ModelTimeout(
+                    f"The model took more than {wait:g} seconds between two pieces of its answer."
+                ) from None
             wait = idle
             yield chunk
     finally:
@@ -99,8 +101,18 @@ async def with_idle_timeout(stream: AsyncIterator[LlmChunk], first: float, idle:
 
 
 class ModelRunner:
-    def __init__(self, providers: Providers, usage: UsageLog, traffic: TrafficLog, alerts: Alerts, *,
-                 chat_slots: int, background_slots: int, first_token_timeout: float, idle_timeout: float):
+    def __init__(
+        self,
+        providers: Providers,
+        usage: UsageLog,
+        traffic: TrafficLog,
+        alerts: Alerts,
+        *,
+        chat_slots: int,
+        background_slots: int,
+        first_token_timeout: float,
+        idle_timeout: float,
+    ):
         self.providers = providers
         self.usage = usage
         self.traffic = traffic
@@ -109,8 +121,18 @@ class ModelRunner:
         self.first_token_timeout = first_token_timeout
         self.idle_timeout = idle_timeout
 
-    async def stream(self, messages: list[dict], tools: list[dict] | None, choice: Choice, *, pool: str, kind: str,
-                     client: str, conversation_id: str | None, budget: Budget | None = None) -> AsyncIterator[LlmChunk]:
+    async def stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        choice: Choice,
+        *,
+        pool: str,
+        kind: str,
+        client: str,
+        conversation_id: str | None,
+        budget: Budget | None = None,
+    ) -> AsyncIterator[LlmChunk]:
         """The chunks of one round. A task reads the model while holding a slot and passes chunks through a queue: a
         client that reads slowly cannot keep a slot busy. A `notice` chunk says a fallback is asked."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -128,15 +150,22 @@ class ModelRunner:
                 try:
                     async with semaphore:
                         backend = self.providers.backend(option.ref, option.window)
-                        self.traffic.content("llm_request", provider=option.provider.id, model=option.model,
-                                             messages=_without_pictures(messages), tools=[t["function"]["name"] for t in tools or ()])
+                        self.traffic.content(
+                            "llm_request",
+                            provider=option.provider.id,
+                            model=option.model,
+                            messages=_without_pictures(messages),
+                            tools=[t["function"]["name"] for t in tools or ()],
+                        )
                         first = self.first_token_timeout
                         idle = self.idle_timeout
                         if budget is not None:
                             if budget.left <= 0:
                                 raise ModelTimeout("This answer has used up its time budget (CLARA_ANSWER_BUDGET).")
                             first, idle = min(first, budget.left), min(idle, budget.left)
-                        async for chunk in with_idle_timeout(backend.stream(messages, tools, session=conversation_id), first, idle):
+                        async for chunk in with_idle_timeout(
+                            backend.stream(messages, tools, session=conversation_id), first, idle
+                        ):
                             started = started or bool(chunk.text or chunk.thinking or chunk.tool_calls)
                             counts[0] += chunk.prompt_tokens
                             counts[1] += chunk.completion_tokens
@@ -155,15 +184,22 @@ class ModelRunner:
                     outcome = "error"
                     failure = error
                     self._alert_for(option, error)
-                    self.traffic.content("llm_error", provider=option.provider.id, model=option.model,
-                                         status=status_of(error), error=str(error))
+                    self.traffic.content(
+                        "llm_error",
+                        provider=option.provider.id,
+                        model=option.model,
+                        status=status_of(error),
+                        error=str(error),
+                    )
                     hand_over = moves_on(error, fallback=index > 0) or isinstance(error, ModelSilent)
                     if started or index + 1 == len(options) or not hand_over:
                         queue.put_nowait(error)
                         return
                     following = options[index + 1]
                     log.warning("the model %s failed (%s), asking %s", option.ref, type(error).__name__, following.ref)
-                    queue.put_nowait(LlmChunk(notice=f"{option.ref} failed, trying {following.ref}…", switched=following.ref))
+                    queue.put_nowait(
+                        LlmChunk(notice=f"{option.ref} failed, trying {following.ref}…", switched=following.ref)
+                    )
                 finally:
                     seconds = time.monotonic() - begun
                     if budget is not None:
@@ -171,14 +207,32 @@ class ModelRunner:
                     estimated = not (counts[0] or counts[1])
                     prompt = counts[0] or (estimate_prompt_tokens(messages, tools) if outcome == "ok" else 0)
                     completion = counts[1] or (math.ceil(text_size / CHARS_PER_TOKEN) if outcome == "ok" else 0)
-                    self.usage.record(kind=kind, client=client, conversation_id=conversation_id,
-                                      provider=option.provider.id, model=option.model, prompt_tokens=prompt,
-                                      completion_tokens=completion, cached_tokens=counts[2],
-                                      duration_ms=int(seconds * 1000), outcome=outcome, estimated=estimated and outcome == "ok")
-                    self.traffic.record("model", provider=option.provider.id, model=option.model, use=kind,
-                                        client=client, prompt_tokens=prompt, completion_tokens=completion,
-                                        cached_tokens=counts[2], ms=int(seconds * 1000), outcome=outcome,
-                                        **_failure_fields(failure))
+                    self.usage.record(
+                        kind=kind,
+                        client=client,
+                        conversation_id=conversation_id,
+                        provider=option.provider.id,
+                        model=option.model,
+                        prompt_tokens=prompt,
+                        completion_tokens=completion,
+                        cached_tokens=counts[2],
+                        duration_ms=int(seconds * 1000),
+                        outcome=outcome,
+                        estimated=estimated and outcome == "ok",
+                    )
+                    self.traffic.record(
+                        "model",
+                        provider=option.provider.id,
+                        model=option.model,
+                        use=kind,
+                        client=client,
+                        prompt_tokens=prompt,
+                        completion_tokens=completion,
+                        cached_tokens=counts[2],
+                        ms=int(seconds * 1000),
+                        outcome=outcome,
+                        **_failure_fields(failure),
+                    )
 
         async def guarded() -> None:
             """Whatever goes wrong in the producer reaches the consumer: it must never wait for ever."""
@@ -186,7 +240,7 @@ class ModelRunner:
                 await produce()
             except asyncio.CancelledError:
                 raise
-            except BaseException as error:  # noqa: BLE001 - handed over, not swallowed
+            except BaseException as error:  # handed over, not swallowed
                 queue.put_nowait(error)
 
         producer = asyncio.ensure_future(guarded())
@@ -210,19 +264,29 @@ class ModelRunner:
     def _alert_for(self, option: Choice, error: BaseException) -> None:
         status = status_of(error)
         if key_refused(error):
-            self.alerts.raise_(f"provider_key:{option.provider.id}", f"{option.provider.label} refused its key",
-                               f"HTTP {status} while calling {option.ref}. Check the key: clara secrets set "
-                               f"{option.provider.key_secret}.")
+            self.alerts.raise_(
+                f"provider_key:{option.provider.id}",
+                f"{option.provider.label} refused its key",
+                f"HTTP {status} while calling {option.ref}. Check the key: clara secrets set "
+                f"{option.provider.key_secret}.",
+            )
         elif status == PAYMENT_STATUS:
-            self.alerts.raise_(f"provider_payment:{option.provider.id}", f"{option.provider.label} wants payment",
-                               f"HTTP 402 while calling {option.ref}: the balance may be spent.")
+            self.alerts.raise_(
+                f"provider_payment:{option.provider.id}",
+                f"{option.provider.label} wants payment",
+                f"HTTP 402 while calling {option.ref}: the balance may be spent.",
+            )
 
-    async def complete(self, messages: list[dict], choice: Choice, *, kind: str, conversation_id: str | None,
-                       client: str = "server") -> str:
+    async def complete(
+        self, messages: list[dict], choice: Choice, *, kind: str, conversation_id: str | None, client: str = "server"
+    ) -> str:
         """A side job's whole text (a title, a summary, a plan): background pool, no tools."""
         parts: list[str] = []
-        async with contextlib.aclosing(self.stream(messages, None, choice, pool="background", kind=kind, client=client,
-                                                   conversation_id=conversation_id)) as chunks:
+        async with contextlib.aclosing(
+            self.stream(
+                messages, None, choice, pool="background", kind=kind, client=client, conversation_id=conversation_id
+            )
+        ) as chunks:
             async for chunk in chunks:
                 parts.append(chunk.text)
         return "".join(parts)
@@ -244,6 +308,7 @@ def _failure_fields(error: Exception | None) -> dict:
 def _without_pictures(messages: list[dict]) -> list[dict]:
     return [
         {**message, "images": [f"{image.get('name', '')} ({image.get('mime', '')})" for image in message["images"]]}
-        if message.get("images") else message
+        if message.get("images")
+        else message
         for message in messages
     ]

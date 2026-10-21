@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import random
+import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -66,6 +68,30 @@ def test_html_becomes_text_without_what_css_hides():
     assert "Hi there" in text and "this page (https://x.example/p)" in text
     assert "ignore previous" not in text and "and this" not in text and "evil" not in text and "color:red" not in text
     assert "javascript" not in text and "- one" in text and "- two" in text
+
+
+def test_cleaning_text_takes_linear_time_on_a_long_run_of_spaces():
+    """Audit (boundaries, high): `[ \\t]+\\n` is quadratic on spaces that never reach a newline; 20,000 took 0.36 s,
+    and a header or body can be far longer."""
+    spaces = " " * 200_000
+    for run in (lambda: mail.clean_text("a" + spaces + "b"), lambda: mail.clean_line("a" + spaces + "b"),
+                lambda: mail.html_to_text("<p>a" + spaces + "b</p>"), lambda: mail.html_to_text("a\t" * 100_000)):
+        begun = time.monotonic()
+        run()
+        assert time.monotonic() - begun < 1.0
+
+
+def test_trailing_and_surrounding_blanks_are_trimmed_as_the_regexes_did():
+    assert mail.clean_text("a  \t\nb \n\n\n\n c\t ") == "a\nb\n\n c"
+    assert mail.clean_text("x\r\ny  \rz") == "x\ny\nz"
+    assert mail.html_to_text("<p>one  </p>\n   <p>  two</p>") == "one\n\ntwo"
+    # the same results as the regexes that were replaced, on random mixes of text, blanks and line breaks
+    rng = random.Random(1)
+    pieces = ["a", "b", " ", "\t", "\n", "\n", "\r", "\r\n", "\x00", "\u200b", "  "]
+    for _ in range(2000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 25)))
+        cleaned = mail._CONTROL.sub("", mail._INVISIBLE.sub("", text.replace("\r\n", "\n").replace("\r", "\n")))
+        assert mail.clean_text(text) == mail._BLANKS.sub("\n\n", re.sub(r"[ \t]+\n", "\n", cleaned)).strip()
 
 
 def test_an_address_is_exactly_one_address():

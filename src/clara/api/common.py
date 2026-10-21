@@ -27,9 +27,21 @@ if TYPE_CHECKING:
 log = logging.getLogger("clara.api")
 
 KEEPALIVE_SECONDS = 15.0
-CODES = {400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found", 405: "method_not_allowed",
-         409: "conflict", 413: "too_large", 422: "unprocessable", 429: "rate_limited", 500: "internal",
-         502: "model_failed", 503: "unavailable", 504: "timeout"}
+CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    413: "too_large",
+    422: "unprocessable",
+    429: "rate_limited",
+    500: "internal",
+    502: "model_failed",
+    503: "unavailable",
+    504: "timeout",
+}
 
 
 class ApiError(HTTPException):
@@ -46,8 +58,11 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, error: HTTPException) -> JSONResponse:
         code = getattr(error, "code", None)
-        return JSONResponse(error_body(error.status_code, str(error.detail), code), error.status_code,
-                            headers=getattr(error, "headers", None))
+        return JSONResponse(
+            error_body(error.status_code, str(error.detail), code),
+            error.status_code,
+            headers=getattr(error, "headers", None),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
@@ -142,7 +157,9 @@ def sse(event: dict, event_id: int | None = None) -> str:
     return f"{head}event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
 
-async def with_keepalive(events: AsyncIterator[dict], interval: float = KEEPALIVE_SECONDS) -> AsyncIterator[dict | None]:
+async def with_keepalive(
+    events: AsyncIterator[dict], interval: float = KEEPALIVE_SECONDS
+) -> AsyncIterator[dict | None]:
     """The events, and a None every `interval` seconds of silence (proxies drop idle connections)."""
     iterator = events.__aiter__()
     pending = asyncio.ensure_future(iterator.__anext__())
@@ -167,5 +184,6 @@ async def with_keepalive(events: AsyncIterator[dict], interval: float = KEEPALIV
 
 
 def event_stream(lines: AsyncIterator[str]) -> StreamingResponse:
-    return StreamingResponse(lines, media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        lines, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
