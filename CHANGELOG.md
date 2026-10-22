@@ -131,6 +131,7 @@ earlier server: the new Clara starts empty.
   the rest can now be told apart). Approval requests stay in `#approval`, the questions of scheduled runs in `#general`, and alerts
   cannot be switched off. The server tells the bot each event's channel, so the choice applies to the next message; with nothing
   chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
+- **Automation forms:** the schedule and hook forms on the web site are told in steps (Trigger, Action, Tools, Runs, Review) with a bar at the foot that stays in view, a choice of radios in place of the short dropdowns (the hook's trigger as cards), a condition builder that reads as a rule, a last step that says the whole in words, and a form that does not let you go on while a step has something missing or invalid (a name, a prompt, a time, a number): Next says what, shows the error and puts the focus on the field. Nothing changes in the API or in what is stored.
 - **Hooks on GitHub:** a hook can wait for a pull request opened, merged or closed (`github.pull_request`) or a push to a branch
   (`github.push`) in the repositories you added. GitHub cannot call Clara, so they are found by a poll
   (`CLARA_GITHUB_POLL_SECONDS`), only while a hook waits; nothing is replayed when a hook is made, and a stop loses and repeats

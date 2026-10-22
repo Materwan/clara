@@ -443,6 +443,80 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .segmented.quiet button { padding: var(--sp-6) var(--sp-8); font-size: var(--fs-2xs); gap: var(--sp-4); }
 .segmented.quiet button[aria-pressed='true'] { background: var(--raised); color: var(--text); }
 
+/* a choice (Choice.svelte): one answer out of a few, a group of native radios. Segmented like .segmented, or as cards when each
+   answer has a sentence of its own (.cards: the radio shows, the chosen card takes the signal's tint). */
+.choice { border: none; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6); }
+.choice legend { padding: 0; margin-bottom: var(--sp-6); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+.choice-help { margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); }
+.choice-options { display: flex; flex-wrap: wrap; gap: 2px; align-self: flex-start; max-width: 100%; background: var(--hover); border-radius: var(--r-md); padding: 3px; }
+.choice-option {
+  position: relative; display: inline-flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-14); border-radius: var(--r-sm);
+  color: var(--muted); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; transition: background-color var(--dur-fast), color var(--dur-fast);
+}
+.choice:not(.cards) .choice-option > input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; } /* the radio is the whole segment, unseen */
+.choice:not(.cards) .choice-option:hover:not(:has(input:checked, input:disabled)) { color: var(--text); }
+.choice:not(.cards) .choice-option:has(input:checked) { background: var(--primary); color: var(--primary-ink); }
+.choice-option:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
+.choice-option:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.choice-text { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.choice-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-8); }
+.choice-hint { margin: 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 400; }
+.choice.cards .choice-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(var(--sp-64) * 3.5), 1fr)); gap: var(--sp-8); align-self: stretch; background: none; padding: 0; border-radius: 0; }
+.choice.cards .choice-option {
+  align-items: flex-start; gap: var(--sp-10); padding: var(--sp-10) var(--sp-12); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  background: var(--raised); color: var(--text); font-size: var(--fs-md); font-weight: 400;
+}
+.choice.cards .choice-option > input { margin-top: var(--sp-2); }
+.choice.cards .choice-title { font-weight: 650; }
+.choice.cards .choice-option:hover:not(:has(input:checked, input:disabled)) { border-color: var(--text-2); background: var(--hover); }
+.choice.cards .choice-option:has(input:checked) { border-color: var(--accent-text); background: var(--accent-soft); }
+.choice.cards .choice-option:has(input:checked) .choice-hint { color: var(--text-2); }
+
+/* a yes/no setting with its consequence beside it: a checkbox, what it is, what it does */
+label.option { display: flex; align-items: flex-start; gap: var(--sp-10); cursor: pointer; }
+label.option .option-text { display: flex; flex-direction: column; min-width: 0; }
+label.option .option-text > strong { font-weight: 650; }
+label.option .option-text > span { color: var(--muted); font-size: var(--fs-xs); }
+
+/* a form told in steps (Wizard.svelte): the bar of steps, the open step, and a bar at the foot that stays in view */
+.wizard { --pad-x: var(--sp-20); --pad-y: var(--sp-16); padding: var(--pad-y) var(--pad-x); }
+.steps { list-style: none; display: flex; align-items: center; flex-wrap: wrap; row-gap: var(--sp-4); margin: 0 0 var(--sp-20); padding: 0 0 var(--sp-12); border-bottom: 1px solid var(--line); }
+.steps li { display: flex; align-items: center; }
+.steps li + li::before { content: ''; flex: none; width: var(--sp-16); height: 1px; margin-inline: var(--sp-4); background: var(--line-strong); }
+.step { border: none; gap: var(--sp-8); padding: var(--sp-4) var(--sp-10) var(--sp-4) var(--sp-4); border-radius: var(--r-pill); color: var(--muted); font-size: var(--fs-sm); }
+.step:hover:not([aria-current='step']) { background: var(--hover); color: var(--text); }
+.step-num {
+  flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1.5px solid var(--line-strong); border-radius: 50%;
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
+.step[aria-current='step'] { color: var(--text); }
+.step[aria-current='step'] .step-num { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.step-head h3 { font-size: var(--fs-xl); margin-bottom: var(--sp-4); }
+.step-head h3:focus { outline: none; } /* it takes the focus on a change of step so that it is read out; it is not a control */
+.step-head p { max-width: 70ch; margin-bottom: var(--sp-20); }
+.block { border-top: 1px solid var(--line); padding-top: var(--sp-16); }
+.step-body > .block { margin-top: var(--sp-16); }
+.block:first-child { border-top: none; padding-top: 0; }
+.block > h4 { margin: 0 0 var(--sp-2); font-size: var(--fs-md); }
+.block > h4 + p { margin-bottom: var(--sp-10); color: var(--muted); font-size: var(--fs-xs); }
+.wizard-bar {
+  position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-8);
+  margin: var(--sp-24) calc(var(--pad-x) * -1) calc(var(--pad-y) * -1); padding: var(--sp-12) var(--pad-x) calc(var(--sp-12) + var(--safe-b));
+  background: var(--bg); border-top: 1px solid var(--line); border-radius: 0 0 var(--r-md) var(--r-md);
+}
+.wizard-why { color: var(--muted); font-size: var(--fs-xs); }
+/* Next while the open step is incomplete: it looks off but stays a button, so a click can say what is missing */
+.wizard-bar button[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
+.wizard-bar button[aria-disabled='true']:hover { background: transparent; border-color: var(--line-strong); }
+.wizard-bar button.primary[aria-disabled='true']:hover { background: var(--primary); border-color: var(--primary); }
+.field-error { color: var(--danger); font-size: var(--fs-xs); font-weight: 500; }
+.problems { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
+.narrow { max-width: calc(var(--sp-64) * 5); }
+/* a group of controls that is not one control (a button and the files beside it) written like a labelled field */
+div.field { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-6); }
+.field-title { font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+div.field .hint { color: var(--muted); font-size: var(--fs-xs); }
+
 /* tables: ruled like a panel (the frame is above) */
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); }
 .panel table { border: none; border-radius: 0; }
@@ -645,7 +719,7 @@ tr.off td { opacity: .5; }
 .composer textarea:focus, .composer textarea:focus-visible { outline: none; }
 .composer-bar { display: flex; align-items: center; gap: var(--sp-6); padding-top: var(--sp-2); }
 .composer-bar .attach { cursor: pointer; }
-.packs { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-12); display: flex; flex-direction: column; gap: var(--sp-6); }
+.packs { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-12); display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; } /* a fieldset is as wide as its widest control unless told it may shrink */
 .packs legend { padding: 0 var(--sp-4); color: var(--muted); }
 .pack { display: flex; align-items: flex-start; gap: var(--sp-8); }
 .pack .icon { flex: none; margin-top: var(--sp-2); color: var(--muted); }
@@ -810,6 +884,9 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
   .welcome { padding-top: 8vh; }
   .context .label { display: none; }
   .panel { padding: var(--sp-16); }
+  .wizard { --pad-x: var(--sp-16); }
+  .step:not([aria-current='step']) .step-label { display: none; } /* five steps do not fit with their names: the open one keeps its own */
+  .steps li + li::before { width: var(--sp-8); }
   /* a table is as wide as its words need and scrolls sideways: it is not squeezed until the words break in the middle */
   table { display: block; overflow-x: auto; }
   td { overflow-wrap: break-word; }
@@ -824,6 +901,7 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
   button.icon-btn, .msg-actions button, .convo .actions button { min-width: 36px; min-height: 36px; }
   button.small, label.button.small, select.small { min-height: 36px; }
   .chip button { min-width: 32px; min-height: 32px; }
+  .choice:not(.cards) .choice-option, .step { min-height: 36px; }
   .convo, .group-head button, .pages a { min-height: 44px; }
   .search-field input { min-height: 36px; }
 }
@@ -840,6 +918,7 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 @media (forced-colors: active) {
   select { appearance: auto; background-image: none; }
   .segmented button[aria-pressed='true'], .pages a[aria-current='page'], .convo.active, button.primary, button.toggle[aria-pressed='true'] { outline: 2px solid Highlight; outline-offset: -2px; }
+  .choice-option:has(input:checked), .step[aria-current='step'] .step-num { outline: 2px solid Highlight; outline-offset: -2px; }
   .settings-bar a[aria-current='page'] { border-bottom-color: Highlight; }
   .dot { border: 1px solid CanvasText; }
   .check svg { stroke: CanvasText; }
