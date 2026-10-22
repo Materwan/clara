@@ -57,7 +57,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 
 | Page | What you do there |
 | --- | --- |
-| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
 | Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
@@ -158,7 +158,9 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   - *Web to Discord:* a question and its answer are posted in the thread, the question as its user's words (documents
     named, not repeated) and the answer with a line of the tools Clara used (`🔧 Searched the web ×24, read a page ×6 · 31
     actions`, the web site's words; the results of tools are never shown); a long answer is split at 2,000 characters.
-    A new conversation makes its thread; a rename of the conversation renames the thread; a question asked again or
+    A new conversation makes its thread; a conversation that had turns before it had a thread (its project, schedule or
+    hook was not shown in the history yet, or the bot was off) gets it when its next question is asked, made whole: the
+    thread starts with its first question, the earlier turns follow in order, then the new question; a rename of the conversation renames the thread; a question asked again or
     edited replaces its messages (the old ones are removed, the new ones posted); a deleted conversation removes its thread.
   - *Discord to Clara:* what you write in a thread goes to its conversation as the web site would send it: the same
     tools (the conversation's special tools, `/tools`), the same rule gate, files attached (as on the web). A new post in
@@ -244,11 +246,20 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **Streaming:** `POST /v1/chat/stream` answers with server-sent events: `turn`, `thinking`, `token`, `retrying`,
   `tool_start`, `tool`, `approval`, `tool_requests`, `usage`, `compacted`, `discarded`, `warning`, `done`, or `error`
   (status, code and message) when the turn fails. `POST /v1/chat` returns the whole answer at once. Closing the
-  stream (the web's Stop button) stops the answer: what was said is kept, marked interrupted, and tool calls that had
-  not run are recorded as not run.
+  stream stops the answer: what was said is kept, marked interrupted, and tool calls that had not run are recorded as
+  not run. Unless the request has `keep_running` (the web sets it): then the answer is driven by the server and the
+  stream only follows it, so closing the page, going to another conversation or losing the connection does not stop
+  it, and it is stored when it ends. Open the conversation again and `GET /v1/conversations/{id}/run` gives the same
+  events from the start: `resume` first (your question and the names of its files), then everything said so far
+  (consecutive `token` and `thinking` events joined), then what comes, `done` at the end; an approval card shows how
+  its request ended if it was answered meanwhile. `DELETE /v1/conversations/{id}/run` stops it (the web's Stop
+  button): what was said is kept, marked `interrupted: you stopped it`. One kept answer at a time per conversation
+  (a second question is refused with 409), and not with client-side `tools` (422: they need the client). A kept answer
+  that needs an approval waits for it as any chat does (`CLARA_APPROVAL_WAIT`), whoever is reading. A graceful stop
+  waits for kept answers like for any running turn, then saves them as interrupted.
 - **Request fields:** `message`, `conversation`, `attachments` (base64, at most 4), `project`, `model`, `fork_of`
   (ask again or edit: a new version of a message), `timezone`, `tools` (client-side tools), `instructions`,
-  `incognito`, `local_only`, `parent` (with a new conversation: the one it is shown in. A console sub agent's conversation
+  `incognito`, `local_only`, `keep_running` (the answer goes on without the stream, above), `parent` (with a new conversation: the one it is shown in. A console sub agent's conversation
   names the conversation that started it; it is left out of every list, listed in its parent's `subagents`, kept as long
   as the parent and deleted with it. One level only: a sub agent's conversation cannot be a parent).
 - **Versions:** editing a message or asking again keeps the earlier answer as another version; you move between them.
@@ -277,7 +288,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   readable later with `read_conversation_file`.
 - **Time budget:** an answer may take `CLARA_ANSWER_BUDGET` (900 s) of model time in all, across rounds and fallbacks
   (waiting for your approval does not count). A model that says nothing for `CLARA_FIRST_TOKEN_TIMEOUT` (300 s) at
-  first, or `CLARA_IDLE_TIMEOUT` (120 s) once started, is given up. `CLARA_MAX_TOOL_ROUNDS` (20) rounds at most.
+  first, or `CLARA_IDLE_TIMEOUT` (120 s) once started, is given up. `CLARA_MAX_TOOL_ROUNDS` (20) rounds at most: when they are used, the answer is given without tools, with a `warning`
+  event and a note to the model to say what it found and what is missing, instead of ending on its last announcement.
 - **Model slots:** your chats use `CLARA_CHAT_SLOTS` (2); titles, summaries, reminders, tasks and schedules use a
   separate pool of `CLARA_BACKGROUND_SLOTS` (1), so they cannot starve a chat.
 - **Long turns:** an answer still running after `CLARA_NOTIFY_LONG_TURN` (120 s) sends you a notification when done,
@@ -970,6 +982,8 @@ keep-alive every 15 s.
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
 | `DELETE /v1/conversations/{conversation_id}` | Delete it, with its files |
 | `GET /v1/conversations/{conversation_id}/messages` | Its messages (the chosen versions) |
+| `GET /v1/conversations/{conversation_id}/run` | Follow the answer being given in it (a kept one), from its first event; 404 when there is none |
+| `DELETE /v1/conversations/{conversation_id}/run` | Stop that answer; what was said is kept, marked interrupted |
 | `POST /v1/conversations/{conversation_id}/compact` | Summarise it now |
 | `POST /v1/conversations/{conversation_id}/title` | Write its title again |
 | `POST /v1/conversations/{conversation_id}/version` | Choose which version of a message is shown |

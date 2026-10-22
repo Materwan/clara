@@ -372,6 +372,7 @@ def create_app(s: Services) -> FastAPI:
                         result = stopper()
                         if asyncio.iscoroutine(result):
                             await result
+            await s.agent.runs.cancel_all("the server stopped")  # saved as interrupted, before the database closes
             await s.approvals.close()
             await s.agent.drain_background()
             await s.providers.aclose()

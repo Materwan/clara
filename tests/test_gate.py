@@ -179,6 +179,21 @@ async def test_an_answer_that_comes_before_the_turn_waits_runs_the_action_once(s
     assert services.approvals.list()[0].status == "done"
 
 
+async def test_a_call_that_was_asked_about_is_announced_once(services, llm):
+    """The page draws a call at each `tool_start` and finishes it at each `tool`: a second `tool_start` after the
+    answer left a call that spun for ever (and a Discord line that counted it twice)."""
+    _counting_tool(services)
+    tester = services.tokens.create("tester", "cli")[0]
+    llm.replies = [calls(("fake_send", {"text": "a"}), ("fake_send", {"text": "b"})), "Sent."]
+    events = []
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="send both", client="web"))) as stream:
+        async for event in stream:
+            events.append(event["type"])
+            if event["type"] == "approval":
+                await services.approvals.decide(event["approval"]["id"], "allow_once", tester)
+    assert events.count("tool_start") == events.count("tool") == 2
+
+
 async def test_a_turn_that_ends_before_the_answer_leaves_it_to_decide(services, llm):
     ran = _counting_tool(services)
     tester = services.tokens.create("tester", "cli")[0]

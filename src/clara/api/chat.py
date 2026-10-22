@@ -1,7 +1,9 @@
 """Chat: one question, streamed as server-sent events or answered as one JSON object.
 
-POST /v1/chat/stream                  the events of the turn, as they come
+POST /v1/chat/stream                  the events of the turn, as they come (`keep_running`: it goes on if you leave)
 POST /v1/chat                         the `done` event only (approvals are not waited for: they are pushed)
+GET /v1/conversations/{id}/run        follow the answer a conversation is giving, from its first event
+DELETE /v1/conversations/{id}/run     stop that answer (what was said is kept, marked interrupted)
 POST /v1/turns/{id}/tool-results      a client's answers to `tool_requests` (only the token that opened the turn)
 POST /v1/documents/extract            the text of a PDF or Word file, for a client that puts documents in messages
 """
@@ -16,6 +18,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from ..agent.runs import AlreadyRunning, Run
 from ..agent.turn import ChatRequest
 from ..knowledge import ingest
 from ..knowledge.attachments import MAX_ATTACHMENTS, Attached, FileError, prepare
@@ -64,6 +67,10 @@ class ChatBody(BaseModel):
     mirror_thread: str = Field(
         default="", max_length=40, description="A new conversation started in a Discord forum post: its thread"
     )
+    keep_running: bool = Field(
+        default=False,
+        description="The answer goes on if the stream is closed (follow it again with GET /v1/conversations/{id}/run)",
+    )
 
 
 def _files(body: ChatBody) -> tuple[Attached, ...]:
@@ -111,15 +118,35 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
     )
 
 
+def _followed(events: AsyncIterator[dict]) -> AsyncIterator[str]:
+    async def lines() -> AsyncIterator[str]:
+        async with contextlib.aclosing(with_keepalive(events)) as stream:
+            async for event in stream:
+                yield ": keepalive\n\n" if event is None else sse(event)
+
+    return lines()
+
+
 @router.post("/chat/stream")
 async def chat_stream(body: ChatBody, request: Request):
     refuse_when_stopping(request)
     agent = services(request).agent
+    if body.keep_running and body.tools:
+        raise ApiError(422, "keep_running cannot carry client tools: they need the client to stay.")
+    if body.keep_running and body.conversation and agent.runs.of(body.conversation) is not None:
+        raise ApiError(409, "Clara is already answering in this conversation: follow it, or stop it.")
     chat = chat_request(body, request, wait=True)
     try:
         plan = agent.plan(chat)  # what fails before streaming is a plain HTTP error
     except Exception as error:
         raise failure(error, "chat") from None
+
+    if body.keep_running:
+        try:
+            run = agent.runs.start(chat, plan, lambda error: error_event(error, "chat"))
+        except AlreadyRunning:
+            raise ApiError(409, "Clara is already answering in this conversation: follow it, or stop it.") from None
+        return event_stream(_followed(run.follow()))
 
     async def lines() -> AsyncIterator[str]:
         events = agent.turn(chat, plan)
@@ -131,6 +158,39 @@ async def chat_stream(body: ChatBody, request: Request):
             yield sse(error_event(error, "chat"))
 
     return event_stream(lines())
+
+
+def _running(request: Request, conversation_id: str) -> Run:
+    run = services(request).agent.runs.of(conversation_id)
+    if run is None:
+        raise ApiError(404, "Clara is not answering in this conversation.")
+    return run
+
+
+@router.get("/conversations/{conversation_id}/run")
+async def follow_run(conversation_id: str, request: Request):
+    """The answer in progress, from its start: `resume` (your question), what was said so far, then what comes."""
+    run = _running(request, conversation_id)
+    approvals = services(request).approvals
+
+    async def events() -> AsyncIterator[dict]:
+        yield {"type": "resume", "message": run.question, "attachments": run.attachments}
+        async with contextlib.aclosing(run.follow()) as followed:
+            async for event in followed:
+                if event["type"] == "approval":  # answered since it was said: the card shows how it ended
+                    current = approvals.get(event["approval"]["id"])
+                    if current is not None:
+                        event = {**event, "approval": current.describe()}
+                yield event
+
+    return event_stream(_followed(events()))
+
+
+@router.delete("/conversations/{conversation_id}/run")
+async def stop_run(conversation_id: str, request: Request) -> dict:
+    run = _running(request, conversation_id)
+    await services(request).agent.runs.stop(run, "you stopped it")
+    return {"ok": True}
 
 
 @router.post("/chat")

@@ -212,6 +212,22 @@ def test_a_turn_of_a_mirrored_conversation_is_watched_from_its_start_to_its_stor
     assert published[-1]["digest"] == text.digest(published[-1]["text"])
 
 
+def test_a_turn_that_starts_in_a_conversation_with_no_thread_tells_the_bot_what_came_before(services, monkeypatch):
+    """A project switched into the history after its conversations began, a bot that was off: the conversation reached
+    Discord at its latest question only, and its earlier turns came last."""
+    published: list[dict] = []
+    monkeypatch.setattr(services.mirror.live, "publish", published.append)
+    conversation = talk(services, title="Live", question="Q1", reply="A1")  # stored, never posted
+    watch = services.mirror.watch("Q2")
+    watch.see({"type": "turn", "id": "t-2", "conversation": conversation})
+    earlier = published[0]["earlier"]
+    assert [(turn["user"]["text"], turn["reply"]["text"]) for turn in earlier] == [("Q1", "A1")]
+    services.mirror.link_thread(conversation, "55")  # once it has its thread, the sync keeps it right: nothing to tell
+    watch = services.mirror.watch("Q3")
+    watch.see({"type": "turn", "id": "t-3", "conversation": conversation})
+    assert published[1]["thread"] == "55" and published[1]["earlier"] == []
+
+
 def test_a_turn_that_fails_ends_what_was_shown_as_failed(services, monkeypatch):
     published: list[dict] = []
     monkeypatch.setattr(services.mirror.live, "publish", published.append)

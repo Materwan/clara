@@ -19,7 +19,9 @@ earlier server: the new Clara starts empty.
   model. A 403 that is not about the key (OpenCode's free tier) is no longer reported as a refused key.
 - **Chat:** streaming, versions (edit, ask again), titles, compaction that never cuts silently, a time budget per
   answer, separate model slots for background work, fallbacks that never leave a local choice, incognito and
-  local-only conversations, attachments (PDF, Word, text, pictures, animations), client-side tools.
+  local-only conversations, attachments (PDF, Word, text, pictures, animations), client-side tools. An answer goes on
+  when the web page is closed or left (`keep_running`), can be followed again from its start and stopped on purpose;
+  one that uses all its tool rounds says so.
 - **Memory:** facts with source, confirmation, supersede, expiry and forget tombstones; FTS5 search; history search.
 - **Time:** reminders, tasks with sub-tasks, unattended schedules, notifications, an event store with a cursor per
   client; zone names only, so daylight-saving changes do not shift anything.

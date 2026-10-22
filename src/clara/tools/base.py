@@ -54,6 +54,7 @@ class TurnState:
     counts: dict[str, int] = field(default_factory=dict)
     pictures: list[Image] = field(default_factory=list)
     files_written: list[dict] = field(default_factory=list)  # workspace notes changed this turn (chat cards)
+    stop_reason: str = ""  # who cut the turn short, for the note stored with what it had said ("" : the client left)
 
     @property
     def situation(self) -> Situation:

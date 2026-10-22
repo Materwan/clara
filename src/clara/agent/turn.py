@@ -51,6 +51,7 @@ from .compaction import build_transcript, chunk_messages, summary_request, trans
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
 from .model import Budget, ModelRunner, RoundResult
 from .prompt import Persona, PromptParts, render
+from .runs import Runs
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -71,6 +72,10 @@ OMITTED = "[output omitted to save context]"
 CUT_IN_TURN = "\n[… cut to save context: run the tool again for the rest]"
 OMITTED_IN_TURN = "[output omitted to fit the context: run the tool again if you still need it]"
 NOT_RUN = "[not run: the answer was interrupted]"
+ROUNDS_USED = (
+    "(The {} tool rounds an answer may take are used: no tool is offered now. Answer with what you have found, say "
+    "what is established and what is still missing, and offer to go on if the person asks.)"
+)
 TOOL_EVENT_RESULT = 8_000
 PROMPT_LIMIT = 0.95
 ROUND_SEPARATOR = "\n\n"
@@ -211,6 +216,7 @@ class Agent:
         self._pending: dict[str, _Pending] = {}
         self._background: set[asyncio.Task] = set()
         self._side_jobs = 0
+        self.runs = Runs(self.turn)  # turns that go on when their client leaves
         # Blocks of the system prompt that connectors add (GitHub, Drive...): each gives text for a turn, or ""
         self.context_blocks: list[Callable[[TurnState], str]] = []
         # Tools offered only when a condition holds for the turn (name -> condition)
@@ -227,7 +233,7 @@ class Agent:
     # ------------------------------------------------------------------
     @property
     def busy(self) -> bool:
-        return self.stats.active > 0 or self._side_jobs > 0 or bool(self._background)
+        return self.stats.active > 0 or self._side_jobs > 0 or bool(self._background) or self.runs.active
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         lock = self._locks.get(conversation_id)
@@ -690,6 +696,13 @@ class Agent:
                 for round_number in range(self.settings.max_tool_rounds + 1):
                     offer = round_number < self.settings.max_tool_rounds
                     tools = schemas if offer and schemas else None
+                    if not offer:  # only reached after a round of calls: the answer is cut short, and says so
+                        limit = self.settings.max_tool_rounds
+                        messages.append({"role": "user", "content": ROUNDS_USED.format(limit)})
+                        yield {
+                            "type": "warning",
+                            "message": f"Clara used the {limit} tool rounds an answer may take: she answers with what she has.",
+                        }
                     async for event in self._fit(request, plan, messages, tools, compact=round_number == 0 and stored):
                         yield event
                     current = RoundResult()
@@ -760,7 +773,9 @@ class Agent:
                             )
                 finished = True
             except BaseException as error:
-                if not isinstance(error, (GeneratorExit, asyncio.CancelledError)):
+                if isinstance(error, (GeneratorExit, asyncio.CancelledError)):
+                    reason = state.stop_reason or reason
+                else:
                     reason = str(error) or type(error).__name__
                 raise
             finally:
@@ -940,7 +955,6 @@ class Agent:
                     if answer is None:
                         text = outcome.text  # still waiting: the request stays, and Clara is told later
                     elif answer.startswith("allow"):
-                        yield {"type": "tool_start", "name": call.name, "arguments": call.arguments}
                         text, ok = await toolbox.execute(call.name, context, call.arguments)
                         self.s.approvals.finish(approval.id, "done" if ok else "failed", text, told=True)
                         for extra in context.events:

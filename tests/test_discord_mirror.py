@@ -290,3 +290,31 @@ async def test_an_answer_is_written_as_it_comes_and_ends_with_what_was_stored(wo
     assert world.clara.reports[-1]["posts"] == [{"conversation": "c1", "turn": "t9", "side": "reply",
                                                  "ids": ["5502"], "digest": "dr"}]
     assert "t9" not in world.mirror.streams
+
+
+async def test_a_conversation_with_no_thread_is_made_whole_when_a_turn_starts_in_it(world):
+    """Its place was not shown before, or the bot was off: the thread starts with its first question, the turns that came
+    before follow in order, and only then the question being asked."""
+    world.mirror.places = {"main": {"category": 1, "forum": 2}}
+    forum = FakeForum(2, "Conversations")
+    world.guild.channels[2] = forum
+    await world.mirror.on_live({"type": "start", "conversation": "c1", "turn": "t3", "title": "Plan", "text": "Q3",
+                                "digest": "d-Q3", "ref": "", "place": "main", "thread": "",
+                                "earlier": [turn("t1", "Q1", "A1"), turn("t2", "Q2", "A2")]})
+    (thread,) = forum.threads
+    assert thread.sent == ["Q1", "A1", "Q2", "A2", "Q3", "…"]
+    posts = [(post["turn"], post["side"]) for call in world.clara.reports for post in call.get("posts", [])]
+    assert posts == [("t1", "user"), ("t1", "reply"), ("t2", "user"), ("t2", "reply"), ("t3", "user"), ("t3", "reply")]
+    assert world.mirror.threads["c1"] == str(thread.id) and "t3" in world.mirror.streams
+
+
+async def test_a_new_conversation_still_starts_its_thread_with_the_question_being_asked(world):
+    world.mirror.places = {"main": {"category": 1, "forum": 2}}
+    forum = FakeForum(2, "Conversations")
+    world.guild.channels[2] = forum
+    await world.mirror.on_live({"type": "start", "conversation": "c1", "turn": "t1", "title": "Plan", "text": "Q1",
+                                "digest": "d-Q1", "ref": "", "place": "main", "thread": "", "earlier": []})
+    (thread,) = forum.threads
+    assert thread.sent == ["Q1", "…"]
+    posts = [(post["turn"], post["side"]) for call in world.clara.reports for post in call.get("posts", [])]
+    assert posts == [("t1", "user"), ("t1", "reply")]

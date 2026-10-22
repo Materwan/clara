@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 
 import pytest
 
@@ -86,6 +87,25 @@ async def test_a_stopped_answer_is_kept_as_interrupted(services, llm):
     stored = services.conversations.read_back(conversation)
     assert [m["role"] for m in stored] == ["user", "assistant"]
     assert "[This answer was interrupted" in stored[1]["content"]
+
+
+async def test_the_last_round_says_why_it_has_no_tools(services, llm):
+    """Twenty rounds of searching ended an answer on « one last check… »: nobody was told the rounds were used up."""
+    services.agent.settings = dataclasses.replace(services.agent.settings, max_tool_rounds=2)
+    llm.replies = [calls(("recall_facts", {"query": "a"})), calls(("recall_facts", {"query": "b"})), "Here is what I found."]
+    events = []
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="dig", client="web"))) as stream:
+        async for event in stream:
+            events.append(event)
+    warnings = [e["message"] for e in events if e["type"] == "warning"]
+    assert len(warnings) == 1 and "2 tool rounds" in warnings[0]
+    assert events[-1]["type"] == "done" and events[-1]["reply"] == "Here is what I found."
+    last = llm.seen[-1]
+    assert last["tools"] is None
+    assert last["messages"][-1]["role"] == "user" and "no tool is offered now" in last["messages"][-1]["content"]
+    assert all(seen["tools"] for seen in llm.seen[:-1])
+    stored = services.conversations.read_back(events[-1]["conversation"], calls=True)
+    assert not any("no tool is offered" in m["content"] for m in stored)  # the note was for the model, not the record
 
 
 def test_attachment_limits_fit_the_request_limit():

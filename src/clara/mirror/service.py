@@ -61,6 +61,9 @@ class Watch:
             self.turn = _Turn(conversation, str(event.get("id")))
             if self.thread:
                 self.mirror.link_thread(conversation, self.thread)
+            # A conversation with no thread yet (its place was not shown, the bot was off) is made whole by the bot: it is
+            # told the turns that came before this one, to write them first
+            thread = self.mirror.thread_of(conversation)
             self.mirror.live.publish(
                 {
                     "type": "start",
@@ -71,7 +74,8 @@ class Watch:
                     "digest": text.digest(self.question),
                     "ref": self.ref,
                     "place": self.mirror.place_of_id(conversation),
-                    "thread": self.mirror.thread_of(conversation),
+                    "thread": thread,
+                    "earlier": [] if thread else self.mirror.stored_turns(conversation),
                 }
             )
         elif self.turn is None:
@@ -340,6 +344,10 @@ class Mirror:
                 reply = {"text": body, "digest": text.digest(body)}
             result.append({"key": turn["key"], "user": turn["user"], "reply": reply})
         return result
+
+    def stored_turns(self, conversation_id: str) -> list[dict]:
+        """The turns stored so far, as the bot writes them."""
+        return self._turns(conversation_id)
 
     def answer_of(self, conversation_id: str, turn_id: str) -> dict | None:
         """What the mirror writes for one turn, as stored (the same text `sync` gives for it)."""

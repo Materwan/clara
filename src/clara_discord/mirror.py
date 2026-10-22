@@ -438,26 +438,35 @@ class Mirror:
             )
 
     async def thread_for(self, conversation: str, event: dict) -> tuple[discord.Thread | None, bool]:
-        """The conversation's thread, made from the question when it has none yet. Returns (thread, made now)."""
+        """The conversation's thread, made when it has none yet. Returns (thread, whether its first message is this
+        turn's question).
+
+        A conversation that had turns before its thread (its place was not shown then, the bot was off) is made whole:
+        the thread starts with its first question and the turns that came before this one follow, in order, so the
+        question of this turn lands after them, where it belongs."""
         known = event.get("thread") or self.threads.get(conversation)
         if known:
             thread = await self.existing_thread(known)
             if thread is not None:
                 return thread, False
+        earlier = event.get("earlier") or []
+        current = {
+            "key": event["turn"],
+            "user": {"text": event["text"], "ref": event.get("ref", ""), "digest": event["digest"]},
+            "reply": None,
+        }
         data = {
             "id": conversation,
             "title": event.get("title") or "Conversation",
             "place": event.get("place") or "",
-            "turns": [
-                {
-                    "key": event["turn"],
-                    "user": {"text": event["text"], "ref": event.get("ref", ""), "digest": event["digest"]},
-                    "reply": None,
-                }
-            ],
+            "turns": [*earlier, current],
             "posted": {},
         }
-        return await self.make_thread(conversation, data)
+        thread, made = await self.make_thread(conversation, data)
+        if thread is None or not earlier:
+            return thread, made
+        await self.write_turns(thread, {**data, "turns": earlier})
+        return thread, False
 
     async def show(self, stream: Stream) -> None:
         stream.last = time.monotonic()

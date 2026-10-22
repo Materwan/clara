@@ -6,7 +6,7 @@
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import QcmForm from '../components/QcmForm.svelte';
-  import { api, fileToBase64, stream, zone } from '../lib/api';
+  import { ApiError, api, fileToBase64, stream, zone } from '../lib/api';
   import { type Document, repack, unpack } from '../lib/documents';
   import { markdown } from '../lib/markdown';
   import { conversations, go, route, toast, ui } from '../lib/state.svelte';
@@ -84,7 +84,10 @@
 
   $effect(() => {
     const id = conversationId;
-    if (id && id === skipReload) return;
+    if (id && id === skipReload) {
+      skipReload = ''; // only the reload that `send` made unnecessary: coming back later reads the conversation
+      return;
+    }
     load(id);
   });
 
@@ -94,26 +97,56 @@
     if (id) api.get(`/v1/projects/${id}`).then((project) => { if (projectId === id) projectName = project.name; }).catch(() => {});
   });
 
+  let loads = 0; // the latest load: an older one that ends late draws nothing
+
+  /** Leaving a conversation: the answer in it goes on without us, only the stream we read it from is dropped. */
+  function leave(): void {
+    controller?.abort();
+    controller = null;
+    busy = false;
+  }
+
   async function load(id: string | null): Promise<void> {
+    const mine = ++loads;
+    leave();
     conversation = null;
     messages = [];
     orphans = [];
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
     packList = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
     projectList = (await api.get('/v1/projects').catch(() => ({ projects: [] }))).projects;
+    if (mine !== loads) return;
     if (!id) chosenProject = undefined;
     if (!id) return;
     try {
-      conversation = await api.get(`/v1/conversations/${id}`);
-      if (conversation.parent) return go('/chat/' + conversation.parent); // a sub agent's conversation is read in its parent's
+      const found = await api.get(`/v1/conversations/${id}`);
+      if (mine !== loads) return;
+      conversation = found;
+      if (found.parent) return go('/chat/' + found.parent); // a sub agent's conversation is read in its parent's
       const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
-      messages = group(history, conversation.approvals ?? []);
-      orphans = putSubagents(messages, conversation.subagents ?? []);
-      scrollDown(true);
+      if (mine !== loads) return;
+      // An answer still being given is followed from its start: its approval cards come with it
+      draw(found, history, found.answering ? [] : (found.approvals ?? []));
+      if (found.answering) attach(id, found, history);
     } catch (error) {
+      if (mine !== loads) return;
       toast((error as Error).message, 'error');
       go('/chat');
     }
+  }
+
+  function draw(found: any, history: any[], waiting: any[]): void {
+    conversation = found;
+    messages = group(history, waiting);
+    orphans = putSubagents(messages, found.subagents ?? []);
+    scrollDown(true);
+  }
+
+  /** The stored messages of a conversation, drawn again (an answer that ended while we were not reading it). */
+  async function refresh(id: string): Promise<void> {
+    const found = await api.get(`/v1/conversations/${id}`);
+    const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
+    if (conversationId === id) draw(found, history, found.approvals ?? []);
   }
 
   function addText(message: Message, text: string): void {
@@ -234,13 +267,78 @@
     }
   }
 
+  /** Draw the events of an answer into `current` until its stream ends (`id`: the conversation they belong to). */
+  async function follow(events: AsyncIterable<any>, user: Message, current: Message, id: string): Promise<void> {
+    for await (const event of events) {
+      switch (event.type) {
+        case 'thinking':
+          current.thinking = (current.thinking ?? '') + event.text;
+          break;
+        case 'token':
+          addText(current, event.text);
+          break;
+        case 'tool_start':
+          addCall(current, { name: event.name, arguments: event.arguments, running: true });
+          break;
+        case 'tool': {
+          const call = openCall(current, event.name, true);
+          if (call) Object.assign(call, { running: false, result: event.result });
+          else addCall(current, { name: event.name, arguments: event.arguments, result: event.result });
+          break;
+        }
+        case 'approval':
+          current.parts.push({ kind: 'approval', approval: event.approval });
+          break;
+        case 'qcm':
+          current.parts.push({ kind: 'form', form: event.form });
+          break;
+        case 'file':
+          current.files.push(event);
+          break;
+        case 'retrying':
+        case 'warning':
+          current.notes.push(event.message);
+          break;
+        case 'compacted':
+          current.notes.push(`Summarised: ${Math.round(event.before)}% → ${Math.round(event.after)}% of the context.`);
+          break;
+        case 'discarded':
+          current.notes.push(`The replaced answer had run: ${event.tools.join(', ')} (what they changed stays changed).`);
+          break;
+        case 'done':
+          user.id = event.message_id ?? undefined;
+          user.versions = event.versions?.length > 1 ? event.versions : undefined;
+          user.version = user.versions ? user.versions.indexOf(event.message_id) + 1 : undefined;
+          if (conversation?.id === id) conversation.context = event.context;
+          break;
+        case 'error':
+          current.error = event.message;
+          break;
+      }
+      scrollDown();
+    }
+  }
+
+  /** The end of a stream we were reading: ready for the next question, unless we left for another conversation. */
+  async function finished(mine: AbortController, id: string | null): Promise<void> {
+    conversations.changed++;
+    if (controller !== mine) return; // left, or another stream has taken over
+    controller = null;
+    busy = false;
+    if (!id) return;
+    const latest = await api.get(`/v1/conversations/${id}`).catch(() => null);
+    if (latest && conversationId === id) conversation = latest;
+  }
+
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
     if (conversation?.archived) return;
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
-    controller = new AbortController();
+    const mine = new AbortController();
+    controller = mine;
     const files = carried ?? await Promise.all(attached.map(async (file) => ({ name: file.name, data: await fileToBase64(file) })));
     let id = conversationId;
+    let current: Message | undefined;
     try {
       if (!id) {
         const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs });
@@ -259,75 +357,62 @@
       const answer = blank('assistant');
       answer.streaming = true;
       messages.push(user, answer);
-      const current = messages[messages.length - 1];
+      current = messages[messages.length - 1];
       draft = '';
       attached = [];
       scrollDown(true);
-      const body = { message: text, conversation: id, attachments: files, timezone: zone, fork_of: forkOf ?? undefined };
-      for await (const event of stream('POST', '/v1/chat/stream', body, controller.signal)) {
-        switch (event.type) {
-          case 'thinking':
-            current.thinking = (current.thinking ?? '') + event.text;
-            break;
-          case 'token':
-            addText(current, event.text);
-            break;
-          case 'tool_start':
-            addCall(current, { name: event.name, arguments: event.arguments, running: true });
-            break;
-          case 'tool': {
-            const call = openCall(current, event.name, true);
-            if (call) Object.assign(call, { running: false, result: event.result });
-            else addCall(current, { name: event.name, arguments: event.arguments, result: event.result });
-            break;
-          }
-          case 'approval':
-            current.parts.push({ kind: 'approval', approval: event.approval });
-            break;
-          case 'qcm':
-            current.parts.push({ kind: 'form', form: event.form });
-            break;
-          case 'file':
-            current.files.push(event);
-            break;
-          case 'retrying':
-          case 'warning':
-            current.notes.push(event.message);
-            break;
-          case 'compacted':
-            current.notes.push(`Summarised: ${Math.round(event.before)}% → ${Math.round(event.after)}% of the context.`);
-            break;
-          case 'discarded':
-            current.notes.push(`The replaced answer had run: ${event.tools.join(', ')} (what they changed stays changed).`);
-            break;
-          case 'done':
-            user.id = event.message_id ?? undefined;
-            user.versions = event.versions?.length > 1 ? event.versions : undefined;
-            user.version = user.versions ? user.versions.indexOf(event.message_id) + 1 : undefined;
-            if (conversation) conversation.context = event.context;
-            break;
-          case 'error':
-            current.error = event.message;
-            break;
-        }
-        scrollDown();
-      }
+      // keep_running: the answer goes on if this page is closed or left, and is followed again from where it is
+      const body = { message: text, conversation: id, attachments: files, timezone: zone, fork_of: forkOf ?? undefined, keep_running: true };
+      await follow(stream('POST', '/v1/chat/stream', body, mine.signal), user, current, id);
       current.streaming = false;
       messages = [...messages];
     } catch (error) {
       if ((error as Error).name !== 'AbortError') toast((error as Error).message, 'error');
     } finally {
-      const last = messages.at(-1);
-      if (last) last.streaming = false;
-      busy = false;
-      controller = null;
-      conversations.changed++;
-      if (id) conversation = await api.get(`/v1/conversations/${id}`).catch(() => conversation);
+      if (current) current.streaming = false;
+      finished(mine, id);
     }
   }
 
-  function stop(): void {
+  /** Follow the answer Clara is still giving in a conversation we opened: the page was closed, or left, while she worked. */
+  async function attach(id: string, found: any, history: any[]): Promise<void> {
+    busy = true;
+    const mine = new AbortController();
+    controller = mine;
+    let current: Message | undefined;
+    try {
+      const events = stream('GET', `/v1/conversations/${id}/run`, undefined, mine.signal);
+      const first = await events.next();
+      if (first.done || first.value.type !== 'resume') return;
+      const user = yours(first.value.message);
+      for (const name of first.value.attachments ?? []) {
+        if (!user.attachments.some((file) => file.name === name)) user.attachments.push({ name });
+      }
+      const answer = blank('assistant');
+      answer.streaming = true;
+      messages.push(user, answer);
+      current = messages[messages.length - 1];
+      scrollDown(true);
+      await follow(events, messages[messages.length - 2], current, id);
+      current.streaming = false;
+      messages = [...messages];
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        // not an answer we can follow (it ended just now, or it is not kept running): what is stored is what there is
+        if (conversationId === id) draw(found, history, found.approvals ?? []);
+      } else if ((error as Error).name !== 'AbortError') toast((error as Error).message, 'error');
+    } finally {
+      if (current) current.streaming = false;
+      finished(mine, id);
+    }
+  }
+
+  /** Stop the answer. It goes on without us, so it is told to stop; then what it had said is read back, marked as cut. */
+  async function stop(): Promise<void> {
+    const id = conversationId;
+    if (id) await api.del(`/v1/conversations/${id}/run`).catch(() => {});
     controller?.abort();
+    if (id) await refresh(id).catch(() => {});
   }
 
   /** A reply that failed or was cut off can be tried again: its question is asked again (a new version when it is stored). */
