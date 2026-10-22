@@ -50,7 +50,6 @@ RETRY_WAITS = (60, 300)
 MAX_SUMMARY = 700
 CATCH_UPS = ("all", "latest", "digest", "skip")
 ACTIONS = ("run", "notify")
-DEFAULT_TEMPLATE = "{from}: {subject}"
 
 
 class TriggerError(ValueError):
@@ -188,6 +187,12 @@ class Triggers(DueLoop):
     def wants(self, kind: str) -> bool:
         """Is any enabled trigger waiting for this kind of event? (A source need not look if none is.)"""
         return self.db.one("SELECT 1 FROM triggers WHERE enabled = 1 AND event_kind = ?", (kind,)) is not None
+
+    def waiting_since(self, kind: str) -> str | None:
+        """Since when a trigger waits for this kind of event: the earliest of the enabled ones, as last made or changed (turning
+        one on is a change). None if none does."""
+        row = self.db.one("SELECT MIN(updated_at) AS at FROM triggers WHERE enabled = 1 AND event_kind = ?", (kind,))
+        return row["at"]
 
     def find(self, trigger_id: int) -> Trigger | None:
         row = self.db.one("SELECT * FROM triggers WHERE id = ?", (trigger_id,))
@@ -669,12 +674,12 @@ class Triggers(DueLoop):
         return len(rows)
 
     def _notify(self, trigger: Trigger, events: list[StoredEvent]) -> str:
-        template = trigger.prompt or DEFAULT_TEMPLATE
+        template = trigger.prompt or KINDS[trigger.on].template
         if len(events) == 1:
-            title, text = trigger.name, fill(template, {**events[0].data, "title": events[0].title})
+            title, text = trigger.name, fill(template, {"title": events[0].title, **events[0].data})
         else:
             title = f"{trigger.name}: {len(events)} events"
-            text = "\n".join(fill(template, {**event.data, "title": event.title}) for event in events[:10])
+            text = "\n".join(fill(template, {"title": event.title, **event.data}) for event in events[:10])
             text += f"\n…and {len(events) - 10} more." if len(events) > 10 else ""
         self.events.publish(
             "notification", title, text, source="triggers", targets=("web",) if trigger.local_only else None
@@ -750,7 +755,7 @@ class Triggers(DueLoop):
             reason = "The filter does not match."
         shown = event if isinstance(event, StoredEvent) else StoredEvent(**{**event.__dict__, "id": 0})
         message = (
-            fill(trigger.prompt or DEFAULT_TEMPLATE, {**shown.data, "title": shown.title})
+            fill(trigger.prompt or KINDS[trigger.on].template, {"title": shown.title, **shown.data})
             if trigger.action == "notify"
             else message_of(trigger.name, trigger.prompt, [shown])
         )

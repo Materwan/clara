@@ -54,7 +54,11 @@ def status(request: Request) -> dict:
             "connected": bool(github and s.secrets.has("github_token")),
             "account": github["account"] if github else "",
             "status": github["status"] if github else "",
-            "repos": [r.describe() for r in s.connections.resources("github_repo")],
+            "poll_seconds": s.settings.github_poll_seconds,
+            "repos": [
+                {**r.describe(), "watching": connectors.github_watch.watching(r.locator)}
+                for r in s.connections.resources("github_repo")
+            ],
         },
         "google": {
             "configured": connectors.google_auth() is not None,

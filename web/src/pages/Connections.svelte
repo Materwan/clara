@@ -1,7 +1,7 @@
 <script lang="ts">
   import Checkbox from '../components/Checkbox.svelte';
   import Icon from '../components/Icon.svelte';
-  import { api } from '../lib/api';
+  import { api, when } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { route, toast } from '../lib/state.svelte';
 
@@ -11,6 +11,7 @@
   let branch = $state('');
   let senders = $state('');
   type Mailbox = 'gmail';
+  const WATCHED: Record<string, string> = { 'github.pull_request': 'pull requests', 'github.push': 'pushes' };
 
   async function load(): Promise<void> {
     info = await api.get('/v1/connections');
@@ -165,7 +166,8 @@
           <button>Add repository</button>
         </form>
         {#each info.github.repos as item (item.id)}
-          <div class="row"><span class="grow">{item.locator}{item.branch ? ` (branch ${item.branch})` : ''}</span><button class="small danger" onclick={() => removeResource(item.id)}>Remove</button></div>
+          <div class="row"><span class="grow">{item.locator}{item.branch ? ` (branch ${item.branch})` : ''}
+            {#each Object.entries<string>(item.watching ?? {}) as [kind, since] (kind)}<span class="muted small">· {WATCHED[kind] ?? kind} since {when(since)} </span>{/each}</span><button class="small danger" onclick={() => removeResource(item.id)}>Remove</button></div>
         {:else}<div class="muted small">No repository yet: Clara can reach none.</div>{/each}
       {/if}
     </section>

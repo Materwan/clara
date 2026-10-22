@@ -58,7 +58,8 @@ listening on 127.0.0.1:8888, with `deploy/searxng/settings.yml` and a random `se
 
 Create a **fine-grained personal access token** on GitHub limited to the repositories Clara should reach, with the
 permissions she needs (Contents, Issues, Pull requests: read and write; Metadata: read). Paste it on the Connections
-page, then add each repository there: Clara reaches no other, and every change asks first by default.
+page, then add each repository there: Clara reaches no other, and every change asks first by default. For hooks on pull
+requests and pushes, read access to Contents and Pull requests is what the poll uses.
 
 ### Google Drive
 
@@ -103,11 +104,13 @@ a token of its own.
 - **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
   inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` alert once.
 
-### Hooks (Clara acts when a mail arrives)
+### Hooks (Clara acts when a mail arrives, or a pull request or a push is made)
 
 A hook is a rule you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
 one, and the model cannot make one. On the web site, make and watch them in **Automation → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
-notifications) listens.
+notifications) listens. GitHub cannot call Clara, so a hook on `github.pull_request` or `github.push` is found by a poll too, every
+`CLARA_GITHUB_POLL_SECONDS` (120), of the repositories added on the Connections page and only for the kinds a hook waits for.
+A hook's run is untrusted, so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
 
 ```text
 /triggers add invoices '{"on": "mail.received",

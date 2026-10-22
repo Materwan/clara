@@ -6,7 +6,7 @@
   import { confirmDialog } from '../lib/dialog.svelte';
   import { conversations, live, toast } from '../lib/state.svelte';
 
-  // The hooks of Clara: what she does when something happens outside (today: a new mail). The server decides everything; this
+  // The hooks of Clara: what she does when something happens outside (a new mail, a pull request, a push). The server decides everything; this
   // page writes the triggers, shows what they did and lets you test one on a stored event without running anything.
   type Condition = { field: string; operator: string; value: string };
 
@@ -17,9 +17,30 @@
   const FIELDS: Record<string, string> = {
     from: 'Sender', from_address: 'Sender address', subject: 'Subject', snippet: 'Start of the text', account: 'Service (gmail)',
     mailbox: 'Mailbox address', has_attachment: 'Has an attachment', unread: 'Is unread',
+    repo: 'Repository', action: 'What happened (opened, merged, closed)', title: 'Title', author: 'Author', branch: 'Branch',
+    base: 'Base branch', draft: 'Is a draft', from_fork: 'Comes from a fork', message: 'Commit message',
+    created: 'Makes a new branch', forced: 'Rewrites history',
   };
-  const KINDS: Record<string, string> = { 'mail.received': 'new mail' };
-  const LONG: Record<string, string> = { 'mail.received': 'new mail in a connected mailbox' };
+  const KINDS: Record<string, string> = { 'mail.received': 'new mail', 'github.pull_request': 'pull request', 'github.push': 'push' };
+  const LONG: Record<string, string> = {
+    'mail.received': 'new mail in a connected mailbox',
+    'github.pull_request': 'a pull request opened, merged or closed in a GitHub repository',
+    'github.push': 'a push to a branch of a GitHub repository',
+  };
+  const EVERY: Record<string, string> = {
+    'mail.received': 'every new mail', 'github.pull_request': 'every pull request opened, merged or closed', 'github.push': 'every push',
+  };
+  const HINTS: Record<string, string> = {
+    'mail.received': '{from}, {subject}, {snippet}, {mailbox}. Empty: the sender and the subject.',
+    'github.pull_request': '{repo}, {number}, {action}, {title}, {author}, {branch}, {url}. Empty: the repository, the number, what happened, the author and the title.',
+    'github.push': '{repo}, {branch}, {author}, {message}, {sha}, {url}. Empty: the repository, the branch, the author and the message.',
+  };
+  // The places hooks look at: what each needs, and the server setting that turns its polling off.
+  const SOURCES: Record<string, { label: string; tag: string; missing: string; setting: string; reads: string; icon: string }> = {
+    mail: { label: 'Mail', tag: 'No mailbox', missing: 'A hook on new mail has nothing to look at. Connect Gmail on the', setting: 'CLARA_MAIL_POLL_SECONDS', reads: 'read mail', icon: 'mail' },
+    github: { label: 'GitHub', tag: 'No repository', missing: 'A hook on GitHub has nothing to look at. Connect GitHub and add a repository on the', setting: 'CLARA_GITHUB_POLL_SECONDS', reads: 'read GitHub', icon: 'branch' },
+  };
+  const sourceOf = (kind: string): string => kind.split('.')[0];
   const CATCH_UPS = [
     { value: 'all', label: 'run for each of them, at the pace allowed' }, { value: 'digest', label: 'run once for all of them together' },
     { value: 'latest', label: 'run only for the newest' }, { value: 'skip', label: 'do nothing for them' },
@@ -35,7 +56,7 @@
   let projects = $state<any[]>([]);
   let models = $state<any>({ models: [], default: '' });
   let toolNames = $state<string[]>([]);
-  let mail = $state<any>({ ready: true, poll: 120 });
+  let sources = $state<Record<string, { ready: boolean; poll: number }>>({ mail: { ready: true, poll: 120 }, github: { ready: true, poll: 120 } });
   let form = $state(empty());
   let open = $state(false);
   let more = $state(false); // the form's less common options
@@ -50,6 +71,14 @@
   const readTools = $derived<string[]>([...(kinds.find((kind) => kind.kind === form.on)?.read_tools ?? []), 'notify']);
   const shownTools = $derived(toolNames.filter((name) => name.includes(toolFilter.trim().toLowerCase())));
   const label = (field: string): string => FIELDS[field] ?? field;
+  // A source is worth a warning only to someone who has a hook on it, or is making one.
+  const watched = (source: string): boolean =>
+    (open && sourceOf(form.on) === source) || hooks.some((hook) => hook.enabled && sourceOf(hook.on) === source);
+  const looked = $derived(
+    Object.entries(SOURCES)
+      .map(([key, item]) => `${item.label} ${sources[key].poll ? `is looked at every ${sources[key].poll} seconds while a hook is on` : 'is not looked at: polling is off on this server'}`)
+      .join('; '),
+  );
   const operatorLabel = (operator: string): string => OPERATORS.find((item) => item.value === operator)?.label ?? operator;
 
   async function load(): Promise<void> {
@@ -60,7 +89,10 @@
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
     const connections = await api.get('/v1/connections').catch(() => null);
     if (connections) {
-      mail = { ready: connections.gmail.connected, poll: connections.mail.poll_seconds };
+      sources = {
+        mail: { ready: connections.gmail.connected, poll: connections.mail.poll_seconds },
+        github: { ready: connections.github.connected && connections.github.repos.length > 0, poll: connections.github.poll_seconds },
+      };
     }
     if (runs) runs = { hook: runs.hook, runs: (await api.get(`/v1/triggers/${runs.hook.id}/runs`)).runs };
     if (seen) seen = (await api.get('/v1/trigger-events', { limit: 30 })).events;
@@ -124,7 +156,7 @@
   }
 
   function addCondition(): void {
-    const first = 'subject' in fields ? 'subject' : (Object.keys(fields).find((field) => fields[field] === 'text') ?? Object.keys(fields)[0] ?? 'subject');
+    const first = ['subject', 'title', 'message'].find((field) => field in fields) ?? (Object.keys(fields).find((field) => fields[field] === 'text') ?? Object.keys(fields)[0] ?? 'subject');
     form.conditions.push({ field: first, operator: 'contains', value: '' });
   }
 
@@ -177,12 +209,12 @@
   }
 
   // ------------------------------------------------------------------ the list
-  function describeFilter(filter: Record<string, any>): string {
+  function describeFilter(filter: Record<string, any>, kind: string): string {
     const parts = Object.entries(filter).flatMap(([field, spec]) =>
       typeof spec.eq === 'boolean'
         ? [`${label(field).toLowerCase()}: ${spec.eq ? 'yes' : 'no'}`]
         : Object.entries(spec).map(([operator, values]) => `${label(field).toLowerCase()} ${operatorLabel(operator)} ${(values as string[]).map((value) => `“${value}”`).join(' or ')}`));
-    return parts.join(' · ') || 'every new mail';
+    return parts.join(' · ') || (EVERY[kind] ?? 'every event');
   }
 
   async function toggle(hook: any): Promise<void> {
@@ -244,19 +276,22 @@
 
 <div class="stack">
   <div class="row start">
-    <p class="intro grow">A hook runs Clara, or only notifies you, when something happens outside: today, a new mail in a mailbox you
-      connected. What arrives was written by someone else, so a run starts <b>unattended and untrusted</b>: anything it would change
-      outside (send a mail, write to GitHub or Drive) asks you first, and it has only the tools you give it.</p>
+    <p class="intro grow">A hook runs Clara, or only notifies you, when something happens outside: a new mail in a mailbox you
+      connected, or a pull request or a push in a GitHub repository you added. What arrives was written by someone else, so a run starts
+      <b>unattended and untrusted</b>: anything it would change outside (send a mail, write to GitHub or Drive) asks you first, and it
+      has only the tools you give it.</p>
     <button class="primary" aria-expanded={open} aria-controls="hook-form" bind:this={newButton}
       onclick={() => (open ? closeForm() : openForm())}><Icon name="plus" size={18} />New hook</button>
   </div>
-  {#if !mail.ready}
-    <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />No mailbox</span>
-      <span class="small">A hook on new mail has nothing to look at. Connect Gmail on the <a href="#/connections">Connections</a> page.</span></p>
-  {:else if mail.poll === 0}
-    <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Mail polling is off</span>
-      <span class="small"><code>CLARA_MAIL_POLL_SECONDS</code> is 0 on the server, so no hook will start.</span></p>
-  {/if}
+  {#each Object.entries(SOURCES) as [source, item] (source)}
+    {#if watched(source) && !sources[source].ready}
+      <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />{item.tag}</span>
+        <span class="small">{item.missing} <a href="#/connections">Connections</a> page.</span></p>
+    {:else if watched(source) && sources[source].poll === 0}
+      <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />{item.label} polling is off</span>
+        <span class="small"><code>{item.setting}</code> is 0 on the server, so no hook will start.</span></p>
+    {/if}
+  {/each}
   {#if open}
   <form class="panel stack" id="hook-form" aria-label={form.id ? `Change ${form.name}` : 'New hook'} onsubmit={save}>
     <div class="grid-2">
@@ -300,14 +335,14 @@
         </select></label>
     </div>
     <label class="field">{form.action === 'run' ? 'What Clara should do' : 'The notification'}
-      {#if form.action === 'notify'}<span class="hint">Use {'{from}'}, {'{subject}'}, {'{snippet}'}, {'{mailbox}'}. Empty: the sender and the subject.</span>{/if}
+      {#if form.action === 'notify'}<span class="hint">Use {HINTS[form.on] ?? ''}</span>{/if}
       <textarea rows={form.action === 'run' ? 4 : 2} bind:value={form.prompt} required={form.action === 'run'}></textarea></label>
     {#if form.action === 'run'}
       <fieldset class="packs">
         <legend class="small">Tools of the run</legend>
         <label class="field">
           <select aria-label="Which tools" bind:value={form.toolsMode}>
-            <option value="default">the safe default: read mail, notify</option><option value="choose">choose the tools…</option>
+            <option value="default">the safe default: {SOURCES[sourceOf(form.on)].reads}, notify</option><option value="choose">choose the tools…</option>
           </select></label>
         {#if form.toolsMode === 'default'}<p class="muted small">Exactly: {readTools.join(', ')}.</p>{/if}
         {#if form.toolsMode === 'choose'}
@@ -317,7 +352,7 @@
               <label class="small row"><Checkbox checked={form.tools.includes(name)} onchange={() => toggleTool(name)} />{name}</label>
             {/each}
           </div>
-          <p class="muted small">{form.tools.length} chosen. Give the fewest that the job needs: a hostile mail can steer a run only within them.
+          <p class="muted small">{form.tools.length} chosen. Give the fewest that the job needs: a hostile message or pull request can steer a run only within them.
             Whatever changes something outside still asks you.</p>
         {/if}
       </fieldset>
@@ -329,7 +364,7 @@
     </div>
     {#if more}
     <div class="grid-2" id="hook-more">
-      <label class="field">If mail arrived while the server was off
+      <label class="field">If it happened while the server was off
         <select bind:value={form.catch_up}>{#each CATCH_UPS as item}<option value={item.value}>{item.label}</option>{/each}</select></label>
       <label class="field">Runs an hour, at most <input type="number" min="1" max="600" bind:value={form.max_per_hour} /></label>
       <label class="field">Forget what waited more than (hours, 0: never) <input type="number" min="0" max="8760" bind:value={form.max_age_hours} /></label>
@@ -343,7 +378,9 @@
           <option value={1}>do not try again</option><option value={2}>try again once, after 1 minute</option><option value={3}>try again, after 1 and 5 minutes</option>
         </select></label>
       <div class="stack">
-        <label class="small row" title="Mail sent from Clara's own account is left out, so a hook cannot answer its own answer"><Checkbox bind:checked={form.include_self} />Also for mail from my own account</label>
+        {#if form.on === 'mail.received'}
+          <label class="small row" title="Mail sent from Clara's own account is left out, so a hook cannot answer its own answer"><Checkbox bind:checked={form.include_self} />Also for mail from my own account</label>
+        {/if}
         <label class="small row" title="A run the server stop cut half way is normally not repeated: it may have done part of its work"><Checkbox bind:checked={form.rerun_interrupted} />Repeat a run the server stopped half way</label>
       </div>
     </div>
@@ -359,14 +396,14 @@
     <tbody>
       {#each hooks as hook (hook.id)}
         <tr>
-          <td><strong>{hook.name}</strong> <span class="tag"><Icon name="mail" size={14} />{KINDS[hook.on] ?? hook.on}</span>
+          <td><strong>{hook.name}</strong> <span class="tag"><Icon name={SOURCES[sourceOf(hook.on)]?.icon ?? 'bolt'} size={14} />{KINDS[hook.on] ?? hook.on}</span>
             <span class="tag">{hook.action === 'run' ? 'runs Clara' : 'notifies'}</span>
             {#if !hook.enabled}<span class="tag">paused</span>{/if}{#if hook.running}<span class="tag ok">running</span>{/if}
             {#if hook.queued}<span class="tag warn">{hook.queued} waiting</span>{/if}
             {#if hook.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}
             {#if hook.catch_up !== 'all'}<span class="tag">backlog: {hook.catch_up}</span>{/if}
             <span class="tag">{hook.max_per_hour} an hour</span>
-            <br /><span class="muted small">When {describeFilter(hook.filter)}</span>
+            <br /><span class="muted small">When {describeFilter(hook.filter, hook.on)}</span>
             {#if hook.action === 'run'}<br /><span class="muted small">Tools: {hook.effective_tools.join(', ')}</span>{/if}</td>
           <td class="small">{#if hook.last}<span class:danger={hook.last.status === 'failed'}>{hook.last.status}</span> {when(hook.last.finished_at)}<br /><span class="muted">{hook.last.summary || hook.last.note}</span>{:else}—{/if}</td>
           <td class="row">
@@ -412,7 +449,7 @@
     <div class="panel">
       <div class="row"><h2 class="grow">Runs of {runs.hook.name}</h2><button class="small" onclick={() => (runs = null)}>Close</button></div>
       <table>
-        <thead><tr><th>When</th><th>Status</th><th>Mail</th><th>What happened</th><th><span class="sr-only">Conversation</span></th></tr></thead>
+        <thead><tr><th>When</th><th>Status</th><th>Event</th><th>What happened</th><th><span class="sr-only">Conversation</span></th></tr></thead>
         <tbody>
           {#each runs.runs as item (item.id)}
             <tr>
@@ -431,7 +468,7 @@
   {/if}
   <div class="row">
     <button class="small" aria-expanded={!!seen} aria-controls="hook-events" onclick={toggleSeen}>{seen ? 'Hide' : 'Show'} the events seen</button>
-    <span class="muted small">What the hooks were offered ({mail.poll ? `mail is looked at every ${mail.poll} seconds while a hook is on` : 'mail is not looked at: polling is off on this server'}).</span>
+    <span class="muted small">What the hooks were offered ({looked}).</span>
   </div>
   {#if seen}
     <div class="panel" id="hook-events">
@@ -442,7 +479,7 @@
             <tr><td class="small">{when(stored.occurred_at)}</td>
               <td class="small">{stored.title}{#if stored.self_caused} <span class="tag">from my own account</span>{/if}</td></tr>
           {:else}
-            <tr><td colspan="2" class="empty">Nothing yet. A hook sees only the mail that arrives after it is made.</td></tr>
+            <tr><td colspan="2" class="empty">Nothing yet. A hook sees only what happens after it is made.</td></tr>
           {/each}
         </tbody>
       </table>

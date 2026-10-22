@@ -38,7 +38,9 @@ def _problem(error: TriggerError) -> ApiError:
 
 class NewTrigger(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    on: str = Field(min_length=1, max_length=50, description="The kind of event: mail.received")
+    on: str = Field(
+        min_length=1, max_length=50, description="The kind of event: mail.received, github.pull_request or github.push"
+    )
     filter: dict | None = None
     action: Literal["run", "notify"] = "run"
     prompt: str = Field(default="", max_length=20_000)

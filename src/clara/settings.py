@@ -28,6 +28,7 @@ RESERVED_PROVIDER_IDS = frozenset(HOSTED_PROVIDERS)
 TAILSCALE_PORTS = (443, 8443, 10000)
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
 MAIL_POLL_MIN = 30
+GITHUB_POLL_MIN = 30
 
 
 class SettingsError(ValueError):
@@ -132,6 +133,7 @@ class Settings:
     google_client_id: str = ""
     google_project_number: str = ""
     mail_poll_seconds: int = 120
+    github_poll_seconds: int = 120
 
     # --- operations -----------------------------------------------------------------------------------------
     tailscale: str = "serve"
@@ -366,6 +368,12 @@ def load_settings(
     if 0 < mail_poll_seconds < MAIL_POLL_MIN:
         r.problems.append(f"CLARA_MAIL_POLL_SECONDS={mail_poll_seconds} must be 0 (never) or at least {MAIL_POLL_MIN}.")
         mail_poll_seconds = 120
+    github_poll_seconds = r.integer("CLARA_GITHUB_POLL_SECONDS", 120, 0, 86_400)
+    if 0 < github_poll_seconds < GITHUB_POLL_MIN:
+        r.problems.append(
+            f"CLARA_GITHUB_POLL_SECONDS={github_poll_seconds} must be 0 (never) or at least {GITHUB_POLL_MIN}."
+        )
+        github_poll_seconds = 120
     waiting_remind_at = r.text("CLARA_WAITING_REMIND_AT", "09:00")
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", waiting_remind_at):
         r.problems.append(f"CLARA_WAITING_REMIND_AT={waiting_remind_at!r} must be HH:MM.")
@@ -454,6 +462,7 @@ def load_settings(
         google_client_id=r.text("CLARA_GOOGLE_CLIENT_ID", ""),
         google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),
         mail_poll_seconds=mail_poll_seconds,
+        github_poll_seconds=github_poll_seconds,
         tailscale=r.choice("CLARA_TAILSCALE", "serve", ("serve", "off")),
         tailscale_port=tailscale_port,
         tailscale_bin=r.text("CLARA_TAILSCALE_BIN", "tailscale"),

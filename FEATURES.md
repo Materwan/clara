@@ -63,12 +63,12 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
 | Automation | One page for what Clara does by herself, with a switch at its top between its views, one for each way she is set off: **Schedules** (at a time) and **Hooks** (when something happens). The old address `#/schedules` still leads there. Another kind of automation is one more view |
 | Automation → Schedules | The **Schedules** view, the one the page opens on: prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
-| Automation → Hooks | The **Hooks** view (the address `#/automation?view=hooks` opens it): the list of hooks with what each waits for in words, its tools, its pace, what is waiting and its last run; **New hook** and **Edit** with a condition builder (a field, a comparison, a value; commas mean « or »), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the mail, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns when no mailbox is connected or mail polling is off, and reloads by itself while a run goes or waits |
+| Automation → Hooks | The **Hooks** view (the address `#/automation?view=hooks` opens it): the list of hooks with what each waits for in words, its tools, its pace, what is waiting and its last run; **New hook** and **Edit** with a condition builder (a field, a comparison, a value; commas mean « or »), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
-| Connections (Settings) | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
+| Connections (Settings) | GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
@@ -309,29 +309,56 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 ### Hooks: when something happens
 
 A schedule runs Clara at a time; a **hook** runs her when something happens outside. Today that is a new message in the
-inbox of a connected Gmail mailbox (`mail.received`); the design takes other sources (a pull request, a file).
+inbox of a connected Gmail mailbox (`mail.received`), a pull request opened, merged or closed in a GitHub repository you
+added (`github.pull_request`) and a push to one of its branches (`github.push`); the design takes other sources (a file).
 
 - **Events.** The mail poll (section 8) finds new messages and stores each as an *event*, once: `(source, key)` is unique,
   so the same message seen twice (a restart, a replay) is one event. An event carries the sender, the subject, a short
   snippet, the mailbox and whether it has attachments, never the body; everything in it was written by someone else. Events
   are kept 30 days (longer while a run still waits for one), runs `CLARA_RETENTION_DAYS`.
+- **GitHub.** GitHub cannot call Clara (she is on your tailnet only), so she looks: every `CLARA_GITHUB_POLL_SECONDS` (120),
+  at each repository added on the Connections page, and only while an enabled hook waits for that kind. Like the mail poll, the
+  first look only notes where things stand (a new hook never replays history), the place is forgotten when no hook waits, and the
+  place moves in the same transaction as the events and the runs they plan. For pull requests the first look notes things as of
+  the moment the repository began to be waited for (the later of its being added and a hook's being made, at most 15 minutes back),
+  so what happens before the poll gets round to it is not lost; a push cannot be told from before the first look. The Connections
+  page says, for each repository, since when its pull requests and pushes are looked for. An answer carries an etag, so
+  « nothing changed » costs no rate limit.
+  - `github.pull_request` (fields `repo`, `action`, `title`, `author`, `branch`, `base`, `snippet`, `draft`, `from_fork`): a
+    pull request **opened**, **merged** or **closed** (a merged one is not also closed), found by comparing the times GitHub
+    gives with the time the poll had reached; the most recently updated 300 pull requests are looked at in a poll. The event
+    carries the title, the author, both branches, the first 300 characters of the description, the head commit and the address,
+    never more.
+  - `github.push` (fields `repo`, `branch`, `author`, `message`, `created`, `forced`): the head of each of the first 100 branches
+    against the head seen last. The event lists up to 10 of the new commits (the count is always given); `author` and `message`
+    are the newest commit's. A new branch is a push only when its commit is not another branch's; a branch rewritten so that its
+    old head is no ancestor is `forced`. GitHub does not say when a push was made, so a push is dated from the last look: one
+    found after a gap of more than 15 minutes (the server was off) is a backlog for the hook's `catch_up`.
+  - **No event is `self_caused`.** The token is yours, so her commits and yours look the same, and a hook sees both. What keeps a
+    hook from answering itself is the gate: a hook's run is tainted, so every change it makes on GitHub (a commit, a branch, a pull
+    request, an issue, a merge) asks you first, whatever the rules say, and the loop turns only as fast as you approve (and at most
+    `max_per_hour`). Only turning the tainted-turn rule off (`/tainted off`) lifts this, so a rule that allows `github_write` is
+    then enough to write without asking.
+  - A run reads the rest with `github_read` (its `diff` action shows what a pull request or a commit changes); with no tools
+    listed it has `github_read` and `notify` only.
 - **Triggers.** You write them (`/triggers`, `POST /v1/triggers`); the model has no tool to make, read or change one, so a
-  message cannot create a hook. A trigger has: a name; an event kind; a **filter** (fields `account`, `mailbox`, `from`,
-  `from_address`, `subject`, `snippet`, `has_attachment`, `unread`; operators `eq`, `contains`, `starts_with`, `ends_with`,
+  message cannot create a hook. A trigger has: a name; an event kind; a **filter** (for mail the fields `account`, `mailbox`, `from`,
+  `from_address`, `subject`, `snippet`, `has_attachment`, `unread`, for GitHub those above; operators `eq`, `contains`, `starts_with`, `ends_with`,
   `not_contains`; all fields must hold, any value of an operator; no regular expression, on purpose); an **action** (`run`: a turn of
-  Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… and no model); its
+  Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… (GitHub: `{repo}`, `{number}`, `{action}`, `{title}`,
+  `{author}`, `{branch}`, `{message}`, `{sha}`, `{url}`) and no model, with a default text for each kind); its
   `tools`; an optional `project` (none by default); an optional `model`; `local_only`; `catch_up`; `max_per_hour`;
-  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`. Mail from Clara's own account is left out unless `include_self`; a sender's
+  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`. Mail from Clara's own account is left out unless `include_self` (which does nothing for GitHub); a sender's
   `From` can be forged, so a sender filter is a convenience, not a proof.
 - **A run** is an unattended turn in a conversation of its own, which belongs to the hook: the web history lists the conversations
   of a hook as a group under its name, like a schedule's, only when you switch the hook's `in_history` on (it starts off). The hook may
   also name a **project**, whose files and instructions are then context for every run. It is **tainted from its first word**: every outside write (a send, a GitHub change, a
   Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
-  lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`),
+  lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`; GitHub: `github_read`),
   so a hook never has more than you gave it. The same limits hold for the turn that follows one of its approvals. The event
   reaches the model after your prompt, inside an `<event>` tag as JSON with `<` and `>` escaped, with a line saying it is
   data. To let a hook send, list `mail_send` in its tools **and** write the rule; the run is tainted, so each send still asks.
-- **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the mail poll had reached are
+- **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the poll (mail or GitHub) had reached are
   written in one transaction. Mail that arrived while Clara was off is found (oldest first, section 8) and handled by the
   trigger's `catch_up`, for events found more than 15 minutes after they happened: `all` (a run each, the default, at the
   pace of `max_per_hour`), `latest` (a run for the newest; the others are recorded as skipped), `digest` (one run for the
@@ -420,7 +447,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   you wrote or a search returned is read at once; any other asks (refused when unattended).
 - **GitHub:** a fine-grained personal access token you paste on the Connections page, and the list of repositories
   Clara may use (others are refused before any request). Reading (tree, files, code search, branches, issues, pull
-  requests, threads) is allowed; every change (commit, branch, issue, pull request, merge) asks by default.
+  requests, threads, and the changes of a pull request or a commit) is allowed; every change (commit, branch, issue, pull request, merge) asks by default.
 - **Google Drive:** OAuth with the `drive.file` scope only (plus `openid email` to show which account you attach), with
   PKCE. Clara sees only files she created (in her own "Clara" folder) and files or folders you open to her with the
   Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
@@ -567,7 +594,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
 | `web_search` | Search the web (SearXNG) — untrusted | web_search / read |
 | `web_fetch` | Read a web page — untrusted | fetch_trusted or fetch_other / read |
-| `github_read` | Look at a connected repository — untrusted | github_read / read |
+| `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted | github_read / read |
 | `github_write` | Commit a file change (create, overwrite, append, delete) | github_write / write or destructive |
 | `github_branch` | Create or delete a branch | github_write / write or destructive |
 | `github_pr` | Open, comment, merge or close a pull request | github_write / write or destructive |
@@ -812,6 +839,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_GOOGLE_CLIENT_ID` | — | Google OAuth client (web application) |
 | `CLARA_GOOGLE_PROJECT_NUMBER` | — | Google Cloud project number (the Picker) |
 | `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
+| `CLARA_GITHUB_POLL_SECONDS` | `120` | How often the added repositories are looked at for hooks on pull requests and pushes (only while a hook waits for them); `0` never; 30 at least |
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
 | `CLARA_TAILSCALE_BIN` | tailscale | The tailscale binary |
@@ -994,7 +1022,7 @@ keep-alive every 15 s.
 | `POST /v1/triggers/{trigger_id}/test` | What would happen for an event (stored, sample or latest): match, message, tools; nothing is done |
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
-| `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories, files; the mail notification settings |
+| `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories (with since when hooks look at each), files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |
@@ -1039,7 +1067,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Vault note | 400,000 characters; 20 search results |
 | Special tools | `day_conversations` `CLARA_DAY_DIGEST_CHARS`; `files_created` 60 files a page; `daily_notes` 31 days; a question of `ask_person` 2,000 characters; 31 missed or queued runs per schedule |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
-| Hooks | 50 hooks; a prompt of 20,000 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each; 2 hooks running at once; a filter of 10 fields with 20 values of 200 characters; events kept 30 days |
+| Hooks | 50 hooks; a prompt of 20,000 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each; 2 hooks running at once; a filter of 10 fields with 20 values of 200 characters; events kept 30 days; GitHub: 300 pull requests and the first 100 branches looked at in a poll, 10 commits listed in a push event |
 | Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

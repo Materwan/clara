@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ..tools.base import TurnState
 from .drive import Drive, DriveError, GoogleAuth
 from .github import GitHub, GitHubError
+from .github_watch import GitHubWatch
 from .gmail import Gmail
 from .mail import LABELS, PROVIDERS, MailClient, MailError
 from .mail_tools import mail_tools
@@ -49,6 +50,7 @@ class Connectors:
         self._gmail: Gmail | None = None
         self._gmail_key = ""
         self.watch = MailWatch(s)
+        self.github_watch = GitHubWatch(s)
 
     # ------------------------------------------------------------------
     def github_client(self) -> GitHub | None:

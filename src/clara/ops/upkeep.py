@@ -8,7 +8,9 @@
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
   sessions, and the events of hooks older than 30 days (those a run still needs stay);
 * every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
-  waits for the mail providers, so the watchdog does not count it.
+  waits for the mail providers, so the watchdog does not count it;
+* every CLARA_GITHUB_POLL_SECONDS (0: never): pull requests and pushes in the repositories you added, while a hook waits
+  for them. Same reason, same exception for the watchdog.
 """
 
 from __future__ import annotations
@@ -54,6 +56,13 @@ class Upkeep:
                     name="upkeep-mail",
                 )
             )
+        if self.s.settings.github_poll_seconds > 0:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._loop("github", float(self.s.settings.github_poll_seconds), self.github, watched=False),
+                    name="upkeep-github",
+                )
+            )
         interval = watchdog_seconds()
         if interval:
             self._tasks.append(asyncio.create_task(self._watchdog(interval), name="watchdog"))
@@ -84,6 +93,10 @@ class Upkeep:
     async def mail(self) -> None:
         if self.s.connectors is not None:
             await self.s.connectors.watch.poll()
+
+    async def github(self) -> None:
+        if self.s.connectors is not None:
+            await self.s.connectors.github_watch.poll()
 
     def every_minute(self) -> None:
         s = self.s

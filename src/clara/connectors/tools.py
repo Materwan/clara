@@ -140,6 +140,7 @@ async def _github_read(
     query: str = "",
     number: Any = None,
     start_line: Any = 1,
+    ref: str = "",
 ) -> str:
     name = _repo(context, {"repo": repo})
     client = _github(context)
@@ -160,10 +161,12 @@ async def _github_read(
             return await client.issues(name, action == "pulls")
         if action == "thread":
             return await client.thread(name, optional_number(number, "number") or 0)
+        if action == "diff":
+            return await client.diff(name, optional_number(number, "number") or 0, str(ref), context.turn.read_chars)
     except GitHubError as error:
         _connectors(context).github_failed(error)
         raise ToolError(str(error)) from None
-    raise ToolError("action must be list, read, search, branches, issues, pulls or thread.")
+    raise ToolError("action must be list, read, search, branches, issues, pulls, thread or diff.")
 
 
 async def _github_write(
@@ -370,13 +373,15 @@ def github_tools() -> list[Tool]:
         "delete": ("github_write", "destructive"),
     }
     read_levels = {
-        name: ("github_read", "read") for name in ("list", "read", "search", "branches", "issues", "pulls", "thread")
+        name: ("github_read", "read")
+        for name in ("list", "read", "search", "branches", "issues", "pulls", "thread", "diff")
     }
     return [
         Tool(
             "github_read",
             "Look at a connected GitHub repository: list a folder, read a file, search the code, list "
-            "branches, open issues or pull requests, or read one issue/PR thread (`number`).",
+            "branches, open issues or pull requests, read one issue/PR thread (`number`), or see what a pull request "
+            "(`number`) or a commit or range (`ref`: a sha, or base...head) changes (`diff`).",
             _github_read,
             _github_action(read_levels, "read"),
             {
@@ -386,6 +391,7 @@ def github_tools() -> list[Tool]:
                 "branch": {"type": "string"},
                 "query": {"type": "string"},
                 "number": {"type": "integer"},
+                "ref": {"type": "string", "description": "For diff: a commit sha or branch, or a range base...head."},
                 "start_line": {"type": "integer"},
             },
             ("repo", "action"),
