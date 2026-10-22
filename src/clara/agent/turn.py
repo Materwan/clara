@@ -166,6 +166,8 @@ class ChatRequest:
     wait_for_approvals: bool = True  # a chat waits for your answer to an approval request (False: it is pushed)
     tainted: bool = False  # the turn starts as if it had read untrusted content (a run an outside event started)
     only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (a hook's allow-list)
+    ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
+    mirror_thread: str = ""  # a new conversation started in a Discord forum post: its thread
 
 
 @dataclass
@@ -246,6 +248,17 @@ class Agent:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    def start_turn(self, request: ChatRequest) -> None:
+        """A turn nobody waits for, run to its end: an edited Discord message asked again. Its answer is shown by the mirror."""
+        self._spawn(self._run_to_end(request))
+
+    async def _run_to_end(self, request: ChatRequest) -> None:
+        try:
+            async for _ in self.turn(request):
+                pass
+        except Exception:
+            log.exception("a turn started by the Discord mirror failed")
+
     # ------------------------------------------------------------------
     # Client tools
     # ------------------------------------------------------------------
@@ -311,6 +324,9 @@ class Agent:
         """Find or start the conversation, choose the model, and decide the tools offered."""
         self.validate(request)
         conversation: Conversation | None = None
+        if request.conversation and self.s.mirror.is_archived(request.conversation):
+            # an archived conversation is read, never written: a run that would write in it is recorded as failed
+            raise ValueError("This conversation is archived: unarchive it to write in it.")
         if request.conversation:
             conversation = self.s.conversations.get(request.conversation)
             if conversation is None:
@@ -556,15 +572,18 @@ class Agent:
         self.stats.active += 1
         self.stats.turns += 1
         started = time.monotonic()
+        watch = self.s.mirror.watch(request.message, request.ref, request.mirror_thread)
         try:
             async with contextlib.aclosing(self._turn(request, plan)) as events:
                 async for event in events:
+                    watch.see(event)  # a turn of a mirrored conversation is shown in Discord while it is written
                     if event["type"] == "done":
                         self.stats.prompt_tokens += event["usage"]["prompt_tokens"]
                         self.stats.completion_tokens += event["usage"]["completion_tokens"]
                         self._after_turn(request, plan, event, time.monotonic() - started)
                     yield event
         finally:
+            watch.close()
             self.stats.active -= 1
 
     def _after_turn(self, request: ChatRequest, plan: TurnPlan, done: dict, seconds: float) -> None:
@@ -761,6 +780,7 @@ class Agent:
                     prefix=request.prefix,
                     client=request.client,
                     turn_id=state.turn_id,
+                    ref=request.ref,
                 )
                 detached.clear()
                 if told:
@@ -985,6 +1005,7 @@ class Agent:
                 prefix=request.prefix,
                 client=request.client,
                 turn_id=state.turn_id,
+                ref=request.ref,
             )
         except Exception:
             log.exception("could not store the interrupted turn of %s", conversation_id)

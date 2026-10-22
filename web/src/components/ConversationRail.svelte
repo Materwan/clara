@@ -21,6 +21,7 @@
   let choice = $state<Record<string, boolean>>(remembered()); // group → true: opened by you, false: closed by you
   let all = $state<Record<string, boolean>>({}); // groups that listed everything ("Show more")
   let menu = $state<string | null>(null); // the conversation whose actions are open under its row (touch screens: no hover)
+  let archivedItems = $state<any[]>([]); // the archived conversations: read, and taking no new message
   const pinned = $derived(items.filter((item) => item.pinned));
   const others = $derived(items.filter((item) => !item.pinned));
   const loose = $derived(others.filter((item) => !item.group));
@@ -81,6 +82,7 @@
   async function load(): Promise<void> {
     try {
       items = (await api.get('/v1/conversations', { q: query, kind: 'any', history: !query, hide: query ? '' : hidden(), limit: 200 })).conversations;
+      archivedItems = query ? [] : (await api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 })).conversations;
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -114,6 +116,15 @@
     load();
   }
 
+  async function archive(item: any): Promise<void> {
+    try {
+      await api.patch(`/v1/conversations/${item.id}`, { archived: !item.archived });
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+    load();
+  }
+
   async function remove(item: any): Promise<void> {
     if (!(await confirmDialog({ title: 'Delete the conversation', message: 'Delete this conversation? Its facts stay.', confirm: 'Delete', danger: true }))) return;
     try {
@@ -142,6 +153,8 @@
       <button class="ghost icon-btn" aria-pressed={!!item.pinned} title={item.pinned ? 'Unpin' : 'Pin'} aria-label={item.pinned ? 'Unpin' : 'Pin'}
         onclick={() => pin(item)}><Icon name="pin" size={16} /></button>
       <button class="ghost icon-btn" title="Rename" aria-label="Rename" onclick={() => rename(item)}><Icon name="edit" size={16} /></button>
+      <button class="ghost icon-btn" aria-pressed={!!item.archived} title={item.archived ? 'Unarchive' : 'Archive'}
+        aria-label={item.archived ? 'Unarchive' : 'Archive'} onclick={() => archive(item)}><Icon name="archive" size={16} /></button>
       <button class="ghost icon-btn" title="Delete" aria-label="Delete" onclick={() => remove(item)}><Icon name="trash" size={16} /></button>
     </span>
     <button class="ghost icon-btn row-more" aria-expanded={menu === item.id} aria-label={`Actions for ${item.title || item.preview || 'this conversation'}`}
@@ -151,6 +164,7 @@
     <li class="convo-menu" class:nested use:reveal>
       <button class="small toggle" aria-pressed={!!item.pinned} onclick={() => { menu = null; pin(item); }}><Icon name="pin" size={16} />Pin</button>
       <button class="small" onclick={() => { menu = null; rename(item); }}><Icon name="edit" size={16} />Rename</button>
+      <button class="small" onclick={() => { menu = null; archive(item); }}><Icon name="archive" size={16} />{item.archived ? 'Unarchive' : 'Archive'}</button>
       <button class="small danger" onclick={() => { menu = null; remove(item); }}><Icon name="trash" size={16} />Delete</button>
     </li>
   {/if}
@@ -198,6 +212,10 @@
     {#if loose.length}
       <li class="group-title">Conversations</li>
       {#each loose as item (item.id)}{@render row(item)}{/each}
+    {/if}
+    {#if archivedItems.length && !query}
+      <li class="group-title">Archived</li>
+      {#each archivedItems as item (item.id)}{@render row(item)}{/each}
     {/if}
     {#if !items.length}
       <li class="empty small">{query ? 'No conversation matches.' : 'No conversation yet. Write to Clara to start one.'}</li>

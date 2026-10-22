@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from ..agent.estimate import CHARS_PER_TOKEN, estimate_tokens
 from ..db import Database
+from ..mirror.clock import bump
 from ..timeutil import now_iso
 from .ingest import ExtractedFile, Skipped
 
@@ -283,11 +284,14 @@ class Projects:
 
     def delete(self, project_id: int) -> int:
         """Delete a project and its files. Its conversations stay, in no project. Returns how many there were."""
-        with self.db.transaction():
-            moved = self._db.execute(
+        with self.db.transaction() as tx:
+            ids = [row[0] for row in tx.execute("SELECT id FROM conversations WHERE project_id = ?", (project_id,))]
+            for conversation_id in ids:  # they move to no project: their place on Discord changes
+                bump(tx, conversation_id)
+            moved = tx.execute(
                 "UPDATE conversations SET project_id = NULL WHERE project_id = ?", (project_id,)
             ).rowcount
-            self._db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            tx.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         return moved
 
     def _touch(self, project_id: int) -> None:

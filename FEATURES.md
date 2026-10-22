@@ -31,7 +31,7 @@ All clients speak the same HTTP API (section 15) with their own token, and share
 | Web site | Svelte single-page site served by Clara itself | `web` |
 | `clara-chat` | Terminal chat | `cli` |
 | `clara-admin` | Terminal admin console (the console commands below) | `console` |
-| `clara-discord` | Discord bot in your private server, answers your user id only, in #general (separate process) | `discord` |
+| `clara-discord` | Discord bot in your private server, answers your user id only: its conversations are threads in forums, `#general` says what is pending (separate process) | `discord` |
 | Your scripts | The HTTP API and its event stream | `script` |
 
 ### Web site
@@ -58,6 +58,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Page | What you do there |
 | --- | --- |
 | Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
@@ -147,17 +148,48 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   its heartbeat (the `discord` alert). Otherwise run it as `clara-discord.service`. Use one of the two, never both.
 - Connects with the guild, guild-message and message-content intents (the last is privileged: switch it on in the
   developer portal): no member list, no presences, no direct messages.
-- Answers **only** `CLARA_DISCORD_USER_ID`, and only in `#general` (and in a thread of a scheduled run under it); every other user, channel and server is ignored
-  without a reply. At start it finds the four channels: if one is missing, is not a text channel, or they are not all
+- Answers **only** `CLARA_DISCORD_USER_ID`, and only in its forums (the threads of the Discord mirror, below), in a thread of
+  a scheduled run under `#general`, and in `/` commands; every other user, channel and server is ignored without a reply. At start it finds the four channels: if one is missing, is not a text channel, or they are not all
   in one server, it refuses to start and says which. Only one bot runs per state file.
-- What you write in `#general` is a chat message in the bot's current conversation; files and pictures you attach go
-  with it (4 files, 25 MB each, 34 MB in all); Clara's answer, and the notes she writes, come back there (split at
-  2,000 characters).
+- **Conversations on Discord (the mirror).** Each place of the history is a **category** in your server with one forum
+  in it: a project, a schedule or a hook (its name) whose **Show in history** is on; **`Clara`** for the conversations of
+  none of them (the main forum); **`Clara · incognito`** for the incognito ones. Each conversation of those places is a
+  **thread** (a post) in its forum, named by its title. Local-only conversations are never on Discord.
+  - *Web to Discord:* a question and its answer are posted in the thread, the question as its user's words (documents
+    named, not repeated) and the answer with a line of the tools Clara used (`🔧 Searched the web ×24, read a page ×6 · 31
+    actions`, the web site's words; the results of tools are never shown); a long answer is split at 2,000 characters.
+    A new conversation makes its thread; a rename of the conversation renames the thread; a question asked again or
+    edited replaces its messages (the old ones are removed, the new ones posted); a deleted conversation removes its thread.
+  - *Discord to Clara:* what you write in a thread goes to its conversation as the web site would send it: the same
+    tools (the conversation's special tools, `/tools`), the same rule gate, files attached (as on the web). A new post in
+    the main forum, in a project's forum or in the incognito forum starts a conversation there. An automation's forum
+    takes no new post (its conversations are made by its runs). Editing your last question in Discord asks Clara again,
+    as the web site does; only the last one can be changed, and your messages are never deleted by Clara.
+  - *The answer is written as it comes:* the bot posts a message when a turn starts and edits it while Clara writes
+    (a line of tools, then the text, at most about once every 1.5 seconds), then gives it its final text. Only the answer
+    and the questions are written, never the results of tools.
+  - *Archive:* an archived conversation is kept whole in both places, and takes no new message (a message in Discord is
+    refused, and the thread is archived again, unless Discord archived it on its own after a week, which reopens the
+    conversation). A conversation whose project, schedule or hook is switched off in **Show in history** is archived, and
+    unarchived again when it is switched back on.
+  - *Deletions:* deleting a conversation, a project, a schedule or a hook on the web site deletes its thread or forum, as
+    it is asked now. Deleting a thread or a forum in Discord asks for your approval on the web site (the bot's token cannot
+    approve a deletion); once you approve, the conversation (or the project, schedule or hook and its conversations; a
+    main or incognito forum's conversations) is deleted here. Refuse it and nothing is deleted; the conversation then has
+    no thread.
+  - *The first copy:* the first sync makes the categories, forums and threads of every conversation that is shown, and
+    posts their messages; a later change is sent as a change. Discord's limits (500 channels and 50 categories per server)
+    stop the mirror: nothing more is made, the Admin page and `#alerts` say so, and **Resume the mirror** on the Admin page
+    starts it again.
+  - The bot needs *Manage Channels*, *Create Public Threads*, *Send Messages in Threads*, *Manage Threads*, *Read Message
+    History*, *Attach Files* and *View Channel* in your server.
+- Files and pictures you attach in a thread go with the message (4 files, 25 MB each, 34 MB in all); Clara's answer, and
+  the notes she writes, come back in the thread (split at 2,000 characters).
 - Where each kind of message goes:
 
   | Channel | What |
   | --- | --- |
-  | `#general` | Your conversation with Clara; a line saying where to answer when she waits for an approval |
+  | `#general` | Notices and where to answer: a line saying where to answer when she waits for an approval; `/new` opens a conversation in the Conversations forum |
   | `#approval` | Approval requests, with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
   | `#notification` | Reminders, notifications, task reminders, schedule and hook summaries and update news (by default: see below) |
   | `#alerts` | Alerts |
@@ -188,12 +220,11 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   (`discord_thread`). The bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general`
   (it logs what it lacks at start); without *Manage Threads* it archives the thread instead.
 - **A message to answer** (not a ping): what Clara says with `discord_say`, or an automation that delivers to Discord
-  (section 5, `deliver`), is an `ask` event of stage `said`. The bot posts it in `#general` (in the conversation's thread
-  when it has one; split into messages of 2,000 characters, up to 6,000 characters in all) and the conversation becomes
-  the current one there, so what you write next goes to it, and Clara has the whole conversation in front of her. It
-  replaces the conversation you were in on Discord until you write `/new` or another such message arrives. It is never sent
-  in a local-only or an incognito conversation. `#notification` stays for pings.
-- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation: list them, or switch one on or off), `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
+  (section 5, `deliver`), is an `ask` event of stage `said`. The bot posts it in the conversation's thread when it is on
+  Discord (split into messages of 2,000 characters, up to 6,000 characters in all); otherwise in `#general`, where the
+  conversation becomes the current one until you write `/new` or another such message arrives. It is never sent in a
+  local-only or an incognito conversation. `#notification` stays for pings.
+- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation, the one of the thread you are in: list them, or switch one on or off), `/new` (a new conversation: a thread in the main forum), `/status`, `/tasks`, `/reminders`,
   `/approvals`.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
   raises the `discord` alert after 5 minutes of silence. A bot that stopped by itself (exit code 0) is not started
@@ -522,6 +553,7 @@ neither read nor change rules, and no tool answers a request.
 | `fetch_trusted`: fetch a URL you wrote or a search returned | allow | allow |
 | `fetch_other`: fetch any other URL | ask | refuse |
 | `discord`: open, write in or remove a Discord thread, or say something in `#general` | allow | allow |
+| `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | ask | ask |
 
 ### Rules
 
@@ -577,7 +609,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-64 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+65 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -590,6 +622,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `list_reminders` | Reminders to come | read |
 | `cancel_reminder` | Cancel a reminder | memory / write |
 | `notify` | Notify you now on your clients (3 per turn): a ping that needs no answer, in `#notification` on Discord | memory / write |
+| `discord_forget` | What a deleted Discord thread or forum asks for, once you approve it: the conversation, or the project, schedule or hook with its conversations, or the main or incognito conversations. The model is never offered it, and the Discord token cannot approve it |
 | `discord_say` | Say something on Discord in `#general`, as a message you can answer: the conversation goes on there with your reply (3 per turn, 6,000 characters; not offered from Discord itself, in an incognito or a local-only conversation; refused when the bot is not connected) | discord / write |
 | `add_task` | Add a task or sub-task with reminders | memory / write |
 | `list_tasks` | Tasks, or one task in full | read |
@@ -1018,7 +1051,12 @@ keep-alive every 15 s.
 | `GET /v1/admin/releases` | Releases and the updater's state |
 | `POST /v1/admin/update` | Install a release |
 | `GET /v1/admin/alerts` | Active and recent alerts |
-| `GET /v1/admin/discord` | The Discord page: the bot's state, its channels, the category routes, the last test |
+| `GET /v1/admin/discord` | The Discord page: the bot's state, its channels, the category routes, the last test, and the mirror (conversations in Discord, a stop and its reason) |
+| `POST /v1/admin/discord/resume` | Start the Discord mirror again after it stopped at a Discord limit |
+| `GET /v1/discord/sync` | The bot's: the places, the conversations changed since a revision, the threads to remove (the Discord client only) |
+| `POST /v1/discord/report` | The bot's: the places, threads and messages it made, and what stopped it (the Discord client only) |
+| `GET /v1/discord/live` | The bot's: the answers being written in mirrored conversations, as they come (the Discord client only, server-sent events) |
+| `POST /v1/discord/event` | The bot's: a thread archived or deleted, a forum deleted, a question edited, on Discord (the Discord client only) |
 | `POST /v1/admin/discord/test` | Post a test message in one channel (`general`, `notification`, `approval`, `alerts`) |
 | `POST /v1/clients/heartbeat` | A client says it is alive (the Discord bot also says its name, the channels it sees and how a test went) |
 | `GET /v1/workspace` | Workspace status |

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from ..db import Database
+from ..mirror.clock import bump
 from ..timeutil import iso, now_iso, utcnow
 from .facts import fts_query
 
@@ -48,6 +49,8 @@ class Conversation:
     updated_at: str
     packs: tuple[str, ...] = ("web",)
     parent_id: str | None = None  # the conversation this one is shown in (a sub agent's), else None
+    archived_at: str | None = None  # archived: it can be read, and takes no new message
+    archived_by: str = ""  # who archived it: 'you', 'discord' (its idle week there), 'group' (its history switched off)
 
     def active_packs(self) -> list[str]:
         """The packs switched on, the vault's switch included (it is stored as `vault_open`)."""
@@ -70,6 +73,8 @@ class Conversation:
             "summarised": bool(self.summary),
             "packs": self.active_packs(),
             "parent": self.parent_id,
+            "archived": self.archived_at is not None,
+            "archived_by": self.archived_by,
         }
 
 
@@ -127,6 +132,8 @@ def _conversation(row) -> Conversation:
         row["updated_at"],
         _packs(row["packs"]),
         row["parent_id"],
+        row["archived_at"],
+        row["archived_by"],
     )
 
 
@@ -235,6 +242,7 @@ class Conversations:
         offset: int = 0,
         history: bool = False,
         hide_clients: tuple[str, ...] = (),
+        archived: bool | None = False,
     ) -> list[dict]:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
         `group` (its schedule, else its hook, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
@@ -242,6 +250,8 @@ class Conversations:
         the conversations the listed clients started. A sub agent's conversation is never listed: it is shown in its parent's."""
         where = ["c.parent_id IS NULL"]
         params: list = []
+        if archived is not None:  # False: the ones not archived (the default); True: only the archived ones
+            where.append("c.archived_at IS NOT NULL" if archived else "c.archived_at IS NULL")
         if kind != ANY:
             where.append("c.kind = ?")
             params.append(kind)
@@ -328,31 +338,55 @@ class Conversations:
                 values[name] = value
         if values:
             assignments = ", ".join(f"{name} = ?" for name in values)
-            self.db.execute(f"UPDATE conversations SET {assignments} WHERE id = ?", (*values.values(), conversation_id))
+            with self.db.transaction() as tx:
+                tx.execute(f"UPDATE conversations SET {assignments} WHERE id = ?", (*values.values(), conversation_id))
+                bump(tx, conversation_id)
         return self.require(conversation_id)
 
     def title_if_untitled(self, conversation_id: str, title: str) -> str:
         """Clara's title, unless the conversation got one meanwhile (yours is never replaced)."""
         title = " ".join(title.split())[:MAX_TITLE]
-        self.db.execute(
-            "UPDATE conversations SET title = ?, titled_by = 'clara' WHERE id = ? AND title = ''",
-            (title, conversation_id),
-        )
+        with self.db.transaction() as tx:
+            changed = tx.execute(
+                "UPDATE conversations SET title = ?, titled_by = 'clara' WHERE id = ? AND title = ''",
+                (title, conversation_id),
+            ).rowcount
+            if changed:
+                bump(tx, conversation_id)
         return self.require(conversation_id).title
 
     def touch(self, conversation_id: str) -> None:
         self.db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now_iso(), conversation_id))
 
     def delete(self, conversation_id: str) -> bool:
-        return self.db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,)).rowcount > 0
+        with self.db.transaction() as tx:
+            self._trash(tx, "id = ?", (conversation_id,))
+            return tx.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,)).rowcount > 0
+
+    @staticmethod
+    def _trash(tx, where: str, params: tuple = ()) -> None:
+        """The Discord threads of the conversations that `where` picks (on the conversations table) are to be removed."""
+        tx.execute(
+            "INSERT OR IGNORE INTO discord_trash (thread_id) SELECT thread_id FROM discord_threads"
+            f" WHERE thread_id <> '' AND conversation_id IN (SELECT id FROM conversations WHERE {where})",
+            params,
+        )
+
+    def delete_where(self, where: str, params: tuple = ()) -> int:
+        """Delete the conversations `where` picks (on the conversations table): what a Discord forum's deletion asks for."""
+        with self.db.transaction() as tx:
+            self._trash(tx, where, params)
+            return tx.execute(f"DELETE FROM conversations WHERE {where}", params).rowcount
 
     def sweep_incognito(self, hours: int) -> int:
         """Delete incognito conversations idle for longer than `hours`. A sub agent's (always incognito) lives and dies with
         its parent: it goes when the parent is swept or deleted."""
         limit = iso(utcnow() - timedelta(hours=hours))
-        return self.db.execute(
-            "DELETE FROM conversations WHERE incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,)
-        ).rowcount
+        with self.db.transaction() as tx:
+            self._trash(tx, "incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,))
+            return tx.execute(
+                "DELETE FROM conversations WHERE incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,)
+            ).rowcount
 
     # ------------------------------------------------------------------
     # Summary state
@@ -433,17 +467,19 @@ class Conversations:
         prefix: str = "",
         client: str = "",
         turn_id: str | None = None,
+        ref: str = "",
     ) -> int:
-        """Store a question and what followed it after the end of the path. Returns the question's id."""
+        """Store a question and what followed it after the end of the path. Returns the question's id. `ref`: the id of
+        the question's message on Discord, when it came from there."""
         now = now_iso()
         with self.db.transaction() as tx:
             parent = tx.execute(
                 "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND active = 1", (conversation_id,)
             ).fetchone()[0]
             question_id = parent = tx.execute(
-                "INSERT INTO messages (conversation_id, parent_id, role, content, prefix, client, turn_id, created_at)"
-                " VALUES (?, ?, 'user', ?, ?, ?, ?, ?)",
-                (conversation_id, parent, question, prefix, client, turn_id, now),
+                "INSERT INTO messages (conversation_id, parent_id, role, content, prefix, client, turn_id, ref, created_at)"
+                " VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?)",
+                (conversation_id, parent, question, prefix, client, turn_id, ref, now),
             ).lastrowid
             for row in rows:
                 parent = tx.execute(
@@ -462,6 +498,7 @@ class Conversations:
                     ),
                 ).lastrowid
             tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            bump(tx, conversation_id)
         return int(question_id or 0)
 
     # ------------------------------------------------------------------
@@ -543,6 +580,7 @@ class Conversations:
                 node = tx.execute(
                     "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?", (conversation_id, node)
                 ).fetchone()[0]
+            bump(tx, conversation_id)
 
     def heal_versions(self) -> int:
         """A server that stopped while a question was asked again left the old version off the path and the new one

@@ -217,6 +217,31 @@ class Approvals:
             self.push(approval)
         return approval
 
+    def ask_outside(
+        self, tool: str, arguments: dict, target: str, summary: str, conversation_id: str | None = None
+    ) -> Approval:
+        """A request no turn asked for: something Clara holds was deleted on Discord, so you are asked whether to delete
+        it here too. Always destructive, so only the web site and the terminals can answer it."""
+        approval_id = self.db.insert(
+            "INSERT INTO approvals (conversation_id, turn_id, tool, arguments, args_digest, target, level, action_class,"
+            " situation, summary, reason, status, created_at, expires_at) VALUES (?, '', ?, ?, ?, ?, 'destructive',"
+            " 'discord_forget', 'discord', ?, 'Deleted on Discord', 'pending', ?, ?)",
+            (
+                conversation_id,
+                tool,
+                json.dumps(arguments, ensure_ascii=False),
+                args_digest(arguments),
+                target,
+                summary[: SUMMARY_FULL.get("discord_forget", SUMMARY_SHOWN)],
+                iso(utcnow()),
+                iso(utcnow() + timedelta(seconds=self.expire_after)),
+            ),
+        )
+        approval = self.get(approval_id)
+        assert approval is not None
+        self.push(approval)
+        return approval
+
     def waiting_text(self, approval: Approval) -> str:
         return WAITING.format(id=approval.id)
 

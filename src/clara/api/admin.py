@@ -340,6 +340,7 @@ def discord_page(request: Request) -> dict:
             }
             for name in CHANNELS
         ],
+        "sync": s.mirror.status(),
         "categories": [
             {
                 "id": category.id,

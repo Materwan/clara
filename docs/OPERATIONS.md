@@ -160,7 +160,7 @@ direct-message function.
 2. On the Discord developer portal: a new application and its bot. On the Bot page, turn **Public Bot** off (nobody
    else can invite it) and turn on **Message Content Intent** (it lets the bot read what you write in `#general`;
    no other privileged intent is needed). Invite it to your server with an OAuth2 URL of scopes `bot` and
-   `applications.commands` and the permissions View Channels, Send Messages, Attach Files, Read Message History, Create Public Threads, Send Messages in Threads and Manage Threads (the last three are for the questions of scheduled runs, see *Special tools and the daily note*).
+   `applications.commands` and the permissions View Channels, Send Messages, Attach Files, Read Message History, Create Public Threads, Send Messages in Threads, Manage Threads, Manage Channels (the mirror makes the categories and forums) and Create Posts (the last three are for the questions of scheduled runs, see *Special tools and the daily note*).
 3. A Clara token for it: `clara token create discord discord` (its approval scope is `safe`).
 4. Two files that only the `clara` user can read, one with the bot's token, one with the Clara token:
 
@@ -212,6 +212,19 @@ selector: `#notification`, `#general`, `#alerts`, or off on Discord. Nothing cha
 the next message. A common use: send *Hook failures* to `#alerts`, or switch *New mail* off on Discord and keep it on the
 web site. Approval requests and the questions of scheduled runs cannot be moved, and alerts cannot be switched off. The
 setting is `discord_routes`, which the Settings tab also shows as JSON.
+
+
+**Conversations in Discord (the mirror).** Once the bot is in your server, run the live check once, with the bot's token in
+the environment (not in a file of the repository):
+
+```bash
+DISCORD_TOKEN=<the bot's token> DISCORD_GUILD_ID=<the server's id> uv run python scripts/discord_live_check.py
+```
+
+It makes a category, a forum, a thread and a message, edits, archives and unarchives the thread, then removes them, and
+prints one line per step: a `FAIL` names the right the bot lacks. Forum channels need the server's **Community** features
+switched on (Server settings). Discord's limits are 500 channels and 50 categories per server: when one is reached the
+mirror stops, `#alerts` says so and the Admin page offers **Resume the mirror** once you have removed some.
 
 ### Special tools and the daily note
 

@@ -224,7 +224,18 @@
     queueMicrotask(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
   }
 
+  /** Archived: no new message. Unarchiving here is the same switch as the rail's. */
+  async function unarchive(): Promise<void> {
+    try {
+      await api.patch(`/v1/conversations/${conversation.id}`, { archived: false });
+      conversation = { ...conversation, archived: false, archived_by: '' };
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
+    if (conversation?.archived) return;
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
     controller = new AbortController();
@@ -655,6 +666,10 @@
   <div class="composer" class:drop={dragging} role="group" aria-label="Write to Clara"
     ondragover={(event) => { event.preventDefault(); dragging = true; }} ondragleave={() => (dragging = false)} ondrop={drop}>
     <div class="composer-frame">
+      {#if conversation?.archived}
+        <p class="composer-hint" role="status">This conversation is archived: you can read it, but it takes no new message.
+          <button type="button" class="link" onclick={unarchive}>Unarchive</button></p>
+      {/if}
       <div class="composer-inner">
         {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
           <div class="chips" aria-label="Tools of this conversation">
@@ -675,7 +690,7 @@
           </div>
         {/if}
         <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
-          onkeydown={keydown} onpaste={paste}></textarea>
+          onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived}></textarea>
         <div class="composer-bar">
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
             onToggle={togglePack} onProject={chooseProject} />
@@ -688,7 +703,7 @@
           {#if busy}
             <button class="send stop" title="Stop" aria-label="Stop" onclick={stop}><Icon name="stop" /></button>
           {:else}
-            <button class="send" title="Send" aria-label="Send" disabled={!draft.trim() && !attached.length} onclick={() => send()}><Icon name="send" /></button>
+            <button class="send" title="Send" aria-label="Send" disabled={!!conversation?.archived || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
           {/if}
         </div>
       </div>

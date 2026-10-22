@@ -33,6 +33,7 @@ from .api import auth as auth_api
 from .api import chat as chat_api
 from .api import connections as connections_api
 from .api import conversations as conversations_api
+from .api import discord as discord_api
 from .api import events as events_api
 from .api import gate as gate_api
 from .api import memory as memory_api
@@ -59,6 +60,7 @@ from .llm import Catalog, NoModel, Providers, Router
 from .llm.retry import retryable
 from .memory.conversations import Conversations
 from .memory.facts import Facts
+from .mirror.service import Mirror
 from .ops import setup as ops_setup
 from .ops.alerts import Alerts
 from .ops.lifecycle import Lifecycle
@@ -147,6 +149,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         usage=UsageLog(db),
         facts=Facts(db),
         conversations=Conversations(db),
+        mirror=Mirror(db, events),
         conversation_files=ConversationFiles(db),
         projects=Projects(
             db,
@@ -182,6 +185,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     )
     s.agent = Agent(s, runner, Persona(settings.persona_file))
     s.agent.tool_conditions["discord_say"] = can_say
+    s.agent.tool_conditions["discord_forget"] = lambda state: False  # only an approved request runs it
     wire(s)
     s.lifecycle = Lifecycle(s, settings.drain_seconds)
     return s
@@ -401,6 +405,7 @@ def create_app(s: Services) -> FastAPI:
     app.include_router(connections_api.router)
     app.include_router(vault_api.router)
     app.include_router(packs_api.router)
+    app.include_router(discord_api.router)
     app.include_router(web_api.router)
     # outermost last: security headers → traffic log → body limit → authentication → the routes
     app.add_middleware(AuthMiddleware, services=s)

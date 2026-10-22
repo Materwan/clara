@@ -60,6 +60,10 @@ class ChatBody(BaseModel):
         pattern=r"^c[0-9a-f]{16}$",
         description="With a new conversation: the one it is shown in (a sub agent's)",
     )
+    ref: str = Field(default="", max_length=40, description="The message's id on Discord, when the bot sends it")
+    mirror_thread: str = Field(
+        default="", max_length=40, description="A new conversation started in a Discord forum post: its thread"
+    )
 
 
 def _files(body: ChatBody) -> tuple[Attached, ...]:
@@ -83,6 +87,8 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         raise ApiError(422, str(error)) from None
     if body.project is not None and services(request).projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
+    if body.conversation and services(request).mirror.is_archived(body.conversation):
+        raise ApiError(409, "This conversation is archived: unarchive it to write in it.")
     return ChatRequest(
         message=prepared.message,
         client=who.client,
@@ -100,6 +106,8 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         local_only=body.local_only,
         parent=body.parent,
         wait_for_approvals=wait,
+        ref=body.ref,
+        mirror_thread=body.mirror_thread,
     )
 
 

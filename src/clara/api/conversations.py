@@ -39,9 +39,12 @@ def listing(
     ),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    archived: Literal["no", "yes", "any"] = "no",
 ) -> dict:
     hidden = tuple(client for client in dict.fromkeys(hide.split(",")) if client in CLIENTS)
-    return {"conversations": services(request).conversations.listing(q, project, kind, limit, offset, history, hidden)}
+    shown = {"no": False, "yes": True, "any": None}[archived]
+    found = services(request).conversations.listing(q, project, kind, limit, offset, history, hidden, archived=shown)
+    return {"conversations": found}
 
 
 class NewConversation(BaseModel):
@@ -95,6 +98,7 @@ def get(conversation_id: str, request: Request) -> dict:
 
 class ConversationChange(BaseModel):
     title: str | None = Field(default=None, max_length=100)
+    archived: bool | None = Field(default=None, description="Archived: it can be read, and takes no new message")
     pinned: bool | None = None
     project: int | None = Field(default=None, description="0: out of any project")
     model: str | None = Field(default=None, max_length=200)
@@ -121,6 +125,8 @@ def change(conversation_id: str, body: ConversationChange, request: Request) -> 
         fields["local_only"] = body.local_only
     if body.packs is not None:
         fields["packs"] = _packs(s, body.packs)
+    if body.archived is not None:
+        s.mirror.set_archived(conversation_id, body.archived, "you")
     try:
         return s.conversations.update(conversation_id, **fields).describe()
     except ConversationError as error:

@@ -49,6 +49,7 @@ from discord import app_commands
 from clara.timeutil import ZoneError, human, parse_iso, zone
 
 from .api import Clara, ClaraError
+from .mirror import Mirror
 from .settings import Settings, SettingsError
 
 log = logging.getLogger("clara_discord")
@@ -160,6 +161,7 @@ class ClaraBot(discord.Client):
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.settings = settings
         self.clara = Clara(settings.clara_url, settings.clara_token)
+        self.mirror = Mirror(self, self.clara)  # the conversations kept in forums, in your server
         self.tree = app_commands.CommandTree(self)
         self.channels: dict[str, discord.TextChannel] = {}  # general, notification, approval, alerts
         self.guild_id: int | None = None
@@ -210,6 +212,11 @@ class ClaraBot(discord.Client):
             if conversation
             else None
         )
+
+    def bot_forum(self, key: str) -> discord.ForumChannel | None:
+        place = self.mirror.places.get(key)
+        channel = self.get_channel(place["forum"]) if place else None
+        return channel if isinstance(channel, discord.ForumChannel) else None
 
     async def resolve_channels(self) -> None:
         """Find the four channels by id. A missing one is refused: there is no direct-message fallback."""
@@ -266,6 +273,8 @@ class ClaraBot(discord.Client):
         await self.tree.sync()
         self._tasks.append(asyncio.create_task(self.relay(), name="relay"))
         self._tasks.append(asyncio.create_task(self.heartbeat(), name="heartbeat"))
+        self._tasks.append(asyncio.create_task(self.mirror.run(), name="mirror"))
+        self._tasks.append(asyncio.create_task(self.mirror.live(), name="mirror-live"))
 
     async def close(self) -> None:
         if self.is_closed():  # discord.py and the SIGTERM handler may both close: the second one has nothing left to do
@@ -317,36 +326,107 @@ class ClaraBot(discord.Client):
             return  # every other id is ignored, without a word
         channel = message.channel
         general = self.settings.channels["general"]
-        if channel.id == general:
-            conversation, remember = self.conversation(), True
-        elif isinstance(channel, discord.Thread) and channel.parent_id == general:
-            conversation, remember = self.threads().get(str(channel.id)), False  # a thread of a run
+        if isinstance(channel, discord.Thread) and channel.parent_id in self.mirror.forums:
+            await self.mirror_message(message)
+            return
+        if channel.id == general:  # #general is not a chat any more: the conversations are threads in their forums
+            await channel.send(
+                "Write in the Conversations forum (each conversation is a thread there), or `/new` to start one."
+            )
+            return
+        if isinstance(channel, discord.Thread) and channel.parent_id == general:
+            conversation = self.threads().get(str(channel.id))  # a thread of a scheduled run
             if conversation is None:
                 return
+            files = await self.attachments_of(message)
+            if files is None:
+                return
+            if not message.content.strip() and not files:
+                return
+            await self.ask(
+                channel,
+                {
+                    "message": message.content,
+                    "attachments": files,
+                    "timezone": self.settings.timezone,
+                    "conversation": conversation,
+                },
+                remember=False,
+            )
         else:
             return  # the other channels, other servers and DMs are not for chatting
-        files = []
+
+    async def attachments_of(self, message: discord.Message) -> list[dict] | None:
+        """The files of a message, read, or None when one of them is refused (the refusal is said in the channel)."""
         if len(message.attachments) > MAX_FILES:
             await message.channel.send(f"{MAX_FILES} files at most per message: send the others in another one.")
-            return
+            return None
         if sum(attachment.size for attachment in message.attachments) > MAX_TOTAL_BYTES:
             await message.channel.send(f"The files of one message may weigh {MAX_TOTAL_BYTES // 1_000_000} MB in all.")
-            return
+            return None
+        files = []
         for attachment in message.attachments:
             if attachment.size > MAX_FILE_BYTES:
                 await message.channel.send(f"{attachment.filename} is too big (25 MB at most).")
-                return
+                return None
             files.append({"name": attachment.filename, "data": base64.b64encode(await attachment.read()).decode()})
-        if not message.content.strip() and not files:
-            return
-        body = {"message": message.content, "attachments": files, "timezone": self.settings.timezone}
-        if conversation:
-            body["conversation"] = conversation
-        await self.ask(message.channel, body, remember=remember)
+        return files
 
-    async def ask(self, channel: discord.abc.Messageable, body: dict, remember: bool = True) -> None:
-        """Send a message to Clara and post the answer. `remember`: the conversation becomes the current one (not for a
-        check-in thread, which has its own)."""
+    async def mirror_message(self, message: discord.Message) -> None:
+        """What you write in a conversation's thread (or start as a new post of a forum) goes to Clara, in that
+        conversation, as the web site would send it. Its answer is written in the thread by the mirror as it comes."""
+        channel = message.channel
+        key = self.mirror.forums[channel.parent_id]
+        conversation = self.mirror.conversation_of(channel.id)
+        files = await self.attachments_of(message)
+        if files is None or (not message.content.strip() and not files):
+            return
+        body: dict = {
+            "message": message.content,
+            "attachments": files,
+            "timezone": self.settings.timezone,
+            "ref": str(message.id),
+        }
+        if conversation is None:
+            if channel.id != message.id:
+                return  # a thread the server does not know: not a conversation
+            if key.startswith("project:"):
+                body["project"] = int(key.split(":", 1)[1])
+            elif key == "incognito":
+                body["incognito"] = True
+            elif key != "main":
+                await channel.send("Automations are Clara's: a new post starts a conversation in Conversations.")
+                return
+            body["mirror_thread"] = str(channel.id)
+        else:
+            body["conversation"] = conversation
+            if channel.archived and not await self.reopen(conversation, channel):
+                return
+        await self.ask(channel, body, remember=False, mirrored=True)
+
+    async def reopen(self, conversation: str, thread: discord.Thread) -> bool:
+        """A message in an archived thread: Discord reopened the thread, so Clara follows when the archive came from
+        Discord (its idle week); one the web site made stays archived, and the message is said to be refused."""
+        try:
+            info = await self.clara.call("GET", f"/v1/conversations/{conversation}")
+        except ClaraError as error:
+            await thread.send(f"⚠️ {error}")
+            return False
+        if not info.get("archived"):  # Clara does not have it archived: Discord's state is the one that was wrong
+            return True
+        if info.get("archived_by") == "discord":
+            await self.clara.call("PATCH", f"/v1/conversations/{conversation}", json={"archived": False})
+            return True
+        await thread.edit(archived=True)
+        await thread.send("This conversation is archived: unarchive it on the web site to write in it.")
+        return False
+
+    async def ask(
+        self, channel: discord.abc.Messageable, body: dict, remember: bool = True, mirrored: bool = False
+    ) -> None:
+        """Send a message to Clara. `remember`: the conversation becomes the current one (not for a check-in thread, which
+        has its own). `mirrored`: the answer is written by the mirror as it comes (text and files), so only approvals and
+        failures are said here."""
         reply = ""
         done: dict = {}
         conversation = body.get("conversation")
@@ -374,22 +454,54 @@ class ClaraBot(discord.Client):
             reply = f"⚠️ {error}"
         finally:
             self.answering.discard(conversation)
-        for part in split_message(reply or "(no answer)"):
-            await channel.send(part)
-        for card in done.get("files", []):
-            try:
-                data = await self.clara.file(card["path"])
-                await channel.send(file=discord.File(io.BytesIO(data), filename=card["path"].rsplit("/", 1)[-1]))
-            except (ClaraError, discord.HTTPException) as error:
-                log.warning("cannot send %s: %s", card.get("path"), error)
+        if mirrored and reply.startswith("⚠️"):
+            await channel.send(reply[:LIMIT])
+        elif not mirrored:
+            for part in split_message(reply or "(no answer)"):
+                await channel.send(part)
+            for card in done.get("files", []):
+                try:
+                    data = await self.clara.file(card["path"])
+                    await channel.send(file=discord.File(io.BytesIO(data), filename=card["path"].rsplit("/", 1)[-1]))
+                except (ClaraError, discord.HTTPException) as error:
+                    log.warning("cannot send %s: %s", card.get("path"), error)
         if conversation in self.finished:  # the recap was written during this answer: now the thread can go
             await self.close_ask(self.finished.pop(conversation))
 
-    async def tools_text(self, pack: str | None, state: str | None) -> str:
+    # ------------------------------------------------------------------
+    # What Discord changes by itself: archived, edited, deleted
+    # ------------------------------------------------------------------
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread) -> None:
+        await self.mirror.thread_changed(before, after)
+
+    async def on_thread_delete(self, thread: discord.Thread) -> None:
+        await self.mirror.thread_deleted(thread)
+
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        await self.mirror.forum_deleted(channel)
+
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
+        """Your message in a conversation's thread was edited: the server asks Clara again, when it is your last question."""
+        data = payload.data
+        if str(data.get("author", {}).get("id", "")) != str(self.settings.owner_id) or "content" not in data:
+            return
+        channel = self.get_channel(payload.channel_id)
+        if not isinstance(channel, discord.Thread) or channel.parent_id not in self.mirror.forums:
+            return
+        try:
+            await self.clara.call(
+                "POST",
+                "/v1/discord/event",
+                json={"kind": "edit", "message": str(payload.message_id), "text": data["content"][:2000]},
+            )
+        except ClaraError as error:
+            await channel.send(f"⚠️ {error}")
+
+    async def tools_text(self, pack: str | None, state: str | None, current: str | None = None) -> str:
         """The packs of the current conversation (a new one starts with web search), after switching one if asked. The
         conversation decides: what is on here is on wherever it is continued."""
         listing = (await self.clara.call("GET", "/v1/packs", params={"where": "chat"}))["packs"]
-        current = self.conversation()
+        current = current or self.conversation()
         active = (await self.clara.call("GET", f"/v1/conversations/{current}"))["packs"] if current else ["web"]
         note = ""
         if pack:
@@ -528,6 +640,13 @@ class ClaraBot(discord.Client):
             else:
                 await self.close_ask(event)
             return
+        mirrored = self.mirror.threads.get(conversation) if conversation else None
+        if mirrored is not None:  # a conversation kept in Discord: what Clara says to you goes in its thread
+            thread = await self.mirror.existing_thread(mirrored)
+            if thread is not None:
+                for part in split_message(f"📓 **{event.get('title') or 'Clara'}**\n{event.get('text', '')}"):
+                    await thread.send(part)
+                return
         thread_id = self.thread_of(conversation)
         existing = None
         if thread_id is not None:
@@ -608,11 +727,16 @@ class ClaraBot(discord.Client):
         @tree.command(name="new", description="Start a new conversation with Clara")
         @here
         async def new(interaction: discord.Interaction) -> None:
-            if await only_you(interaction):
-                self.set_conversation(None)
-                await interaction.response.send_message(
-                    "New conversation: your next message starts it.", ephemeral=True
-                )
+            if not await only_you(interaction):
+                return
+            forum = self.bot_forum("main")
+            if forum is None:
+                await interaction.response.send_message("The Conversations forum is not made yet.", ephemeral=True)
+                return
+            made = await forum.create_thread(
+                name="New conversation", content="Write here: a new conversation with Clara."
+            )
+            await interaction.response.send_message(f"New conversation: <#{made.thread.id}>.", ephemeral=True)
 
         @tree.command(name="status", description="Clara's state")
         @here
@@ -672,7 +796,8 @@ class ClaraBot(discord.Client):
             if not await only_you(interaction):
                 return
             try:
-                await interaction.response.send_message(await self.tools_text(pack, state), ephemeral=True)
+                current = self.mirror.conversation_of(interaction.channel_id)  # a thread: its conversation
+                await interaction.response.send_message(await self.tools_text(pack, state, current), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 

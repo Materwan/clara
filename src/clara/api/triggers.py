@@ -121,10 +121,14 @@ async def change_trigger(
     trigger_id: int, body: TriggerChange, request: Request
 ) -> dict:  # async: it wakes the server's loop
     service = _service(request)
+    fields = body.model_dump(exclude_unset=True)
     try:
-        return service.describe(service.update(trigger_id, **body.model_dump(exclude_unset=True)))
+        changed = service.update(trigger_id, **fields)
     except TriggerError as error:
         raise _problem(error) from None
+    if "in_history" in fields:
+        request.app.state.services.mirror.group_switched(f"hook:{trigger_id}", bool(fields["in_history"]))
+    return service.describe(changed)
 
 
 @router.delete("/triggers/{trigger_id}")

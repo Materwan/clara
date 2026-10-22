@@ -14,6 +14,7 @@
   let gone = false;
 
   const connected = $derived(data?.bot.state === 'connected');
+  const sync = $derived(data?.sync ?? null);
   const changed = $derived<number>(data ? data.categories.filter((item: any) => item.channel !== item.default).length : 0);
 
   async function load(): Promise<void> {
@@ -63,6 +64,16 @@
       if (channel !== item.default) found[item.id] = channel;
     }
     return found;
+  }
+
+  async function resume(): Promise<void> {
+    try {
+      await api.post('/v1/admin/discord/resume', {});
+      toast('The mirror starts again.', 'ok');
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
   }
 
   async function test(channel: string): Promise<void> {
@@ -122,6 +133,18 @@
       {/each}
     </div>
 
+    {#if sync}
+      <section class="panel small stack" aria-label="Conversations kept in Discord">
+        <h2>Conversations in Discord</h2>
+        <p class="small">{sync.threads} conversations are threads, in {sync.places} forums; {sync.archived} archived in Clara.</p>
+        {#if sync.stopped}
+          <p class="row" role="alert"><span class="tag danger"><Icon name="warn" size={14} />Stopped</span> <span class="small">{sync.stopped}</span></p>
+          <p><button class="primary" onclick={resume}>Resume the mirror</button></p>
+        {:else if sync.error}
+          <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Last error</span> <span class="small">{sync.error}</span></p>
+        {/if}
+      </section>
+    {/if}
     <section class="panel small stack">
       <h2>Where each kind of message goes</h2>
       <p class="muted small">Pick the channel of each kind, or switch it off on Discord (the web site and the other clients still get it). A change applies to the next message.</p>

@@ -166,6 +166,7 @@ def change(project_id: int, body: ProjectChange, request: Request) -> dict:
             projects.pin(project_id, body.pinned)
         if body.in_history is not None:
             projects.show_in_history(project_id, body.in_history)
+            services(request).mirror.group_switched(f"project:{project_id}", body.in_history)
     except ProjectError as error:
         raise ApiError(422, str(error)) from None
     return _details(request, project_id)

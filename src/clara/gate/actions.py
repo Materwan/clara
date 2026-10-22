@@ -49,6 +49,11 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "fetch_trusted": ("allow", "allow", "Fetch a URL you wrote or a search returned"),
     "fetch_other": ("ask", "refuse", "Fetch any other URL"),
     "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
+    "discord_forget": (
+        "ask",
+        "ask",
+        "Delete a conversation, a project or an automation because its Discord thread or forum was deleted",
+    ),
 }
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
 RAISED_WHEN_TAINTED = frozenset(

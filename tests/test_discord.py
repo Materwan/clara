@@ -112,7 +112,7 @@ async def test_guild_intents_only_and_no_direct_messages(bot):
 async def test_only_you_in_general_are_answered(bot, monkeypatch):
     asked = []
 
-    async def ask(channel, body, remember=True):
+    async def ask(channel, body, remember=True, mirrored=False):
         asked.append((channel, body))
 
     monkeypatch.setattr(bot, "ask", ask)
@@ -130,8 +130,9 @@ async def test_only_you_in_general_are_answered(bot, monkeypatch):
     direct.channel.id = 12345
     await bot.on_message(direct)
     assert asked == []
-    await bot.on_message(message(42, GENERAL))
-    assert len(asked) == 1 and asked[0][1]["message"] == "hi" and asked[0][1]["timezone"] == "Europe/Paris"
+    told = message(42, GENERAL)  # #general is not a chat: it points to the forum
+    await bot.on_message(told)
+    assert asked == [] and "Conversations forum" in texts(told.channel)[-1]
 
 
 def test_long_answers_are_split_for_discord():
@@ -380,14 +381,13 @@ async def test_commands_work_for_you_in_your_server_only(bot):
     command = bot.tree.get_command("new")
     contexts = command.allowed_contexts
     assert contexts.guild and not contexts.dm_channel and not contexts.private_channel
-    bot.set_conversation("old")
     for who, where in ((7, GUILD), (42, GUILD + 1), (42, None)):
         call, said = interaction(who, where)
         await command.callback(call)
-        assert said == [("Not for you.", True)] and bot.conversation() == "old"
+        assert said == [("Not for you.", True)]
     call, said = interaction(42, GUILD)
     await command.callback(call)
-    assert bot.conversation() is None and "New conversation" in said[0][0]
+    assert said == [("The Conversations forum is not made yet.", True)]  # /new opens a thread in it, once it exists
 
 
 async def test_command_results_are_ephemeral_but_errors_stay_visible(bot, monkeypatch):
@@ -555,8 +555,8 @@ async def test_what_you_write_in_the_thread_goes_to_the_check_in_not_to_the_curr
     thread = FakeThread(777, GENERAL)
     await bot.on_message(message(thread))
     assert asked[0][0] is thread and asked[0][1]["conversation"] == "c-checkin" and asked[0][2] is False
-    await bot.on_message(message(FakeChannel(GENERAL)))
-    assert asked[1][1]["conversation"] == "c-current" and asked[1][2] is True
+    await bot.on_message(message(FakeChannel(GENERAL)))  # #general no longer continues the current conversation
+    assert len(asked) == 1
 
 
 async def test_an_answer_in_the_thread_does_not_make_it_the_current_conversation(bot, monkeypatch):

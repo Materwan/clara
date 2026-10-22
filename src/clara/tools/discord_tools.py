@@ -45,8 +45,86 @@ def _say(context: ToolContext, text: str, title: str = "") -> str:
     return "Sent to Discord's #general. This conversation is now the current one there: the person's reply comes back to it."
 
 
+# What a deleted Discord thread or forum asks Clara to delete too, once you approve it. The model is never offered it.
+FORGET_KINDS = ("conversation", "loose", "incognito", "project", "schedule", "hook")
+
+
+def scope_of(kind: str, target: str = "") -> tuple[str, tuple]:
+    """The conversations a deletion of this kind covers, as a condition on the conversations table: a conversation; the
+    loose ones (the main forum); the incognito ones (their forum); a project, a schedule or a hook with its runs."""
+    if kind == "conversation":
+        return "id = ?", (target,)
+    if kind == "loose":
+        return (
+            "project_id IS NULL AND incognito = 0 AND local_only = 0 AND parent_id IS NULL"
+            " AND id NOT IN (SELECT conversation_id FROM schedule_runs WHERE conversation_id IS NOT NULL)"
+            " AND id NOT IN (SELECT conversation_id FROM trigger_runs WHERE conversation_id IS NOT NULL)"
+            " AND id NOT IN (SELECT conversation_id FROM schedules WHERE conversation_id IS NOT NULL)",
+            (),
+        )
+    if kind == "incognito":
+        return "incognito = 1 AND parent_id IS NULL", ()
+    if kind == "project":
+        return "project_id = ?", (int(target),)
+    if kind == "schedule":
+        return (
+            "id IN (SELECT conversation_id FROM schedule_runs WHERE schedule_id = ? AND conversation_id IS NOT NULL)"
+            " OR id IN (SELECT conversation_id FROM schedules WHERE id = ? AND conversation_id IS NOT NULL)",
+            (int(target), int(target)),
+        )
+    if kind == "hook":
+        return (
+            "id IN (SELECT conversation_id FROM trigger_runs WHERE trigger_id = ? AND conversation_id IS NOT NULL)",
+            (int(target),),
+        )
+    raise ValueError(f"Unknown kind {kind!r}.")
+
+
+def _forget(context: ToolContext, kind: str, target: str = "", summary: str = "") -> str:
+    """Delete what a deleted Discord thread or forum stood for, with its conversations (`summary` is the request's words)."""
+    s = context.services
+    if kind not in FORGET_KINDS:
+        raise ToolError(f"Unknown kind {kind!r}.")
+    if kind == "project" and s.projects.get(int(target)) is None:
+        raise ToolError("No such project any more.")
+    try:
+        if kind == "schedule":
+            s.schedules.get(int(target))
+        elif kind == "hook":
+            s.triggers.get(int(target))
+    except Exception:  # a schedule or a hook that is gone: the service says so with its own error
+        raise ToolError(f"No such {kind} any more.") from None
+    removed = s.conversations.delete_where(*scope_of(kind, target))
+    if kind == "project":
+        s.projects.delete(int(target))
+    elif kind == "schedule":
+        s.schedules.delete(int(target))
+    elif kind == "hook":
+        s.triggers.delete(int(target))
+    return f"Deleted {removed} conversations" + (
+        f" and the {kind}." if kind in ("project", "schedule", "hook") else "."
+    )
+
+
 def discord_tools() -> list[Tool]:
     return [
+        Tool(
+            name="discord_forget",
+            description="Delete what a deleted Discord thread or forum stood for, once the person approves it.",
+            function=_forget,
+            describe=fixed(
+                "discord_forget", "destructive", lambda a: str(a.get("target", "")), lambda a: str(a.get("summary", ""))
+            ),
+            parameters={
+                "kind": {
+                    "type": "string",
+                    "enum": ["conversation", "loose", "incognito", "project", "schedule", "hook"],
+                },
+                "target": {"type": "string", "description": "The id of the conversation, project, schedule or hook."},
+                "summary": {"type": "string"},
+            },
+            required=("kind",),
+        ),
         Tool(
             name="discord_say",
             description=(
@@ -62,5 +140,5 @@ def discord_tools() -> list[Tool]:
                 "title": {"type": "string", "description": "Optional short title (default: the conversation's)."},
             },
             required=("text",),
-        )
+        ),
     ]

@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .mirror.service import Mirror
 from .ops.discord_report import DiscordReport
 
 if TYPE_CHECKING:
@@ -80,6 +81,7 @@ class Services:
     monitors: Any = None
     clients: dict[str, float] = field(default_factory=dict)  # client heartbeats: name -> monotonic time
     discord_report: DiscordReport = field(default_factory=DiscordReport)  # what the bot's heartbeats said
+    mirror: Mirror | None = None  # the conversations kept in Discord
     boot_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started: float = field(default_factory=time.monotonic)
 

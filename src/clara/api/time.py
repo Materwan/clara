@@ -267,9 +267,12 @@ def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) ->
     if "model" in fields:
         fields["model"] = _model(fields["model"])
     try:
-        return service.describe(service.update(schedule_id, **fields))
+        changed = service.update(schedule_id, **fields)
     except ScheduleError as error:
         raise ApiError(404 if "No scheduled" in str(error) else 422, str(error)) from None
+    if "in_history" in fields:
+        services(request).mirror.group_switched(f"schedule:{schedule_id}", fields["in_history"])
+    return service.describe(changed)
 
 
 @router.post("/schedules/{schedule_id}/run")
