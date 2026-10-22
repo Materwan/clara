@@ -79,8 +79,8 @@ earlier server: the new Clara starts empty.
 - **Schedules grew up:** packs, a model of its own, one conversation per run, a run that **asks and waits** for your answer
   (`waiting`, reminded once, closed from what Clara has, `finish_run`), what to do with runs missed while the server was off
   (`skip`, `latest`, `all`) and with a run that comes due before the last is over (`skip`, `replace`, `queue`). The
-  Schedules page has all of it. Fixed: "Run now" on the Schedules page failed (the route needed the server's event loop).
-- **Try again:** a reply on the web site that failed or was cut off has a **Try again** button (its question is asked again; a new version when it is stored). Schedules have `attempts` (1 to 3, 3 by default): a run the model could not answer is tried again after 1 and 5 minutes, unless it had already used a tool or written text. The Schedules page has the setting; the API takes `attempts` on create and change.
+  Schedules view of the Automation page has all of it. Fixed: "Run now" on the Schedules view failed (the route needed the server's event loop).
+- **Try again:** a reply on the web site that failed or was cut off has a **Try again** button (its question is asked again; a new version when it is stored). Schedules have `attempts` (1 to 3, 3 by default): a run the model could not answer is tried again after 1 and 5 minutes, unless it had already used a tool or written text. The Schedules view has the setting; the API takes `attempts` on create and change.
 - **The daily note is a schedule:** "Bilan du jour" is made once at start when there is a vault (every day at 23:59). It
   reads the day with the packs' tools, asks you one question on the web site and Discord (a thread under it in `#general`),
   waits for your answer, writes the day into a block of that day's daily note (`vault_daily_block`, `[[links]]` kept only
@@ -119,12 +119,12 @@ earlier server: the new Clara starts empty.
   connectors move out of NON-GOALS.md.
 - **Hooks:** Clara acts when something happens outside. A *trigger* you write (`/triggers`, `POST /v1/triggers`; the model cannot
   make one) matches new mail by field (no regular expression), and either notifies you or runs Clara: unattended, **tainted from
-  its first word**, with **only the tools you list** (by default: read mail and notify), in a conversation of its own inside a
-  project per hook. Events are stored once; the events, the runs they plan and the mail poll's place are one transaction, so a stop
+  its first word**, with **only the tools you list** (by default: read mail and notify), in a conversation of its own, listed under the
+  hook in the web history (a group like a schedule's, off until you switch it on). Events are stored once; the events, the runs they plan and the mail poll's place are one transaction, so a stop
   loses nothing and repeats nothing. Mail that arrived while Clara was off is handled by the trigger's `catch_up` (`all` by default,
   at `max_per_hour`; `latest`, `digest`, `skip`), a run the stop cut is not repeated unless asked. Also fixed: mail past the 50th
   that arrived during a stop was never announced; the poll now takes a backlog oldest first and forgets its place when nobody
-  listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`. The web site has a **Hooks** view on the Schedules page (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
+  listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`; version 10 gives a hook its `in_history` switch and removes the project that was made for each hook when it held nothing else. The web site has a **Hooks** view on the Automation page, beside Schedules (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
 - **Discord page:** the Admin page has a **Discord** tab: whether the bot is connected and what it sees in each of its four
   channels (their names, the rights it lacks), a **test message** per channel, and which channel carries each of twelve kinds of
   message (`#notification`, `#general`, `#alerts` or off on Discord; hook results and failures, new mail, Clara's own notices and
@@ -133,4 +133,4 @@ earlier server: the new Clara starts empty.
   chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
 - **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MAIL_POLL_SECONDS`; the runtime settings `discord_routes`, `mail_notify` and `mail_notify_senders`; the secret
   `gmail_refresh_token`; the alert `gmail`.
-- **Migrations:** schema version 9 (0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail as a connection, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).
+- **Migrations:** schema version 10 (0010: a hook's own history group, the project made for each hook goes when it was empty; 0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail as a connection, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0006: `parent_id` of a conversation, for a console sub agent's, deleted with its parent; 0007: `attempts` of a schedule, 3 by default).

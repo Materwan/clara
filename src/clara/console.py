@@ -273,7 +273,10 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
             if action == "add":
                 on = fields.pop("on", "")
                 made = s.triggers.create(rest[0], on, **fields)
-                return f"Made hook #{made.id}. Its runs go in project #{made.project_id}.\n{_hook_line(s, made)}"
+                return (
+                    f"Made hook #{made.id}. Its runs are listed under it in the history once you set in_history.\n"
+                    f"{_hook_line(s, made)}"
+                )
             return "Changed.\n" + _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, **fields))
         if action in ("on", "off") and rest:
             return _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, enabled=action == "on"))

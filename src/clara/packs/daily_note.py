@@ -2,7 +2,7 @@
 web site and Discord, waits for your answer, then writes the day into a block of the daily note of the vault.
 
 It is made once at start (when there is a vault), as an ordinary schedule: its prompt, time and packs are yours to
-change on the Schedules page, or to delete (it is not made again). The days of the earlier, built-in recap (table
+change on the Automation page (Schedules view), or to delete (it is not made again). The days of the earlier, built-in recap (table
 `recaps_legacy`) become runs of it.
 """
 

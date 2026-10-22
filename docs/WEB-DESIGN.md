@@ -64,9 +64,9 @@ account tab) stay put; `.rail-scroll` between them holds the pages and the conve
 which scroll as one. A conversation row's background is opaque (`--row`, mixed from `--rail-bg`) so its buttons can fade over its title.
 A row's actions (pin, rename, delete) are three icons that appear on hover; where there is no hover (`hover: none`) they are
 one **⋯** button (`.row-more`, `aria-expanded`) that opens them, named, in a row under the conversation (`.convo-menu`).
-The list is in sections: Pinned, **Projects**, **Schedules**, then the loose conversations. A project or a schedule is a
+The list is in sections: Pinned, **Projects**, **Schedules**, **Hooks**, then the loose conversations. A project, a schedule or a hook is a
 `.group-head` disclosure (`aria-expanded`, the chevron turns) over its rows (`.convo.nested`); `.more` lists the rest of a
-group. The button that switches a group on for the list is a `button.toggle` (`aria-pressed`) on the Projects and Schedules pages.
+group. The button that switches a group on for the list is a `button.toggle` (`aria-pressed`) on the Projects page and on the Schedules and Hooks views of the Automation page.
 
 The state of the connection is a lamp on the rim of Clara's portrait (`.portrait > .dot`, ringed in the rail's blue so it
 sits in the picture: `ok` connected, `warn` reconnecting, `danger` Clara not reachable). It has no visible text; a
@@ -78,7 +78,7 @@ account tab below.
 | Component | Where | Notes |
 | --- | --- | --- |
 | Discord | `components/Discord.svelte` | The Discord tab of the Admin page: the bot's state, one card per channel (with its test button and the result next to it), then a row per kind of message with a `<select>`. Only the site's classes (`.panel`, `.tag`, `.row`, `.grid-2`). The page reloads every 5 s while open (a heartbeat's age and the rights move by themselves); a test polls once a second for the bot's report, at most 12 s. A save sends only the kinds that differ from their default |
-| Hooks | `components/Hooks.svelte` | The Hooks view of the Schedules page (`#/schedules?view=hooks`, the `Segmented` at the top of Schedules). Uses only the site's classes (`.panel`, `.packs`, `.tag`, `.toggle`, `table`); a notice is a `.tag.warn` and a line of text, there is no banner component. Its form's fieldsets get `min-width: 0` (a fieldset otherwise grows to its widest control and pushes out of the card on a phone) |
+| Hooks | `components/Hooks.svelte` | The Hooks view of the Automation page (`#/automation?view=hooks`, the `Segmented` at the top of `pages/Automation.svelte`, which holds `components/Schedules.svelte` and this one). Uses only the site's classes (`.panel`, `.packs`, `.tag`, `.toggle`, `table`); a notice is a `.tag.warn` and a line of text, there is no banner component. Its form's fieldsets get `min-width: 0` (a fieldset otherwise grows to its widest control and pushes out of the card on a phone) |
 | Button | `button` | Variants: default (outline), `.primary`, `.danger`, `.ghost`, `.icon-btn`, `.link`. Sizes: default, `.small`, `.large`. States: hover, active, focus-visible, `:disabled`, `aria-busy="true"` (spinner; keeps its label). The base is wrapped in `:where()` (specificity 0): a component restyles a button with one plain class |
 | Field | `label.field` + `input` / `select` / `textarea` | A label above a control. States: hover, focus-visible, `:disabled`, `:user-invalid` and `[aria-invalid='true']` (red border). `.small` for compact controls. On iPhone and iPad fields are 16 px (Safari zooms into a smaller one and stays zoomed) |
 | Checkbox | `Checkbox.svelte` | Never a bare `<input type="checkbox">`. The input is the box (`appearance: none`, 16 px, 2 px `--line-strong` border); ticked, it fills `--check` and a tick drawn like the line icons unrolls over it. Takes every input attribute; `bind:checked` works. It is a line high, so beside text it sits on the first line. Radios share the look, round, with a violet dot |

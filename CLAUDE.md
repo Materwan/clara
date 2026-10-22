@@ -47,3 +47,5 @@ CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_netw
 - **FEATURES.md is tested against the code** (`tests/test_docs.py`). Adding a tool, route, `CLARA_*` setting, console command, secret, runtime knob, action class, event kind or alert without naming it in FEATURES.md (in backticks) fails the suite, and the tool count line (`N tools.`) must be updated.
 - Tests use `FakeLLM` (`tests/fakes.py`: scripted replies, `calls(("tool", {...}))` for tool calls) and `tests/mailworld.py` (a stand-in Gmail). The fixtures set `CLARA_RUN=off` and `CLARA_APPROVAL_WAIT=2`. `asyncio_mode = auto`; an unraisable exception (a leaked or un-awaited task) is configured to fail the test.
 - Subprocesses are always argv lists, never a shell. A child that is awaited with a timeout must be stopped on timeout *and* on cancellation (see `ops/backups.py::_stop`).
+- For test you can use ollama cloud model, and send mail to `jeanmichdu6934@gmail.com`, dedicated to tests.
+- For any task, ask as many questions as you need, whenever you need, to uderstand precisely the user asking, before modify files.

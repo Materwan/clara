@@ -43,7 +43,7 @@ class NewTrigger(BaseModel):
     action: Literal["run", "notify"] = "run"
     prompt: str = Field(default="", max_length=20_000)
     tools: list[str] | None = Field(default=None, max_length=40)
-    project: int | Literal["auto", "none"] = "auto"
+    project: int | Literal["none"] = "none"
     model: str = Field(default="", max_length=200)
     local_only: bool = False
     catch_up: CatchUp = "all"
@@ -53,6 +53,7 @@ class NewTrigger(BaseModel):
     rerun_interrupted: bool = False
     attempts: int = Field(default=MAX_ATTEMPTS, ge=1, le=MAX_ATTEMPTS)
     announce: bool = True
+    in_history: bool = False
     enabled: bool = True
 
 
@@ -72,6 +73,7 @@ class TriggerChange(BaseModel):
     rerun_interrupted: bool | None = None
     attempts: int | None = Field(default=None, ge=1, le=MAX_ATTEMPTS)
     announce: bool | None = None
+    in_history: bool | None = None
     enabled: bool | None = None
 
 

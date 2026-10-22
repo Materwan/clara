@@ -19,9 +19,9 @@ log = logging.getLogger(__name__)
 
 
 async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[StoredEvent]) -> str:
-    """One run: a turn in a conversation of its own (in the hook's project), unattended, tainted from its first word, with
-    only the tools the hook allows. Like a scheduled run, it is tried again when the model was busy or unreachable and the
-    attempt had stored nothing."""
+    """One run: a turn in a conversation of its own (listed under the hook, and in its project if it has one), unattended,
+    tainted from its first word, with only the tools the hook allows. Like a scheduled run, it is tried again when the
+    model was busy or unreachable and the attempt had stored nothing."""
     title = f"{trigger.name} — {events[0].title}" if len(events) == 1 else f"{trigger.name} — {len(events)} events"
     conversation = s.conversations.create(
         "server", title=title, project_id=trigger.project_id, local_only=trigger.local_only, model=trigger.model

@@ -108,15 +108,16 @@ def test_a_filter_mistake_is_told_and_there_is_no_regular_expression(bad, messag
 # ----------------------------------------------------------------------
 # Making and changing triggers
 # ----------------------------------------------------------------------
-def test_a_trigger_gets_a_project_and_the_safe_tools(services):
+def test_a_trigger_gets_the_safe_tools_and_no_project(services):
     trigger = make(services)
     assert trigger.effective_tools == ("mail_search", "mail_read", "mail_attachment_read", "notify")
-    assert services.projects.get(trigger.project_id).name == "Hook: Invoices"
+    assert trigger.project_id is None and trigger.in_history is False and services.projects.listing() == []  # no project is made for it
     assert (trigger.catch_up, trigger.max_per_hour, trigger.rerun_interrupted, trigger.include_self) == ("all", 20, False, False)
     own = make(services, "Mine", tools=["mail_read", "add_task"], project="none")
     assert own.effective_tools == ("mail_read", "add_task") and own.project_id is None
-    shared = make(services, "Shared", project=trigger.project_id)
-    assert shared.project_id == trigger.project_id
+    context = services.projects.create("Invoice rules").id
+    shared = make(services, "Shared", project=context)
+    assert shared.project_id == context and services.triggers.update(shared.id, project="none").project_id is None
     assert make(services, "Ring", action="notify", prompt="{from}").effective_tools == ()
 
 
@@ -125,7 +126,7 @@ def test_a_trigger_that_could_do_harm_by_mistake_is_refused(services):
     for fields, message in (
         ({"name": "Invoices"}, "exists already"), ({"prompt": ""}, "needs a prompt"), ({"tools": ["no_such_tool"]}, "matches no tool"),
         ({"tools": "mail_read"}, "list of tool"), ({"catch_up": "everything"}, "catch_up"), ({"max_per_hour": 0}, "max_per_hour"),
-        ({"attempts": 9}, "attempts"), ({"model": "nocolon"}, "provider:model"), ({"project": 999}, "No project"),
+        ({"attempts": 9}, "attempts"), ({"model": "nocolon"}, "provider:model"), ({"project": 999}, "No project"), ({"project": "auto"}, "No project"),
         ({"filter": {"nope": 1}}, "not a field"), ({"action": "shell"}, "action must be"), ({"colour": "red"}, "Unknown fields"),
         ({"action": "notify", "tools": ["notify"], "prompt": "x"}, "uses no tools"),
     ):
@@ -434,7 +435,7 @@ async def new_mail_run(services, llm, world, *, tools=None, replies=None):
     return trigger
 
 
-async def test_a_new_mail_starts_a_run_in_a_conversation_of_the_hooks_project(services, llm, world):
+async def test_a_new_mail_starts_a_run_in_a_conversation_grouped_under_the_hook(services, llm, world):
     trigger = await new_mail_run(services, llm, world)
     assert [e.key for e in services.triggers.recent_events()] == ["gmail:m2", "gmail:m1"]  # both stored, one wanted
     assert runs(services, trigger) == [("queued", 1)]
@@ -442,9 +443,15 @@ async def test_a_new_mail_starts_a_run_in_a_conversation_of_the_hooks_project(se
     run = services.triggers.runs(trigger.id)[0]
     assert run["status"] == "ok" and run["summary"].startswith("Invoice 42: 120 EUR due 1 Nov.")
     conversation = services.conversations.get(run["conversation"])
-    assert conversation.project_id == trigger.project_id and conversation.title.startswith("Invoices — Billing")
+    assert conversation.project_id is None and conversation.title.startswith("Invoices — Billing")
     assert run["conversation"] not in [c["id"] for c in services.conversations.listing(history=True)]  # out of the history until you ask
-    services.projects.show_in_history(trigger.project_id, True)
+    assert services.conversations.listing(kind="any")[0]["group"] == {"kind": "hook", "id": trigger.id, "name": "Invoices"}
+    services.triggers.update(trigger.id, in_history=True)
+    shown = {c["id"]: c for c in services.conversations.listing(kind="any", history=True)}
+    assert shown[run["conversation"]]["group"] == {"kind": "hook", "id": trigger.id, "name": "Invoices"}
+    services.triggers.update(trigger.id, in_history=False)
+    assert run["conversation"] not in [c["id"] for c in services.conversations.listing(history=True)]
+    services.conversations.update(run["conversation"], pinned=True)  # a pinned one stays whatever its group
     assert run["conversation"] in [c["id"] for c in services.conversations.listing(history=True)]
     first = chat_calls(llm)[0]
     assert {t["function"]["name"] for t in first["tools"]} == {"mail_search", "mail_read", "mail_attachment_read", "notify"}
@@ -619,6 +626,67 @@ def test_a_database_from_the_previous_release_gets_the_hook_tables(tmp_path):
     assert {"triggers", "trigger_events", "trigger_runs"} <= {r[0] for r in new.execute("SELECT name FROM sqlite_master")}
 
 
+def test_a_database_with_hook_projects_gets_hook_groups(tmp_path):
+    """Migration 0010: the switch of a hook's project becomes the hook's own; a project that was only the hook's folder goes,
+    one you filled, shared or moved a chat into stays, and no conversation is lost."""
+    migrate_module = importlib.import_module("clara.db.migrate")
+    path = tmp_path / "old.db"
+    old = connect(path)
+    for migration in migrate_module.migrations()[:9]:
+        old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
+    now = iso(utcnow())
+
+    def project(name: str, instructions: str = "", in_history: int = 0) -> int:
+        return old.execute(
+            "INSERT INTO projects (name, instructions, in_history, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (name, instructions, in_history, now, now),
+        ).lastrowid
+
+    def hook(name: str, project_id: int) -> int:
+        return old.execute(
+            "INSERT INTO triggers (name, event_kind, action, prompt, project_id, created_at, updated_at)"
+            " VALUES (?, 'mail.received', 'run', 'x', ?, ?, ?)",
+            (name, project_id, now, now),
+        ).lastrowid
+
+    def conversation(conversation_id: str, project_id: int, trigger_id: int | None) -> None:
+        old.execute(
+            "INSERT INTO conversations (id, client, project_id, created_at, updated_at) VALUES (?, 'server', ?, ?, ?)",
+            (conversation_id, project_id, now, now),
+        )
+        if trigger_id:
+            old.execute(
+                "INSERT INTO trigger_runs (trigger_id, event_ids, status, queued_at, conversation_id)"
+                " VALUES (?, '[]', 'ok', ?, ?)",
+                (trigger_id, now, conversation_id),
+            )
+
+    folder = project("Hook: Bills", in_history=1)  # only the hook's folder, switched on
+    bills = hook("Bills", folder)
+    conversation("c0000000000000001", folder, bills)
+    filled = project("Hook: Receipts", instructions="Amounts in euros.")  # given instructions: kept
+    receipts = hook("Receipts", filled)
+    conversation("c0000000000000002", filled, receipts)
+    mixed = project("Hook: Letters")  # a chat of yours was moved in: kept
+    letters = hook("Letters", mixed)
+    conversation("c0000000000000003", mixed, letters)
+    conversation("c0000000000000004", mixed, None)
+    shared = project("Context")  # the project of two hooks: kept
+    hook("One", shared)
+    hook("Two", shared)
+    old.commit()
+    old.close()
+
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (9, migrate_module.LATEST_VERSION)
+    new = connect(path)
+    assert sorted(r[0] for r in new.execute("SELECT name FROM projects")) == ["Context", "Hook: Letters", "Hook: Receipts"]
+    assert dict(new.execute("SELECT name, in_history FROM triggers")) == {"Bills": 1, "Receipts": 0, "Letters": 0, "One": 0, "Two": 0}
+    assert new.execute("SELECT project_id FROM triggers WHERE name = 'Bills'").fetchone()[0] is None
+    assert new.execute("SELECT project_id FROM conversations WHERE id = 'c0000000000000001'").fetchone()[0] is None
+    assert new.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 4
+    assert new.execute("SELECT name FROM sqlite_master WHERE name = 'hook_projects'").fetchone() is None
+
+
 # ----------------------------------------------------------------------
 # The API and the console
 # ----------------------------------------------------------------------
@@ -629,7 +697,9 @@ async def test_the_api_makes_shows_tests_changes_and_deletes_a_hook(client, serv
     made = await client.post("/v1/triggers", json=BODY)
     assert made.status_code == 201
     trigger = made.json()
-    assert trigger["effective_tools"] == ["mail_search", "mail_read", "mail_attachment_read", "notify"] and trigger["project"]
+    assert trigger["effective_tools"] == ["mail_search", "mail_read", "mail_attachment_read", "notify"]
+    assert trigger["project"] is None and trigger["in_history"] is False
+    assert (await client.patch(f"/v1/triggers/{trigger['id']}", json={"in_history": True})).json()["in_history"] is True
     listed = (await client.get("/v1/triggers")).json()
     assert [t["name"] for t in listed["triggers"]] == ["Invoices"] and "from" in listed["kinds"][0]["fields"]
     for bad, message in (({"filter": {"colour": 1}}, "not a field"), ({"prompt": ""}, "needs a prompt"), ({"name": "Invoices"}, "exists already")):

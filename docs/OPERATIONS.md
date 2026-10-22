@@ -106,7 +106,7 @@ a token of its own.
 ### Hooks (Clara acts when a mail arrives)
 
 A hook is a rule you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
-one, and the model cannot make one. On the web site, make and watch them in **Schedules → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
+one, and the model cannot make one. On the web site, make and watch them in **Automation → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
 notifications) listens.
 
 ```text
@@ -213,12 +213,12 @@ setting is `discord_routes`, which the Settings tab also shows as JSON.
 ### Special tools and the daily note
 
 Special tools (**packs**) are switched on per conversation in the web chat's **"+" menu** (or `/tools` on Discord and in
-`clara-chat`), and per schedule on the Schedules page. The ones that read a day back need nothing more; **Second brain**
+`clara-chat`), and per schedule on the Automation page (Schedules view). The ones that read a day back need nothing more; **Second brain**
 and **Daily notes** need the vault (above); **Discord thread** needs the bot connected (below).
 
 When there is a vault, the first start makes the schedule **"Bilan du jour"**: every day at 23:59 (in `CLARA_TIMEZONE`)
 Clara reads the day, asks you one question on the web site and in a Discord thread, waits for your answer, then writes the
-day into the « Récap (Clara) » block of the daily note. You edit it on the Schedules page (time, prompt, packs, model, what
+day into the « Récap (Clara) » block of the daily note. You edit it on the Automation page, Schedules view (time, prompt, packs, model, what
 to do when the server was off or when the last run is not over), pause it, or delete it (it is not made again).
 
 1. The vault's `_clara/schema.json` says where daily notes go (`types.daily.folder` and `daily_format`, or `daily.folder`
@@ -226,7 +226,7 @@ to do when the server was off or when the last run is not over), pause it, or de
 2. In Discord, give the bot *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general` (the bot
    logs what it lacks at start). The last one lets it delete the thread when the run ends; without it the thread is
    archived instead. Without the first two the run's conversation becomes the current one instead of a thread.
-3. Try it without waiting for midnight: **Run now** on the Schedules page. Answer in the thread (Discord) or in the run's
+3. Try it without waiting for midnight: **Run now** on the Automation page (Schedules view). Answer in the thread (Discord) or in the run's
    conversation (web; **Answer** on the page). Clara shows the recap and writes it; open the daily note to see the block.
    **Close it** writes an unanswered one from what Clara read.
 

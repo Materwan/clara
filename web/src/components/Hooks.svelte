@@ -26,7 +26,7 @@
   ];
   const empty = () => ({
     id: 0, name: '', on: 'mail.received', action: 'run', prompt: '', conditions: [] as Condition[], toolsMode: 'default', tools: [] as string[],
-    project: 'auto', model: '', local_only: false, catch_up: 'all', max_per_hour: 20, max_age_hours: 0, include_self: false,
+    project: 'none', model: '', local_only: false, catch_up: 'all', max_per_hour: 20, max_age_hours: 0, include_self: false,
     rerun_interrupted: false, attempts: 3, announce: true,
   });
 
@@ -51,7 +51,6 @@
   const shownTools = $derived(toolNames.filter((name) => name.includes(toolFilter.trim().toLowerCase())));
   const label = (field: string): string => FIELDS[field] ?? field;
   const operatorLabel = (operator: string): string => OPERATORS.find((item) => item.value === operator)?.label ?? operator;
-  const projectOf = (hook: any): any => projects.find((project) => project.id === hook.project);
 
   async function load(): Promise<void> {
     const data = await api.get('/v1/triggers');
@@ -164,7 +163,7 @@
       tools: form.action === 'run' && form.toolsMode === 'choose' ? form.tools : [], model: form.model, local_only: form.local_only,
       catch_up: form.catch_up, max_per_hour: Number(form.max_per_hour), max_age_hours: Number(form.max_age_hours),
       include_self: form.include_self, rerun_interrupted: form.rerun_interrupted, attempts: Number(form.attempts), announce: form.announce,
-      project: form.project === 'auto' || form.project === 'none' ? form.project : Number(form.project),
+      project: form.project === 'none' ? 'none' : Number(form.project),
     };
     try {
       if (form.id) await api.patch(`/v1/triggers/${form.id}`, body);
@@ -196,7 +195,7 @@
   }
 
   async function remove(hook: any): Promise<void> {
-    const message = `Delete “${hook.name}”? Its runs are forgotten; the conversations they made stay${hook.project ? ' in its project' : ''}.`;
+    const message = `Delete “${hook.name}”? Its runs are forgotten; the conversations they made stay, no longer grouped under the hook.`;
     if (!(await confirmDialog({ title: 'Delete hook', message, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/triggers/${hook.id}`);
     if (runs?.hook.id === hook.id) runs = null;
@@ -205,10 +204,8 @@
   }
 
   async function inHistory(hook: any): Promise<void> {
-    const project = projectOf(hook);
-    if (!project) return;
     try {
-      await api.patch(`/v1/projects/${project.id}`, { in_history: !project.in_history });
+      await api.patch(`/v1/triggers/${hook.id}`, { in_history: !hook.in_history });
       conversations.changed++;
       load();
     } catch (error) {
@@ -296,8 +293,8 @@
           <option value="run">run Clara</option><option value="notify">only notify me (no model)</option>
         </select></label>
       <label class="field">Project of the runs
+        <span class="hint">Its files and instructions are context for every run. The runs are listed under the hook either way.</span>
         <select bind:value={form.project}>
-          {#if !form.id}<option value="auto">a new project for this hook</option>{/if}
           <option value="none">no project</option>
           {#each projects as project}<option value={String(project.id)}>{project.name}</option>{/each}
         </select></label>
@@ -377,10 +374,8 @@
             <button class="small" onclick={() => edit(hook)}>Edit</button>
             <button class="small" onclick={() => toggle(hook)}>{hook.enabled ? 'Pause' : 'Resume'}</button>
             <button class="small" onclick={() => showRuns(hook)}>Runs</button>
-            {#if projectOf(hook)}
-              <button class="small toggle" aria-pressed={projectOf(hook).in_history} title="List the conversations of this hook's runs in the history of the rail"
-                onclick={() => inHistory(hook)}><Icon name="eye" size={14} />Show in history</button>
-            {/if}
+            <button class="small toggle" aria-pressed={hook.in_history} title="List the conversations of this hook's runs in the history of the rail"
+              onclick={() => inHistory(hook)}><Icon name="eye" size={14} />Show in history</button>
             <button class="small danger" onclick={() => remove(hook)}>Delete</button>
           </td>
         </tr>

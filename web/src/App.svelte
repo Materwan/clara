@@ -12,10 +12,9 @@
   import Chat from './pages/Chat.svelte';
   import Memory from './pages/Memory.svelte';
   import Tasks from './pages/Tasks.svelte';
-  import Schedules from './pages/Schedules.svelte';
+  import Automation from './pages/Automation.svelte';
   import Projects from './pages/Projects.svelte';
-  import Workspace from './pages/Workspace.svelte';
-  import Vault from './pages/Vault.svelte';
+  import Library from './pages/Library.svelte';
   import Connections from './pages/Connections.svelte';
   import Rules from './pages/Rules.svelte';
   import Models from './pages/Models.svelte';
@@ -28,9 +27,8 @@
   const WORK = [
     { path: '/projects', label: 'Projects', icon: 'folder', page: Projects },
     { path: '/tasks', label: 'Tasks & reminders', icon: 'tasks', page: Tasks },
-    { path: '/schedules', label: 'Schedules', icon: 'clock', page: Schedules },
-    { path: '/workspace', label: 'Workspace', icon: 'file', page: Workspace },
-    { path: '/vault', label: 'Vault', icon: 'book', page: Vault },
+    { path: '/automation', label: 'Automation', icon: 'play', page: Automation },
+    { path: '/library', label: 'Library', icon: 'book', page: Library },
   ];
   // How Clara works: one "Settings" entry, these pages as its tabs.
   const SETTINGS = [

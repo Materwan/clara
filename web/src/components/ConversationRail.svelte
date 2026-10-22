@@ -6,10 +6,11 @@
   import Icon from './Icon.svelte';
 
   // The list of conversations, in the rail under the pages: on every page, scrolling with the rest of the rail.
-  // The conversations of a project or of a schedule are grouped under its name; they are listed only when that project
-  // or schedule is switched on for the history, and those of Discord or the console only when the account menu shows them
-  // (a search looks through all of them; so do pinned conversations).
-  type Group = { key: string; kind: 'project' | 'schedule'; name: string; items: any[] };
+  // The conversations of a project, of a schedule or of a hook are grouped under its name; they are listed only when that
+  // project, schedule or hook is switched on for the history, and those of Discord or the console only when the account menu
+  // shows them (a search looks through all of them; so do pinned conversations).
+  type Group = { key: string; kind: 'project' | 'schedule' | 'hook'; name: string; items: any[] };
+  const ICONS = { project: 'folder', schedule: 'clock', hook: 'bolt' } as const;
   const KEY = 'clara-rail-groups';
   const SHOWN = 5; // conversations a group lists before "Show more"
 
@@ -36,6 +37,7 @@
   });
   const projects = $derived(groups.filter((group) => group.kind === 'project'));
   const schedules = $derived(groups.filter((group) => group.kind === 'schedule'));
+  const hooks = $derived(groups.filter((group) => group.kind === 'hook'));
 
   function remembered(): Record<string, boolean> {
     try {
@@ -158,7 +160,7 @@
   {@const open = isOpen(group)}
   <li class="group-head">
     <button type="button" class="ghost" aria-expanded={open} title={group.name} onclick={() => toggle(group)}>
-      <Icon name="chevron" size={14} /><Icon name={group.kind === 'project' ? 'folder' : 'clock'} size={14} />
+      <Icon name="chevron" size={14} /><Icon name={ICONS[group.kind]} size={14} />
       <span class="name">{group.name}</span><span class="n">{group.items.length}</span>
     </button>
   </li>
@@ -188,6 +190,10 @@
     {#if schedules.length}
       <li class="group-title">Schedules</li>
       {#each schedules as group (group.key)}{@render section(group)}{/each}
+    {/if}
+    {#if hooks.length}
+      <li class="group-title">Hooks</li>
+      {#each hooks as group (group.key)}{@render section(group)}{/each}
     {/if}
     {#if loose.length}
       <li class="group-title">Conversations</li>

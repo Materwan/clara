@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Hint from '../components/Hint.svelte';
-  import Icon from '../components/Icon.svelte';
+  import Hint from './Hint.svelte';
+  import Icon from './Icon.svelte';
   import { api, ApiError } from '../lib/api';
   import { markdown } from '../lib/markdown';
   import { toast } from '../lib/state.svelte';
@@ -42,7 +42,7 @@
   }
 </script>
 
-<div class="page stack">
+<div class="stack">
   {#if missing}
     <p class="intro">No vault is connected. To give Clara a second brain, point <Hint text="CLARA_VAULT_PATH" /> at your Obsidian vault (a git clone) on the server.</p>
   {:else if info}

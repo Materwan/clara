@@ -65,8 +65,32 @@ export function releaseToast(id: number): void {
   if (toasts.list.some((item) => item.id === id)) arm(id, 2500);
 }
 
+// Pages that changed name or were merged into another: an old link or bookmark still lands there (the view, if any, is kept).
+const MOVED = new Map([
+  ['schedules', '/automation'],
+  ['workspace', '/library'],
+  ['vault', '/library?view=vault'],
+]);
+
+/** The hash of an old address as the page that replaced it is addressed now. */
+function moved(hash: string): string {
+  const [path, query] = hash.split('?', 2);
+  const [first, ...rest] = path.split('/').filter(Boolean);
+  const to = MOVED.get(first ?? '');
+  if (!to) return hash;
+  const [target, added] = to.split('?', 2);
+  const merged = new URLSearchParams(query ?? '');
+  for (const [key, value] of new URLSearchParams(added ?? '')) if (!merged.has(key)) merged.set(key, value);
+  return [target, ...rest].join('/') + (merged.toString() ? `?${merged}` : '');
+}
+
 export function readRoute(): void {
-  const hash = location.hash.replace(/^#/, '') || '/chat';
+  let hash = location.hash.replace(/^#/, '') || '/chat';
+  const current = moved(hash);
+  if (current !== hash) {
+    hash = current;
+    window.history.replaceState(null, '', '#' + hash);
+  }
   const [path, query] = hash.split('?', 2);
   const parts = path.split('/').filter(Boolean);
   route.path = '/' + (parts[0] ?? 'chat');

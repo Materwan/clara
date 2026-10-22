@@ -42,7 +42,7 @@ Sign in once by pasting a `web` token; the browser keeps an HttpOnly, Secure, Sa
 The design is the first Clara site's ("Cyanotype"): a Prussian-blue navigation rail in both themes with Clara's
 portrait, the page in cool chalk (or deep blue in the dark theme), one violet signal for what is live or waits for you,
 Hanken Grotesk and Epilogue served by Clara herself (SIL Open Font Licence, the licences at `/fonts/`), line icons.
-The rail holds **New chat** (the logo leads to the same place: the chat has no link of its own), the pages you work in (Projects, Tasks & reminders, Schedules, Workspace, Vault),
+The rail holds **New chat** (the logo leads to the same place: the chat has no link of its own), the pages you work in (Projects, Tasks & reminders, Automation, Library),
 the list of conversations (on every page) and **Settings**, whose six pages share a tab bar (Memory, Connections, Rules
 & approvals, Models, Usage, Admin). The logo and **New chat** stay at the top, the account tab at the foot; the pages and
 conversations scroll between them. The connection is a lamp on Clara's portrait: green when connected, amber while
@@ -58,14 +58,16 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Page | What you do there |
 | --- | --- |
 | Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer; pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
-| Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects** and the **schedules** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project or a schedule shows its conversations here only when its **Show in history** button is on (both start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's run belongs to the schedule even when the schedule has a project |
+| Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Schedules → Hooks | The same page has a second view, **Hooks** (a switch at its top; the address `#/schedules?view=hooks` opens it): the list of hooks with what each waits for in words, its tools, its pace, what is waiting and its last run; **New hook** and **Edit** with a condition builder (a field, a comparison, a value; commas mean « or »), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs, and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the mail, what happened, a link to each conversation); **Pause**, **Show in history** (the hook's project), **Delete**; *the events seen*. It warns when no mailbox is connected or mail polling is off, and reloads by itself while a run goes or waits |
-| Schedules | Prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
+| Automation | One page for what Clara does by herself, with a switch at its top between its views, one for each way she is set off: **Schedules** (at a time) and **Hooks** (when something happens). The old address `#/schedules` still leads there. Another kind of automation is one more view |
+| Automation → Schedules | The **Schedules** view, the one the page opens on: prompts that run unattended on a schedule: add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
+| Automation → Hooks | The **Hooks** view (the address `#/automation?view=hooks` opens it): the list of hooks with what each waits for in words, its tools, its pace, what is waiting and its last run; **New hook** and **Edit** with a condition builder (a field, a comparison, a value; commas mean « or »), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the mail, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns when no mailbox is connected or mail polling is off, and reloads by itself while a run goes or waits |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
-| Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs |
-| Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
+| Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. Another place is one more view |
+| Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
+| Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
 | Connections (Settings) | GitHub token and the repositories Clara may use; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
@@ -281,7 +283,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   - **Asking and waiting:** a schedule with the *Ask you* pack may ask you one question (`ask_person`: an `ask` event on
     the web site and Discord) and end its turn; the run is then `waiting`, your answer arrives in the run's conversation
     like in any chat (with the same packs), and `finish_run` ends it. A waiting run is reminded once, at
-    `CLARA_WAITING_REMIND_AT` (09:00) after at least three hours; `Close it` on the Schedules page (or the next run, below)
+    `CLARA_WAITING_REMIND_AT` (09:00) after at least three hours; `Close it` on the Schedules view of the Automation page (or the next run, below)
     closes it from what Clara has: she is told no answer came, does what the task says for that case and finishes.
   - **Missed** (the server was off, more than an hour late): `skip` records them; `latest` runs the latest one at the next
     start; `all` runs every missed one in turn (31 at most). **Overlap** (a run comes due while the previous one still
@@ -318,12 +320,12 @@ inbox of a connected Gmail mailbox (`mail.received`); the design takes other sou
   `from_address`, `subject`, `snippet`, `has_attachment`, `unread`; operators `eq`, `contains`, `starts_with`, `ends_with`,
   `not_contains`; all fields must hold, any value of an operator; no regular expression, on purpose); an **action** (`run`: a turn of
   Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… and no model); its
-  `tools`; a `project`; an optional `model`; `local_only`; `catch_up`; `max_per_hour`; `max_age_hours`; `include_self`;
-  `rerun_interrupted`; `attempts`; `announce`. Mail from Clara's own account is left out unless `include_self`; a sender's
+  `tools`; an optional `project` (none by default); an optional `model`; `local_only`; `catch_up`; `max_per_hour`;
+  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`. Mail from Clara's own account is left out unless `include_self`; a sender's
   `From` can be forged, so a sender filter is a convenience, not a proof.
-- **A run** is an unattended turn in a conversation of its own, inside the hook's **project** (made when you make the hook, named
-  « Hook: <name> »; its files and instructions are context for every run; its conversations are listed in the web history only when
-  you switch that project's history on). It is **tainted from its first word**: every outside write (a send, a GitHub change, a
+- **A run** is an unattended turn in a conversation of its own, which belongs to the hook: the web history lists the conversations
+  of a hook as a group under its name, like a schedule's, only when you switch the hook's `in_history` on (it starts off). The hook may
+  also name a **project**, whose files and instructions are then context for every run. It is **tainted from its first word**: every outside write (a send, a GitHub change, a
   Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
   lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`),
   so a hook never has more than you gave it. The same limits hold for the turn that follows one of its approvals. The event
@@ -386,7 +388,7 @@ inbox of a connected Gmail mailbox (`mail.received`); the design takes other sou
 
 The workspace (`CLARA_WORKSPACE`, default `/var/lib/clara/workspace`) is the only place Clara writes or runs anything
 on the machine. It is a git repository: every change by a tool is one commit (tool, summary, turn id), changes a
-script makes are one commit after the run, and any commit can be undone (`/undo`, the Workspace page, `/v1/workspace/undo`).
+script makes are one commit after the run, and any commit can be undone (`/undo`, the Workspace view of the Library page, `/v1/workspace/undo`).
 
 - **Paths:** joined to the root and resolved; absolute paths, `..`, symlinks and anything under `.git` are refused;
   files are opened without following links, and only regular files are opened (a named pipe or socket a script left
@@ -884,7 +886,7 @@ keep-alive every 15 s.
 | `POST /v1/chat` | Chat, the whole answer at once |
 | `POST /v1/turns/{turn_id}/tool-results` | Results of client-side tools |
 | `POST /v1/documents/extract` | The text of a document (as the chat would see it) |
-| `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any; `history=true` leaves out those of a project or schedule not shown in the history; `hide=discord,console` leaves out what those clients started, the pinned ones apart; each names its `group`; a sub agent's conversation is never listed) |
+| `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any; `history=true` leaves out those of a project, schedule or hook not shown in the history; `hide=discord,console` leaves out what those clients started, the pinned ones apart; each names its `group`; a sub agent's conversation is never listed) |
 | `POST /v1/conversations` | Create one (incognito, local only, model, project) |
 | `GET /v1/conversations/{conversation_id}` | One conversation, with its context, files, waiting approvals and `subagents` (the console sub agents' conversations it started, each with the `prompt` it was given) |
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
@@ -988,7 +990,7 @@ keep-alive every 15 s.
 | `POST /v1/triggers` | Make a hook |
 | `GET /v1/triggers/{trigger_id}` | One hook, with its latest runs |
 | `PATCH /v1/triggers/{trigger_id}` | Change it, turn it on or off |
-| `DELETE /v1/triggers/{trigger_id}` | Delete it (its runs go; its project stays) |
+| `DELETE /v1/triggers/{trigger_id}` | Delete it (its runs go; the conversations they made stay, no longer grouped under it) |
 | `POST /v1/triggers/{trigger_id}/test` | What would happen for an event (stored, sample or latest): match, message, tools; nothing is done |
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |

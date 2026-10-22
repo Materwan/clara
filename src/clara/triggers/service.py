@@ -77,6 +77,7 @@ class Trigger:
     rerun_interrupted: bool
     attempts: int
     announce: bool
+    in_history: bool  # the conversations of its runs are listed in the web site's history
     created_at: str
     updated_at: str
 
@@ -108,6 +109,7 @@ def _trigger(row) -> Trigger:
         bool(row["rerun_interrupted"]),
         row["attempts"],
         bool(row["announce"]),
+        bool(row["in_history"]),
         row["created_at"],
         row["updated_at"],
     )
@@ -152,6 +154,7 @@ DEFAULTS: dict[str, Any] = {
     "rerun_interrupted": False,
     "attempts": MAX_ATTEMPTS,
     "announce": True,
+    "in_history": False,
 }
 
 
@@ -250,7 +253,7 @@ class Triggers(DueLoop):
             "attempts": values["attempts"],
             **{
                 field: int(bool(values[field]))
-                for field in ("enabled", "local_only", "include_self", "rerun_interrupted", "announce")
+                for field in ("enabled", "local_only", "include_self", "rerun_interrupted", "announce", "in_history")
             },
         }
 
@@ -270,22 +273,14 @@ class Triggers(DueLoop):
                 raise TriggerError(f"{item!r} matches no tool of Clara's.")
         return found
 
-    def _project(self, project: Any, name: str, *, creating: bool) -> int | None:
+    def _project(self, project: Any) -> int | None:
         if project in (None, "none"):
             return None
-        if project == "auto":
-            if not creating:
-                return None
-            return self.projects.create(
-                f"Hook: {name}"[:200],
-                f"The runs of the hook “{name}”: one conversation each. "
-                "Files and instructions put here are context for every run.",
-            ).id
         if not isinstance(project, int) or isinstance(project, bool) or self.projects.get(project) is None:
             raise TriggerError(f"No project {project}.")
         return project
 
-    def create(self, name: str, on: str, *, project: Any = "auto", **fields: Any) -> Trigger:
+    def create(self, name: str, on: str, *, project: Any = "none", **fields: Any) -> Trigger:
         unknown = set(fields) - set(DEFAULTS)
         if unknown:
             raise TriggerError(f"Unknown fields: {', '.join(sorted(unknown))}.")
@@ -296,7 +291,7 @@ class Triggers(DueLoop):
         )
         if self.by_name(values["name"]) is not None:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
-        values["project_id"] = self._project(project, values["name"], creating=True)
+        values["project_id"] = self._project(project)
         now = now_iso()
         columns = list(values)
         trigger_id = self.db.insert(
@@ -330,15 +325,14 @@ class Triggers(DueLoop):
             "rerun_interrupted": current.rerun_interrupted,
             "attempts": current.attempts,
             "announce": current.announce,
+            "in_history": current.in_history,
         }
         merged.update({key: value for key, value in fields.items() if value is not None or key == "filter"})
         values = self._normal(merged)
         other = self.by_name(values["name"])
         if other is not None and other.id != trigger_id:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
-        values["project_id"] = (
-            current.project_id if project == "keep" else self._project(project, values["name"], creating=False)
-        )
+        values["project_id"] = current.project_id if project == "keep" else self._project(project)
         assignments = ", ".join(f"{column} = ?" for column in values)
         with self.db.transaction():
             self.db.execute(
@@ -389,6 +383,7 @@ class Triggers(DueLoop):
             "rerun_interrupted": trigger.rerun_interrupted,
             "attempts": trigger.attempts,
             "announce": trigger.announce,
+            "in_history": trigger.in_history,
             "created_at": trigger.created_at,
             "updated_at": trigger.updated_at,
             "queued": int(

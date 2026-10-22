@@ -1,7 +1,7 @@
 <script lang="ts">
-  import Hint from '../components/Hint.svelte';
-  import Icon from '../components/Icon.svelte';
-  import Segmented from '../components/Segmented.svelte';
+  import Hint from './Hint.svelte';
+  import Icon from './Icon.svelte';
+  import Segmented from './Segmented.svelte';
   import { api, download, fileToBase64, saveBlob, size, when } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { markdown } from '../lib/markdown';
@@ -85,12 +85,12 @@
   }
 </script>
 
-<div class="page stack">
+<div class="stack">
   {#if info}
     <p class="intro">{size(info.size)} of {size(info.max_size)} used · scripts:
       {#if info.run_ready}<span class="tag ok">ready</span>{:else}<span class="tag warn">off</span> <Hint text={info.run_problem} />{/if}</p>
   {/if}
-  <div><Segmented label="Section" options={TABS} bind:value={tab} /></div>
+  <div><Segmented label="Section" quiet options={TABS} bind:value={tab} /></div>
   {#if tab === 'files'}
     <div class="row"><label class="button"><Icon name="upload" size={18} />Upload into uploads/<input class="sr-only" type="file" multiple onchange={upload} /></label></div>
     <div class="split">

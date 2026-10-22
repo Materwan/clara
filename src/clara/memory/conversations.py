@@ -216,10 +216,13 @@ class Conversations:
         "COALESCE((SELECT s.id FROM schedules s WHERE s.conversation_id = c.id),"
         " (SELECT r.schedule_id FROM schedule_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))"
     )
-    # Whether the group of a conversation shows it in the history: its schedule's say, else its project's, else yes. A
-    # schedule's own conversation whose schedule is gone has no group to switch on, so it stays out.
+    # The hook a conversation belongs to: the one whose run made it.
+    _HOOK = "(SELECT r.trigger_id FROM trigger_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1)"
+    # Whether the group of a conversation shows it in the history: its schedule's say, else its hook's, else its project's,
+    # else yes. A schedule's own conversation whose schedule is gone has no group to switch on, so it stays out.
     _SHOWN = (
         f"COALESCE((SELECT s.in_history FROM schedules s WHERE s.id = {_SCHEDULE}),"
+        f" (SELECT t.in_history FROM triggers t WHERE t.id = {_HOOK}),"
         " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)"
     )
 
@@ -234,7 +237,7 @@ class Conversations:
         hide_clients: tuple[str, ...] = (),
     ) -> list[dict]:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
-        `group` (its schedule, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
+        `group` (its schedule, else its hook, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
         leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
         the conversations the listed clients started. A sub agent's conversation is never listed: it is shown in its parent's."""
         where = ["c.parent_id IS NULL"]
@@ -269,6 +272,7 @@ class Conversations:
             "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
             " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
             f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
+            f" {self._HOOK} AS hook_id, (SELECT t.name FROM triggers t WHERE t.id = {self._HOOK}) AS hook_name,"
             " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
             f" FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
@@ -293,6 +297,8 @@ class Conversations:
     def _group(row) -> dict | None:
         if row["schedule_id"] is not None:
             return {"kind": "schedule", "id": row["schedule_id"], "name": row["schedule_name"]}
+        if row["hook_id"] is not None:
+            return {"kind": "hook", "id": row["hook_id"], "name": row["hook_name"]}
         if row["project_id"] is not None:
             return {"kind": "project", "id": row["project_id"], "name": row["project_name"]}
         return None
