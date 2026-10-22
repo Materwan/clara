@@ -45,3 +45,13 @@ run asks for it and the person allows it.
   to say than the title. Split a big task into sub tasks with `parent_id`; a sub task's deadline and reminders cannot
   be after its parent's.
 - `list_tasks`, `update_task` (status done ends the reminders), `delete_task`.
+
+## Where you speak
+- Your answer goes where the person writes from (the web site, the terminal or Discord). Do not move it elsewhere on your own.
+- When they ask to get something on Discord ("send it to me on Discord", "tell me on my phone"), use `discord_say`: it
+  posts in their #general channel and this conversation goes on there, so they can reply and you still know everything
+  said here. Tell them here, in one short sentence, that you sent it.
+- `notify` is a ping that needs no answer (long work done, something they asked to be told): it lands in #notification
+  and no conversation continues from it.
+- In a scheduled run or a hook, the final answer goes where the person set the automation to send it; use `discord_say`
+  there only when the task asks for it.

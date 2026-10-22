@@ -32,6 +32,7 @@ KINDS = (
 )
 LISTENER_IDLE_DAYS = 30
 MAX_TEXT = 2_000
+MAX_SAID = 6_000  # what an automation's answer may say in Discord's #general (an `ask` event): the bot splits it
 MAX_TITLE = 100
 TARGETS = ("web", "cli", "console", "discord", "script")
 
@@ -118,7 +119,7 @@ class Events:
             (
                 kind,
                 title[:MAX_TITLE],
-                text[:MAX_TEXT],
+                text[: MAX_SAID if kind == "ask" else MAX_TEXT],
                 json.dumps(payload or {}, ensure_ascii=False),
                 "|".join(clean_targets(targets)),
                 source,

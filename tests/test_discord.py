@@ -703,6 +703,34 @@ async def test_a_second_question_goes_in_the_thread_that_exists(bot):
     assert thread.sent[0][0].startswith("📓 **Bilan du dimanche") and not bot.channels["general"].sent
 
 
+SAID = {"type": "ask", "title": "Facture", "text": "Facture 42 : 120 EUR.\nÀ payer avant le 1er novembre.",
+        "payload": {"conversation": "c-mail", "stage": "said"}, "conversation": "c-mail"}
+
+
+async def test_a_message_to_answer_is_posted_in_general_and_its_conversation_becomes_the_current_one(bot):
+    bot.set_conversation("c-before")
+    await bot.deliver(SAID)
+    assert texts(bot.channels["general"])[0] == "📓 **Facture**\nFacture 42 : 120 EUR.\nÀ payer avant le 1er novembre."
+    assert "Réponds ici" in texts(bot.channels["general"])[1]
+    assert bot.conversation() == "c-mail" and bot.threads() == {}
+    assert not bot.channels["notification"].sent  # a ping goes there, a conversation does not
+
+
+async def test_a_message_to_answer_for_a_conversation_with_a_thread_goes_in_the_thread_and_leaves_the_current_chat(bot):
+    thread, _ = with_thread(bot)
+    bot.set_conversation("c-before")
+    await bot.deliver({**SAID, "payload": {"conversation": "c-checkin", "stage": "said"}, "conversation": "c-checkin"})
+    assert thread.sent[0][0].startswith("📓 **Facture**") and not bot.channels["general"].sent
+    assert bot.conversation() == "c-before"
+
+
+async def test_a_long_answer_is_said_in_several_messages(bot):
+    paragraph = "Une ligne de détail de la facture. " * 20
+    await bot.deliver({**SAID, "text": "\n\n".join([paragraph] * 6)})
+    sent = texts(bot.channels["general"])
+    assert len(sent) > 2 and all(len(part) <= 2000 for part in sent) and "Réponds ici" in sent[-1]
+
+
 async def test_a_run_can_open_write_in_and_remove_a_thread_by_itself(bot):
     bot.channels["general"] = general = ThreadingChannel(GENERAL)
     event = {"type": "ask", "title": "Rapport", "text": "Premier message", "conversation": "c-run",

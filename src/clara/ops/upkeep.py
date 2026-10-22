@@ -22,6 +22,7 @@ import time
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from ..events.delivery import DISCORD_SILENCE
 from ..timeutil import iso, parse_iso, utcnow
 from .status import disk_percent
 from .systemd import notify, watchdog_seconds
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DISCORD_SILENCE = 300.0
 LOOP_STALL = 120.0
 
 

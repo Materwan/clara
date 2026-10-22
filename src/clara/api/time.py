@@ -180,6 +180,10 @@ class NewSchedule(BaseModel):
     overlap: Literal["skip", "replace", "queue"] = "skip"
     model: str = Field(default="", max_length=200, description="'': the default model")
     attempts: int = Field(default=3, description="Tries of a run when the model is busy or unreachable: 1 to 3")
+    deliver: Literal["notice", "web", "discord", "both"] = Field(
+        default="notice",
+        description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
+    )
 
 
 def _model(model: str) -> str:
@@ -216,6 +220,7 @@ def add_schedule(body: NewSchedule, request: Request) -> dict:
             overlap=body.overlap,
             model=_model(body.model),
             attempts=body.attempts,
+            deliver=body.deliver,
         )
     except ScheduleError as error:
         raise ApiError(422, str(error)) from None
@@ -250,6 +255,7 @@ class ScheduleChange(BaseModel):
     model: str | None = Field(default=None, max_length=200)
     attempts: int | None = None
     in_history: bool | None = None
+    deliver: Literal["notice", "web", "discord", "both"] | None = None
 
 
 @router.patch("/schedules/{schedule_id}")

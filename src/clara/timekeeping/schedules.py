@@ -35,7 +35,7 @@ from datetime import datetime, time, timedelta
 from typing import Any
 
 from ..db import Database
-from ..events import Events
+from ..events import Events, delivery
 from ..timeutil import REPEATS, iso, next_local, now_iso, parse_iso, resolve_local, utcnow, zone
 from .clock import MomentError, local_text, read_moment, zone_of
 from .dueloop import DueLoop
@@ -68,6 +68,13 @@ INSTRUCTIONS_ASKING = (
     "something from the person, ask it once with ask_person (one message), then end your turn: the run waits, and the "
     "answer arrives in this conversation, where you go on. End the run with finish_run. Apart from that question, ask "
     "nothing: take the most reasonable reading. If an action waits for the person's permission, carry on with the rest."
+)
+INSTRUCTIONS_TALKING = (
+    "This is a scheduled task: the person asked you to do it at this time and will read your answer on Discord. Do the "
+    "work with your tools. If an action waits for the person's permission, carry on with the rest and say what is "
+    "waiting. Your final answer is sent to the person on Discord as a message they can answer, and this conversation "
+    "goes on there with their reply: write it to them, what you did and found, and when something calls for a decision "
+    "or an action of yours (a reminder, a task), end with one short proposal or question."
 )
 CLOSING = (
     "[No answer received] The person did not answer, and this task is due again. Finish it now with what you have: do "
@@ -107,6 +114,7 @@ class Schedule:
     model: str = ""
     in_history: bool = False  # its conversations are listed in the web site's history
     attempts: int = MAX_ATTEMPTS  # tries of a run when the model is busy or unreachable (1: no retry)
+    deliver: str = "notice"  # where a run's result goes (events/delivery.py)
 
     @property
     def asks(self) -> bool:
@@ -144,6 +152,7 @@ def _schedule(row) -> Schedule:
         row["model"],
         bool(row["in_history"]),
         row["attempts"],
+        row["deliver"],
     )
 
 
@@ -165,7 +174,9 @@ def message_of(schedule: Schedule) -> str:
 
 
 def instructions_of(schedule: Schedule) -> str:
-    return INSTRUCTIONS_ASKING if schedule.asks else INSTRUCTIONS
+    if schedule.asks:
+        return INSTRUCTIONS_ASKING
+    return INSTRUCTIONS_TALKING if schedule.deliver in ("discord", "both") else INSTRUCTIONS
 
 
 def summary_of(reply: str) -> str:
@@ -253,6 +264,13 @@ class Schedules(DueLoop):
         return value
 
     @staticmethod
+    def _deliver(value: Any, local_only: bool) -> str:
+        try:
+            return delivery.check(value, local_only=local_only)
+        except ValueError as error:
+            raise ScheduleError(str(error)) from None
+
+    @staticmethod
     def _attempts(value: int) -> int:
         if not isinstance(value, int) or not 1 <= value <= MAX_ATTEMPTS:
             raise ScheduleError(f"attempts must be a whole number from 1 to {MAX_ATTEMPTS} (1: no retry).")
@@ -303,6 +321,7 @@ class Schedules(DueLoop):
         overlap: str = "skip",
         model: str = "",
         attempts: int = MAX_ATTEMPTS,
+        deliver: str = "notice",
     ) -> Schedule:
         if int(self.db.value("SELECT COUNT(*) FROM schedules", (), 0)) >= MAX_SCHEDULES:
             raise ScheduleError(f"At most {MAX_SCHEDULES} scheduled tasks: delete some first.")
@@ -311,8 +330,8 @@ class Schedules(DueLoop):
         now = now_iso()
         schedule_id = self.db.insert(
             "INSERT INTO schedules (name, prompt, documents, conversation_id, project_id, repeat, weekdays, local_at,"
-            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, deliver, created_at,"
+            " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._name(name),
                 self._prompt(prompt, docs),
@@ -331,6 +350,7 @@ class Schedules(DueLoop):
                 self._policy(overlap, OVERLAPS, "overlap"),
                 model.strip(),
                 self._attempts(attempts),
+                self._deliver(deliver, local_only),
                 now,
                 now,
             ),
@@ -382,6 +402,10 @@ class Schedules(DueLoop):
             columns["attempts"] = self._attempts(fields["attempts"])
         if "in_history" in fields:
             columns["in_history"] = int(bool(fields["in_history"]))
+        if "deliver" in fields or "local_only" in fields:
+            columns["deliver"] = self._deliver(
+                fields.get("deliver", old.deliver), bool(fields.get("local_only", old.local_only))
+            )
         enabled = bool(fields.get("enabled", old.enabled))
         if {"at", "timezone", "repeat", "weekdays"} & fields.keys() or enabled != old.enabled:
             at = fields.get("at") or old.local_at.isoformat(timespec="minutes")
@@ -454,6 +478,7 @@ class Schedules(DueLoop):
             "model": schedule.model,
             "in_history": schedule.in_history,
             "attempts": schedule.attempts,
+            "deliver": schedule.deliver,
             "waiting_run": {
                 "id": waiting["id"],
                 "conversation": waiting["conversation_id"],
@@ -673,7 +698,7 @@ class Schedules(DueLoop):
                     conversation_id=row["conversation_id"],
                 )
             else:
-                self._tell(schedule, status, text, 0)
+                self._tell(schedule, status, text, 0, conversation=row["conversation_id"])
         self.wake()
 
     def close_waiting(self, schedule_id: int) -> bool:
@@ -742,10 +767,12 @@ class Schedules(DueLoop):
                 1,
             )
         )
+        reply = ""
         try:
             if self.runner is None:
                 raise ScheduleError("Clara cannot run it now.")
-            status, summary = "ok", summary_of(await self.runner(schedule, number, Run(run_id, due)))
+            reply = await self.runner(schedule, number, Run(run_id, due))
+            status, summary = "ok", summary_of(reply)
         except Stopping:
             self.db.execute(
                 "UPDATE schedule_runs SET status = 'interrupted', finished_at = ? WHERE id = ?", (now_iso(), run_id)
@@ -759,7 +786,7 @@ class Schedules(DueLoop):
         except Exception as error:
             log.warning("schedule %s: the run failed (%s: %s)", schedule.id, type(error).__name__, error)
             status, summary = "failed", f"Clara could not run it: {error or type(error).__name__}"
-        current = self.db.one("SELECT status FROM schedule_runs WHERE id = ?", (run_id,))
+        current = self.db.one("SELECT status, conversation_id FROM schedule_runs WHERE id = ?", (run_id,))
         if current is None or current["status"] in ("waiting", "ok", "closed"):
             self.wake()  # it asked and waits, or finish_run ended it: nothing more to record
             return
@@ -769,7 +796,7 @@ class Schedules(DueLoop):
             "UPDATE schedule_runs SET status = ?, finished_at = ?, summary = ?, waiting = ? WHERE id = ?",
             (status, now_iso(), summary, waiting, run_id),
         )
-        self._tell(schedule, status, summary, waiting)
+        self._tell(schedule, status, summary, waiting, reply, current["conversation_id"])
         self.wake()
 
     def _record(self, schedule: Schedule, due: datetime, status: str, summary: str) -> None:
@@ -779,18 +806,38 @@ class Schedules(DueLoop):
         )
         self._tell(schedule, status, summary, 0)
 
-    def _tell(self, schedule: Schedule, status: str, summary: str, waiting: int) -> None:
-        text = summary
-        if waiting:
-            text += f"\n{waiting} request{'s' if waiting > 1 else ''} wait for your permission."
-        self.events.publish(
-            "schedule",
-            f"Scheduled task: {schedule.name}",
-            text,
-            payload={"schedule": schedule.id, "status": status, "waiting": waiting},
-            source="schedules",
-            conversation_id=schedule.conversation_id,
-        )
+    def _tell(
+        self,
+        schedule: Schedule,
+        status: str,
+        summary: str,
+        waiting: int,
+        reply: str = "",
+        conversation: str | None = None,
+    ) -> None:
+        """How a run ended, the way the schedule's `deliver` says: the short notification, and for Discord the whole answer."""
+        conversation = conversation or schedule.conversation_id
+        note = f"\n{waiting} request{'s' if waiting > 1 else ''} wait for your permission." if waiting else ""
+        ok = status == "ok"
+        if delivery.says(schedule.deliver, ok):
+            delivery.say(
+                self.events,
+                f"Scheduled task: {schedule.name}",
+                (reply.strip() or summary) + (f"\n{note}" if note else ""),
+                conversation=conversation,
+                source="schedules",
+                payload={"schedule": schedule.id},
+            )
+        if delivery.notifies(schedule.deliver, ok):
+            self.events.publish(
+                "schedule",
+                f"Scheduled task: {schedule.name}",
+                summary + note,
+                payload={"schedule": schedule.id, "status": status, "waiting": waiting},
+                source="schedules",
+                conversation_id=conversation,
+                targets=delivery.OTHER_CLIENTS if ok and schedule.deliver in ("web", "both") else None,
+            )
 
     def recover(self) -> int:
         """At start: runs left `running` by a crash are marked interrupted and their schedule is due again now."""

@@ -41,6 +41,14 @@
     { value: 'replace', label: 'Close the old one, start the new', hint: 'A waiting run is closed from what it has; a running one is waited for.' },
     { value: 'queue', label: 'Queue the new run', hint: 'It starts when the old one ends.' },
   ];
+  // Where the result of a run goes (`deliver`): the same four answers for a schedule and for a hook
+  const DELIVERIES = [
+    { value: 'notice', label: 'A short notification', hint: 'Every client gets a few lines, Discord\'s #notification included.' },
+    { value: 'web', label: 'Web only', hint: 'The same few lines, without Discord.' },
+    { value: 'discord', label: 'Discord conversation', hint: 'The whole answer in #general. You answer there and the conversation goes on.' },
+    { value: 'both', label: 'Web and Discord', hint: 'The conversation on Discord, and the few lines on the other clients.' },
+  ];
+  const TALKS = ['discord', 'both'];
   const TRIGGER_TIME = { value: TIME, label: 'At a time', hint: 'Once, or every day, week or month, from the first run you give.', icon: 'clock' };
 
   // The hooks' choices
@@ -118,7 +126,7 @@
     id: 0, name: '', on: TIME, action: 'run', prompt: '', conditions: [] as Condition[], toolsMode: 'default', tools: [] as string[],
     at: '', repeat: '', weekdays: [] as number[], project: 'none', local_only: false, documents: [] as any[], packs: ['web'] as string[],
     per_run: false, missed: 'skip', overlap: 'skip', model: '', catch_up: 'all', max_per_hour: 20, max_age_hours: 0, include_self: false,
-    rerun_interrupted: false, attempts: 3, announce: true,
+    rerun_interrupted: false, attempts: 3, announce: true, deliver: 'notice',
   });
 
   let schedules = $state<any[]>([]);
@@ -179,6 +187,9 @@
       };
     }),
   ]);
+  // Discord is outside the machine, and a notification has no conversation to answer in
+  const cannotTalk = $derived(form.local_only || (!isTime && form.action === 'notify'));
+  const deliveryOptions = $derived(DELIVERIES.map((option) => ({ ...option, disabled: cannotTalk && TALKS.includes(option.value) })));
   const toolOptions = $derived([
     { value: 'default', label: 'The safe default', hint: `It can only ${SOURCES[sourceOf(form.on)]?.reads} and notify you.` },
     { value: 'choose', label: 'Choose the tools', hint: 'Give the fewest the job needs.' },
@@ -209,6 +220,12 @@
       found.push({ step: 'action', field: 'af-prompt', message: 'Say what Clara should do, or add a document.' });
     } else if (!isTime && form.action === 'run' && !form.prompt.trim()) {
       found.push({ step: 'action', field: 'af-prompt', message: 'Say what Clara should do.' });
+    }
+    if (cannotTalk && TALKS.includes(form.deliver)) {
+      found.push({
+        step: 'runs', field: 'af-deliver',
+        message: form.local_only ? 'Discord is outside the machine: a local-only automation cannot deliver there.' : 'A notification has no conversation to answer in.',
+      });
     }
     if (!isTime && !whole(form.max_age_hours, 0, 8760)) {
       found.push({ step: 'runs', field: 'af-max-age', message: 'Hours a run may wait must be a whole number from 0 to 8760.' });
@@ -386,14 +403,14 @@
         ...empty(), id: item.id, name: item.name, prompt: item.prompt, at: item.local_at, repeat: item.repeat, weekdays: [...item.weekdays],
         project: item.project ? String(item.project) : 'none', local_only: item.local_only,
         documents: item.documents.map((doc: any) => ({ name: doc.name })), packs: [...item.packs], per_run: item.per_run, missed: item.missed,
-        overlap: item.overlap, model: item.model, attempts: item.attempts,
+        overlap: item.overlap, model: item.model, attempts: item.attempts, deliver: item.deliver,
       }
       : {
         ...empty(), id: item.id, on: item.on, name: item.name, action: item.action, prompt: item.prompt, conditions: conditionsOf(item.filter),
         toolsMode: item.tools.length ? 'choose' : 'default', tools: [...item.tools], project: item.project ? String(item.project) : 'none',
         model: item.model, local_only: item.local_only, catch_up: item.catch_up, max_per_hour: item.max_per_hour,
         max_age_hours: item.max_age_hours, include_self: item.include_self, rerun_interrupted: item.rerun_interrupted,
-        attempts: item.attempts, announce: item.announce,
+        attempts: item.attempts, announce: item.announce, deliver: item.deliver,
       };
     await openForm();
   }
@@ -411,6 +428,7 @@
           name: form.name, prompt: form.prompt, at: form.at, timezone: zone, repeat: form.repeat, weekdays: form.weekdays,
           project: form.project === 'none' ? null : Number(form.project), local_only: form.local_only, documents: form.documents,
           packs: form.packs, per_run: form.per_run, missed: form.missed, overlap: form.overlap, model: form.model, attempts: form.attempts,
+          deliver: form.deliver,
         };
         if (form.id) await api.patch(`/v1/schedules/${form.id}`, body);
         else await api.post('/v1/schedules', body);
@@ -420,7 +438,7 @@
           tools: form.action === 'run' && form.toolsMode === 'choose' ? form.tools : [], model: form.model, local_only: form.local_only,
           catch_up: form.catch_up, max_per_hour: Number(form.max_per_hour), max_age_hours: Number(form.max_age_hours),
           include_self: form.include_self, rerun_interrupted: form.rerun_interrupted, attempts: Number(form.attempts), announce: form.announce,
-          project: form.project === 'none' ? 'none' : Number(form.project),
+          deliver: form.deliver, project: form.project === 'none' ? 'none' : Number(form.project),
         };
         if (form.id) await api.patch(`/v1/triggers/${form.id}`, body);
         else await api.post('/v1/triggers', { ...body, on: form.on });
@@ -696,7 +714,15 @@
             <span class="option-text"><strong>Local only</strong><span>Local models only; nothing leaves your machines.</span></span></label>
         </section>
       {:else if stepId === 'runs'}
+        {#snippet delivery()}
+          <div id="af-deliver">
+            <Choice cards legend="Where the result goes" options={deliveryOptions} bind:value={form.deliver}
+              help={cannotTalk ? 'Discord is not offered here: it is outside the machine, and a notification has no conversation to answer in.' : undefined} />
+            {#if errorOf('af-deliver')}<span class="field-error">{errorOf('af-deliver')}</span>{/if}
+          </div>
+        {/snippet}
         {#if isTime}
+          {@render delivery()}
           <Choice legend="Conversation" options={CONVERSATIONS}
             bind:value={() => (form.per_run ? 'each' : 'shared'), (value) => (form.per_run = value === 'each')} />
           <Choice cards legend="If the server was off" help="A run more than an hour late counts as missed." options={MISSED} bind:value={form.missed} />
@@ -728,6 +754,7 @@
           </section>
           <section class="block stack">
             <h4>Afterwards</h4>
+            {@render delivery()}
             <label class="option"><Checkbox bind:checked={form.announce} />
               <span class="option-text"><strong>Tell me when a run ends</strong><span>A good run stays quiet when this is off; a failed one always tells.</span></span></label>
             {#if form.action === 'run'}
@@ -772,11 +799,13 @@
             <dt>If the server was off</dt><dd>{labelOf(MISSED, form.missed)}</dd>
             <dt>If the last run is not over</dt><dd>{labelOf(OVERLAPS, form.overlap)}</dd>
             <dt>If the model fails</dt><dd>{labelOf(ATTEMPTS, String(form.attempts))}</dd>
+            <dt>Result</dt><dd>{labelOf(DELIVERIES, form.deliver)}</dd>
           {:else}
             <dt>If the server was off</dt><dd>{labelOf(CATCH_UPS, form.catch_up)}</dd>
             <dt>Pace</dt>
             <dd>At most {form.max_per_hour} an hour{#if Number(form.max_age_hours) > 0}; a run that waited more than {form.max_age_hours} hours expires{/if}.</dd>
             {#if form.action === 'run'}<dt>If the model fails</dt><dd>{labelOf(ATTEMPTS, String(form.attempts))}</dd>{/if}
+            <dt>Result</dt><dd>{labelOf(DELIVERIES, form.deliver)}</dd>
             <dt>When a run ends</dt><dd>{form.announce ? 'You are told.' : 'Quiet if it went well; a failed one tells you.'}</dd>
           {/if}
         </dl>
@@ -801,6 +830,7 @@
             {#if !item.enabled}<span class="tag">paused</span>{/if}{#if item.running}<span class="tag ok">running</span>{/if}
             {#if item.queued}<span class="tag" class:warn={!timed}>{item.queued} {timed ? 'queued' : 'waiting'}</span>{/if}
             {#if item.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}
+            {#if TALKS.includes(item.deliver)}<span class="tag"><Icon name="chat" size={14} />on Discord</span>{/if}
             {#if timed}
               {#if item.waiting_run}<span class="tag warn">waiting for you</span>{/if}
               {#if item.per_run}<span class="tag">one conversation per run</span>{/if}

@@ -22,6 +22,7 @@ from .common import ApiError, services
 router = APIRouter(prefix="/v1", tags=["triggers"])
 
 CatchUp = Literal["all", "latest", "digest", "skip"]
+Deliver = Literal["notice", "web", "discord", "both"]
 assert CATCH_UPS == ("all", "latest", "digest", "skip")
 
 
@@ -56,6 +57,10 @@ class NewTrigger(BaseModel):
     attempts: int = Field(default=MAX_ATTEMPTS, ge=1, le=MAX_ATTEMPTS)
     announce: bool = True
     in_history: bool = False
+    deliver: Deliver = Field(
+        default="notice",
+        description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
+    )
     enabled: bool = True
 
 
@@ -76,6 +81,7 @@ class TriggerChange(BaseModel):
     attempts: int | None = Field(default=None, ge=1, le=MAX_ATTEMPTS)
     announce: bool | None = None
     in_history: bool | None = None
+    deliver: Deliver | None = None
     enabled: bool | None = None
 
 

@@ -187,6 +187,12 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   correction is made there (the web site). A run can also open, write in and remove a thread by itself
   (`discord_thread`). The bot needs *Create Public Threads*, *Send Messages in Threads* and *Manage Threads* in `#general`
   (it logs what it lacks at start); without *Manage Threads* it archives the thread instead.
+- **A message to answer** (not a ping): what Clara says with `discord_say`, or an automation that delivers to Discord
+  (section 5, `deliver`), is an `ask` event of stage `said`. The bot posts it in `#general` (in the conversation's thread
+  when it has one; split into messages of 2,000 characters, up to 6,000 characters in all) and the conversation becomes
+  the current one there, so what you write next goes to it, and Clara has the whole conversation in front of her. It
+  replaces the conversation you were in on Discord until you write `/new` or another such message arrives. It is never sent
+  in a local-only or an incognito conversation. `#notification` stays for pings.
 - Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation: list them, or switch one on or off), `/new` (a new conversation), `/status`, `/tasks`, `/reminders`,
   `/approvals`.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
@@ -290,6 +296,16 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
     runs or waits): `skip` records the new one as skipped; `replace` closes a waiting run, then starts the new one (a
     running one is waited for); `queue` starts it when the old one ends.
   - **Retry** (`attempts`, 3 by default): a run the model could not answer (429, 5xx, a timeout, no connection) is tried again after 1 and 5 minutes. A run that already used a tool or wrote text is not run again, so its actions are not repeated; a refused key or a bad request is not retried.
+  - **Where the result goes** (`deliver`, the same on a schedule and on a hook): `notice` (the default, what they always did: a
+    short notification to every client, Discord's `#notification` included), `web` (the same, without Discord), `discord` (the
+    run's **whole** answer in Discord's `#general`, as a message you can answer; nothing else) or `both` (that message, and the
+    short notification for the clients that are not Discord). The run's conversation becomes the current one on Discord, so
+    your reply goes to it and Clara still has the run in front of her (the mail she read, what she found): « add it to my
+    reminders, an hour before » works. The run is told its answer is a message you will answer, so it may end with a
+    proposal or a question. A reply is an ordinary chat turn in that conversation: all her tools (a hook's tool list limits the run, not
+    your reply), and the turn is tainted while a mail the run read is still in the prompt, so an outside write still asks.
+    A run that failed always tells you the way `notice` does, and **announce** off keeps a good one quiet. A local-only automation
+    cannot deliver to Discord (it is outside the machine), nor can a hook that only notifies (no conversation to answer in).
   - A run more than an hour late is skipped and recorded as missed unless `missed` says otherwise. 100 schedules.
   - **The daily note** is a schedule made once at start when there is a vault ("Bilan du jour", every day at 23:59, one
     conversation per run, missed `latest`, overlap `replace`, packs second brain, day conversations, day activity, files
@@ -302,7 +318,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
   back (`GET /v1/events`, or the live stream `GET /v1/events/stream`, which tells the Discord bot each event's `channel`). Event kinds: `reminder`, `notification`,
-  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone).
+  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone; and, for Discord alone, a message to answer in `#general`, stage `said`).
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
@@ -348,7 +364,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… (GitHub: `{repo}`, `{number}`, `{action}`, `{title}`,
   `{author}`, `{branch}`, `{message}`, `{sha}`, `{url}`) and no model, with a default text for each kind); its
   `tools`; an optional `project` (none by default); an optional `model`; `local_only`; `catch_up`; `max_per_hour`;
-  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`. Mail from Clara's own account is left out unless `include_self` (which does nothing for GitHub); a sender's
+  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`; `deliver` (where the result goes, below). Mail from Clara's own account is left out unless `include_self` (which does nothing for GitHub); a sender's
   `From` can be forged, so a sender filter is a convenience, not a proof.
 - **A run** is an unattended turn in a conversation of its own, which belongs to the hook: the web history lists the conversations
   of a hook as a group under its name, like a schedule's, only when you switch the hook's `in_history` on (it starts off). The hook may
@@ -505,7 +521,7 @@ neither read nor change rules, and no tool answers a request.
 | `web_search`: web search | allow | allow |
 | `fetch_trusted`: fetch a URL you wrote or a search returned | allow | allow |
 | `fetch_other`: fetch any other URL | ask | refuse |
-| `discord`: open, write in or remove a Discord thread | allow | allow |
+| `discord`: open, write in or remove a Discord thread, or say something in `#general` | allow | allow |
 
 ### Rules
 
@@ -561,7 +577,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-63 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+64 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -573,7 +589,8 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `remind` | Set a reminder (once, daily, weekly, monthly; for some clients) | memory / write |
 | `list_reminders` | Reminders to come | read |
 | `cancel_reminder` | Cancel a reminder | memory / write |
-| `notify` | Notify you now on your clients (3 per turn) | memory / write |
+| `notify` | Notify you now on your clients (3 per turn): a ping that needs no answer, in `#notification` on Discord | memory / write |
+| `discord_say` | Say something on Discord in `#general`, as a message you can answer: the conversation goes on there with your reply (3 per turn, 6,000 characters; not offered from Discord itself, in an incognito or a local-only conversation; refused when the bot is not connected) | discord / write |
 | `add_task` | Add a task or sub-task with reminders | memory / write |
 | `list_tasks` | Tasks, or one task in full | read |
 | `update_task` | Change a task (title, description, due, reminders, status, parent) | memory / write |
@@ -1060,7 +1077,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Schedules | 100; prompt 20,000 characters; documents 150,000 characters |
 | Approval requests waiting per conversation | 10 |
 | Notifications | 3 per turn from Clara; 10 a minute from clients |
-| Event text | 2,000 characters; title 100 |
+| Event text | 2,000 characters (6,000 for what an automation or `discord_say` says in `#general`; the bot splits it into messages of 2,000, Discord's limit); title 100 |
 | Forms | 20 questions, 2 to 10 options |
 | Projects | 90 MB and 1,000 files per upload; `CLARA_PROJECT_MAX_CHARS`, `CLARA_PROJECT_MAX_FILES`; a file over 30 MB in an archive is skipped; 600 MB unpacked per archive; GitHub archives 300 MB |
 | Workspace | `CLARA_WORKSPACE_MAX_SIZE`, `CLARA_WORKSPACE_MAX_FILE`; reads 1,000 lines at once; 80 search matches |

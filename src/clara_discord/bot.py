@@ -19,6 +19,8 @@ function: DMs are ignored.
   the current one instead. When the run ends (or is closed without your answer) the bot says so in #general and
   deletes the thread (it archives it when it may not delete); the conversation stays in Clara. A run can also open,
   write in and remove a thread by itself.
+* An automation that delivers to Discord, or Clara herself (`discord_say`), puts a message in #general (`ask` event,
+  stage `said`): its conversation becomes the current one, so what you write next goes to it.
 * A heartbeat every minute lets the server alert you when the bot is gone. It also tells the channels the bot found and
   the rights it lacks in them, for the Discord page of the web site, which can have a test message posted in each.
 
@@ -511,6 +513,8 @@ class ClaraBot(discord.Client):
 
         asked, thread_open   the message in #general, with a thread under it (when the run has the thread pack, or
                              for thread_open); the thread carries your answers to the run's conversation
+        said                 the message in #general (in the conversation's thread when it has one); the conversation
+                             becomes the current one, so your next message goes to it
         thread_post          a message in that thread       reminder   the same, in the thread when there is one
         finished, closed     a line in #general, then the thread is removed (after the answer being written is posted)
         thread_close         the thread is removed
@@ -548,7 +552,7 @@ class ClaraBot(discord.Client):
             else:
                 self.remember_thread(thread.id, conversation)
                 return
-        if stage in ("asked", "thread_open"):  # no thread: your next message answers it
+        if stage in ("asked", "thread_open", "said"):  # no thread: your next message answers it
             self.set_conversation(conversation)
             await self.channels["general"].send(
                 "↩️ Réponds ici : cette conversation est maintenant la conversation courante."

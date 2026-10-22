@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..db import Database
-from ..events import Events
+from ..events import Events, delivery
 from ..timekeeping.dueloop import DueLoop
 from ..timekeeping.schedules import Stopping
 from ..timeutil import iso, now_iso, parse_iso, utcnow
@@ -79,6 +79,7 @@ class Trigger:
     in_history: bool  # the conversations of its runs are listed in the web site's history
     created_at: str
     updated_at: str
+    deliver: str = "notice"  # where a run's result goes (events/delivery.py)
 
     @property
     def effective_tools(self) -> tuple[str, ...]:
@@ -111,6 +112,7 @@ def _trigger(row) -> Trigger:
         bool(row["in_history"]),
         row["created_at"],
         row["updated_at"],
+        row["deliver"],
     )
 
 
@@ -154,6 +156,7 @@ DEFAULTS: dict[str, Any] = {
     "attempts": MAX_ATTEMPTS,
     "announce": True,
     "in_history": False,
+    "deliver": "notice",
 }
 
 
@@ -244,6 +247,12 @@ class Triggers(DueLoop):
         model = str(values["model"] or "").strip()
         if len(model) > 200 or (model and ":" not in model):
             raise TriggerError("A model is written provider:model.")
+        try:
+            deliver = delivery.check(
+                values["deliver"], local_only=bool(values["local_only"]), conversation=action == "run"
+            )
+        except ValueError as error:
+            raise TriggerError(str(error)) from None
         return {
             "name": name,
             "event_kind": kind.kind,
@@ -256,6 +265,7 @@ class Triggers(DueLoop):
             "max_per_hour": values["max_per_hour"],
             "max_age_hours": values["max_age_hours"],
             "attempts": values["attempts"],
+            "deliver": deliver,
             **{
                 field: int(bool(values[field]))
                 for field in ("enabled", "local_only", "include_self", "rerun_interrupted", "announce", "in_history")
@@ -331,6 +341,7 @@ class Triggers(DueLoop):
             "attempts": current.attempts,
             "announce": current.announce,
             "in_history": current.in_history,
+            "deliver": current.deliver,
         }
         merged.update({key: value for key, value in fields.items() if value is not None or key == "filter"})
         values = self._normal(merged)
@@ -389,6 +400,7 @@ class Triggers(DueLoop):
             "attempts": trigger.attempts,
             "announce": trigger.announce,
             "in_history": trigger.in_history,
+            "deliver": trigger.deliver,
             "created_at": trigger.created_at,
             "updated_at": trigger.updated_at,
             "queued": int(
@@ -623,7 +635,7 @@ class Triggers(DueLoop):
     async def _execute(self, trigger: Trigger, run_id: int) -> None:
         row = self.db.one("SELECT * FROM trigger_runs WHERE id = ?", (run_id,))
         events = self._events_of(row) if row else []
-        status, summary = "ok", ""
+        status, summary, reply = "ok", "", ""
         try:
             if not events:
                 raise TriggerError("The events of this run are gone.")
@@ -632,7 +644,8 @@ class Triggers(DueLoop):
             else:
                 if self.runner is None:
                     raise TriggerError("Clara cannot run it now.")
-                summary = summary_of(await self.runner(trigger, run_id, events))
+                reply = await self.runner(trigger, run_id, events)
+                summary = summary_of(reply)
         except Stopping:
             self._cut(trigger, run_id)
             return
@@ -643,7 +656,7 @@ class Triggers(DueLoop):
             "UPDATE trigger_runs SET status = ?, finished_at = ?, summary = ? WHERE id = ?",
             (status, now_iso(), summary, run_id),
         )
-        self._tell(trigger, run_id, status, summary)
+        self._tell(trigger, run_id, status, summary, reply)
 
     def _cut(self, trigger: Trigger, run_id: int) -> None:
         """A run the stop cut: started afresh if it had done nothing, else interrupted (or started afresh if you said so)."""
@@ -682,23 +695,40 @@ class Triggers(DueLoop):
             text = "\n".join(fill(template, {"title": event.title, **event.data}) for event in events[:10])
             text += f"\n…and {len(events) - 10} more." if len(events) > 10 else ""
         self.events.publish(
-            "notification", title, text, source="triggers", targets=("web",) if trigger.local_only else None
+            "notification",
+            title,
+            text,
+            source="triggers",
+            targets=delivery.notice_targets(trigger.deliver, trigger.local_only),
         )
         return summary_of(text)
 
-    def _tell(self, trigger: Trigger, run_id: int, status: str, summary: str) -> None:
+    def _tell(self, trigger: Trigger, run_id: int, status: str, summary: str, reply: str = "") -> None:
+        """How a run ended, the way the hook's `deliver` says: the short notification, and for Discord the whole answer."""
         if trigger.action == "notify" or (status == "ok" and not trigger.announce):
             return
         row = self.db.one("SELECT conversation_id FROM trigger_runs WHERE id = ?", (run_id,))
-        self.events.publish(
-            "schedule",
-            f"Hook: {trigger.name}",
-            summary,
-            payload={"trigger": trigger.id, "run": run_id, "status": status},
-            source="triggers",
-            conversation_id=row["conversation_id"] if row else None,
-            targets=("web",) if trigger.local_only else None,
-        )
+        conversation = row["conversation_id"] if row else None
+        ok = status == "ok"
+        if delivery.says(trigger.deliver, ok):
+            delivery.say(
+                self.events,
+                f"Hook: {trigger.name}",
+                reply.strip() or summary,
+                conversation=conversation,
+                source="triggers",
+                payload={"trigger": trigger.id, "run": run_id},
+            )
+        if delivery.notifies(trigger.deliver, ok):
+            self.events.publish(
+                "schedule",
+                f"Hook: {trigger.name}",
+                summary,
+                payload={"trigger": trigger.id, "run": run_id, "status": status},
+                source="triggers",
+                conversation_id=conversation,
+                targets=delivery.notice_targets(trigger.deliver, trigger.local_only, ok),
+            )
 
     async def wait_running(self) -> None:
         await asyncio.gather(*self._running.values(), return_exceptions=True)

@@ -9,7 +9,7 @@ from ..agent.turn import ChatRequest, ServerStopping
 from ..llm.retry import retryable
 from ..timekeeping.schedules import Stopping
 from .events import StoredEvent
-from .message import INSTRUCTIONS, message_of
+from .message import instructions_of, message_of
 from .service import Trigger, Triggers
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[S
         message=message_of(trigger.name, trigger.prompt, events),
         client="server",
         conversation=conversation.id,
-        instructions=INSTRUCTIONS,
+        instructions=instructions_of(trigger.deliver),
         prefix=f"[Hook “{trigger.name}”, run {run_id}]",
         timezone=s.settings.timezone,
         mode="unattended",

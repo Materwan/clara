@@ -81,6 +81,7 @@ from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
 from .timekeeping.schedules import Run, Schedule, instructions_of, message_of
 from .timeutil import parse_iso, zone
 from .tools.base import Toolbox, ToolContext, TurnState
+from .tools.discord_tools import can_say, discord_tools
 from .tools.knowledge_tools import knowledge_tools
 from .tools.memory_tools import memory_tools
 from .tools.time_tools import time_tools
@@ -166,7 +167,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         router=Router(providers, catalog, runtime),
     )
     s.github_snapshots = GitHubSnapshots()
-    tools = memory_tools() + time_tools() + knowledge_tools()
+    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools()
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
     runner = ModelRunner(
@@ -180,6 +181,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         idle_timeout=settings.idle_timeout,
     )
     s.agent = Agent(s, runner, Persona(settings.persona_file))
+    s.agent.tool_conditions["discord_say"] = can_say
     wire(s)
     s.lifecycle = Lifecycle(s, settings.drain_seconds)
     return s

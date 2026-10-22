@@ -15,16 +15,16 @@ the conversation of a scheduled run, never in a plain chat.
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from ..events.delivery import discord_connected
 
 if TYPE_CHECKING:
     from ..memory.conversations import Conversation
     from ..services import Services
 
-DISCORD_SILENCE = 300.0  # seconds without the bot's heartbeat before it is called disconnected
 SECOND_BRAIN = "second_brain"
 
 
@@ -49,8 +49,7 @@ def _vault_needed(s: Services) -> str:
 
 
 def _discord_needed(s: Services) -> str:
-    seen = s.clients.get("discord")
-    return "" if seen is not None and time.monotonic() - seen < DISCORD_SILENCE else "The Discord bot is not connected."
+    return "" if discord_connected(s) else "The Discord bot is not connected."
 
 
 PACKS: tuple[Pack, ...] = (
