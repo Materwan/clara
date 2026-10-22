@@ -4,10 +4,11 @@
     -> stream the model, running tools through the gate -> store the turn -> compact if too long
 
 `Agent.turn()` yields events (dicts), so the same code serves streaming clients (events as they come) and plain ones
-(the last event):
+(the answer is the `done` event). After `done`, a long conversation is summarised: `compacting`, then `compacted` or
+`warning`.
 
     turn, thinking, token, tool_start, tool, qcm, file, tool_requests, approval, retrying, discarded, usage,
-    compacted, warning, done
+    done, compacting, compacted, warning
 
 **Client tools** are tools a client describes in its request and runs on its own machine: when the model calls one,
 the turn emits `tool_requests` and waits for the client to post the results (only the token that opened the turn may).
@@ -787,6 +788,7 @@ class Agent:
                         detached.clear()
             reply = "".join(reply_parts).strip()
             question_id = None
+            compact = False
             if stored and (reply or rows):
                 question_id = self.s.conversations.add_turn(
                     conversation.id,
@@ -808,15 +810,7 @@ class Agent:
                 over_tokens = (
                     bool(self.settings.compact_tokens) and context_tokens - fixed_tokens >= self.settings.compact_tokens
                 )
-                if over_window or over_tokens:
-                    try:
-                        before, after = await self._compact_locked(conversation.id, choice=choice)
-                        current_conversation = self.s.conversations.get(conversation.id)
-                        context_tokens = current_conversation.context_tokens if current_conversation else context_tokens
-                        yield {"type": "compacted", "before": before, "after": after}
-                    except Exception as error:
-                        log.warning("automatic compaction of %s failed: %s", conversation.id, error)
-                        yield {"type": "warning", "message": f"Could not compact the conversation: {error}"}
+                compact = over_window or over_tokens
         yield {
             "type": "done",
             "reply": reply,
@@ -830,6 +824,14 @@ class Agent:
             "model": used.ref,
             "tainted": state.tainted,
         }
+        if compact:  # after the answer, which is complete and stored: the summary is a step of its own
+            yield {"type": "compacting"}
+            try:
+                before, after = await self._compact_locked(conversation.id, choice=choice)
+                yield {"type": "compacted", "before": before, "after": after}
+            except Exception as error:
+                log.warning("automatic compaction of %s failed: %s", conversation.id, error)
+                yield {"type": "warning", "message": f"Could not compact the conversation: {error}"}
 
     def _versions(self, conversation_id: str, question_id: int | None) -> list[int]:
         if question_id is None:

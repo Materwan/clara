@@ -97,7 +97,7 @@ def set_secret(name: str, body: SecretValue, request: Request) -> dict:
         s.secrets.set(name, body.value.strip())
     except SecretError as error:
         raise ApiError(422, str(error)) from None
-    s.providers.forget_backends()
+    console.secret_changed(s, name)
     return {"name": name, "set": True}
 
 
@@ -105,7 +105,7 @@ def set_secret(name: str, body: SecretValue, request: Request) -> dict:
 def unset_secret(name: str, request: Request) -> dict:
     s = services(request)
     removed = s.secrets.unset(name)
-    s.providers.forget_backends()
+    console.secret_changed(s, name)
     return {"name": name, "set": False, "removed": removed}
 
 

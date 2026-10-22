@@ -21,8 +21,9 @@ earlier server: the new Clara starts empty.
   answer, separate model slots for background work, fallbacks that never leave a local choice, incognito and
   local-only conversations, attachments (PDF, Word, text, pictures, animations), client-side tools. An answer goes on
   when the web page is closed or left (`keep_running`), can be followed again from its start and stopped on purpose;
-  one that uses all its tool rounds says so. Web search goes to the Brave Search API when a key is set (Connections
-  page), with SearXNG as the fallback, and says why when no search service can answer.
+  one that uses all its tool rounds says so. Web search goes to the Brave Search API when a key is set (Admin,
+  Secrets), with SearXNG as the fallback, and says why when no search service can answer. A long conversation is summarised after its answer is complete, shown as
+  "Compacting the conversation…" (the stop button then reads "Stop compacting").
 - **Memory:** facts with source, confirmation, supersede, expiry and forget tombstones; FTS5 search; history search.
 - **Time:** reminders, tasks with sub-tasks, unattended schedules, notifications, an event store with a cursor per
   client; zone names only, so daylight-saving changes do not shift anything.

@@ -313,9 +313,7 @@ class Web:
             raise WebError("The query is empty.")
         providers = self._providers()
         if not providers:
-            raise WebError(
-                "No search service is set up: add a Brave API key on the Connections page, or CLARA_SEARXNG_URL."
-            )
+            raise WebError("No search service is set up: set brave_api_key (Admin, Secrets), or CLARA_SEARXNG_URL.")
         failures = []
         for provider in providers:
             try:

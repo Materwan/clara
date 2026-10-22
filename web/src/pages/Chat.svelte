@@ -36,6 +36,7 @@
     versions?: number[];
     version?: number;
     streaming?: boolean;
+    compacting?: boolean; // the answer is complete and stored; the conversation is being summarised after it
     error?: string;
     interrupted?: boolean; // the stored reply was cut off (its text says why)
     upload?: { name: string; data: string }[]; // the files of a question not stored yet, to send again with it
@@ -62,6 +63,7 @@
   let draft = $state('');
   let attached = $state<File[]>([]);
   let busy = $state(false);
+  const compacting = $derived(messages.some((message) => message.compacting));
   let dragging = $state(false);
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
@@ -296,10 +298,17 @@
           current.files.push(event);
           break;
         case 'retrying':
-        case 'warning':
           current.notes.push(event.message);
           break;
+        case 'warning':
+          current.notes.push(event.message);
+          current.compacting = false;
+          break;
+        case 'compacting':
+          current.compacting = true;
+          break;
         case 'compacted':
+          current.compacting = false;
           current.notes.push(`Summarised: ${Math.round(event.before)}% → ${Math.round(event.after)}% of the context.`);
           break;
         case 'discarded':
@@ -731,6 +740,9 @@
             <div class="who"><Mark size={30} /></div>
             <div class="body">
               {@render replyParts(message, false)}
+              {#if message.compacting}
+                <div class="compacting" role="status"><span class="spin" aria-hidden="true"></span><span>Compacting the conversation…</span></div>
+              {/if}
               {#if message.notes.length}
                 <div class="reply-notes">{#each message.notes as line}<span>{line}</span>{/each}</div>
               {/if}
@@ -786,7 +798,7 @@
             {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
           </select>
           {#if busy}
-            <button class="send stop" title="Stop" aria-label="Stop" onclick={stop}><Icon name="stop" /></button>
+            <button class="send stop" title={compacting ? 'Stop compacting' : 'Stop'} aria-label={compacting ? 'Stop compacting' : 'Stop'} onclick={stop}><Icon name="stop" /></button>
           {:else}
             <button class="send" title="Send" aria-label="Send" disabled={!!conversation?.archived || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
           {/if}

@@ -248,37 +248,25 @@ async def test_web_search_uses_brave_and_returns_its_addresses_as_trusted(servic
     assert "Mapping Police" in result and "https://mpv.example/" in result
 
 
-async def test_the_connections_page_checks_the_key_before_keeping_it(client, services, monkeypatch):
-    from clara.connectors import web as web_module
-
-    real = web_module.Brave.__init__
-    verdict = {"status": 401}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if verdict["status"] == 200:
-            return httpx.Response(200, json={"web": {"results": []}})
-        return httpx.Response(verdict["status"])
-
-    monkeypatch.setattr(web_module.Brave, "__init__", lambda self, key, transport=None: real(self, key, httpx.MockTransport(handler)))
-    refused = await client.put("/v1/connections/brave", json={"key": "BSA-not-valid"})
-    assert refused.status_code == 422 and "refused" in refused.json()["error"]["message"]
-    assert not services.secrets.has("brave_api_key") and (await client.get("/v1/connections")).json()["brave"]["connected"] is False
-    verdict["status"] = 200
-    assert (await client.put("/v1/connections/brave", json={"key": "BSA-valid-key"})).status_code == 200
-    assert services.secrets.get("brave_api_key") == "BSA-valid-key"
-    status = (await client.get("/v1/connections")).json()["brave"]
-    assert status["connected"] is True and status["status"] == "ok" and status["fallback"] is True
-    assert "BSA-valid-key" not in (await client.get("/v1/connections")).text
-    assert (await client.delete("/v1/connections/brave")).json() == {"connected": False}
-    assert not services.secrets.has("brave_api_key") and services.connections.get("brave") is None
-
-
-async def test_a_key_brave_refuses_later_is_marked_and_raised_as_an_alert(services, monkeypatch):
+async def test_a_key_brave_refuses_later_raises_an_alert_and_searches_go_on_without_it(services):
     services.web.searxng_url = ""
     services.secrets.set("brave_api_key", "BSA-old")
-    services.connections.set("brave", "Brave Search API")
     services.web._transport = two_services(brave=lambda request: httpx.Response(403))[1]
     with pytest.raises(WebError, match="the API key was refused"):
         await services.web.search("police")
-    assert services.connections.get("brave")["status"] == "needs_reconnect"
-    assert "brave" in services.alerts.active
+    assert "brave" in services.alerts.active and "brave_api_key" in services.alerts.active["brave"]
+
+
+async def test_the_key_is_set_on_the_secrets_tab_and_replacing_it_ends_the_alert(client, services):
+    services.web.searxng_url = ""
+    assert not services.web.can_search()
+    assert (await client.put("/v1/admin/secrets/brave_api_key", json={"value": "BSA-new"})).status_code == 200
+    assert services.web.can_search()  # the web tools follow the key, no restart
+    services.alerts.raise_("brave", "Brave refused the API key", "x")
+    assert (await client.put("/v1/admin/secrets/brave_api_key", json={"value": "BSA-newer"})).status_code == 200
+    assert "brave" not in services.alerts.active
+    services.alerts.raise_("brave", "Brave refused the API key", "x")
+    assert (await client.delete("/v1/admin/secrets/brave_api_key")).json()["removed"] is True
+    assert "brave" not in services.alerts.active and not services.web.can_search()
+    assert "brave" not in (await client.get("/v1/connections")).json()  # the Connections page has no card for it
+    assert (await client.put("/v1/connections/brave", json={"key": "BSA-new-key"})).status_code in (404, 405)

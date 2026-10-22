@@ -171,6 +171,16 @@ def _tokens(s: Services, args: list[str], token: TokenInfo) -> str:
     )
 
 
+ALERT_OF_SECRET = {"brave_api_key": "brave"}  # an alert that is over once its secret is replaced or removed
+
+
+def secret_changed(s: Services, name: str) -> None:
+    """A secret was set or removed (from the Admin page or the console): what depends on it looks again."""
+    s.providers.forget_backends()
+    if name in ALERT_OF_SECRET:
+        s.alerts.clear(ALERT_OF_SECRET[name])
+
+
 def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
     if not args or args[0] == "list":
         return "\n".join(
@@ -178,7 +188,7 @@ def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
         )
     if args[0] == "unset" and len(args) == 2:
         removed = s.secrets.unset(args[1])
-        s.providers.forget_backends()
+        secret_changed(s, args[1])
         return f"{args[1]}: {'removed' if removed else 'was not set'}"
     if args[0] == "set" and len(args) == 3:
         if args[1] not in KNOWN_SECRETS:
@@ -187,7 +197,7 @@ def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
             s.secrets.set(args[1], args[2])
         except SecretError as error:
             return str(error)
-        s.providers.forget_backends()
+        secret_changed(s, args[1])
         return f"{args[1]}: set"
     return "Usage: /secrets [list] | set <name> <value> | unset <name>   (clara-admin asks for the value hidden)"
 

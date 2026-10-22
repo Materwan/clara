@@ -63,11 +63,10 @@ class Connectors:
             self.s.alerts.raise_("github", "GitHub refused the token", str(error))
 
     def brave_refused(self, name: str) -> None:
-        self.s.connections.mark("brave", "needs_reconnect")
         self.s.alerts.raise_(
             "brave",
             "Brave refused the API key",
-            "Searches go to SearXNG until the key is replaced on the Connections page.",
+            "Searches go to SearXNG until the key is replaced: Admin, Secrets, brave_api_key.",
         )
 
     def google_auth(self) -> GoogleAuth | None:

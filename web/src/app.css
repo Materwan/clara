@@ -664,6 +664,7 @@ tr.off td { opacity: .5; }
 .retry { margin-top: var(--sp-8); }
 .failed-note { display: flex; gap: var(--sp-8); align-items: flex-start; margin-top: var(--sp-8); padding: var(--sp-8) var(--sp-12); border-radius: var(--r-xs); background: var(--danger-soft); color: var(--danger); font-size: var(--fs-md); }
 .reply-notes { margin-top: var(--sp-8); display: flex; flex-direction: column; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+.compacting { margin-top: var(--sp-8); display: flex; align-items: center; gap: var(--sp-8); color: var(--muted); font-size: var(--fs-xs); }
 
 /* Clara's reply in the order she made it: text, tool calls (a run of them is one line that opens), requests, forms */
 .parts { display: flex; flex-direction: column; gap: var(--sp-8); }

@@ -52,7 +52,7 @@ From a source tree (development machines): `sudo deploy/install.sh --from-source
 ### Web search (Brave, SearXNG)
 
 Brave first: create a key at <https://api-dashboard.search.brave.com> (a card is requested; the plan page lists the
-free monthly credit) and paste it on the **Connections** page (or `/secrets set brave_api_key <key>`). SearXNG is the
+free monthly credit) and set it on the **Admin** page, **Secrets** tab (which links to the dashboard), or with `/secrets set brave_api_key <key>`. SearXNG is the
 fallback, and the only search when there is no key. Scraped engines block an address that searches in bursts, which is
 why the API comes first.
 

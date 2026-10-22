@@ -6,7 +6,6 @@
   import { route, toast } from '../lib/state.svelte';
 
   let info = $state<any>(null);
-  let braveKey = $state('');
   let githubToken = $state('');
   let repo = $state('');
   let branch = $state('');
@@ -50,18 +49,6 @@
       else await confirmMailbox(kind, state, found.account);
     } catch (problem) {
       toast((problem as Error).message, 'error');
-    }
-  }
-
-  async function connectBrave(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    try {
-      await api.put('/v1/connections/brave', { key: braveKey.trim() });
-      braveKey = '';
-      toast('Brave connected: web searches go to Brave first.', 'ok');
-      load();
-    } catch (error) {
-      toast((error as Error).message, 'error');
     }
   }
 
@@ -150,10 +137,9 @@
   const DISCONNECT = {
     github: { title: 'Disconnect GitHub', message: 'Disconnect GitHub? The token is forgotten.' },
     google: { title: 'Disconnect Google Drive', message: 'Disconnect Google Drive? The token is revoked at Google.' },
-    brave: { title: 'Disconnect Brave', message: 'Disconnect Brave? The key is forgotten; searches go to SearXNG alone.' },
   };
 
-  async function disconnect(kind: 'github' | 'google' | 'brave'): Promise<void> {
+  async function disconnect(kind: 'github' | 'google'): Promise<void> {
     if (!(await confirmDialog({ ...DISCONNECT[kind], confirm: 'Disconnect', danger: true }))) return;
     await api.del(`/v1/connections/${kind}`);
     load();
@@ -169,17 +155,6 @@
   <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
     each GitHub and Drive change asks you first, and an email is sent only after you have read it in an approval request.</p>
   {#if info}
-    <section class="panel stack">
-      <h2><Icon name="globe" size={18} /> Web search (Brave) {#if info.brave.connected && info.brave.status !== 'needs_reconnect'}<span class="tag ok">key set</span>{/if}
-        {#if info.brave.status === 'needs_reconnect'}<span class="tag danger">key refused</span>{/if}</h2>
-      <form class="row" onsubmit={connectBrave}>
-        <input class="grow" type="password" aria-label="Brave Search API key" placeholder="A Brave Search API key (api-dashboard.search.brave.com)" bind:value={braveKey} />
-        <button class="primary" disabled={!braveKey.trim()}>{info.brave.connected ? 'Replace key' : 'Connect'}</button>
-        {#if info.brave.connected}<button type="button" class="danger" onclick={() => disconnect('brave')}>Disconnect</button>{/if}
-      </form>
-      <p class="muted small">Clara checks the key with a test search before keeping it. Searches go to Brave first;
-        {#if info.brave.fallback}when Brave cannot answer (a spent credit, a rate limit), SearXNG does.{:else}SearXNG is not set up, so when Brave cannot answer the search fails and says why.{/if}</p>
-    </section>
     <section class="panel stack">
       <h2><Icon name="branch" size={18} /> GitHub {#if info.github.connected}<span class="tag ok">{info.github.account}</span>{/if}
         {#if info.github.status === 'needs_reconnect'}<span class="tag danger">token refused</span>{/if}</h2>

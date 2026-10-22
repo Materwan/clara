@@ -69,7 +69,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
-| Connections (Settings) | The **Brave** API key for web search (checked with a test search before it is kept, replace, disconnect, « key refused » when Brave stops accepting it); GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
+| Connections (Settings) | GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
@@ -244,7 +244,7 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **One shared list:** a conversation started on Discord can be continued on the web or in the terminal. Each message
   records the client it came from (`X-Clara-Client`), which the prompt mentions.
 - **Streaming:** `POST /v1/chat/stream` answers with server-sent events: `turn`, `thinking`, `token`, `retrying`,
-  `tool_start`, `tool`, `approval`, `tool_requests`, `usage`, `compacted`, `discarded`, `warning`, `done`, or `error`
+  `tool_start`, `tool`, `approval`, `tool_requests`, `usage`, `compacting`, `compacted`, `discarded`, `warning`, `done`, or `error`
   (status, code and message) when the turn fails. `POST /v1/chat` returns the whole answer at once. Closing the
   stream stops the answer: what was said is kept, marked interrupted, and tool calls that had not run are recorded as
   not run. Unless the request has `keep_running` (the web sets it): then the answer is driven by the server and the
@@ -272,7 +272,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   still decides each call. `GET /v1/packs` lists them.
 - **Titles and summaries:** a title is written after the first answer (by the side-jobs model). When a conversation
   passes `CLARA_COMPACT_PERCENT` of the model's window, or `CLARA_COMPACT_TOKENS`, older turns are summarised; the last
-  `CLARA_KEEP_RECENT_TURNS` stay whole. With `CLARA_PURGE_SUMMARISED=true` the summarised messages are deleted.
+  `CLARA_KEEP_RECENT_TURNS` stay whole. The answer is complete (`done`) before that: the summary is a step of its own
+  (`compacting`, then `compacted` or `warning`), shown as "Compacting the conversation…" in the web chat. With `CLARA_PURGE_SUMMARISED=true` the summarised messages are deleted.
 - **Prompt fitting:** nothing is cut silently. Old tool results are shortened first (marked as omitted), then turns
   are left out (and you are told in a `warning` event); a message that alone exceeds half the window is refused.
 - **Incognito:** no fact is read or written, the conversation is never searched by `search_history`, and it is deleted
@@ -498,13 +499,13 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 
 ## 8. The outside world
 
-- **Web search:** through the Brave Search API when a key is set (the secret `brave_api_key`, entered on the Connections
-  page, which checks it with a test search before keeping it), else, or when Brave cannot answer, through a self-hosted
+- **Web search:** through the Brave Search API when a key is set (the secret `brave_api_key`, set on the Admin page's
+  Secrets tab, with a link to Brave's dashboard; nothing checks it when it is saved), else, or when Brave cannot answer, through a self-hosted
   SearXNG (`CLARA_SEARXNG_URL`), with the JSON format enabled (`deploy/searxng/`). A service that answers with no result
   is believed (no second try); one that cannot answer (a refused key, a spent monthly credit or a rate limit: HTTP 401,
   403 or 429; every search engine of SearXNG refused or timed out, which SearXNG reports and used to be shown as « No
   result. ») is skipped, and when none can, `web_search` fails with each one's reason and says that trying again at
-  once will not help. A key Brave refuses marks the Brave connection « key refused » and raises the `brave` alert;
+  once will not help. A key Brave refuses raises the `brave` alert (over once the key is replaced or removed);
   searches go on through SearXNG. The web tools are offered while a Brave key or `CLARA_SEARXNG_URL` is set. The search
   words go to Brave (and, as before, to the engines SearXNG asks).
 - **Web fetch:** `web_fetch` reads http and https pages (title, text, links; `CLARA_FETCH_MAX_SIZE`, 2 MB). The address
@@ -959,7 +960,7 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `deepseek_api_key` | DeepSeek API key |
 | `mistral_api_key` | Mistral API key |
 | `opencode_go_api_key` | OpenCode Go API key |
-| `brave_api_key` | Brave Search API key (set from the Connections page) |
+| `brave_api_key` | Brave Search API key (set on the Admin page, Secrets tab) |
 | `github_token` | GitHub fine-grained personal access token (set from the Connections page) |
 | `google_client_secret` | Google OAuth client secret (Drive and Gmail) |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |
@@ -1101,8 +1102,6 @@ keep-alive every 15 s.
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
 | `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories (with since when hooks look at each), files; the mail notification settings |
-| `PUT /v1/connections/brave` | Set the Brave Search API key (refused with 422 unless Brave accepts a test search with it) |
-| `DELETE /v1/connections/brave` | Forget it |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |

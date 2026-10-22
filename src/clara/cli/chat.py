@@ -339,6 +339,8 @@ class Chat:
                 self.run_local(event)
             elif kind in ("warning", "retrying"):
                 print(f"\n  ({event['message']})", end="", flush=True)
+            elif kind == "compacting":
+                print("\n  (compacting the conversation…)", end="", flush=True)
             elif kind == "compacted":
                 print(f"\n  (summarised: {event['before']:.0f}% → {event['after']:.0f}% of the context)", end="")
             elif kind == "error":

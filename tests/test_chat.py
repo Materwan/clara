@@ -108,6 +108,24 @@ async def test_the_last_round_says_why_it_has_no_tools(services, llm):
     assert not any("no tool is offered" in m["content"] for m in stored)  # the note was for the model, not the record
 
 
+async def test_a_long_conversation_is_summarised_after_its_answer_is_complete(services, llm):
+    """The answer ends (`done`, stored) before the summary, which is a step of its own a client can show."""
+    services.agent.settings = dataclasses.replace(services.agent.settings, compact_tokens=1)
+    conversation = services.conversations.create("web")
+    for number in range(4):
+        services.conversations.add_turn(conversation.id, f"question {number}", [])
+    llm.replies = ["Answer.", "Summary: four questions."]
+    events = []
+    request = ChatRequest(message="go on", client="web", conversation=conversation.id)
+    async with contextlib.aclosing(services.agent.turn(request)) as stream:
+        async for event in stream:
+            events.append(event)
+    kinds = [event["type"] for event in events]
+    assert kinds[-3:] == ["done", "compacting", "compacted"]
+    assert events[-3]["reply"] == "Answer."
+    assert services.conversations.get(conversation.id).summary == "Summary: four questions."
+
+
 def test_attachment_limits_fit_the_request_limit():
     """Four files of the largest kind would not fit the 48 MB request once base64-encoded: the total is what counts."""
     from clara.api.middleware import LIMITS
