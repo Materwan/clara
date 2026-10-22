@@ -45,7 +45,7 @@ earlier server: the new Clara starts empty.
   - **Layout:** a page's title, its Settings tabs and its body start at one left edge at any width (`--col-pad`, drawn
     from the width of `.content`), and every Settings page has the same width (Connections was narrower, so the page
     jumped between tabs). On a phone the open Settings tab scrolls into view (Models, Usage and Admin were off-screen).
-  - **Tasks and Schedules:** the list comes first; the form opens from **New task** / **New schedule** (and from **+ Sub**
+  - **Tasks and Schedules:** the list comes first; the form opens from **New task** / **New automation** (and from **+ Sub**
     and **Edit**), with its fields labelled above them, focus in the first field and back on the button afterwards. The
     Tasks row no longer collapses on a phone (the title was 0 px wide, under the buttons), and its actions are quiet at
     rest with text at full strength (the faded buttons were 3:1, under the 4.5:1 the design asks for). Tools a server
@@ -79,8 +79,8 @@ earlier server: the new Clara starts empty.
 - **Schedules grew up:** packs, a model of its own, one conversation per run, a run that **asks and waits** for your answer
   (`waiting`, reminded once, closed from what Clara has, `finish_run`), what to do with runs missed while the server was off
   (`skip`, `latest`, `all`) and with a run that comes due before the last is over (`skip`, `replace`, `queue`). The
-  Schedules view of the Automation page has all of it. Fixed: "Run now" on the Schedules view failed (the route needed the server's event loop).
-- **Try again:** a reply on the web site that failed or was cut off has a **Try again** button (its question is asked again; a new version when it is stored). Schedules have `attempts` (1 to 3, 3 by default): a run the model could not answer is tried again after 1 and 5 minutes, unless it had already used a tool or written text. The Schedules view has the setting; the API takes `attempts` on create and change.
+  Automation page has all of it. Fixed: "Run now" on the Automation page failed (the route needed the server's event loop).
+- **Try again:** a reply on the web site that failed or was cut off has a **Try again** button (its question is asked again; a new version when it is stored). Schedules have `attempts` (1 to 3, 3 by default): a run the model could not answer is tried again after 1 and 5 minutes, unless it had already used a tool or written text. The Automation page has the setting; the API takes `attempts` on create and change.
 - **The daily note is a schedule:** "Bilan du jour" is made once at start when there is a vault (every day at 23:59). It
   reads the day with the packs' tools, asks you one question on the web site and Discord (a thread under it in `#general`),
   waits for your answer, writes the day into a block of that day's daily note (`vault_daily_block`, `[[links]]` kept only
@@ -124,7 +124,7 @@ earlier server: the new Clara starts empty.
   loses nothing and repeats nothing. Mail that arrived while Clara was off is handled by the trigger's `catch_up` (`all` by default,
   at `max_per_hour`; `latest`, `digest`, `skip`), a run the stop cut is not repeated unless asked. Also fixed: mail past the 50th
   that arrived during a stop was never announced; the poll now takes a backlog oldest first and forgets its place when nobody
-  listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`; version 10 gives a hook its `in_history` switch and removes the project that was made for each hook when it held nothing else. The web site has a **Hooks** view on the Automation page, beside Schedules (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
+  listens. Schema version 9 adds `trigger_events`, `triggers` and `trigger_runs`; version 10 gives a hook its `in_history` switch and removes the project that was made for each hook when it held nothing else. The web site lists hooks on the Automation page, with schedules (list, form with a condition builder, test, runs, events seen); there is no GitHub source yet.
 - **Discord page:** the Admin page has a **Discord** tab: whether the bot is connected and what it sees in each of its four
   channels (their names, the rights it lacks), a **test message** per channel, and which channel carries each of twelve kinds of
   message (`#notification`, `#general`, `#alerts` or off on Discord; hook results and failures, new mail, Clara's own notices and
@@ -132,6 +132,7 @@ earlier server: the new Clara starts empty.
   cannot be switched off. The server tells the bot each event's channel, so the choice applies to the next message; with nothing
   chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
 - **Automation forms:** the schedule and hook forms on the web site are told in steps (Trigger, Action, Tools, Runs, Review) with a bar at the foot that stays in view, a choice of radios in place of the short dropdowns (the hook's trigger as cards), a condition builder that reads as a rule, a last step that says the whole in words, and a form that does not let you go on while a step has something missing or invalid (a name, a prompt, a time, a number): Next says what, shows the error and puts the focus on the field. Nothing changes in the API or in what is stored.
+- **One automation list and form:** schedules and hooks share one list on the Automation page and one **New automation** button; its first step says what sets it off (at a time, or one of the events) and the steps after it show what fits that choice. A GitHub repository is picked from the ones added on Connections. The API is unchanged.
 - **Hooks on GitHub:** a hook can wait for a pull request opened, merged or closed (`github.pull_request`) or a push to a branch
   (`github.push`) in the repositories you added. GitHub cannot call Clara, so they are found by a poll
   (`CLARA_GITHUB_POLL_SECONDS`), only while a hook waits; nothing is replayed when a hook is made, and a stop loses and repeats
