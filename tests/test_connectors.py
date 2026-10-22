@@ -141,3 +141,144 @@ async def test_vault_search_edit_move_and_delete(vault):
     log = vault.git.git("log", "--format=%s")
     assert "Clara: delete Projects/Roadmap.md" in log and "Clara: move Plans.md to Projects/Roadmap.md" in log
     assert "Clara: daily note" in await vault.daily("append", "met Paul") or (vault.root / "Daily").exists()
+
+
+# ----------------------------------------------------------------------
+# Web search: Brave first, SearXNG after, and a service that cannot answer is told, not read as "no result"
+# ----------------------------------------------------------------------
+BRAVE_HOST = "api.search.brave.com"
+
+
+def two_services(brave=None, searx=None):
+    """Brave and SearXNG as stand-ins: what each is asked, in order, and what each answers."""
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        handler = brave if request.url.host == BRAVE_HOST else searx
+        assert handler is not None, f"{request.url.host} should not have been asked"
+        return handler(request)
+
+    return seen, httpx.MockTransport(answer)
+
+
+def brave_found(request: httpx.Request) -> httpx.Response:
+    assert request.headers["x-subscription-token"] == "BSA-test"
+    item = {"title": "<strong>Mapping</strong> Police", "url": "https://mpv.example/", "description": "A <strong>database</strong> &amp; more"}
+    return httpx.Response(200, json={"web": {"results": [item]}})
+
+
+def searx_found(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"results": [{"title": "From SearXNG", "url": "https://s.example/", "content": "snippet"}]})
+
+
+def searx_blocked(request: httpx.Request) -> httpx.Response:
+    engines = [["brave", "too many requests"], ["duckduckgo", "timeout"]]
+    return httpx.Response(200, json={"results": [], "unresponsive_engines": engines})
+
+
+async def test_brave_is_asked_first_with_its_key_and_its_markup_is_removed():
+    seen, transport = two_services(brave=brave_found)
+    web = Web("http://search", 1000, transport=transport, brave_key=lambda: "BSA-test")
+    assert await web.search("police", 5) == [{"title": "Mapping Police", "url": "https://mpv.example/", "snippet": "A database & more"}]
+    assert [request.url.host for request in seen] == [BRAVE_HOST]  # SearXNG was not asked
+    assert seen[0].url.params["q"] == "police" and seen[0].url.params["count"] == "5"
+
+
+async def test_searxng_answers_when_brave_cannot():
+    for status in (429, 500):
+        seen, transport = two_services(brave=lambda request, status=status: httpx.Response(status), searx=searx_found)
+        web = Web("http://search", 1000, transport=transport, brave_key=lambda: "BSA-test")
+        assert (await web.search("police"))[0]["title"] == "From SearXNG"
+        assert [request.url.host for request in seen] == [BRAVE_HOST, "search"]
+
+
+async def test_a_refused_key_is_reported_and_searxng_answers():
+    refused: list[str] = []
+    _, transport = two_services(brave=lambda request: httpx.Response(401), searx=searx_found)
+    web = Web("http://search", 1000, transport=transport, brave_key=lambda: "BSA-test", on_key_refused=refused.append)
+    assert (await web.search("police"))[0]["title"] == "From SearXNG"
+    assert refused == ["Brave"]
+
+
+async def test_no_result_from_a_service_that_answered_is_believed():
+    seen, transport = two_services(brave=lambda request: httpx.Response(200, json={"web": {"results": []}}))
+    web = Web("http://search", 1000, transport=transport, brave_key=lambda: "BSA-test")
+    assert await web.search("zzzz") == [] and len(seen) == 1  # not a reason to ask another service
+    _, transport = two_services(searx=lambda request: httpx.Response(200, json={"results": [], "unresponsive_engines": []}))
+    assert await Web("http://search", 1000, transport=transport).search("zzzz") == []
+
+
+async def test_a_search_nobody_could_answer_says_why_instead_of_no_result():
+    _, transport = two_services(brave=lambda request: httpx.Response(429), searx=searx_blocked)
+    web = Web("http://search", 1000, transport=transport, brave_key=lambda: "BSA-test")
+    with pytest.raises(WebError) as failure:
+        await web.search("police")
+    text = str(failure.value)
+    assert "Brave: rate limit reached or monthly credit used up" in text
+    assert "SearXNG: no search engine answered (brave: too many requests, duckduckgo: timeout)" in text
+    assert "Trying again at once will not help" in text
+
+
+async def test_without_a_key_only_searxng_is_used_and_with_nothing_set_up_the_search_says_so():
+    seen, transport = two_services(searx=searx_found)
+    assert (await Web("http://search", 1000, transport=transport).search("police"))[0]["title"] == "From SearXNG"
+    assert [request.url.host for request in seen] == ["search"]
+    with pytest.raises(WebError, match="No search service is set up"):
+        await Web("", 1000, transport=transport).search("police")
+
+
+async def test_the_web_tools_follow_the_brave_key_when_searxng_is_not_set(services):
+    services.web.searxng_url = ""
+    assert not services.web.can_search()
+    services.secrets.set("brave_api_key", "BSA-test")
+    assert services.web.can_search()
+
+
+async def test_web_search_uses_brave_and_returns_its_addresses_as_trusted(services, llm, monkeypatch):
+    from clara.connectors import web as web_module
+
+    services.secrets.set("brave_api_key", "BSA-test")
+    real = web_module.Brave.__init__
+    _, transport = two_services(brave=brave_found)
+    monkeypatch.setattr(web_module.Brave, "__init__", lambda self, key, transport_=None: real(self, key, transport))
+    llm.replies = [calls(("web_search", {"query": "police"})), "done"]
+    await services.agent.answer(ChatRequest(message="search", client="cli", wait_for_approvals=False))
+    result = next(m["content"] for m in llm.seen[-1]["messages"] if m["role"] == "tool")
+    assert "Mapping Police" in result and "https://mpv.example/" in result
+
+
+async def test_the_connections_page_checks_the_key_before_keeping_it(client, services, monkeypatch):
+    from clara.connectors import web as web_module
+
+    real = web_module.Brave.__init__
+    verdict = {"status": 401}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if verdict["status"] == 200:
+            return httpx.Response(200, json={"web": {"results": []}})
+        return httpx.Response(verdict["status"])
+
+    monkeypatch.setattr(web_module.Brave, "__init__", lambda self, key, transport=None: real(self, key, httpx.MockTransport(handler)))
+    refused = await client.put("/v1/connections/brave", json={"key": "BSA-not-valid"})
+    assert refused.status_code == 422 and "refused" in refused.json()["error"]["message"]
+    assert not services.secrets.has("brave_api_key") and (await client.get("/v1/connections")).json()["brave"]["connected"] is False
+    verdict["status"] = 200
+    assert (await client.put("/v1/connections/brave", json={"key": "BSA-valid-key"})).status_code == 200
+    assert services.secrets.get("brave_api_key") == "BSA-valid-key"
+    status = (await client.get("/v1/connections")).json()["brave"]
+    assert status["connected"] is True and status["status"] == "ok" and status["fallback"] is True
+    assert "BSA-valid-key" not in (await client.get("/v1/connections")).text
+    assert (await client.delete("/v1/connections/brave")).json() == {"connected": False}
+    assert not services.secrets.has("brave_api_key") and services.connections.get("brave") is None
+
+
+async def test_a_key_brave_refuses_later_is_marked_and_raised_as_an_alert(services, monkeypatch):
+    services.web.searxng_url = ""
+    services.secrets.set("brave_api_key", "BSA-old")
+    services.connections.set("brave", "Brave Search API")
+    services.web._transport = two_services(brave=lambda request: httpx.Response(403))[1]
+    with pytest.raises(WebError, match="the API key was refused"):
+        await services.web.search("police")
+    assert services.connections.get("brave")["status"] == "needs_reconnect"
+    assert "brave" in services.alerts.active

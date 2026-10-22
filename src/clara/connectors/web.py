@@ -1,6 +1,9 @@
-"""The web: search through a self-hosted SearXNG, and read pages.
+"""The web: search through the Brave Search API or a self-hosted SearXNG, and read pages.
 
-**Search** asks SearXNG (CLARA_SEARXNG_URL) for JSON results; the addresses it returns become trusted for this turn.
+**Search** asks Brave first when an API key is set (the secret `brave_api_key`), then SearXNG (CLARA_SEARXNG_URL) when
+Brave cannot answer; the addresses it returns become trusted for this turn. A service that answers with no result is
+believed; one that cannot answer (a refused key, a spent monthly credit, a rate limit, every search engine of SearXNG
+blocked) is told with its reason, so "nothing matches" is never confused with "the search is down".
 
 **Fetch** reads one http(s) page, and refuses anything that is not on the public internet: the host's addresses are
 resolved first and every one must be public (no loopback, private, link-local, multicast, reserved, or the
@@ -15,9 +18,11 @@ What a page says is data, not instructions: a turn that read one is *tainted* (t
 from __future__ import annotations
 
 import asyncio
+import html
 import ipaddress
 import re
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -43,10 +48,21 @@ TEXT_TYPES = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 )
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
+BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+BRAVE_MAX_RESULTS = 20  # per request
+ENGINES_SHOWN = 5
 
 
 class WebError(ValueError):
     pass
+
+
+class SearchUnavailable(Exception):
+    """A search service could not answer. Not the same as an answer with no result."""
+
+
+class KeyRefused(SearchUnavailable):
+    """The service does not accept the API key."""
 
 
 def public_address(address: str) -> bool:
@@ -175,39 +191,147 @@ class Page:
     links: list[tuple[str, str]]
 
 
+def _plain(text: object) -> str:
+    """Brave marks the words searched for with <strong>: text only, one line."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", str(text or ""))).split())
+
+
+def _result(title: object, url: object, snippet: object) -> dict:
+    return {"title": _plain(title)[:200], "url": str(url or ""), "snippet": _plain(snippet)[:400]}
+
+
+class Brave:
+    """The Brave Search API (https://api.search.brave.com): a key in a header, JSON back."""
+
+    name = "Brave"
+
+    def __init__(self, key: Callable[[], str | None], transport: httpx.AsyncBaseTransport | None = None):
+        self._key = key
+        self._transport = transport
+
+    async def search(self, query: str, count: int) -> list[dict]:
+        key = self._key()
+        if not key:
+            raise SearchUnavailable("no API key is set")
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
+                response = await http.get(
+                    BRAVE_URL,
+                    params={"q": query, "count": max(1, min(count, BRAVE_MAX_RESULTS))},
+                    headers={"X-Subscription-Token": key, "Accept": "application/json", "User-Agent": USER_AGENT},
+                )
+        except httpx.HTTPError as error:
+            raise SearchUnavailable(f"could not be reached ({error or type(error).__name__})") from None
+        if response.status_code in (401, 403):
+            raise KeyRefused(f"the API key was refused (HTTP {response.status_code})")
+        if response.status_code == 429:
+            raise SearchUnavailable("rate limit reached or monthly credit used up (HTTP 429)")
+        if response.is_error:
+            raise SearchUnavailable(f"answered HTTP {response.status_code}")
+        try:
+            found = (response.json().get("web") or {}).get("results") or []
+        except ValueError:
+            raise SearchUnavailable("answered something that is not JSON") from None
+        return [
+            _result(item.get("title"), item.get("url"), item.get("description"))
+            for item in found[: max(1, min(count, 10))]
+            if item.get("url")
+        ]
+
+
+class SearXNG:
+    """A self-hosted SearXNG with its JSON format on."""
+
+    name = "SearXNG"
+
+    def __init__(self, url: str, transport: httpx.AsyncBaseTransport | None = None):
+        self._url = url.rstrip("/")
+        self._transport = transport
+
+    async def search(self, query: str, count: int) -> list[dict]:
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
+                response = await http.get(
+                    f"{self._url}/search",
+                    params={"q": query, "format": "json"},
+                    headers={"User-Agent": USER_AGENT},
+                )
+        except httpx.HTTPError as error:
+            raise SearchUnavailable(f"could not be reached ({error or type(error).__name__})") from None
+        if response.is_error:
+            raise SearchUnavailable(f"answered HTTP {response.status_code} (is the JSON format enabled?)")
+        try:
+            data = response.json()
+        except ValueError:
+            raise SearchUnavailable("answered something that is not JSON") from None
+        found = data.get("results") or []
+        if not found and data.get("unresponsive_engines"):  # no result because its engines were refused or timed out
+            engines = ", ".join(
+                f"{item[0]}: {item[1]}"
+                for item in data["unresponsive_engines"][:ENGINES_SHOWN]
+                if isinstance(item, list) and len(item) >= 2
+            )
+            raise SearchUnavailable(f"no search engine answered ({engines or 'all failed'})")
+        return [
+            _result(item.get("title"), item.get("url"), item.get("content"))
+            for item in found[: max(1, min(count, 10))]
+            if item.get("url")
+        ]
+
+
 class Web:
     def __init__(
-        self, searxng_url: str, max_bytes: int, transport: httpx.AsyncBaseTransport | None = None, resolver=None
+        self,
+        searxng_url: str,
+        max_bytes: int,
+        transport: httpx.AsyncBaseTransport | None = None,
+        resolver=None,
+        brave_key: Callable[[], str | None] | None = None,
+        on_key_refused: Callable[[str], None] | None = None,
     ):
         self.searxng_url = searxng_url.rstrip("/")
         self.max_bytes = max_bytes
         self._transport = transport
         self._resolve = resolver or resolve_public
+        self._brave_key = brave_key
+        self._on_key_refused = on_key_refused
+
+    def can_search(self) -> bool:
+        return bool(self.searxng_url) or bool(self._brave_key and self._brave_key())
+
+    def _providers(self) -> list[Brave | SearXNG]:
+        found: list[Brave | SearXNG] = []
+        if self._brave_key is not None and self._brave_key():
+            found.append(Brave(self._brave_key, self._transport))
+        if self.searxng_url:
+            found.append(SearXNG(self.searxng_url, self._transport))
+        return found
 
     async def search(self, query: str, count: int = 5) -> list[dict]:
+        """The results of the first service that can answer. [] is a real answer: nothing matches."""
         if not query.strip():
             raise WebError("The query is empty.")
-        try:
-            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http:
-                response = await http.get(
-                    f"{self.searxng_url}/search",
-                    params={"q": query, "format": "json"},
-                    headers={"User-Agent": USER_AGENT},
-                )
-        except httpx.HTTPError as error:
-            raise WebError(f"The search service (SearXNG) could not be reached: {error}") from None
-        if response.is_error:
-            raise WebError(f"The search service answered HTTP {response.status_code} (is the JSON format enabled?).")
-        results = response.json().get("results") or []
-        return [
-            {
-                "title": str(item.get("title") or "")[:200],
-                "url": str(item.get("url") or ""),
-                "snippet": " ".join(str(item.get("content") or "").split())[:400],
-            }
-            for item in results[: max(1, min(count, 10))]
-            if item.get("url")
-        ]
+        providers = self._providers()
+        if not providers:
+            raise WebError(
+                "No search service is set up: add a Brave API key on the Connections page, or CLARA_SEARXNG_URL."
+            )
+        failures = []
+        for provider in providers:
+            try:
+                return await provider.search(query, count)
+            except KeyRefused as error:
+                if self._on_key_refused is not None:
+                    self._on_key_refused(provider.name)
+                failures.append(f"{provider.name}: {error}")
+            except SearchUnavailable as error:
+                failures.append(f"{provider.name}: {error}")
+        raise WebError(
+            "The web search is not working right now ("
+            + "; ".join(failures)
+            + "). Trying again at once will not help: "
+            "tell the person, or answer from what you know and say so."
+        )
 
     async def fetch(self, url: str) -> Page:
         current = url.strip()

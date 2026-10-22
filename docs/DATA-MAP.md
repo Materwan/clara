@@ -59,7 +59,7 @@ keep what they held until they rotate out.
 | --- | --- | --- |
 | The model provider of the conversation | The prompt: persona, your facts (not in incognito), the conversation or its summary, project content, tool results, attached files and pictures | Every model call. Local Ollama hosts keep it on your machines; hosted providers are listed with their terms in [PROVIDERS.md](PROVIDERS.md). A local-only conversation never reaches a hosted provider |
 | The model provider of a conversation that reads a day back | What the special tools return: your conversations of that day (normal, project and scheduled ones; never incognito ones, local-only ones only to a local-only conversation), with their earlier summary and last exchanges, tasks, reminders, a short list of the day's files (and a file's text or diff when Clara asks for it), daily notes; a long conversation first goes to the side-jobs model for a summary | When a conversation or schedule has those packs on |
-| SearXNG, then the search engines it asks | The search query | `web_search` |
+| Brave (its Search API), then SearXNG and the search engines it asks | The search query: to Brave first when a key is set, to SearXNG when Brave cannot answer or there is no key | `web_search` |
 | The web site fetched | A request for that address | `web_fetch` |
 | GitHub | Requests for the repositories you listed; the content of commits, issues, pull requests Clara writes | GitHub tools (writes ask first) |
 | Google | Requests for Drive files Clara may use; content Clara writes; the token at revocation | Drive tools (writes ask first) |

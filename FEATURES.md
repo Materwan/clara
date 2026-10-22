@@ -69,11 +69,11 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
-| Connections (Settings) | GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
+| Connections (Settings) | The **Brave** API key for web search (checked with a test search before it is kept, replace, disconnect, « key refused » when Brave stops accepting it); GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
 | Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
-| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (set or remove, values never shown); runtime settings; **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
+| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (one panel per group, each with a link to the provider's page where its value is made: Ollama's keys page for `ollama_api_key`, and so on; set, replace or remove, values never shown; the refresh tokens are made by connecting, with a link to Connections); runtime settings; **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
 
 The site is built at release time (`scripts/build-web.sh`): the machine needs no Node. Every page is served with a
 strict Content-Security-Policy (scripts, styles, fonts and connections from the site only; nothing is inlined as a
@@ -498,8 +498,15 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 
 ## 8. The outside world
 
-- **Web search:** through a self-hosted SearXNG (`CLARA_SEARXNG_URL`), with the JSON format enabled
-  (`deploy/searxng/`).
+- **Web search:** through the Brave Search API when a key is set (the secret `brave_api_key`, entered on the Connections
+  page, which checks it with a test search before keeping it), else, or when Brave cannot answer, through a self-hosted
+  SearXNG (`CLARA_SEARXNG_URL`), with the JSON format enabled (`deploy/searxng/`). A service that answers with no result
+  is believed (no second try); one that cannot answer (a refused key, a spent monthly credit or a rate limit: HTTP 401,
+  403 or 429; every search engine of SearXNG refused or timed out, which SearXNG reports and used to be shown as « No
+  result. ») is skipped, and when none can, `web_search` fails with each one's reason and says that trying again at
+  once will not help. A key Brave refuses marks the Brave connection « key refused » and raises the `brave` alert;
+  searches go on through SearXNG. The web tools are offered while a Brave key or `CLARA_SEARXNG_URL` is set. The search
+  words go to Brave (and, as before, to the engines SearXNG asks).
 - **Web fetch:** `web_fetch` reads http and https pages (title, text, links; `CLARA_FETCH_MAX_SIZE`, 2 MB). The address
   is resolved once and the connection pinned to that address (with the right TLS name), so a DNS change cannot point it
   inside; private, loopback, link-local and tailnet addresses are refused, at every redirect (5 at most). An address
@@ -654,7 +661,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `ws_move` | Rename or move inside the workspace | ws_write / write; ws_destroy / destructive when the target exists |
 | `ws_delete` | Delete a file or folder (undoable) | ws_destroy / destructive |
 | `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
-| `web_search` | Search the web (SearXNG) — untrusted | web_search / read |
+| `web_search` | Search the web (Brave, else SearXNG) — untrusted | web_search / read |
 | `web_fetch` | Read a web page — untrusted | fetch_trusted or fetch_other / read |
 | `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted | github_read / read |
 | `github_write` | Commit a file change (create, overwrite, append, delete) | github_write / write or destructive |
@@ -800,6 +807,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `vault` | `CLARA_VAULT_PATH` is not a folder |
   | `vault_push` | The vault could not be pulled or pushed |
   | `backup` | A backup, its check or its remote copy failed |
+  | `brave` | Brave refused the API key |
   | `github` | GitHub refused the token |
   | `google` | Google refused the refresh token (reconnect Drive) |
   | `trigger:<id>` | A hook has more than 500 runs waiting: the newest events were recorded but not run |
@@ -951,6 +959,7 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `deepseek_api_key` | DeepSeek API key |
 | `mistral_api_key` | Mistral API key |
 | `opencode_go_api_key` | OpenCode Go API key |
+| `brave_api_key` | Brave Search API key (set from the Connections page) |
 | `github_token` | GitHub fine-grained personal access token (set from the Connections page) |
 | `google_client_secret` | Google OAuth client secret (Drive and Gmail) |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |
@@ -1047,7 +1056,7 @@ keep-alive every 15 s.
 | `POST /v1/admin/tokens` | Create one (the secret is shown once) |
 | `PATCH /v1/admin/tokens/{name}` | Change its approval scope |
 | `DELETE /v1/admin/tokens/{name}` | Revoke it (not the one you are using) |
-| `GET /v1/admin/secrets` | Secrets: set or not, never values |
+| `GET /v1/admin/secrets` | Secrets: set or not, and when, never values; each with its `group` (Model providers, Web search, GitHub, Google, Vault and backups, Other), a `link` to the page of its provider where its value is made (or to the Connections page, for the refresh tokens), and whether it is `settable` by hand |
 | `PUT /v1/admin/secrets/{name}` | Set one |
 | `DELETE /v1/admin/secrets/{name}` | Remove one |
 | `GET /v1/admin/settings` | Runtime settings |
@@ -1092,6 +1101,8 @@ keep-alive every 15 s.
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
 | `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories (with since when hooks look at each), files; the mail notification settings |
+| `PUT /v1/connections/brave` | Set the Brave Search API key (refused with 422 unless Brave accepts a test search with it) |
+| `DELETE /v1/connections/brave` | Forget it |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |

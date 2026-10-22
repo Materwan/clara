@@ -3,6 +3,7 @@
 from .store import (
     CONNECTION_TOKENS,
     KNOWN_SECRETS,
+    SECRET_SOURCES,
     KeyMaterial,
     SecretError,
     SecretsStore,
@@ -13,6 +14,7 @@ from .store import (
 __all__ = [
     "CONNECTION_TOKENS",
     "KNOWN_SECRETS",
+    "SECRET_SOURCES",
     "KeyMaterial",
     "SecretError",
     "SecretsStore",

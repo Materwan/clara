@@ -21,6 +21,7 @@ from ..connectors.github import REPO, GitHub, GitHubError
 from ..connectors.gmail import Gmail
 from ..connectors.gmail import authorize_url as gmail_authorize_url
 from ..connectors.mail import MailError
+from ..connectors.web import Brave, SearchUnavailable
 from .common import ApiError, caller, services
 
 router = APIRouter(prefix="/v1/connections", tags=["connections"])
@@ -49,7 +50,13 @@ def status(request: Request) -> dict:
     s, connectors = _connectors(request)
     github = s.connections.get("github")
     google = s.connections.get("google")
+    brave = s.connections.get("brave")
     return {
+        "brave": {
+            "connected": s.secrets.has("brave_api_key"),
+            "status": brave["status"] if brave else "",
+            "fallback": bool(s.settings.searxng_url),
+        },
         "github": {
             "connected": bool(github and s.secrets.has("github_token")),
             "account": github["account"] if github else "",
@@ -85,6 +92,36 @@ def _mailbox_state(s, connectors, provider: str, configured: bool) -> dict:
         "account": found["account"] if found else "",
         "status": found["status"] if found else "",
     }
+
+
+# ----------------------------------------------------------------------
+# Brave (web search)
+# ----------------------------------------------------------------------
+class BraveKey(BaseModel):
+    key: str = Field(min_length=10, max_length=200)
+
+
+@router.put("/brave")
+async def connect_brave(body: BraveKey, request: Request) -> dict:
+    s, _ = _connectors(request)
+    key = body.key.strip()
+    try:
+        await Brave(lambda: key).search("test", 1)  # a real search: the key is only kept if Brave accepts it
+    except SearchUnavailable as error:
+        raise ApiError(422, f"Brave did not accept this key: {error}") from None
+    s.secrets.set("brave_api_key", key)
+    s.connections.set("brave", "Brave Search API")
+    s.alerts.clear("brave")
+    return {"connected": True}
+
+
+@router.delete("/brave")
+def disconnect_brave(request: Request) -> dict:
+    s, _ = _connectors(request)
+    s.secrets.unset("brave_api_key")
+    s.connections.remove("brave")
+    s.alerts.clear("brave")
+    return {"connected": False}
 
 
 # ----------------------------------------------------------------------

@@ -49,9 +49,14 @@ From a source tree (development machines): `sudo deploy/install.sh --from-source
 
 ## 3. Optional parts
 
-### Web search (SearXNG)
+### Web search (Brave, SearXNG)
 
-Follow the comments at the top of `deploy/searxng/searxng.container` (a rootless quadlet of the `clara` user,
+Brave first: create a key at <https://api-dashboard.search.brave.com> (a card is requested; the plan page lists the
+free monthly credit) and paste it on the **Connections** page (or `/secrets set brave_api_key <key>`). SearXNG is the
+fallback, and the only search when there is no key. Scraped engines block an address that searches in bursts, which is
+why the API comes first.
+
+SearXNG: follow the comments at the top of `deploy/searxng/searxng.container` (a rootless quadlet of the `clara` user,
 listening on 127.0.0.1:8888, with `deploy/searxng/settings.yml` and a random `secret_key`). `clara doctor` checks it.
 
 ### GitHub

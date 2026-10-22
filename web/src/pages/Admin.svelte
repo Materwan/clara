@@ -15,6 +15,16 @@
   let status = $state<any>(null);
   let tokens = $state<any>({ tokens: [], you: '' });
   let secrets = $state<any[]>([]);
+  /** The secrets by group, in the order the server lists them (a group stands where its first secret does). */
+  const secretGroups = $derived.by(() => {
+    const groups: { name: string; items: any[] }[] = [];
+    for (const secret of secrets) {
+      let group = groups.find((item) => item.name === secret.group);
+      if (!group) groups.push((group = { name: secret.group, items: [] }));
+      group.items.push(secret);
+    }
+    return groups;
+  });
   let settings = $state<any[]>([]);
   let backups = $state<any>(null);
   let releases = $state<any>(null);
@@ -61,6 +71,11 @@
     if (!(await confirmDialog({ title: 'Revoke token', message: `Revoke ${name}? It is refused at once.`, confirm: 'Revoke', danger: true }))) return;
     await api.del(`/v1/admin/tokens/${name}`);
     load();
+  }
+
+  /** A sentence from the server with `names` in backticks: the plain words, and the names in code style. */
+  function withCode(text: string): { code: boolean; text: string }[] {
+    return text.split(/(`[^`]+`)/).filter(Boolean).map((part) => (part.startsWith('`') ? { code: true, text: part.slice(1, -1) } : { code: false, text: part }));
   }
 
   async function setSecret(name: string): Promise<void> {
@@ -171,16 +186,40 @@
       </tbody>
     </table>
   {:else if tab === 'secrets'}
-    <p class="muted small">Encrypted in the database (AES-GCM); the key is a systemd credential outside the data folder. Values are never shown.</p>
-    <table>
-      <tbody>
-        {#each secrets as secret (secret.name)}
-          <tr><td><code>{secret.name}</code><div class="muted small">{secret.purpose}</div></td><td>{secret.set ? `set ${when(secret.updated_at)}` : '—'}</td>
-            <td class="row">{#if secret.name !== 'google_refresh_token'}<button class="small" onclick={() => setSecret(secret.name)}>Set</button>{/if}
-              {#if secret.set}<button class="small danger" onclick={() => unsetSecret(secret.name)}>Remove</button>{/if}</td></tr>
-        {/each}
-      </tbody>
-    </table>
+    <p class="muted small">Encrypted in the database (AES-GCM); the key is a systemd credential outside the data folder. Values are never shown. A link opens the provider's own page, where the value is made.</p>
+    {#each secretGroups as group (group.name)}
+      <section class="panel">
+        <h2>{group.name}</h2>
+        <ul class="secret-list">
+          {#each group.items as secret (secret.name)}
+            <li class="secret">
+              <div class="secret-text">
+                <code>{secret.name}</code>
+                <div class="secret-about">
+                  {#if secret.purpose}<span class="muted small">{#each withCode(secret.purpose) as part}{#if part.code}<code>{part.text}</code>{:else}{part.text}{/if}{/each}</span>{/if}
+                  {#if secret.link}
+                    {#if secret.link.url.startsWith('#/')}
+                      <a class="source small" href={secret.link.url}>{secret.link.label}</a>
+                    {:else}
+                      <a class="source small" href={secret.link.url} target="_blank" rel="noopener noreferrer" title={secret.link.url}>{secret.link.label}<Icon name="external" size={14} /><span class="sr-only"> (opens in a new tab)</span></a>
+                    {/if}
+                  {/if}
+                </div>
+              </div>
+              <div class="secret-state">
+                {#if secret.set}<span class="tag ok">set</span><span class="muted small">{when(secret.updated_at)}</span>{:else}<span class="tag">not set</span>{/if}
+              </div>
+              <div class="secret-actions">
+                {#if secret.settable}
+                  <button class="small set" aria-label="{secret.set ? 'Replace' : 'Set'} {secret.name}" onclick={() => setSecret(secret.name)}>{secret.set ? 'Replace' : 'Set'}</button>
+                {/if}
+                {#if secret.set}<button class="small danger remove" aria-label="Remove {secret.name}" onclick={() => unsetSecret(secret.name)}>Remove</button>{/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/each}
   {:else if tab === 'settings'}
     <table>
       <tbody>
@@ -225,6 +264,75 @@
 </div>
 
 <style>
+  /* Secrets: a panel per group; a row says what the secret is and where its value is made, its state, and what to do.
+     The columns are fixed so that the state and the two actions (Set or Replace, then Remove) sit in the same place
+     on every row, whichever of them it has. */
+  .secret-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .secret {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 9.5rem 9.5rem;
+    gap: var(--sp-8) var(--sp-16);
+    align-items: start;
+    padding: var(--sp-12) 0;
+    border-top: 1px solid var(--line);
+  }
+  .secret:first-child {
+    padding-top: var(--sp-2);
+    border-top: none;
+  }
+  .secret:last-child {
+    padding-bottom: 0;
+  }
+  .secret-text {
+    display: grid;
+    gap: var(--sp-2);
+    justify-items: start;
+    min-width: 0;
+  }
+  .secret-text code {
+    overflow-wrap: anywhere;
+  }
+  .secret-about {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--sp-12);
+  }
+  .source {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-4);
+    min-height: var(--sp-24);
+  }
+  .secret-state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-2);
+  }
+  .secret-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-8);
+  }
+  .secret-actions .set {
+    grid-column: 1;
+  }
+  .secret-actions .remove {
+    grid-column: 2;
+  }
+  @media (max-width: 600px) {
+    .secret {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .secret-text {
+      grid-column: 1 / -1;
+    }
+  }
   .token {
     word-break: break-all;
   }

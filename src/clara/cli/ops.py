@@ -184,7 +184,7 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
                 (
                     "searxng",
                     WARN,
-                    f"{settings.searxng_url}: {type(error).__name__} (web search is off until it answers)",
+                    f"{settings.searxng_url}: {type(error).__name__} (web search is off until it answers, unless a Brave key is set)",
                 )
             )
     if settings.restic_repository:

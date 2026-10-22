@@ -62,6 +62,14 @@ class Connectors:
             self.s.connections.mark("github", "needs_reconnect")
             self.s.alerts.raise_("github", "GitHub refused the token", str(error))
 
+    def brave_refused(self, name: str) -> None:
+        self.s.connections.mark("brave", "needs_reconnect")
+        self.s.alerts.raise_(
+            "brave",
+            "Brave refused the API key",
+            "Searches go to SearXNG until the key is replaced on the Connections page.",
+        )
+
     def google_auth(self) -> GoogleAuth | None:
         secret = self.s.secrets.get("google_client_secret")
         if not self.s.settings.google_client_id or not secret:
@@ -176,10 +184,15 @@ class Connectors:
 def install(s: Services) -> None:
     s.connections = Connections(s.db)
     s.connectors = Connectors(s)
-    s.web = Web(s.settings.searxng_url, s.settings.fetch_max_bytes) if s.settings.searxng_url else None
-    if s.web is not None:
-        for tool in web_tools():
-            s.toolbox.add(tool)
+    web = s.web = Web(
+        s.settings.searxng_url,
+        s.settings.fetch_max_bytes,
+        brave_key=lambda: s.secrets.get("brave_api_key"),
+        on_key_refused=s.connectors.brave_refused,
+    )
+    for tool in web_tools():  # offered while a search service is set up: the Brave key can come later
+        s.toolbox.add(tool)
+        s.agent.tool_conditions[tool.name] = lambda state: web.can_search()
     for tool in github_tools():
         s.toolbox.add(tool)
         s.agent.tool_conditions[tool.name] = lambda state: bool(

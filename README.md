@@ -41,7 +41,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
   |        (approvals, audit log, tainted turns)             Mistral             |
   |                    |                                                         |
   |                    v                                                         |
-  |   tools: memory, time, projects, files, forms, vault, web (SearXNG),         |
+  |   tools: memory, time, projects, files, forms, vault, web (Brave, SearXNG),         |
   |          GitHub, Drive, Gmail, workspace, scripts (rootless Podman)          |
   |   time: reminders, tasks, schedules -> unattended turns through the gate     |
   |   ops: events, alerts, backups (SQLite + restic), traffic and usage logs     |

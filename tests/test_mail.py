@@ -628,3 +628,27 @@ def test_migration_8_keeps_every_repository_and_drive_file(tmp_path):
         new.execute("INSERT INTO connections (kind, account, created_at, updated_at) VALUES ('yahoo', 'x', 't', 't')")
     new.execute("DELETE FROM connections WHERE kind = 'github'")  # the cascade still reaches its repository, and only that
     assert [r["kind"] for r in new.execute("SELECT kind FROM resources")] == ["drive_folder"]
+
+
+def test_migration_14_keeps_every_repository_and_drive_file_and_allows_brave(tmp_path):
+    migrate_module = importlib.import_module("clara.db.migrate")
+    path = tmp_path / "old.db"
+    old = connect(path)
+    for migration in migrate_module.migrations()[:13]:
+        old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
+    old.execute("INSERT INTO connections (kind, account, status, created_at, updated_at) VALUES ('github', 'me', 'ok', 't', 't')")
+    old.execute("INSERT INTO connections (kind, account, status, created_at, updated_at) VALUES ('gmail', 'me@g.com', 'needs_reconnect', 't', 't')")
+    old.execute("INSERT INTO resources (connection_id, kind, locator, label, branch, mime, created_at) VALUES (1, 'github_repo', 'me/repo', 'me/repo', 'main', '', 't')")
+    old.execute("INSERT INTO resources (connection_id, kind, locator, label, branch, mime, created_at) VALUES (1, 'github_repo', 'me/other', 'me/other', '', '', 't')")
+    before = [tuple(r) for r in old.execute("SELECT * FROM connections ORDER BY id")], [tuple(r) for r in old.execute("SELECT * FROM resources ORDER BY id")]
+    old.close()
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (13, migrate_module.LATEST_VERSION)
+    new = connect(path)
+    assert ([tuple(r) for r in new.execute("SELECT * FROM connections ORDER BY id")],
+            [tuple(r) for r in new.execute("SELECT * FROM resources ORDER BY id")]) == before
+    assert new.execute("PRAGMA foreign_key_check").fetchall() == []
+    new.execute("INSERT INTO connections (kind, account, created_at, updated_at) VALUES ('brave', 'Brave Search API', 't', 't')")
+    with pytest.raises(Exception, match="CHECK"):
+        new.execute("INSERT INTO connections (kind, account, created_at, updated_at) VALUES ('yahoo', 'x', 't', 't')")
+    new.execute("DELETE FROM connections WHERE kind = 'brave'")  # the cascade still reaches a connection's repositories only
+    assert [r["locator"] for r in new.execute("SELECT locator FROM resources ORDER BY id")] == ["me/repo", "me/other"]

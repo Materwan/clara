@@ -83,6 +83,31 @@ def test_secret_values_never_come_back_from_the_api_listing(services):
     assert "super-secret" not in repr(listing)
 
 
+def test_every_secret_says_where_its_value_is_made():
+    from clara.secrets import KNOWN_SECRETS, SECRET_SOURCES
+
+    assert set(SECRET_SOURCES) == set(KNOWN_SECRETS)  # a new secret names its group and the page of its provider
+    for name, (group, label, url) in SECRET_SOURCES.items():
+        assert group and label, name
+        assert url.startswith(("https://", "#/")), name  # an address of this site, or a secure one: never plain http
+
+
+async def test_the_secrets_listing_is_grouped_and_links_each_secret_to_its_provider(client, services):
+    services.secrets.set("legacy_key", "x")  # stored, but no longer a name Clara knows
+    listing = (await client.get("/v1/admin/secrets")).json()["secrets"]
+    by_name = {item["name"]: item for item in listing}
+    ollama = by_name["ollama_api_key"]
+    assert ollama["group"] == "Model providers" and ollama["settable"] is True
+    assert ollama["link"] == {"label": "Ollama account keys", "url": "https://ollama.com/settings/keys"}
+    assert by_name["gmail_refresh_token"]["settable"] is False  # made by connecting the mailbox, never by hand
+    assert by_name["gmail_refresh_token"]["link"]["url"] == "#/connections"
+    assert by_name["legacy_key"]["group"] == "Other" and by_name["legacy_key"]["link"] is None
+    assert by_name["legacy_key"]["settable"] is False
+    groups = list(dict.fromkeys(item["group"] for item in listing))
+    assert groups == ["Model providers", "Web search", "GitHub", "Google", "Vault and backups", "Other"]
+    assert "x" not in {str(value) for item in listing for key, value in item.items() if key == "value"}
+
+
 async def test_the_next_provider_answers_when_the_first_fails(client, services, llm):
     services.runtime.set("providers_enabled", ["local", "pc"])
     services.runtime.set("fallbacks", ["pc:backup"])

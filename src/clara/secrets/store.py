@@ -47,6 +47,7 @@ KNOWN_SECRETS: dict[str, str] = {
     "deepseek_api_key": "DeepSeek API key (provider `deepseek`)",
     "mistral_api_key": "Mistral API key (provider `mistral`)",
     "opencode_go_api_key": "OpenCode Go API key (provider `opencode-go`)",
+    "brave_api_key": "Brave Search API key (web search first, SearXNG after)",
     "github_token": "GitHub fine-grained personal access token",
     "google_client_secret": "Google OAuth client secret (Drive and Gmail)",
     "google_refresh_token": "Google refresh token (set by the Drive connection, not by hand)",
@@ -59,6 +60,34 @@ KNOWN_SECRETS: dict[str, str] = {
 
 # Set by a connection flow after you confirm the account, never by hand (an unconfirmed account must not be attachable)
 CONNECTION_TOKENS = frozenset({"google_refresh_token", "gmail_refresh_token"})
+
+_GITHUB_TOKENS = ("GitHub", "Create a fine-grained token", "https://github.com/settings/personal-access-tokens/new")
+_GOOGLE_CREDENTIALS = ("Google", "Google Cloud credentials", "https://console.cloud.google.com/apis/credentials")
+_CONNECTIONS = ("Google", "Connect it on the Connections page", "#/connections")
+
+# Where each secret comes from, in the order the Admin page shows them: the group it is listed under, and the page of its
+# provider where its value is made (a label, and a fixed address). An address that starts with "#/" is a page of this site.
+# An address is only ever one the code names: a link is not something a client or a model can choose.
+SECRET_SOURCES: dict[str, tuple[str, str, str]] = {
+    "ollama_api_key": ("Model providers", "Ollama account keys", "https://ollama.com/settings/keys"),
+    "gemini_api_key": ("Model providers", "Google AI Studio keys", "https://aistudio.google.com/apikey"),
+    "deepseek_api_key": ("Model providers", "DeepSeek platform keys", "https://platform.deepseek.com/api_keys"),
+    "mistral_api_key": ("Model providers", "Mistral console (API Keys)", "https://console.mistral.ai/"),
+    "opencode_go_api_key": ("Model providers", "OpenCode console", "https://opencode.ai/console"),
+    "brave_api_key": ("Web search", "Brave Search API dashboard", "https://api-dashboard.search.brave.com/"),
+    "github_token": _GITHUB_TOKENS,
+    "release_token": _GITHUB_TOKENS,
+    "google_client_secret": _GOOGLE_CREDENTIALS,
+    "google_picker_api_key": _GOOGLE_CREDENTIALS,
+    "google_refresh_token": _CONNECTIONS,
+    "gmail_refresh_token": _CONNECTIONS,
+    "vault_git_token": ("Vault and backups", "Create a fine-grained token on GitHub", _GITHUB_TOKENS[2]),
+    "restic_password": (
+        "Vault and backups",
+        "restic: preparing a repository",
+        "https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html",
+    ),
+}
 
 
 class SecretError(Exception):
@@ -206,18 +235,26 @@ class SecretsStore:
         return self.db.execute("DELETE FROM secrets WHERE name = ?", (name,)).rowcount > 0
 
     def status(self) -> list[dict]:
-        """Every known secret and every stored one: set or not, and when it changed. Never the value."""
+        """Every known secret and every stored one: set or not, and when it changed, the group it belongs to, the page
+        where its value is made, and whether it can be set by hand. Never the value."""
         stored = {row["name"]: row["updated_at"] for row in self.db.all("SELECT name, updated_at FROM secrets")}
-        names = list(KNOWN_SECRETS) + sorted(set(stored) - set(KNOWN_SECRETS))
-        return [
-            {
-                "name": name,
-                "purpose": KNOWN_SECRETS.get(name, ""),
-                "set": name in stored,
-                "updated_at": stored.get(name),
-            }
-            for name in names
-        ]
+        names = [*SECRET_SOURCES, *(n for n in KNOWN_SECRETS if n not in SECRET_SOURCES)]
+        names += sorted(set(stored) - set(names))
+        listing = []
+        for name in names:
+            group, label, url = SECRET_SOURCES.get(name, ("Other", "", ""))
+            listing.append(
+                {
+                    "name": name,
+                    "purpose": KNOWN_SECRETS.get(name, ""),
+                    "set": name in stored,
+                    "updated_at": stored.get(name),
+                    "group": group,
+                    "link": {"label": label, "url": url} if url else None,
+                    "settable": name in KNOWN_SECRETS and name not in CONNECTION_TOKENS,
+                }
+            )
+        return listing
 
     def rotate(self, material: KeyMaterial) -> int:
         """Re-encrypt every secret under a new key. Returns how many were re-encrypted."""
