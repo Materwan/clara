@@ -2,12 +2,14 @@
   import ApprovalCard from '../components/ApprovalCard.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import FileCard from '../components/FileCard.svelte';
+  import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import QcmForm from '../components/QcmForm.svelte';
   import { ApiError, api, fileToBase64, stream, zone } from '../lib/api';
   import { type Document, repack, unpack } from '../lib/documents';
+  import { grants, stop as stopGrants } from '../lib/grants.svelte';
   import { markdown } from '../lib/markdown';
   import { conversations, go, route, toast, ui } from '../lib/state.svelte';
   import { type Call, argument, note, summary } from '../lib/tools';
@@ -284,8 +286,8 @@
           break;
         case 'tool': {
           const call = openCall(current, event.name, true);
-          if (call) Object.assign(call, { running: false, result: event.result });
-          else addCall(current, { name: event.name, arguments: event.arguments, result: event.result });
+          if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
+          else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
           break;
         }
         case 'approval':
@@ -560,6 +562,12 @@
   }
 
   const percent = $derived(conversation?.context?.percent ?? 0);
+
+  // Approve all next belongs to the conversation on screen and to this page: leaving either ends it
+  $effect(() => {
+    if (grants.conversation && grants.conversation !== conversationId) stopGrants();
+  });
+  $effect(() => stopGrants);
 </script>
 
 {#snippet callDetail(call: Shown)}
@@ -577,6 +585,7 @@
 {#snippet callLine(call: Shown)}
   {@const said = note(call)}
   <span class="run-summary"><b>{said.label}</b>{said.detail ? ` ${said.detail}` : ''}</span>
+  {#if call.granted}<span class="tag warn" title="Allowed by Approve all next">auto-approved</span>{/if}
   {#if call.running}<span class="spin" aria-hidden="true"></span>{/if}
 {/snippet}
 
@@ -625,7 +634,7 @@
           {#each part.calls as call, c (c)}{#if call.sub}{@render subagent(call.sub)}{/if}{/each}
         {/if}
       {:else if part.kind === 'approval'}
-        <ApprovalCard approval={part.approval} />
+        <ApprovalCard approval={part.approval} allowGrant={!nested && part.approval.conversation === conversationId} />
       {:else}
         <QcmForm form={part.form} onAnswer={(text) => send(text)} />
       {/if}
@@ -807,4 +816,5 @@
       <p class="composer-hint">Enter sends, Shift+Enter starts a new line. Drop or paste files to attach them (4 at most).</p>
     </div>
   </div>
+  <GrantBar />
 </section>

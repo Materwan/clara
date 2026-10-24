@@ -992,6 +992,8 @@ class Agent:
         }
         if outcome.approval is not None:
             event["approval"] = outcome.approval.id
+        if outcome.grant:
+            event["grant"] = outcome.grant
         return event
 
     def _keep_interrupted(

@@ -69,15 +69,24 @@ class Gate:
             effect = chat if situation.mode == "interactive" else unattended
             reason = "default"
         raised: list[str] = []
-        if situation.tainted and action.klass in RAISED_WHEN_TAINTED and self.runtime.get("tainted_rule"):
+        if self.tainted_raise(action, situation):
             if effect == "allow":
                 raised.append("this turn read untrusted content")
             effect = stricter(effect, "ask")
-        if action.secret_kinds and action.klass in OUTSIDE:
+        if self.secret_raise(action):
             if effect == "allow":
                 raised.append(f"the content looks like a secret ({', '.join(action.secret_kinds)})")
             effect = stricter(effect, "ask")
         return Decision(effect, reason, rule.id if rule else None, raised=tuple(raised))
+
+    def tainted_raise(self, action: Action, situation: Situation) -> bool:
+        """Does the tainted-turn rule apply to this action, whatever the effect would be otherwise?"""
+        return situation.tainted and action.klass in RAISED_WHEN_TAINTED and bool(self.runtime.get("tainted_rule"))
+
+    @staticmethod
+    def secret_raise(action: Action) -> bool:
+        """Does this action carry content that looks like a secret out of the machine?"""
+        return bool(action.secret_kinds) and action.klass in OUTSIDE
 
     def explain(self, action: Action, situation: Situation) -> dict:
         """For the rule tester: what would decide this action, without counting a hit."""

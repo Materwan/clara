@@ -49,9 +49,19 @@ const NOTES: Record<string, [string, string, string?]> = {
   vault_daily: ['book', 'Opened the daily note'],
   vault_move: ['book', 'Moved the note', 'note'],
   local_task: ['sparkle', 'Sub agent', 'description'], // the console's: its conversation opens under the call
+  automation_list: ['play', 'Looked at your automations'],
+  automation_create: ['play', 'Made an automation', 'name'],
+  automation_update: ['play', 'Changed an automation', 'name'],
+  automation_delete: ['play', 'Deleted an automation'],
+  mail_labels: ['mail', 'Looked at your mail labels'],
+  mail_label_create: ['mail', 'Made a mail label', 'name'],
+  mail_label: ['mail', 'Labelled a mail'],
+  mail_trash: ['mail', 'Moved a mail to the Trash'],
+  mail_mark_read: ['mail', 'Marked a mail as read'],
+  mail_label_delete: ['mail', 'Deleted a mail label', 'name'],
 };
 
-export type Call = { name: string; arguments: any; result?: string; running?: boolean };
+export type Call = { name: string; arguments: any; result?: string; running?: boolean; granted?: number }; // granted: the Approve all next that allowed it
 
 /** A text argument of a call, trimmed ("" when it has none). The arguments may still be the JSON text the model wrote. */
 export function argument(call: Call, key: string): string {

@@ -5,6 +5,7 @@ files_created, read_created_file                       read (a Drive file: drive
 daily_notes                                            read, target vault:daily
 ask_person, finish_run                                 memory (they write Clara's own records and event stream)
 discord_thread                                         discord (it leaves the machine: refused when local only)
+automation_*                                           in automations.py
 """
 
 from __future__ import annotations
@@ -14,9 +15,11 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..connectors.drive import DriveError
+from ..events import delivery
 from ..gate.actions import Action
 from ..tools.base import Tool, ToolContext, ToolError, fixed, optional_number
 from ..tools.days import resolve_day
+from .automations import automation_tools
 from .files import MODES, SOURCES, FilesReader
 from .history import HistoryReader, french_date
 
@@ -228,12 +231,20 @@ def _ask_person(context: ToolContext, question: str, title: str = "") -> str:
     if not text:
         raise ToolError("Give the question.")
     conversation = s.conversations.get(context.turn.conversation_id)
-    thread = bool(conversation and "discord_thread" in conversation.packs)
+    # a run that delivers to Discord asks in its forum thread, never in a thread of #general
+    forum = delivery.forum(run["deliver"])
+    thread = bool(conversation and "discord_thread" in conversation.packs) and not forum
     s.events.publish(
         "ask",
         _title(context, title),
         text[:ASK_TEXT],
-        payload={"conversation": context.turn.conversation_id, "stage": "asked", "run": run["id"], "thread": thread},
+        payload={
+            "conversation": context.turn.conversation_id,
+            "stage": "asked",
+            "run": run["id"],
+            "thread": thread,
+            **delivery.forum_mark(run["deliver"]),
+        },
         targets=_surfaces(context),
         source="packs",
         conversation_id=context.turn.conversation_id,
@@ -413,5 +424,5 @@ def install(s: Services) -> None:
     from .registry import Packs
 
     s.packs = Packs(s)
-    for tool in pack_tools(s.vault is not None):
+    for tool in [*pack_tools(s.vault is not None), *automation_tools()]:
         s.toolbox.add(tool)

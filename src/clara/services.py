@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .auth import FailureLimiter, Tokens, WebSessions
     from .db import Database
     from .events import Events
-    from .gate import Approvals, Audit, Gate, Rules
+    from .gate import Approvals, Audit, Gate, Grants, Rules
     from .knowledge.conversation_files import ConversationFiles
     from .knowledge.projects import Projects
     from .llm import Catalog, Providers, Router
@@ -59,6 +59,7 @@ class Services:
     gate: Gate
     audit: Audit
     approvals: Approvals
+    grants: Grants
     providers: Providers
     catalog: Catalog
     router: Router

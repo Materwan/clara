@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..agent.turn import ChatRequest, ServerStopping
+from ..events import delivery
 from ..llm.retry import retryable
 from ..timekeeping.schedules import Stopping
 from .events import StoredEvent
@@ -23,10 +24,21 @@ async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[S
     tainted from its first word, with only the tools the hook allows. Like a scheduled run, it is tried again when the
     model was busy or unreachable and the attempt had stored nothing."""
     title = f"{trigger.name} — {events[0].title}" if len(events) == 1 else f"{trigger.name} — {len(events)} events"
+    # the packs its tools need (a hook that reads mail gets the Mail pack): the allow-list is the switch, as in a chat's "+"
+    packs = s.packs.starting_with(trigger.effective_tools) if s.packs is not None else None
     conversation = s.conversations.create(
-        "server", title=title, project_id=trigger.project_id, local_only=trigger.local_only, model=trigger.model
+        "server",
+        title=title,
+        project_id=trigger.project_id,
+        local_only=trigger.local_only,
+        model=trigger.model,
+        packs=packs,
     )
     s.db.execute("UPDATE trigger_runs SET conversation_id = ? WHERE id = ?", (conversation.id, run_id))
+    if delivery.forum(trigger.deliver):
+        delivery.started(
+            s, f"Hook: {trigger.name}", conversation=conversation.id, payload={"trigger": trigger.id, "run": run_id}
+        )
     request = ChatRequest(
         message=message_of(trigger.name, trigger.prompt, events),
         client="server",

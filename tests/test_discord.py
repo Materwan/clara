@@ -3,12 +3,15 @@ other server, has no member list, sends each kind of message to its own channel,
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
+from datetime import timedelta
 from types import SimpleNamespace
 
 import discord
 import pytest
 
+from clara.timeutil import iso, utcnow
 from clara_discord import bot as bot_module
 from clara_discord.api import ClaraError
 from clara_discord.bot import ChannelError, ClaraBot, split_message
@@ -772,3 +775,114 @@ async def test_the_tools_command_lists_and_switches_the_packs_of_the_conversatio
     await bot.tools_text("web", None)  # no state: the other one
     assert ("PATCH", "/v1/conversations/c-1", {"packs": []}) in calls
     assert "No tool called" in await bot.tools_text("nothing", "on")
+
+
+# ----------------------------------------------------------------------
+# A run that delivers to Discord lives in one forum thread: nothing in #general, the link in #notification
+# ----------------------------------------------------------------------
+class ForumThread(FakeThread):
+    jump_url = f"https://discord.com/channels/{GUILD}/555"
+
+
+def forum_thread(bot, conversation: str = "c-run") -> ForumThread:
+    thread = ForumThread(555, 600)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.mirror.threads[conversation] = "555"  # the mirror made it as the run's first turn began
+    return thread
+
+
+FORUM = {"type": "ask", "title": "Bilan du dimanche", "text": "Et le reste ?", "conversation": "c-run",
+         "payload": {"conversation": "c-run", "stage": "asked", "thread": False, "forum": True}}
+
+
+def said_in_forum(**payload) -> dict:
+    return {**FORUM, "payload": {"conversation": "c-run", "forum": True, **payload}}
+
+
+async def test_a_forum_run_asks_in_its_forum_thread_and_general_hears_nothing(bot):
+    thread = forum_thread(bot)
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    bot.set_conversation("c-current")
+    await bot.deliver(FORUM)
+    assert texts(thread) == ["📓 **Bilan du dimanche**\nEt le reste ?"]
+    assert not general.sent and not general.threads and not bot.channels["notification"].sent
+    assert bot.conversation() == "c-current" and bot.threads() == {}  # nothing became the current chat, no thread in #general
+
+
+async def test_its_reminder_and_its_end_are_written_in_its_thread_which_stays(bot):
+    thread = forum_thread(bot)
+    await bot.deliver({**said_in_forum(stage="reminder"), "title": "Bilan", "text": "Toujours en attente."})
+    await bot.deliver({**said_in_forum(stage="finished"), "title": "Bilan", "text": "Récap écrit dans la note du jour."})
+    assert texts(thread) == ["📓 **Bilan**\nToujours en attente.", "📓 **Bilan**\nRécap écrit dans la note du jour."]
+    assert not thread.deleted and not thread.archived and not bot.channels["general"].sent  # it is the conversation: it stays
+
+
+async def test_the_end_waits_for_nothing_even_while_you_are_answering(bot):
+    thread = forum_thread(bot)
+    bot.answering.add("c-run")  # a check-in thread would hold the end back until your answer was written
+    await bot.deliver({**said_in_forum(stage="closed"), "title": "Bilan", "text": "Fermé sans réponse."})
+    assert texts(thread) == ["📓 **Bilan**\nFermé sans réponse."] and "c-run" not in bot.finished
+
+
+async def test_its_answer_is_not_said_again_because_the_mirror_wrote_it_in_the_thread(bot):
+    thread = forum_thread(bot)
+    await bot.deliver({**SAID, "conversation": "c-run", "payload": {"conversation": "c-run", "stage": "said", "forum": True}})
+    assert not thread.sent and not bot.channels["general"].sent and bot.conversation() != "c-run"
+
+
+async def test_without_its_thread_a_forum_run_goes_where_it_went_before_and_still_opens_no_thread(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "THREAD_WAIT", 0.0)  # its history is switched off, or the mirror is stopped
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    await bot.deliver({**FORUM, "payload": {**FORUM["payload"], "thread": True}})
+    assert texts(general)[0] == "📓 **Bilan du dimanche**\nEt le reste ?" and "Réponds ici" in texts(general)[1]
+    assert bot.conversation() == "c-run" and not general.threads
+    await bot.deliver({**SAID, "conversation": "c-run", "payload": {"conversation": "c-run", "stage": "said", "forum": True}})
+    assert texts(general)[2].startswith("📓 **Facture**")  # its answer is not lost
+    await bot.deliver({**said_in_forum(stage="finished"), "title": "Bilan", "text": "Fini."})
+    assert texts(general)[-1] == "📓 **Bilan**\nFini." and bot.conversation() is None
+
+
+def started(**more) -> dict:
+    return {"type": "notification", "title": "Scheduled task: Bilan", "text": "Started.", "source": "automations",
+            "conversation": "c-run", "channel": "notification", "created_at": iso(utcnow()),
+            "payload": {"schedule": 1, "run": 3, "conversation": "c-run", "thread": ""}, **more}
+
+
+async def test_a_started_run_is_announced_in_notification_with_the_link_of_its_forum_thread(bot):
+    forum_thread(bot)
+    await bot.deliver(started())
+    assert texts(bot.channels["notification"]) == [
+        f"▶️ **Scheduled task: Bilan**\nStarted.\n🔗 https://discord.com/channels/{GUILD}/555"]
+    assert not bot.channels["general"].sent and not bot.channels["alerts"].sent
+
+
+async def test_the_notice_follows_the_channel_the_server_names_and_off_posts_nothing(bot):
+    forum_thread(bot)
+    await bot.deliver(started(channel="general"))
+    assert texts(bot.channels["general"])[0].startswith("▶️ **Scheduled task: Bilan**") and not bot.channels["notification"].sent
+    await bot.deliver(started(channel="off"))
+    assert len(bot.channels["general"].sent) == 1 and not bot.channels["notification"].sent
+
+
+async def test_a_notice_for_a_thread_that_is_made_after_it_waits_for_it(bot):
+    async def made_later():
+        await asyncio.sleep(0.2)
+        forum_thread(bot)
+
+    maker = asyncio.create_task(made_later())
+    await bot.deliver(started())
+    await maker
+    assert texts(bot.channels["notification"])[0].endswith(f"🔗 https://discord.com/channels/{GUILD}/555")
+
+
+async def test_a_notice_whose_thread_never_comes_is_posted_without_a_link_and_a_stale_one_is_dropped(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "THREAD_WAIT", 0.0)
+    await bot.deliver(started())
+    assert texts(bot.channels["notification"]) == ["▶️ **Scheduled task: Bilan**\nStarted."]
+    await bot.deliver(started(created_at=iso(utcnow() - timedelta(minutes=20))))  # the bot was away: it is not news
+    await bot.deliver(started(created_at="not a date"))
+    assert len(bot.channels["notification"].sent) == 1

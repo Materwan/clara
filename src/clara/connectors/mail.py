@@ -7,6 +7,9 @@ sees a password. What she may do, in the order of risk:
     read      search, read a message, read an attachment's text, save an attachment in the workspace
     draft     save a draft in the mailbox (nothing is sent)
     send      send a message: the rule gate asks you first, with the whole text and every address in front of you
+    label     add or remove labels of your own on a message, make one or delete one (nothing is archived)
+    mark      take the unread mark off a message (nothing else changes)
+    trash     move a message to the Trash: never emptied, and the Trash keeps it until it is removed there
 
 Everything that comes out of a mailbox is written by someone else. `clean_text` removes what is invisible to you but
 not to a model (zero-width and direction-control characters, Unicode "tag" characters, text hidden with CSS), and the
@@ -39,6 +42,7 @@ MAX_RECIPIENTS = 20
 MAX_SUBJECT = 300
 MAX_BODY = 6_000  # characters of a message to send: the approval request shows all of it, so it must fit there
 MAX_FILES = 5
+MAX_LABEL = 100  # characters of a label's name
 MAX_DOWNLOAD = 25_000_000  # an attachment bigger than this is not fetched
 TIMEOUT = httpx.Timeout(20.0, read=90.0)
 SHOWN_FIELD = 200  # a subject or a sender in a list, cut here
@@ -141,6 +145,12 @@ class Outgoing:
 class Sent:
     id: str
     link: str = ""
+
+
+@dataclass(frozen=True)
+class Label:
+    id: str
+    name: str
 
 
 # ----------------------------------------------------------------------
@@ -309,6 +319,16 @@ def message_id(value: Any, name: str = "message") -> str:
     return found
 
 
+def label_name(value: Any) -> str:
+    """A label's name: one line, not empty, at most MAX_LABEL characters. `Parent/Child` nests one, as Gmail does."""
+    text = clean_line(str(value or ""), MAX_LABEL + 1)
+    if not text:
+        raise MailError("A label needs a name.")
+    if len(text) > MAX_LABEL:
+        raise MailError(f"A label's name is longer than {MAX_LABEL} characters.")
+    return text
+
+
 def parse_day(value: str, name: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -387,6 +407,11 @@ class MailClient:
         attachment(id, att)      (Attachment, bytes)
         draft(Outgoing, sender)  saved in the mailbox, not sent
         send(Outgoing, sender)   sent
+        labels()                 your own labels (not the system ones)
+        create_label(name)       a label of yours, made
+        modify(id, add, remove)  label ids added and removed on one message
+        delete_label(id)         one of your labels, deleted (its messages stay)
+        trash(id)                the message moved to the Trash (never deleted)
         new_since(ms, limit)     the OLDEST `limit` inbox messages received since then, oldest first: a backlog is
                                  worked through from its start, never from its end (the caller moves its cursor on)
     """
@@ -470,6 +495,21 @@ class MailClient:
         raise NotImplementedError
 
     async def send(self, mail: Outgoing, sender: str) -> Sent:
+        raise NotImplementedError
+
+    async def labels(self) -> list[Label]:
+        raise NotImplementedError
+
+    async def create_label(self, name: str) -> Label:
+        raise NotImplementedError
+
+    async def modify(self, message: str, add: list[str], remove: list[str]) -> None:
+        raise NotImplementedError
+
+    async def delete_label(self, label: str) -> None:
+        raise NotImplementedError
+
+    async def trash(self, message: str) -> None:
         raise NotImplementedError
 
     async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:

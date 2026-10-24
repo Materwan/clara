@@ -31,6 +31,11 @@ earlier server: the new Clara starts empty.
   tools behind `open_second_brain`), forms.
 - **Rule gate:** allow, ask or refuse for every tool call; editable rules; the tainted-turn rule; secrets leaving the
   machine raise to ask; approvals from any client (Discord buttons included, destructive excepted); an audit log.
+- **Approve all next:** a button on a chat's approval card (web site) that allows the request and the next ones of the same
+  tool in that conversation without a card, while the page stays open: workspace and vault changes only, never after untrusted
+  content or for content that looks like a secret, ended by Stop, a silent page (90 s), 30 minutes or 50 calls (new runtime
+  settings `approve_all_minutes` and `approve_all_calls`, on the Admin page). A banner at the foot of the chat shows what is on;
+  every call stays printed and is in the audit log.
 - **Workspace:** a git repository with a commit per change and undo; scripts in rootless Podman with no network, an
   empty environment and resource limits.
 - **Connectors:** SearXNG search, SSRF-safe page fetching, GitHub with a fine-grained token and a repository list,
@@ -75,7 +80,10 @@ earlier server: the new Clara starts empty.
 - **Tool packs:** special tools a conversation or a schedule is granted, listed by `GET /v1/packs`: web search, second
   brain, **day conversations** (`day_conversations`, `read_conversation`), **day activity**, **files created**
   (`files_created` lists a day's files in short lines, `read_created_file` reads one on demand, whole or as the day's
-  diff), **daily notes** (a range), and, for scheduled runs, **ask you** (`ask_person`, `finish_run`) and **Discord thread**.
+  diff), **daily notes** (a range), **automations** (chats only: `automation_list`, `automation_create`,
+  `automation_update`, `automation_delete` read, make, change, pause and delete schedules and hooks; the new action class
+  `automation` asks in a chat, is refused unattended and asks again after untrusted content; the request shows the whole
+  automation), and, for scheduled runs, **ask you** (`ask_person`, `finish_run`) and **Discord thread**.
   In the web chat the attach button became a **"+" menu**: add files, switch the packs, web search and the second brain on
   or off, choose the project; the choice is saved with the conversation, and `/tools` does the same on Discord and in the
   terminal. A pack decides which tools exist, never what the gate allows. Incognito conversations are never read back;
@@ -113,7 +121,7 @@ earlier server: the new Clara starts empty.
   automatic rollback; nightly SQLite backups and restic copies; alerts; metadata-only traffic log (a failed model call keeps
   its HTTP status and the provider's error code, never its text); `clara doctor`.
 - **Mail (Gmail):** one more connection on the Connections page. Gmail through its API with `gmail.readonly` and
-  `gmail.compose` only (a token of its own, not Drive's). Six
+  `gmail.compose` (and `gmail.modify`, see below; a token of its own, not Drive's). Six
   tools (`mail_search`, `mail_read`, `mail_attachment_read`, `mail_attachment_save`, `mail_draft`, `mail_send`) and three
   gate classes: reading and drafts are allowed, sending asks in a chat (the whole text and every address in the request,
   shown in full), is refused unattended, cannot be approved from Discord, and is raised to ask after untrusted content
@@ -121,6 +129,14 @@ earlier server: the new Clara starts empty.
   characters and CSS-hidden text and handed over as data; the sign-in proves the token reaches a mailbox before anything is
   kept; optional new-mail notifications (sender and subject only; a backlog from a stop is taken oldest first, none skipped). The tools, the classes and the limits are in FEATURES.md (sections 8, 9 and 10), the reasons in DECISIONS.md, the setup in OPERATIONS.md. Email
   connectors move out of NON-GOALS.md.
+- **Mail labels, the read mark and the Trash:** Clara lists your Gmail labels, makes one, adds or removes your labels on a
+  message, deletes one of your labels (its messages stay), marks a message read, and moves a message to the Trash
+  (`mail_labels`, `mail_label_create`, `mail_label`, `mail_label_delete`, `mail_mark_read`, `mail_trash`). Never archived,
+  never emptied, never a permanent delete. The Gmail token gains `gmail.modify`: **every Gmail connection
+  made before this asks you to connect Gmail once more.** The mail tools are a **Mail pack** that the "+" menu switches on
+  (off by default); migration 0016 adds it to schedules whose runs called a mail tool, and a hook gets it from its tools.
+  A label is allowed in a chat; a trash asks, and "Approve all next" covers it even after mail was read (the owner's
+  choice); unattended, both wait for you.
 - **Hooks:** Clara acts when something happens outside. A *trigger* you write (`/triggers`, `POST /v1/triggers`; the model cannot
   make one) matches new mail by field (no regular expression), and either notifies you or runs Clara: unattended, **tainted from
   its first word**, with **only the tools you list** (by default: read mail and notify), in a conversation of its own, listed under the
@@ -137,6 +153,13 @@ earlier server: the new Clara starts empty.
   chosen every message goes where it always went. The bot's heartbeat now also carries its name, its channels and the result of a test.
 - **Automation forms:** the schedule and hook forms on the web site are told in steps (Trigger, Action, Tools, Runs, Review) with a bar at the foot that stays in view, a choice of radios in place of the short dropdowns (the hook's trigger as cards), a condition builder that reads as a rule, a last step that says the whole in words, and a form that does not let you go on while a step has something missing or invalid (a name, a prompt, a time, a number): Next says what, shows the error and puts the focus on the field. Nothing changes in the API or in what is stored.
 - **Conversations in Discord:** the conversations of each project, schedule and hook shown in the history, and the others, are threads in a forum per place in your Discord server (a category each), with the answer written as it comes, Discord's messages read by Clara with the same tools, and archive and deletion followed both ways (a deletion on Discord asks for your approval first). Local-only conversations stay on the web site. The bot needs Manage Channels and Create Posts; `scripts/discord_live_check.py` checks them on your server. Discord's limits (500 channels, 50 categories) stop the mirror, which the Admin page can resume.
+- **Automations that deliver to Discord live in a forum thread:** a schedule or a hook whose `deliver` is `discord` or `both` now
+  has one thread in its automation's forum, and nothing in `#general` (no message, no thread under one). When a run starts the bot
+  posts a line with the thread's link in `#notification` (a new routed category, **Automation started**, on the Admin page's
+  Discord tab); the run's questions, reminder and end are written in the thread, where you answer, and the thread stays. Choosing
+  `discord` or `both` switches **Show in history** on (the forum is made from it); migration 0015 does it for the automations that
+  already deliver to Discord, and brings back the conversations that switch had archived. The **Discord thread** pack is not offered
+  to such a run; the others keep their `#general` thread.
 - **Archive:** a conversation can be archived next to its Delete button: it is kept whole and can be read, and takes no new message.
 - **One automation list and form:** schedules and hooks share one list on the Automation page and one **New automation** button; its first step says what sets it off (at a time, or one of the events) and the steps after it show what fits that choice. A GitHub repository is picked from the ones added on Connections. The API is unchanged.
 - **Hooks on GitHub:** a hook can wait for a pull request opened, merged or closed (`github.pull_request`) or a push to a branch

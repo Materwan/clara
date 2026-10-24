@@ -203,9 +203,9 @@
       {#if !info.gmail.configured}
         <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
           <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
-          <code>gmail.readonly</code> and <code>gmail.compose</code> to its consent screen (Data Access; if the picker does not list them,
+          <code>gmail.readonly</code>, <code>gmail.compose</code> and <code>gmail.modify</code> to its consent screen (Data Access; if the picker does not list them,
           paste their full addresses in <i>Manually add scopes</i>). Clara asks for nothing else: she cannot
-          archive, label, delete or change any setting of your mailbox.</p>
+          archive, delete a message for good or change any setting of your mailbox.</p>
       {:else}
         <div class="row">
           <button class="primary" onclick={() => startMailbox('gmail')}>{info.gmail.connected ? 'Connect again' : 'Connect Gmail'}</button>

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import random
 import re
 import time
@@ -116,9 +117,11 @@ def test_threading_headers_keep_only_well_formed_ids():
     assert mail.reply_subject("Lunch?") == "Re: Lunch?" and mail.reply_subject("RE: Lunch?") == "RE: Lunch?"
 
 
-def test_the_scopes_ask_for_nothing_that_changes_or_deletes_mail():
+def test_the_scopes_ask_for_nothing_that_deletes_mail_for_good():
     assert set(gmail_module.SCOPES.split()) == {"https://www.googleapis.com/auth/gmail.readonly",
-                                                "https://www.googleapis.com/auth/gmail.compose", "openid", "email"}
+                                                "https://www.googleapis.com/auth/gmail.compose",
+                                                "https://www.googleapis.com/auth/gmail.modify", "openid", "email"}
+    assert "https://mail.google.com/" not in gmail_module.SCOPES  # the one scope that deletes a message for good
     url = gmail_module.authorize_url("id", "https://x/cb", "state", "challenge")
     query = parse_qs(urlsplit(url).query)
     assert query["code_challenge_method"] == ["S256"] and query["access_type"] == ["offline"]
@@ -208,7 +211,8 @@ async def test_reading_mail_taints_the_turn_and_sending_asks_with_the_whole_text
     llm.replies = [calls(("mail_search", {"query": "invoice"})),
                    calls(("mail_send", {"to": ["bob@example.com", "Bob@Example.com"], "subject": "Hi", "body": "x" * 3000 + tail})),
                    "done"]
-    await services.agent.answer(ChatRequest(message="go", client="cli", wait_for_approvals=False))
+    chat = services.conversations.create("cli", packs=["web", "mail"]).id
+    await services.agent.answer(ChatRequest(message="go", client="cli", conversation=chat, wait_for_approvals=False))
     assert audit(services) == [("mail_search", "ran"), ("mail_send", "asked")]
     request = services.approvals.list("pending")[0]
     assert (request.action_class, request.level, request.target) == ("mail_send", "destructive", "mail:to:bob@example.com")
@@ -281,12 +285,126 @@ def test_the_three_mail_classes_have_the_agreed_defaults(services):
     assert all(decide(klass, local) == "refuse" for klass in ("mail_read", "mail_draft", "mail_send"))
 
 
+def test_labels_and_the_trash_have_their_own_defaults(services):
+    def decide(klass, situation, level):
+        return services.gate.decide(Action("t", level, klass, ("mail:gmail",), "x"), situation)
+
+    assert (decide("mail_label", CHAT, "write").effect, decide("mail_label", ALONE, "write").effect) == ("allow", "ask")
+    assert (decide("mail_trash", CHAT, "destructive").effect, decide("mail_trash", ALONE, "destructive").effect) == (
+        "ask",
+        "ask",
+    )
+    tainted = decide("mail_trash", Situation("interactive", tainted=True), "destructive")
+    assert tainted.effect == "ask" and tainted.raised == ()  # a trash after mail was read asks, but is not raised
+    local = Situation("interactive", local_only=True)
+    assert decide("mail_label", local, "write").effect == decide("mail_trash", local, "destructive").effect == "refuse"
+
+
+def test_the_mail_pack_holds_every_mail_tool_and_a_hook_that_names_one_gets_the_pack(services):
+    assert {name for name in services.toolbox.names if name.startswith("mail_")} == MAIL_TOOLS
+    assert services.packs.starting_with(["notify"]) == ["web"]
+    assert services.packs.starting_with(["mail_search", "notify"]) == ["web", "mail"]
+    assert services.packs.starting_with(["mail_*"]) == ["web", "mail"]
+    assert services.packs.starting_with(["automation_*", "ask_person"]) == ["web"]  # never a run's packs
+
+
+async def test_a_label_is_made_and_put_on_a_message_and_only_your_own_labels_are_used(services, world):
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    made = await run_tool(services, "mail_label_create", {"name": "Clients/Acme"})
+    assert made.text == "Made the label Clients/Acme in Gmail."
+    again = await run_tool(services, "mail_label_create", {"name": "clients/acme"})
+    assert "exists already" in again.text
+    listed = await run_tool(services, "mail_labels", {})
+    assert listed.text == "Your labels in Gmail (me@gmail.com): Clients/Acme"  # the system labels are not listed
+    labelled = await run_tool(services, "mail_label", {"message": "m1", "add": ["clients/ACME"]})
+    assert labelled.ran and labelled.text.startswith("Labelled the message m1 in Gmail: added clients/ACME")
+    assert world.gmail_modified == [{"message": "m1", "addLabelIds": ["Label_1"], "removeLabelIds": []}]
+    assert "Label_1" in world.gmail["m1"]["labelIds"]
+    refused = await run_tool(services, "mail_label", {"message": "m1", "add": ["INBOX"]})
+    assert "No label of yours named INBOX" in refused.text
+    assert len(world.gmail_modified) == 1  # a system label, which would archive the message, never reached Gmail
+
+
+async def test_a_trash_asks_moves_the_message_and_never_deletes_it(services, world):
+    connect_mailbox(services)
+    tester = services.tokens.create("someone", "web")[0]
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    asked = await run_tool(services, "mail_trash", {"message": "m1"})
+    assert asked.approval is not None and not world.gmail_trashed
+    assert (asked.approval.action_class, asked.approval.level) == ("mail_trash", "destructive")
+    await services.approvals.decide(asked.approval.id, "allow_once", tester)
+    assert world.gmail_trashed == ["m1"] and world.gmail["m1"]["labelIds"] == ["TRASH"]
+    assert world.gmail_refused == []  # Gmail was never asked for a permanent delete
+
+
+async def test_unattended_labels_and_the_trash_wait_for_the_person(services, world):
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    made = await run_tool(services, "mail_label_create", {"name": "Later"}, mode="unattended")
+    trashed = await run_tool(services, "mail_trash", {"message": "m1"}, mode="unattended")
+    assert made.approval is not None and world.gmail_labels == {}
+    assert trashed.approval is not None and not world.gmail_trashed
+
+
+def test_marking_read_and_deleting_a_label_have_their_own_defaults(services):
+    def decide(klass, situation, level):
+        return services.gate.decide(Action("t", level, klass, ("mail:gmail",), "x"), situation).effect
+
+    assert (decide("mail_mark", CHAT, "write"), decide("mail_mark", ALONE, "write")) == ("allow", "ask")
+    assert (decide("mail_label_delete", CHAT, "destructive"), decide("mail_label_delete", ALONE, "destructive")) == (
+        "ask",
+        "ask",
+    )
+    local = Situation("interactive", local_only=True)
+    assert decide("mail_mark", local, "write") == decide("mail_label_delete", local, "destructive") == "refuse"
+
+
+async def test_marking_read_takes_only_the_unread_mark_off(services, world):
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    marked = await run_tool(services, "mail_mark_read", {"message": "m1"})
+    assert marked.ran and marked.text == "Marked the message m1 as read in Gmail."
+    assert world.gmail_modified == [{"message": "m1", "addLabelIds": [], "removeLabelIds": ["UNREAD"]}]
+    assert world.gmail["m1"]["labelIds"] == ["INBOX"]  # still in the inbox
+
+
+async def test_deleting_a_label_asks_and_takes_it_off_its_messages_which_stay(services, world):
+    connect_mailbox(services)
+    tester = services.tokens.create("someone", "web")[0]
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    await run_tool(services, "mail_label_create", {"name": "Old"})
+    await run_tool(services, "mail_label", {"message": "m1", "add": ["Old"]})
+    asked = await run_tool(services, "mail_label_delete", {"name": "old"})
+    assert asked.approval is not None and not world.gmail_labels_deleted
+    assert (asked.approval.action_class, asked.approval.level) == ("mail_label_delete", "destructive")
+    assert not asked.approval.grantable  # « Approve all next » never covers a deleted label
+    settled = await services.approvals.decide(asked.approval.id, "allow_once", tester)
+    assert settled.result == "Deleted the label old in Gmail. Its messages stay, without it."
+    assert world.gmail_labels == {} and world.gmail_labels_deleted == ["Label_1"]
+    assert world.gmail["m1"]["labelIds"] == ["INBOX", "UNREAD"]  # the message stays, without the label
+    assert world.gmail_refused == []  # labels.delete, never messages.delete
+
+
+async def test_a_label_delete_names_one_of_your_labels_only(services, world):
+    connect_mailbox(services)
+    tester = services.tokens.create("someone", "web")[0]
+    asked = await run_tool(services, "mail_label_delete", {"name": "INBOX"})
+    settled = await services.approvals.decide(asked.approval.id, "allow_once", tester)
+    assert "No label of yours named INBOX" in str(settled.result)
+    assert world.gmail_labels_deleted == []
+
+
 def system_text(llm) -> str:
     chat = [call for call in llm.seen if call["tools"]][-1]
     return "\n".join(str(m["content"]) for m in chat["messages"] if m["role"] == "system")
 
 
-async def test_the_tools_exist_only_with_a_mailbox_and_never_in_a_local_only_chat(services, llm, world):
+MAIL_TOOLS = {"mail_search", "mail_read", "mail_attachment_read", "mail_attachment_save", "mail_draft", "mail_send",
+              "mail_labels", "mail_label_create", "mail_label", "mail_trash", "mail_mark_read", "mail_label_delete"}
+
+
+async def test_the_tools_exist_only_with_a_mailbox_and_the_mail_pack_and_never_in_a_local_only_chat(services, llm, world):
     def offered() -> set[str]:
         chat = [call for call in llm.seen if call["tools"]][-1]
         return {tool["function"]["name"] for tool in chat["tools"]}
@@ -294,11 +412,15 @@ async def test_the_tools_exist_only_with_a_mailbox_and_never_in_a_local_only_cha
     await services.agent.answer(ChatRequest(message="hi", client="cli"))
     assert not {name for name in offered() if name.startswith("mail_")}
     connect_mailbox(services)
-    await services.agent.answer(ChatRequest(message="hi", client="cli"))
-    assert {name for name in offered() if name.startswith("mail_")} == {
-        "mail_search", "mail_read", "mail_attachment_read", "mail_attachment_save", "mail_draft", "mail_send"}
+    await services.agent.answer(ChatRequest(message="hi", client="cli"))  # connected, but the pack is off: no tools
+    assert not {name for name in offered() if name.startswith("mail_")}
+    assert '"+" menu' in system_text(llm) and "mail_*" not in system_text(llm)
+    chat = services.conversations.create("cli", packs=["web", "mail"]).id
+    await services.agent.answer(ChatRequest(message="hi", client="cli", conversation=chat))
+    assert {name for name in offered() if name.startswith("mail_")} == MAIL_TOOLS
     assert "Mail (mail_* tools): Gmail (me@gmail.com)" in system_text(llm)
-    await services.agent.answer(ChatRequest(message="hi", client="cli", local_only=True))
+    local = services.conversations.create("cli", packs=["web", "mail"], local_only=True).id
+    await services.agent.answer(ChatRequest(message="hi", client="cli", conversation=local))
     assert not {name for name in offered() if name.startswith("mail_")}
     assert "mail_*" not in system_text(llm)  # nor does the prompt promise tools that are not there
 
@@ -412,7 +534,7 @@ async def test_connecting_gmail_attaches_the_account_the_api_reports(services, b
     services.secrets.set("google_client_secret", "gs")
     started = (await browser.post("/v1/connections/mail/gmail/start")).json()["url"]
     query = parse_qs(urlsplit(started).query)
-    assert query["scope"][0].count("gmail.") == 2 and query["redirect_uri"] == ["https://clara.test/v1/connections/google/callback"]
+    assert query["scope"][0].count("gmail.") == 3 and query["redirect_uri"] == ["https://clara.test/v1/connections/google/callback"]
     state = state_of(started)
     # Google's callback needs no sign-in, does nothing, and says which connection the consent was for
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(services)), base_url="https://clara.test") as stranger:
@@ -652,3 +774,25 @@ def test_migration_14_keeps_every_repository_and_drive_file_and_allows_brave(tmp
         new.execute("INSERT INTO connections (kind, account, created_at, updated_at) VALUES ('yahoo', 'x', 't', 't')")
     new.execute("DELETE FROM connections WHERE kind = 'brave'")  # the cascade still reaches a connection's repositories only
     assert [r["locator"] for r in new.execute("SELECT locator FROM resources ORDER BY id")] == ["me/repo", "me/other"]
+
+
+def test_migration_16_gives_the_mail_pack_to_a_schedule_whose_runs_called_a_mail_tool(tmp_path):
+    migrate_module = importlib.import_module("clara.db.migrate")
+    path = tmp_path / "old.db"
+    old = connect(path)
+    for migration in migrate_module.migrations()[:15]:
+        old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
+    for number, packs in ((1, '["web"]'), (2, '["web"]'), (3, '["web", "mail"]')):
+        old.execute("INSERT INTO schedules (id, name, prompt, local_at, timezone, packs, created_at, updated_at) "
+                    "VALUES (?, 's', 'p', '08:00', 'Europe/Paris', ?, 't', 't')", (number, packs))
+    for run, schedule, tool in ((1, 1, "mail_search"), (2, 2, "web_search"), (3, 3, "mail_read")):
+        old.execute("INSERT INTO conversations (id, client, created_at, updated_at) VALUES (?, 'server', 't', 't')", (f"c{run}",))
+        old.execute("INSERT INTO schedule_runs (id, schedule_id, due_at, status, conversation_id) "
+                    "VALUES (?, ?, 't', 'ok', ?)", (run, schedule, f"c{run}"))
+        old.execute("INSERT INTO audit_log (at, conversation_id, tool, level, situation, args_digest, effect, outcome) "
+                    "VALUES ('t', ?, ?, 'read', 'unattended', '', 'allow', 'ran')", (f"c{run}", tool))
+    old.close()
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (15, migrate_module.LATEST_VERSION)
+    new = connect(path)
+    packs = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM schedules")}
+    assert packs == {1: ["web", "mail"], 2: ["web"], 3: ["web", "mail"]}  # schedule 3 keeps one mail pack, not two

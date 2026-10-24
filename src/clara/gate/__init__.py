@@ -3,12 +3,14 @@
 from .actions import CLASSES, EFFECTS, LEVELS, SITUATIONS, Action, Decision, Situation
 from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals, NoRuleError
 from .engine import Audit, Gate, args_digest
+from .grants import GRANTABLE, Grant, GrantError, Grants
 from .rules import Rule, RuleError, Rules
 
 __all__ = [
     "ANSWERS",
     "CLASSES",
     "EFFECTS",
+    "GRANTABLE",
     "LEVELS",
     "SITUATIONS",
     "Action",
@@ -19,6 +21,9 @@ __all__ = [
     "Audit",
     "Decision",
     "Gate",
+    "Grant",
+    "GrantError",
+    "Grants",
     "NoRuleError",
     "Rule",
     "RuleError",

@@ -267,3 +267,18 @@ async def test_a_run_cannot_write_in_an_archived_conversation_either(services):
     services.mirror.set_archived(conversation, True, "you")
     with pytest.raises(ValueError, match="archived"):
         services.agent.plan(ChatRequest(message="rappel", client="server", conversation=conversation))
+
+
+async def test_choosing_to_deliver_to_discord_shows_the_automation_and_brings_its_conversations_back(client, services):
+    conversation = talk(services, kind="schedule")
+    schedule = services.schedules.create(
+        "Bilan", "Fais le bilan.", "2099-01-01T08:00", timezone="Europe/Paris", conversation_id=conversation
+    )
+    await client.patch(f"/v1/schedules/{schedule.id}", json={"in_history": True})
+    await client.patch(f"/v1/schedules/{schedule.id}", json={"in_history": False})
+    assert services.conversations.get(conversation).describe()["archived_by"] == "group"
+    assert place_of(services, conversation) is None
+    changed = (await client.patch(f"/v1/schedules/{schedule.id}", json={"deliver": "discord"})).json()
+    assert changed["in_history"] is True  # its runs live in a forum thread, made from the switch
+    assert not services.conversations.get(conversation).describe()["archived"]
+    assert place_of(services, conversation) == f"schedule:{schedule.id}"

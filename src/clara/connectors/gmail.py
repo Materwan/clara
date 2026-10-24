@@ -1,10 +1,14 @@
-"""Gmail, through its REST API, with two narrow scopes and a token of its own (it is not the Drive token):
+"""Gmail, through its REST API, with three narrow scopes and a token of its own (it is not the Drive token):
 
     gmail.readonly   search and read messages and attachments
     gmail.compose    save drafts, send messages and drafts
+    gmail.modify     label messages, make labels, move a message to the Trash
 
-Not asked, so the token cannot do them whatever Clara or a prompt injection tries: `gmail.modify` (label, archive, mark
-read, trash), `gmail.settings.*` (filters, forwarding) and the full `mail.google.com` scope.
+Not asked, so the token cannot do them whatever Clara or a prompt injection tries: `gmail.settings.*` (filters,
+forwarding) and the full `mail.google.com` scope, the only one that deletes a message for good (`gmail.modify` does not).
+`gmail.modify` could also archive; Clara's code never does. A mark read takes only UNREAD off a message (`mail_mark_read`),
+and a label is named from `labels()`, which lists only your own, so INBOX and the other system labels cannot be added or
+removed. Deleting a label (`labels.delete`) takes it off its messages, which stay where they are.
 
 The sign-in is the Drive one (OAuth, PKCE, bound to the browser session, `GoogleAuth` of drive.py) with other scopes. A
 Google app whose consent screen is in "Testing" ends its tokens after 7 days; these scopes are "restricted", so an app in
@@ -29,6 +33,7 @@ from .mail import (
     MAX_DOWNLOAD,
     NEW_BATCH,
     Attachment,
+    Label,
     MailClient,
     MailError,
     Message,
@@ -49,7 +54,10 @@ from .mail import (
 log = logging.getLogger(__name__)
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
-SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose openid email"
+SCOPES = (
+    "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose "
+    "https://www.googleapis.com/auth/gmail.modify openid email"
+)
 LABELS = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "trash": "TRASH", "spam": "SPAM"}
 METADATA = ("From", "To", "Subject", "Date")
 PARALLEL = 5
@@ -200,8 +208,7 @@ class Gmail(MailClient):
                 return MailError("The Gmail API is not turned on in your Google Cloud project.")
             if code in ("insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"):
                 return MailError(
-                    "Gmail says the permission is missing: connect Gmail again and allow reading and writing drafts.",
-                    True,
+                    "Gmail says a permission is missing: connect Gmail again and allow everything it asks for.", True
                 )
             if code in ("rateLimitExceeded", "userRateLimitExceeded", "RATE_LIMIT_EXCEEDED"):
                 return MailError("Google says too many requests for now: try again later.")
@@ -337,6 +344,39 @@ class Gmail(MailClient):
             body["threadId"] = thread
         made = await self.json("POST", f"{API}/messages/send", json=body)
         return Sent(str(made.get("id", "")))
+
+    async def labels(self) -> list[Label]:
+        """Your own labels (the system ones are left out)."""
+        listing = await self.json("GET", f"{API}/labels")
+        return [
+            Label(str(item["id"]), clean_line(str(item.get("name", "")), 100))
+            for item in listing.get("labels", []) or []
+            if item.get("type") == "user"
+        ]
+
+    async def create_label(self, name: str) -> Label:
+        made = await self.json(
+            "POST",
+            f"{API}/labels",
+            json={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+        )
+        return Label(str(made.get("id", "")), name)
+
+    async def delete_label(self, label: str) -> None:
+        """Deletes one of your labels (by id): it is taken off its messages, which stay. Not `messages.delete`."""
+        await self.json("DELETE", f"{API}/labels/{quote(label, safe='')}")
+
+    async def modify(self, message: str, add: list[str], remove: list[str]) -> None:
+        """Adds and removes labels (by id) on one message. Never called with both lists empty."""
+        await self.json(
+            "POST",
+            f"{API}/messages/{quote(message, safe='')}/modify",
+            json={"addLabelIds": add, "removeLabelIds": remove},
+        )
+
+    async def trash(self, message: str) -> None:
+        """Moves a message to the Trash. The permanent delete (`messages.delete`) is never called."""
+        await self.json("POST", f"{API}/messages/{quote(message, safe='')}/trash")
 
     async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:
         """The oldest `limit` inbox messages received since `received_ms`. Gmail lists newest first, so every id since then is

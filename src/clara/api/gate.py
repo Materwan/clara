@@ -7,7 +7,8 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, NoRuleError, RuleError, Situation
+from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, GrantError, NoRuleError, RuleError, Situation
+from ..gate.grants import BEAT
 from ..tools.base import ToolContext, ToolError, TurnState
 from .common import ApiError, caller, services
 
@@ -161,6 +162,45 @@ async def decide(approval_id: int, body: Decision, request: Request) -> dict:
     except ApprovalError as error:
         raise ApiError(403 if "may not answer" in str(error) else 404, str(error)) from None
     return approval.describe()
+
+
+class Press(BaseModel):
+    tab: str = Field(min_length=8, max_length=64)  # this page: no other page keeps the grant alive
+
+
+@router.post("/approvals/{approval_id}/grant")
+async def grant(approval_id: int, body: Press, request: Request) -> dict:
+    """Approve all next: allow this request, and the next ones of its tool in its conversation, while the page beats."""
+    s = services(request)
+    who = caller(request)
+    approval = s.approvals.get(approval_id)
+    if approval is None:
+        raise ApiError(404, f"No request {approval_id}.")
+    if approval.status != "pending":
+        raise ApiError(409, f"Request #{approval_id} is already {approval.status}.")
+    if not who.token.may_answer(approval.level):
+        raise ApiError(403, f"The token {who.name} may not answer {approval.level} requests.")
+    try:
+        made = s.grants.arm(approval, body.tab, who.token)
+    except GrantError as error:
+        raise ApiError(422, str(error)) from None
+    try:
+        settled = await s.approvals.decide(approval_id, "allow_once", who.token)
+    except ApprovalError as error:
+        s.grants.cancel(made, "the request could not be allowed")
+        raise ApiError(409 if isinstance(error, AlreadyAnswered) else 403, str(error)) from None
+    return {"approval": settled.describe(), "grants": s.grants.describe(made.conversation_id), "beat": BEAT}
+
+
+@router.put("/conversations/{conversation_id}/grants")
+def beat(conversation_id: str, body: Press, request: Request) -> dict:
+    """The page that pressed Approve all next is still there: what is on, and what ended since the last beat."""
+    return {**services(request).grants.beat(conversation_id, body.tab), "beat": BEAT}
+
+
+@router.delete("/conversations/{conversation_id}/grants")
+def stop_grants(conversation_id: str, request: Request) -> dict:
+    return {"stopped": services(request).grants.stop(conversation_id)}
 
 
 @router.get("/audit")

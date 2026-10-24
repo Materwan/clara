@@ -50,8 +50,8 @@ from .api.middleware import AuthMiddleware, BodyLimitMiddleware, SecurityHeaders
 from .auth import FailureLimiter, Tokens, WebSessions
 from .connectors import setup as connectors_setup
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
-from .events import Events
-from .gate import Approvals, Audit, Gate, Rules
+from .events import Events, delivery
+from .gate import Approvals, Audit, Gate, Grants, Rules
 from .knowledge import vault as vault_setup
 from .knowledge.conversation_files import ConversationFiles
 from .knowledge.github_snapshot import GitHub as GitHubSnapshots
@@ -165,6 +165,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         gate=Gate(db, rules, runtime, vault_push=settings.vault_push),
         audit=audit,
         approvals=Approvals(db, events, rules, audit, alerts, expire_after=settings.approval_expire),
+        grants=Grants(runtime, audit),
         providers=providers,
         catalog=catalog,
         router=Router(providers, catalog, runtime),
@@ -173,6 +174,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools()
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
+    s.toolbox.grants = s.grants
     runner = ModelRunner(
         providers,
         s.usage,
@@ -256,6 +258,13 @@ async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -
             s.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation_id, schedule.id))
         s.conversations.update(conversation_id, packs=packs, model=schedule.model)
     s.db.execute("UPDATE schedule_runs SET conversation_id = ? WHERE id = ?", (conversation_id, run.id))
+    if delivery.forum(schedule.deliver):
+        delivery.started(
+            s,
+            f"Scheduled task: {schedule.name}",
+            conversation=conversation_id,
+            payload={"schedule": schedule.id, "run": run.id},
+        )
     request = ChatRequest(
         message=message_of(schedule),
         client="server",

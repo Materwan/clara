@@ -25,6 +25,7 @@ from ..gate.engine import Audit, Gate, args_digest
 
 if TYPE_CHECKING:
     from ..gate.approvals import Approval, Approvals
+    from ..gate.grants import Grants
     from ..knowledge.attachments import Image
     from ..services import Services
 
@@ -112,6 +113,7 @@ class CallResult:
     text: str
     approval: Approval | None = None  # an approval request was made: the action did NOT run
     ran: bool = False
+    grant: int = 0  # an Approve all next grant allowed it (its number)
 
 
 REFUSED = (
@@ -126,6 +128,7 @@ class Toolbox:
         self.gate = gate
         self.audit = audit
         self.approvals: Approvals | None = None  # set once built (it runs approved calls through this toolbox)
+        self.grants: Grants | None = None  # the Approve all next buttons that are on
 
     @property
     def names(self) -> frozenset[str]:
@@ -174,7 +177,18 @@ class Toolbox:
                     reason=decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
                 )
             )
-        if decision.effect == "ask":
+        granted = None
+        detail = ""
+        if (
+            decision.effect == "ask"
+            and self.grants is not None
+            and not self.gate.tainted_raise(action, situation)
+            and not self.gate.secret_raise(action)
+        ):
+            granted = self.grants.cover(action, situation, context.turn.conversation_id, context.turn.client)
+            if granted is not None:
+                decision, detail = self.grants.decision(granted), self.grants.detail(granted)
+        if decision.effect == "ask" and granted is None:
             if self.approvals is None:
                 self.audit.record(
                     action, situation, digest, decision, "refused", detail="no approval service", **common
@@ -184,10 +198,10 @@ class Toolbox:
             self.audit.record(action, situation, digest, decision, "asked", approval_id=approval.id, **common)
             return CallResult(self.approvals.waiting_text(approval), approval=approval)
         text, ok = await self.run(tool, context, arguments)
-        self.audit.record(action, situation, digest, decision, "ran" if ok else "failed", **common)
+        self.audit.record(action, situation, digest, decision, "ran" if ok else "failed", detail=detail, **common)
         if ok and tool.taints:
             context.turn.tainted = True
-        return CallResult(text, ran=True)
+        return CallResult(text, ran=True, grant=granted.id if granted else 0)
 
     async def execute(self, name: str, context: ToolContext, arguments: dict) -> tuple[str, bool]:
         """Run a call you approved, exactly as it was asked. The floor is checked again (it never bends)."""

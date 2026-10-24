@@ -266,12 +266,14 @@ def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) ->
         fields["project_id"] = fields.pop("project") or None
     if "model" in fields:
         fields["model"] = _model(fields["model"])
+    before = service.find(schedule_id)
     try:
         changed = service.update(schedule_id, **fields)
     except ScheduleError as error:
         raise ApiError(404 if "No scheduled" in str(error) else 422, str(error)) from None
-    if "in_history" in fields:
-        services(request).mirror.group_switched(f"schedule:{schedule_id}", fields["in_history"])
+    if "in_history" in fields or (before is not None and changed.in_history != before.in_history):
+        # also when choosing `deliver` = discord or both switched it on
+        services(request).mirror.group_switched(f"schedule:{schedule_id}", changed.in_history)
     return service.describe(changed)
 
 

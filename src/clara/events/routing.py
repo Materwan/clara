@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from .delivery import STARTED_SOURCE
 from .store import Event
 
 CHANNELS = ("general", "notification", "approval", "alerts")  # the bot's four
@@ -36,6 +37,11 @@ CATEGORIES = (
     Category("reminders", "Reminders", "A reminder you set has come due."),
     Category("tasks", "Tasks", "The reminders of a task on your to-do list."),
     Category("schedules", "Scheduled tasks", "What a scheduled task did, when it ends."),
+    Category(
+        "automation_started",
+        "Automation started",
+        "A schedule or a hook that delivers to Discord began a run: the link of its forum thread.",
+    ),
     Category("hook_results", "Hook results", "A hook's run ended well (its summary)."),
     Category("hook_failures", "Hook failures", "A hook's run failed, or was cut short."),
     Category("hook_notices", "Hook notices", "A hook that only notifies: a mail matched its conditions."),
@@ -70,9 +76,13 @@ def category_of(kind: str, source: str, payload: Mapping) -> str | None:
             return "hook_results" if payload.get("status") == "ok" else "hook_failures"
         return "schedules"
     if kind == "notification":
-        return {"triggers": "hook_notices", "mail": "mail", "clara": "clara_notices", "server": "answers"}.get(
-            source, "notifications"
-        )
+        return {
+            "triggers": "hook_notices",
+            "mail": "mail",
+            "clara": "clara_notices",
+            "server": "answers",
+            STARTED_SOURCE: "automation_started",
+        }.get(source, "notifications")
     return None
 
 

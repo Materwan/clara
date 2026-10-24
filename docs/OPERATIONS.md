@@ -85,8 +85,10 @@ Gmail uses Drive's Google Cloud project, OAuth client and redirect address (`...
 a token of its own.
 
 1. In the same project: enable the **Gmail API** (APIs & Services → Library). On the OAuth consent screen (Google Auth
-   Platform → Data Access) add the scopes `.../auth/gmail.readonly` and `.../auth/gmail.compose`, and nothing else
-   (Clara cannot label, archive, delete or change settings: the token has no scope for it). The scope picker lists only
+   Platform → Data Access) add the scopes `.../auth/gmail.readonly`, `.../auth/gmail.compose` and `.../auth/gmail.modify`,
+   and nothing else (Clara cannot archive, delete a message for good or change settings: the token has no scope for it,
+   and `gmail.modify` cannot delete a message for good). An app that was connected before needs this scope added, and
+   then Gmail connected again. The scope picker lists only
    the scopes of enabled APIs; if one is missing, paste its full URL in the *Manually add scopes* box, then *Add to
    table*, *Update* and *Save*.
 2. These are Google's *restricted* scopes. An app *In production* that Google has not verified shows an « unverified

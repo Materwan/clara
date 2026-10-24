@@ -48,6 +48,8 @@ export const api = {
   put: <T = any>(path: string, body: unknown = {}) => request<T>('PUT', path, body),
   patch: <T = any>(path: string, body: unknown = {}) => request<T>('PATCH', path, body),
   del: <T = any>(path: string) => request<T>('DELETE', path),
+  /** A DELETE that goes through even as the page closes (keepalive), and whose failure nobody reads. */
+  leave: (path: string) => fetch(path, { method: 'DELETE', credentials: 'same-origin', headers: HEADERS, keepalive: true }).catch(() => undefined),
 };
 
 export async function download(path: string): Promise<Blob> {

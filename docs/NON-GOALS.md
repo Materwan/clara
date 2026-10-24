@@ -38,8 +38,9 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
   [DECISIONS.md](DECISIONS.md).)
 - **More than Gmail for mail, and more than one mailbox.** Other providers, IMAP/SMTP with a password
   (a password cannot be limited to reading), several Gmail mailboxes at once.
-- **Organising a mailbox:** labels, archive, mark read, delete, filters, forwarding rules, an HTML composer. The Gmail
-  token has no scope for them.
+- **Organising a mailbox:** archive, filters, forwarding rules, an HTML composer, and any permanent delete. Labels,
+  deleting a label, the read mark and moving a message to the Trash are in (see [DECISIONS.md](DECISIONS.md)). The Gmail
+  token has no scope for the settings, and no tool calls the permanent delete.
 - **Translation or stemming in memory search.**
 - **A mobile app.** The web site works on a phone over the tailnet.
 - **Rewriting git history to erase deleted files** in the workspace or the vault. Deletion there is undoable on

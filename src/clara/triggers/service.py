@@ -4,7 +4,7 @@
   (`also`) in ONE transaction: a crash before it loses nothing (the source looks again from its old place), a crash after it
   repeats nothing (the events are stored, the runs are planned, the place has moved).
 * A **trigger** is yours: an event kind, a filter, and an action: `run` (a turn of Clara's with a prompt and only the tools
-  you allow) or `notify` (a text, no model). The model has no tool to make or change one.
+  you allow) or `notify` (a text, no model). The model makes or changes one only with the Automations pack, which asks you first (packs/automations.py).
 * A **run** waits in `trigger_runs` until its trigger may start it: one run of a trigger at a time, at most `max_per_hour` an
   hour, at most MAX_PARALLEL triggers at once. So a long outage that brought a thousand mails costs a thousand runs only as
   fast as you allowed, oldest first; `max_age_hours` lets the old ones expire instead.
@@ -295,7 +295,8 @@ class Triggers(DueLoop):
             raise TriggerError(f"No project {project}.")
         return project
 
-    def create(self, name: str, on: str, *, project: Any = "none", **fields: Any) -> Trigger:
+    def _fresh(self, name: str, on: str, project: Any, fields: dict) -> dict:
+        """The row `create` would insert, or TriggerError."""
         unknown = set(fields) - set(DEFAULTS)
         if unknown:
             raise TriggerError(f"Unknown fields: {', '.join(sorted(unknown))}.")
@@ -307,6 +308,16 @@ class Triggers(DueLoop):
         if self.by_name(values["name"]) is not None:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
         values["project_id"] = self._project(project)
+        if delivery.forum(values["deliver"]):
+            values["in_history"] = 1  # its runs live in a forum thread, made from "Show in history"
+        return values
+
+    def check_new(self, name: str, on: str, *, project: Any = "none", **fields: Any) -> None:
+        """Raise TriggerError when `create` would refuse these; nothing is made."""
+        self._fresh(name, on, project, fields)
+
+    def create(self, name: str, on: str, *, project: Any = "none", **fields: Any) -> Trigger:
+        values = self._fresh(name, on, project, fields)
         now = now_iso()
         columns = list(values)
         trigger_id = self.db.insert(
@@ -349,6 +360,8 @@ class Triggers(DueLoop):
         if other is not None and other.id != trigger_id:
             raise TriggerError(f"A hook named {values['name']!r} exists already.")
         values["project_id"] = current.project_id if project == "keep" else self._project(project)
+        if delivery.forum(values["deliver"]) and not delivery.forum(current.deliver) and "in_history" not in fields:
+            values["in_history"] = 1  # its runs live in a forum thread, made from "Show in history"
         assignments = ", ".join(f"{column} = ?" for column in values)
         with self.db.transaction():
             self.db.execute(
@@ -717,7 +730,7 @@ class Triggers(DueLoop):
                 reply.strip() or summary,
                 conversation=conversation,
                 source="triggers",
-                payload={"trigger": trigger.id, "run": run_id},
+                payload={"trigger": trigger.id, "run": run_id, "forum": True},
             )
         if delivery.notifies(trigger.deliver, ok):
             self.events.publish(

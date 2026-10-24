@@ -3,6 +3,7 @@ being written, what it reports, and what it stops at (Discord's limits)."""
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import discord
@@ -318,3 +319,20 @@ async def test_a_new_conversation_still_starts_its_thread_with_the_question_bein
     assert thread.sent == ["Q1", "…"]
     posts = [(post["turn"], post["side"]) for call in world.clara.reports for post in call.get("posts", [])]
     assert posts == [("t1", "user"), ("t1", "reply")]
+
+
+async def test_a_conversations_thread_can_be_waited_for_until_the_bot_has_made_it(world):
+    forum = FakeForum(700, "Bilan")
+    thread = FakeThread(7001, "Plan", forum)
+    forum.threads.append(thread)
+    world.guild.channels[700] = forum
+    assert await world.mirror.thread_of("c1") is None and await world.mirror.thread_of("c1", 0.1) is None
+
+    async def made_later():
+        await asyncio.sleep(0.2)
+        world.mirror.remember_thread("7001", "c1")
+
+    maker = asyncio.create_task(made_later())
+    assert await world.mirror.thread_of("c1", 5) is thread
+    await maker
+    assert await world.mirror.thread_of("c1") is thread

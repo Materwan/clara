@@ -1,10 +1,12 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import { press } from '../lib/grants.svelte';
   import { loadPending } from '../lib/live';
   import { session, toast } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
 
-  let { approval }: { approval: any } = $props();
+  // allowGrant: only the chat that shows the request can offer « Approve all next » (it keeps its banner and its beat)
+  let { approval, allowGrant = false }: { approval: any; allowGrant?: boolean } = $props();
   let answered = $state<string | null>(null);
   const status = $derived(answered ?? approval.status ?? 'pending');
   let busy = $state(false);
@@ -22,6 +24,19 @@
     }
   }
 
+  async function approveAll(): Promise<void> {
+    busy = true;
+    try {
+      answered = (await press(approval.id, approval.conversation)).status;
+      loadPending();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      busy = false;
+    }
+  }
+
+  const grantable = $derived(allowGrant && approval.grantable && !!approval.conversation);
   const answerable = $derived(session.approvals === 'all' || (session.approvals === 'safe' && approval.level !== 'destructive'));
 </script>
 
@@ -37,6 +52,8 @@
     {#if answerable}
       <div class="row">
         <button class="primary small" disabled={busy} onclick={() => answer('allow_once')}>Allow once</button>
+        {#if grantable}<button class="small" disabled={busy} onclick={approveAll}
+          title="Allow this and the next {approval.tool} requests of this conversation without asking, until you leave this page, press Stop, or a limit set in Admin > Settings is reached">Approve all next</button>{/if}
         <button class="small" disabled={busy} onclick={() => answer('allow_always')}>Allow always</button>
         <button class="small" disabled={busy} onclick={() => answer('refuse_once')}>Refuse once</button>
         <button class="small danger" disabled={busy} onclick={() => answer('refuse_always')}>Refuse always</button>

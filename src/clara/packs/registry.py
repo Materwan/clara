@@ -9,17 +9,19 @@ A pack is a name for a group of tools. The tools of a pack that is not switched 
 
 Two packs are the familiar switches: `web` (web search and fetch, on by default) and `second_brain` (the vault open, its
 tools offered), which are stored where they always were. A pack for schedules only (`where="schedule"`) is offered in
-the conversation of a scheduled run, never in a plain chat.
+the conversation of a scheduled run, never in a plain chat; one for chats only (`where="chat"`) the other way round.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..events.delivery import discord_connected
+from ..connectors.mail import PROVIDERS
+from ..events.delivery import discord_connected, forum
 
 if TYPE_CHECKING:
     from ..memory.conversations import Conversation
@@ -52,6 +54,11 @@ def _discord_needed(s: Services) -> str:
     return "" if discord_connected(s) else "The Discord bot is not connected."
 
 
+def _mail_needed(s: Services) -> str:
+    connected = s.connectors is not None and any(s.connectors.mail_connected(name) for name in PROVIDERS)
+    return "" if connected else "No mailbox is connected (the Connections page connects Gmail)."
+
+
 PACKS: tuple[Pack, ...] = (
     Pack(
         "web",
@@ -68,6 +75,30 @@ PACKS: tuple[Pack, ...] = (
         frozenset(),
         icon="book",
         check=_vault_needed,
+    ),
+    Pack(
+        "mail",
+        "Mail",
+        "Your Gmail: search, read and draft; label messages, make and delete labels; mark a message read; move a message "
+        "to the Trash. Sending always asks you first.",
+        frozenset(
+            {
+                "mail_search",
+                "mail_read",
+                "mail_attachment_read",
+                "mail_attachment_save",
+                "mail_draft",
+                "mail_send",
+                "mail_labels",
+                "mail_label_create",
+                "mail_label",
+                "mail_trash",
+                "mail_mark_read",
+                "mail_label_delete",
+            }
+        ),
+        icon="mail",
+        check=_mail_needed,
     ),
     Pack(
         "day_conversations",
@@ -98,6 +129,14 @@ PACKS: tuple[Pack, ...] = (
         frozenset({"daily_notes"}),
         icon="calendar",
         check=_vault_needed,
+    ),
+    Pack(
+        "automations",
+        "Automations",
+        "Read, create, change and delete your schedules and hooks. Every change asks you first.",
+        frozenset({"automation_list", "automation_create", "automation_update", "automation_delete"}),
+        where="chat",
+        icon="play",
     ),
     Pack(
         "ask_person",
@@ -167,6 +206,21 @@ class Packs:
             return list(DEFAULT)
         return [item for item in found if item in BY_ID] if isinstance(found, list) else list(DEFAULT)
 
+    @staticmethod
+    def starting_with(patterns) -> list[str]:
+        """The packs a new conversation starts with: the defaults, and each pack holding a tool that these patterns (names
+        or globs, as a hook's allow-list has them) allow. A hook's run gets its packs this way, and only the packs a run
+        may have (`both`): the Automations pack is never given to a run, whatever its allow-list names."""
+        return [
+            pack.id
+            for pack in PACKS
+            if pack.default
+            or (
+                pack.where == "both"
+                and any(fnmatch.fnmatchcase(name, pattern) for name in pack.tools for pattern in patterns)
+            )
+        ]
+
     def active(self, conversation: Conversation | None) -> list[str]:
         if conversation is None:
             return list(DEFAULT)
@@ -181,7 +235,7 @@ class Packs:
         if not conversation_id:
             return None
         return self.s.db.one(
-            "SELECT r.*, s.name AS schedule_name FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            "SELECT r.*, s.name AS schedule_name, s.deliver FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
             " WHERE r.conversation_id = ? ORDER BY r.id DESC LIMIT 1",
             (conversation_id,),
         )
@@ -190,11 +244,19 @@ class Packs:
     # What is offered
     # ------------------------------------------------------------------
     def hidden(self, conversation: Conversation | None) -> set[str]:
-        """The tools of the packs that are off, unusable now, or for schedules in a conversation that is no run."""
+        """The tools of the packs that are off, unusable now, or for schedules in a conversation that is no run (and the
+        chat-only ones in a run's: an automation never manages automations)."""
         active = set(self.active(conversation))
-        in_run = conversation is not None and self.run_of(conversation.id) is not None
+        run = self.run_of(conversation.id) if conversation is not None else None
         hidden: set[str] = set()
         for pack in PACKS:
-            if pack.id not in active or self.unavailable(pack) or (pack.where == "schedule" and not in_run):
+            if (
+                pack.id not in active
+                or self.unavailable(pack)
+                or (pack.where == "schedule" and run is None)
+                or (pack.where == "chat" and run is not None)
+            ):
                 hidden |= pack.tools
+        if run is not None and forum(run["deliver"]):  # its thread is the forum's: none is opened in #general
+            hidden |= BY_ID["discord_thread"].tools
         return hidden

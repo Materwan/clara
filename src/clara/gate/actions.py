@@ -43,12 +43,21 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "mail_read": ("allow", "allow", "Mail read: search, read a message or an attachment (Gmail)"),
     "mail_draft": ("allow", "allow", "Mail draft: save a draft in your mailbox (nothing is sent)"),
     "mail_send": ("ask", "refuse", "Mail send: an email leaves your mailbox"),
+    "mail_label": (
+        "allow",
+        "ask",
+        "Mail label: add or remove your labels on a message, or make one (nothing is archived)",
+    ),
+    "mail_trash": ("ask", "ask", "Mail trash: move a message to the Trash (never emptied)"),
+    "mail_mark": ("allow", "ask", "Mail mark: take the unread mark off a message (nothing else changes)"),
+    "mail_label_delete": ("ask", "ask", "Mail label delete: delete one of your labels (its messages stay)"),
     "vault_write": ("allow", "allow", "Create or edit vault notes (git history)"),
     "vault_destroy": ("ask", "ask", "Delete or move vault notes"),
     "web_search": ("allow", "allow", "Web search"),
     "fetch_trusted": ("allow", "allow", "Fetch a URL you wrote or a search returned"),
     "fetch_other": ("ask", "refuse", "Fetch any other URL"),
     "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
+    "automation": ("ask", "refuse", "Create, change or delete an automation: a schedule or a hook"),
     "discord_forget": (
         "ask",
         "ask",
@@ -57,7 +66,16 @@ CLASSES: dict[str, tuple[str, str, str]] = {
 }
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
 RAISED_WHEN_TAINTED = frozenset(
-    {"github_write", "drive_write", "mail_send", "vault_write", "vault_destroy", "run_network"}
+    {
+        "github_write",
+        "drive_write",
+        "mail_send",
+        "mail_label_delete",
+        "vault_write",
+        "vault_destroy",
+        "run_network",
+        "automation",
+    }
 )
 # Classes whose content leaves the machine: content that looks like a secret raises them to `ask`
 OUTSIDE = frozenset(
@@ -75,11 +93,33 @@ OUTSIDE = frozenset(
 # Classes whose call sends something off the machine (a query, an address, content): refused in a local-only turn.
 # The vault's are there because its changes are pushed to its remote (not when CLARA_VAULT_PUSH is off).
 LEAVES_MACHINE = OUTSIDE | frozenset(
-    {"web_search", "github_read", "drive_read", "mail_read", "vault_destroy", "discord"}
+    {
+        "web_search",
+        "github_read",
+        "drive_read",
+        "mail_read",
+        "mail_label",
+        "mail_trash",
+        "mail_mark",
+        "mail_label_delete",
+        "vault_destroy",
+        "discord",
+    }
 )
 
 PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:")
-SPECIAL_TARGETS = ("net", "search", "memory", "reminders", "tasks", "notify", "forms", "history", "discord")
+SPECIAL_TARGETS = (
+    "net",
+    "search",
+    "memory",
+    "reminders",
+    "tasks",
+    "notify",
+    "forms",
+    "history",
+    "discord",
+    "automations",
+)
 _GLOB_CHARS = re.compile(r"[*?\[]")
 
 

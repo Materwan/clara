@@ -1,5 +1,5 @@
-"""Hooks: when something happens outside (a mail arrives), Clara does what a trigger says. Only clients reach these routes: the
-model has no tool to make, change or read a trigger, so a message cannot create one.
+"""Hooks: when something happens outside (a mail arrives), Clara does what a trigger says. Only clients reach these routes; the
+model has tools for them only in a chat with the Automations pack on, and each change asks you first (packs/automations.py).
 
     GET /v1/triggers                   the triggers, and the kinds of event there are
     POST /v1/triggers                  make one      PATCH /v1/triggers/{id}      change it (or turn it off)
@@ -122,12 +122,14 @@ async def change_trigger(
 ) -> dict:  # async: it wakes the server's loop
     service = _service(request)
     fields = body.model_dump(exclude_unset=True)
+    before = service.find(trigger_id)
     try:
         changed = service.update(trigger_id, **fields)
     except TriggerError as error:
         raise _problem(error) from None
-    if "in_history" in fields:
-        request.app.state.services.mirror.group_switched(f"hook:{trigger_id}", bool(fields["in_history"]))
+    if "in_history" in fields or (before is not None and changed.in_history != before.in_history):
+        # also when choosing `deliver` = discord or both switched it on
+        request.app.state.services.mirror.group_switched(f"hook:{trigger_id}", changed.in_history)
     return service.describe(changed)
 
 

@@ -70,6 +70,6 @@ only the `drive.file` scope), or accept reconnecting. To verify in Google's curr
 
 ## Gmail (not a model provider)
 
-Gmail's scopes (`gmail.readonly`, `gmail.compose`) are *restricted*: the same 7-day rule applies to a consent screen in
+Gmail's scopes (`gmail.readonly`, `gmail.compose`, `gmail.modify`) are *restricted*: the same 7-day rule applies to a consent screen in
 **Testing**, and an app *In production* without Google's verification shows an « unverified app » warning (fine for your
 own account). The mail provider's terms are those of the account you connect. To verify in Google's current documentation.

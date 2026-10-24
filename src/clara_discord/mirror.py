@@ -221,6 +221,19 @@ class Mirror:
             return None
         return channel if hasattr(channel, "create_thread") is False and hasattr(channel, "archived") else None
 
+    async def thread_of(self, conversation: str, wait: float = 0.0) -> discord.Thread | None:
+        """The thread of a conversation; with `wait`, up to that many seconds for the bot to make it (a run's thread is made
+        as its first turn starts, while the event that speaks of it may already be here)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait
+        while True:
+            thread_id = self.threads.get(conversation)
+            if thread_id:
+                return await self.existing_thread(thread_id)
+            if loop.time() >= deadline:
+                return None
+            await asyncio.sleep(0.5)
+
     # ------------------------------------------------------------------
     # Conversations
     # ------------------------------------------------------------------

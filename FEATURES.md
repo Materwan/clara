@@ -62,7 +62,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step |
+| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first |
 | Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
 | Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
 | Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
@@ -197,8 +197,10 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | `#alerts` | Alerts |
 
 - **Which channel carries what (Admin page, Discord tab; runtime setting `discord_routes`):** approval requests always go
-  to `#approval` and the questions of scheduled runs to `#general`. Every other message belongs to one of twelve
-  categories, each sent by default where the table above says: reminders, tasks, scheduled tasks, hook results, hook
+  to `#approval` and the questions of scheduled runs that do not deliver to Discord to `#general` (the ones that do ask
+  in their forum thread). Every other message belongs to one of thirteen
+  categories, each sent by default where the table above says: reminders, tasks, scheduled tasks, automation started
+  (`automation_started`), hook results, hook
   failures, hook notices, new mail, Clara's own notices (her `notify` tool), answer ready, other notifications
   (scripts and other clients), updates (all to `#notification`) and alerts (to `#alerts`). You send a category to
   `#notification`, `#general` or `#alerts`, or switch it off (Discord stays silent; the web site and the other clients
@@ -212,7 +214,18 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   there, whatever the routes say, and reports whether Discord accepted it (at most 6 a minute; refused when the bot is
   not connected; the bot drops a test older than two minutes, so none arrives late).
 
-- **What a scheduled run says** (the `ask` event, section 5): a run's question is posted in `#general`, with a **thread** under it
+- **A run that delivers to Discord** (`deliver` = `discord` or `both`, schedule or hook) lives in **one forum thread**: its
+  conversation, in its automation's forum, and nothing in `#general` (no message, no thread under one). Choosing
+  `discord` or `both` switches the automation's **Show in history** on (the forum is made from it; you may switch it off
+  again, and the run then falls back to the way below, still without a thread in `#general`); an automation that already
+  delivered to Discord had it switched on by the upgrade. When the run starts, the bot posts a line in `#notification`
+  (a routed category, **Automation started**: move it or switch it off on the Admin page) with the **link of the forum
+  thread**; a notice the bot is too late for (15 minutes) is dropped, and one whose thread is not made in 10 seconds goes
+  without the link. The run's questions, its reminder and its end are written in that thread, where you answer (it goes to
+  the run's conversation as any message in a thread); the thread stays, as it is the conversation. The run's answer is
+  written there by the mirror as it comes, so the `said` message is not posted again; the **Discord thread** pack is
+  not offered to such a run. Automations with `notice` or `web` keep everything below.
+- **What any other scheduled run says** (the `ask` event, section 5): a run's question is posted in `#general`, with a **thread** under it
   when the run has the Discord thread pack; what you write in the thread goes to the run's conversation, whatever the current
   conversation is. Without a thread (no pack, or the bot may not open one) the run's conversation becomes the current
   one, until the run ends. A reminder is posted in the thread. **When the run ends** (it finishes, or it is closed because
@@ -245,7 +258,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   records the client it came from (`X-Clara-Client`), which the prompt mentions.
 - **Streaming:** `POST /v1/chat/stream` answers with server-sent events: `turn`, `thinking`, `token`, `retrying`,
   `tool_start`, `tool`, `approval`, `tool_requests`, `usage`, `compacting`, `compacted`, `discarded`, `warning`, `done`, or `error`
-  (status, code and message) when the turn fails. `POST /v1/chat` returns the whole answer at once. Closing the
+  (status, code and message) when the turn fails. A `tool` event carries `grant` (the number of the Approve all next
+  button that allowed the call, see Approval requests) when one did. `POST /v1/chat` returns the whole answer at once. Closing the
   stream stops the answer: what was said is kept, marked interrupted, and tool calls that had not run are recorded as
   not run. Unless the request has `keep_running` (the web sets it): then the answer is driven by the server and the
   stream only follows it, so closing the page, going to another conversation or losing the connection does not stop
@@ -264,8 +278,11 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   as the parent and deleted with it. One level only: a sub agent's conversation cannot be a parent).
 - **Versions:** editing a message or asking again keeps the earlier answer as another version; you move between them.
 - **Special tools (packs):** a pack is a name for a group of tools that exist only where it is switched on: **Web search**
-  (on by default), **Second brain** (the vault open), **Day conversations**, **Day activity**, **Files created**, **Daily
-  notes**, and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
+  (on by default), **Second brain** (the vault open), **Mail** (your Gmail: search, read, draft, send, labels, the read mark and the Trash;
+  off until you switch it on, and offered only with a mailbox connected), **Day conversations**, **Day activity**, **Files created**, **Daily
+  notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
+  schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
+  and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
   it, so it follows the conversation to every client, and a new conversation starts with web search only. A pack that
   cannot be used says why (no vault, Discord bot not connected). A pack only decides which tools exist: the rule gate
@@ -342,9 +359,10 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   - **Retry** (`attempts`, 3 by default): a run the model could not answer (429, 5xx, a timeout, no connection) is tried again after 1 and 5 minutes. A run that already used a tool or wrote text is not run again, so its actions are not repeated; a refused key or a bad request is not retried.
   - **Where the result goes** (`deliver`, the same on a schedule and on a hook): `notice` (the default, what they always did: a
     short notification to every client, Discord's `#notification` included), `web` (the same, without Discord), `discord` (the
-    run's **whole** answer in Discord's `#general`, as a message you can answer; nothing else) or `both` (that message, and the
-    short notification for the clients that are not Discord). The run's conversation becomes the current one on Discord, so
-    your reply goes to it and Clara still has the run in front of her (the mail she read, what she found): « add it to my
+    run's **whole** answer on Discord, in the run's forum thread, which you answer; nothing else) or `both` (that, and the
+    short notification for the clients that are not Discord). A run that delivers to Discord starts a thread and a start
+    notice (see the Discord section), so choosing it switches **Show in history** on. Your reply in the thread goes to the
+    run's conversation, so Clara still has the run in front of her (the mail she read, what she found): « add it to my
     reminders, an hour before » works. The run is told its answer is a message you will answer, so it may end with a
     proposal or a question. A reply is an ordinary chat turn in that conversation: all her tools (a hook's tool list limits the run, not
     your reply), and the turn is tainted while a mail the run read is still in the prompt, so an outside write still asks.
@@ -362,7 +380,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
   back (`GET /v1/events`, or the live stream `GET /v1/events/stream`, which tells the Discord bot each event's `channel`). Event kinds: `reminder`, `notification`,
-  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone; and, for Discord alone, a message to answer in `#general`, stage `said`).
+  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone; and, for Discord alone, a message to answer in `#general`, stage `said`; for a run that delivers to Discord these lines carry `forum` and are written in its forum thread instead). A run that delivers to Discord also tells Discord, with a `notification` of source `automations`, when it starts.
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
@@ -401,8 +419,10 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
     then enough to write without asking.
   - A run reads the rest with `github_read` (its `diff` action shows what a pull request or a commit changes); with no tools
     listed it has `github_read` and `notify` only.
-- **Triggers.** You write them (`/triggers`, `POST /v1/triggers`); the model has no tool to make, read or change one, so a
-  message cannot create a hook. A trigger has: a name; an event kind; a **filter** (for mail the fields `account`, `mailbox`, `from`,
+- **Triggers.** You write them (`/triggers`, `POST /v1/triggers`), or Clara does with the **Automations** pack of a chat
+  (`automation_create`, `automation_update`, `automation_delete`: the gate asks you first, refuses it unattended and asks again
+  after untrusted content whatever a rule says, so a message cannot make a hook you did not read; a hook's own runs never
+  have the pack). A trigger has: a name; an event kind; a **filter** (for mail the fields `account`, `mailbox`, `from`,
   `from_address`, `subject`, `snippet`, `has_attachment`, `unread`, for GitHub those above; operators `eq`, `contains`, `starts_with`, `ends_with`,
   `not_contains`; all fields must hold, any value of an operator; no regular expression, on purpose); an **action** (`run`: a turn of
   Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… (GitHub: `{repo}`, `{number}`, `{action}`, `{title}`,
@@ -415,7 +435,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   also name a **project**, whose files and instructions are then context for every run. It is **tainted from its first word**: every outside write (a send, a GitHub change, a
   Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
   lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`; GitHub: `github_read`),
-  so a hook never has more than you gave it. The same limits hold for the turn that follows one of its approvals. The event
+  so a hook never has more than you gave it. A run whose tools name a mail tool gets the Mail pack for that run. The same limits hold for the turn that follows one of its approvals. The event
   reaches the model after your prompt, inside an `<event>` tag as JSON with `<` and `>` escaped, with a line saying it is
   data. To let a hook send, list `mail_send` in its tools **and** write the rule; the run is tainted, so each send still asks.
 - **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the poll (mail or GitHub) had reached are
@@ -520,11 +540,15 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
   confirm before anything is stored. Disconnecting revokes the token at Google. Reading Google Docs, Sheets and Slides
   gives text; every create, update or delete (to Drive's trash) asks by default.
-- **Gmail:** OAuth with PKCE and two scopes only, `gmail.readonly` and `gmail.compose` (plus `openid email` to show which
-  mailbox you attach), using the Google client of Drive but a token of its own. Clara can search (free words, sender,
-  recipient, subject, unread, with an attachment, between two dates, in the inbox, sent, drafts, trash, spam or
+- **Gmail:** OAuth with PKCE and three scopes only, `gmail.readonly`, `gmail.compose` and `gmail.modify` (plus `openid email`
+  to show which mailbox you attach), using the Google client of Drive but a token of its own. Clara can search (free words,
+  sender, recipient, subject, unread, with an attachment, between two dates, in the inbox, sent, drafts, trash, spam or
   everywhere), read a message, read an attachment's text, keep an attachment in the workspace, save a draft and send. She
-  cannot label, archive, mark read, trash or change any setting: the token has no scope for it. The Gmail API itself says
+  can list your labels, make one, add or remove your labels on a message, delete one of your labels (its messages stay),
+  take the unread mark off a message, and move a message to the Trash. She cannot archive, empty the Trash or change any
+  setting: the token has no scope for settings, and Clara never calls the permanent delete (`messages.delete`), which
+  `gmail.modify` does not allow. A label is named from your own labels only, so INBOX is refused; the mark read touches
+  UNREAD and nothing else. A connection made before this version asks you to connect Gmail once more, for `gmail.modify`. The Gmail API itself says
   whose mailbox it is, which also proves the API is on in your Google Cloud project, before anything is stored.
 - **Mail:** one Gmail mailbox at most. What a message says is untrusted: hidden characters (zero-width,
   direction controls, Unicode tag characters) are removed and HTML is read without text that CSS hides, the result is
@@ -547,7 +571,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
 (`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
-`reminders`, `tasks`, `notify`, `forms`, `history`, `discord`) and a one-line summary. The gate answers allow, ask or refuse. The model can
+`reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
 ### Defaults (when no rule matches)
@@ -567,12 +591,17 @@ neither read nor change rules, and no tool answers a request.
 | `mail_read`: mail read: search, read a message or an attachment (Gmail) | allow | allow |
 | `mail_draft`: mail draft: save a draft in your mailbox (nothing is sent) | allow | allow |
 | `mail_send`: mail send: an email leaves your mailbox | ask | refuse |
+| `mail_label`: mail label: add or remove your labels on a message, or make one (nothing is archived) | allow | ask |
+| `mail_trash`: mail trash: move a message to the Trash (never emptied) | ask | ask |
+| `mail_mark`: mail mark: take the unread mark off a message (nothing else changes) | allow | ask |
+| `mail_label_delete`: mail label delete: delete one of your labels (its messages stay) | ask | ask |
 | `vault_write`: create or edit vault notes (git history) | allow | allow |
 | `vault_destroy`: delete or move vault notes | ask | ask |
 | `web_search`: web search | allow | allow |
 | `fetch_trusted`: fetch a URL you wrote or a search returned | allow | allow |
 | `fetch_other`: fetch any other URL | ask | refuse |
 | `discord`: open, write in or remove a Discord thread, or say something in `#general` | allow | allow |
+| `automation`: create, change or delete an automation, a schedule or a hook (the Automations pack) | ask | refuse |
 | `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | ask | ask |
 
 ### Rules
@@ -597,9 +626,10 @@ counted.
   "always" answer to a message with several recipients writes a rule that matches nothing: write one rule per address
   on the Rules page (an "always" answer whose rule cannot be written, a target over 400 characters, is refused with
   HTTP 400 and the request stays pending: answer it once). In a local-only conversation the mail tools are not offered and the gate refuses them.
+- **Labels, the read mark and the Trash:** a label (`mail_label_create`, `mail_label`) and a mark read (`mail_mark_read`) are allowed in a chat and wait for you unattended. A trash (`mail_trash`) asks in a chat at the `destructive` level, like Drive's trash, so the Discord token cannot approve it; a turn that has read mail does not raise it (the owner chose that, so that a sort of many mails does not ask for each one), and « Approve all next » covers it. Deleting a label (`mail_label_delete`) asks every time at the `destructive` level, is raised after untrusted content, and « Approve all next » does not cover it, because a deleted label cannot be taken back. Unattended, all of them but a label or mark read wait for you. Every one is refused in a local-only conversation. Nothing here archives or empties the Trash.
 - **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
-  Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `vault_write`, `vault_destroy`) and networked
-  scripts (`run_network`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
+  Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
+  scripts (`run_network`) and changes to your automations (`automation`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
   Rules page switches it off.
 - **Secrets going out:** see section 8.
 - **The test box** (Rules page, `POST /v1/rules/test`, `/rules test`): give a tool, its arguments and the situation
@@ -620,6 +650,18 @@ counted.
 - **Who may answer:** each token has an approval scope: `all`, `safe` (everything except destructive actions) or
   `none`. Defaults: web, terminal and console `all`; Discord `safe`; scripts `none`.
 - One conversation may have 10 requests waiting at once.
+- **Approve all next** (a button on the approval cards of a chat in the web site). It allows the request on the card and
+  then answers « allow once » for you to the next requests of the same tool and the same class in that conversation,
+  without a card; every call is still printed in the chat and has its line in the audit log (`grant` when it starts,
+  `ran` with « auto-approved by Approve all next #n » for each call, `grant_end` with the reason). It covers workspace
+  and vault changes and moving a mail to the Trash (`ws_write`, `ws_destroy`, `vault_write`, `vault_destroy`, `mail_trash`: a
+  workspace or vault change is a git commit, and a trashed mail stays in the Trash), turns of the web only, never an
+  unattended run. It never covers what the gate raised on purpose (a tainted turn, except that `mail_trash` is not raised by one;
+  content that looks like a secret), never an « ask » for another tool or class, never a rule that refuses, and it writes no
+  rule. The page beats every 10 s and a banner at the foot of the page shows the tool, the calls used, the time left and
+  **Stop**; it ends when the page stops beating for 90 s (closed, reloaded, left, asleep), when `approve_all_minutes` have
+  passed or `approve_all_calls` calls were made (the Admin page, Settings tab), on **Stop**, or when the server restarts.
+  Pressing it on another page, or in another conversation, never carries it over.
 
 ### Audit
 
@@ -629,7 +671,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-65 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+75 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -681,6 +723,12 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `mail_attachment_save` | Keep an attachment as a workspace file, never over an existing one — untrusted | mail_read / write |
 | `mail_draft` | Save a draft in the mailbox; nothing is sent | mail_draft / write |
 | `mail_send` | Send an email (asks; refused unattended) | mail_send / destructive |
+| `mail_labels` | Your own labels of the mailbox, not the system ones (pack Mail) | mail_read / read |
+| `mail_label_create` | Make a label of yours; it moves nothing (pack Mail) | mail_label / write |
+| `mail_label` | Add or remove your labels on one message; never archives or marks read (pack Mail) | mail_label / write |
+| `mail_trash` | Move one message to the Trash; never emptied; asks, and Approve all next covers it (pack Mail) | mail_trash / destructive |
+| `mail_mark_read` | Take the unread mark off one message; nothing else changes, never an archive (pack Mail) | mail_mark / write |
+| `mail_label_delete` | Delete one of your labels; it comes off its messages, which stay; asks, not grantable (pack Mail) | mail_label_delete / destructive |
 | `day_conversations` | What was said on a day, with the context of conversations begun earlier (pack Day conversations) | read |
 | `read_conversation` | One conversation in full, a page at a time | read |
 | `day_activity` | Tasks, reminders, scheduled runs and Clara's actions of a day (pack Day activity) | read |
@@ -689,7 +737,11 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `daily_notes` | A range of daily notes of the vault (pack Daily notes) | read |
 | `ask_person` | Ask you one question from a scheduled run and wait for the answer (pack Ask you; scheduled runs only) | memory / write |
 | `finish_run` | End the scheduled run, with a summary | memory / write |
-| `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only) | discord / write |
+| `automation_list` | Your schedules and hooks with their numbers, or one in full (pack Automations; chats only). The prompt and filter of a local-only automation are shown only to a local-only conversation | read |
+| `automation_create` | Make a schedule (at a time, once or repeating) or a hook (when a mail arrives or a GitHub pull request or push happens): every setting of the Automation page. It asks you first, with the whole automation (and, for a schedule, when it first runs) in the request; refused unattended; asks again in a tainted turn whatever a rule says. Made in a local-only conversation, it is local only | automation / write |
+| `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change | automation / write |
+| `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
+| `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only, and not offered to a run that delivers to Discord: its thread is the forum's) | discord / write |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
 | `vault_search` | Search notes | read |
 | `vault_read` | Read a note, with line numbers | read |
@@ -944,6 +996,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `fallbacks` | Models asked in turn when the one answering fails |
 | `providers_enabled` | Providers that may be used (local Ollama hosts are enabled at first) |
 | `tainted_rule` | The tainted-turn rule (on) |
+| `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
+| `approve_all_calls` | Calls an **Approve all next** button lets through without asking (50; 1 to 1,000) |
 | `debug_until` | The debug content log's end (empty: off) |
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
@@ -1042,6 +1096,9 @@ keep-alive every 15 s.
 | `POST /v1/rules/test` | Which rule decides this call |
 | `GET /v1/approvals` | Approval requests (by status) |
 | `POST /v1/approvals/{approval_id}/decide` | Answer one |
+| `POST /v1/approvals/{approval_id}/grant` | **Approve all next** on a waiting request: allow it, and the next requests of its tool and class in its conversation, until the page stops beating or a limit is reached (web tokens only; 422 for any other class than a workspace or vault change) |
+| `PUT /v1/conversations/{conversation_id}/grants` | The page's beat (every 10 s): the grants on, with calls used and time left, and the ones that ended since the last beat |
+| `DELETE /v1/conversations/{conversation_id}/grants` | Stop every grant of the conversation |
 | `GET /v1/audit` | The audit log |
 | `GET /v1/models` | What a model picker shows |
 | `GET /v1/admin/providers` | Providers |
@@ -1147,6 +1204,6 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Special tools | `day_conversations` `CLARA_DAY_DIGEST_CHARS`; `files_created` 60 files a page; `daily_notes` 31 days; a question of `ask_person` 2,000 characters; 31 missed or queued runs per schedule |
 | GitHub and Drive files | 30 MB read; 1,000,000 characters written |
 | Hooks | 50 hooks; a prompt of 20,000 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each; 2 hooks running at once; a filter of 10 fields with 20 values of 200 characters; events kept 30 days; GitHub: 300 pull requests and the first 100 branches looked at in a poll, 10 commits listed in a push event |
-| Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
+| Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; a label's name 100 characters; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
 | Request bodies | see section 12 |

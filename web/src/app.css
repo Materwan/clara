@@ -787,6 +787,15 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .approval.settled { --frame-rule: var(--line-strong); }
 .approval.settled .approval-head .icon { color: var(--muted); }
 
+/* Approve all next is on: a warning at the foot of the chat, until it is stopped or the page is left */
+.grant-bar {
+  flex: none; display: flex; align-items: center; gap: var(--sp-12); padding: var(--sp-8) var(--sp-24) calc(var(--sp-8) + var(--safe-b));
+  background: var(--warn-soft); color: var(--warn); border-top: 1px solid var(--warn); font-size: var(--fs-sm);
+}
+.grant-bar p { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+.grant-bar .icon { flex: none; color: var(--warn); }
+.run-head .tag { margin-left: var(--sp-8); }
+
 /* a markdown file Clara wrote */
 .file-card { border: 1px solid var(--line-strong); border-radius: var(--r-md); max-width: 560px; font-size: var(--fs-md); }
 .file-card-head { display: flex; align-items: center; gap: var(--sp-12); padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-12); }

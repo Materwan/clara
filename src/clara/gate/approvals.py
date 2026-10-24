@@ -31,6 +31,7 @@ from ..events import Events
 from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .actions import Action, Decision, Situation
 from .engine import Audit, args_digest
+from .grants import GRANTABLE
 from .rules import RuleError, Rules, check_fields
 
 if TYPE_CHECKING:
@@ -46,7 +47,8 @@ FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
 MAX_PENDING = 10  # requests one conversation may have waiting
 RESULT_SHOWN = 300
 SUMMARY_SHOWN = 500
-SUMMARY_FULL = {"mail_send": 8_000}  # classes whose request shows everything that would leave (the text of an email)
+# classes whose request shows everything that would leave (the text of an email) or be made (the prompt of an automation)
+SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000}
 
 WAITING = (
     "Waiting for permission (request #{id}): this was NOT done, and the person was asked. Go on with anything that does "
@@ -107,7 +109,15 @@ class Approval:
             "decided_at": self.decided_at,
             "decided_by": self.decided_by,
             "answer": self.answer,
+            "grantable": self.grantable,
         }
+
+    @property
+    def grantable(self) -> bool:
+        """Can « Approve all next » be pressed on this request? (a chat's workspace or vault change)"""
+        return (
+            bool(self.conversation_id) and self.action_class in GRANTABLE and self.situation.startswith("interactive")
+        )
 
     def outcome_line(self) -> str:
         if self.status == "done":

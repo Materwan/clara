@@ -13,8 +13,12 @@ function: DMs are ignored.
   #notification (the event stream; what was missed while the bot was away arrives when it reconnects). The server
   says the channel of each event (you choose it on the web site, or switch the kind off); ROUTES below is what the bot
   does with a server that does not say.
-* When a scheduled run asks you something (an `ask` event) the question is posted in #general, with a thread under it
-  when the run has the Discord thread pack: what you write in that thread goes to the run's conversation, whatever the
+* An automation that delivers to Discord lives in one forum thread (its conversation, in its automation's forum) and
+  puts nothing in #general: when a run starts the bot posts its link in the channel the server names (#notification
+  by default), the run's questions, reminder and end are written in the thread, and you answer there. The answer itself
+  is already in the thread (the mirror writes it), so the `said` message is not posted a second time.
+* When any other scheduled run asks you something (an `ask` event) the question is posted in #general, with a thread under
+  it when the run has the Discord thread pack: what you write in that thread goes to the run's conversation, whatever the
   current conversation is. If the bot may not create threads, or the run has no thread, the run's conversation becomes
   the current one instead. When the run ends (or is closed without your answer) the bot says so in #general and
   deletes the thread (it archives it when it may not delete); the conversation stays in Clara. A run can also open,
@@ -60,6 +64,9 @@ MAX_FILE_BYTES = 25_000_000
 MAX_TOTAL_BYTES = 34_000_000  # what Clara takes for one message in all
 HEARTBEAT = 60.0
 TEST_MAX_AGE = 120.0  # a test message older than this (the bot was away) is dropped: it would only confuse
+STARTED_MAX_AGE = 900.0  # so is the notice that a run began, when the bot was away longer than this
+STARTED_SOURCE = "automations"  # the source the server gives that notice
+THREAD_WAIT = 10.0  # seconds a line for a run's forum thread waits for the thread to be made
 RETRY = (2, 5, 15, 30, 60)
 EXIT_SETTINGS = 2
 EXIT_RUNNING = 3
@@ -586,6 +593,9 @@ class ClaraBot(discord.Client):
         if event.get("source") == TEST_SOURCE:
             await self.deliver_test(event)
             return
+        if event.get("source") == STARTED_SOURCE:
+            await self.deliver_started(event)
+            return
         icon = ICONS.get(str(kind))
         told = event.get("channel")
         route = (
@@ -620,6 +630,25 @@ class ClaraBot(discord.Client):
             ok, error = False, problem.text or f"Discord refused ({problem.status})"
         await self.beat(test={"event": int(event.get("id") or 0), "ok": ok, "error": error})
 
+    async def deliver_started(self, event: dict) -> None:
+        """A run that lives in a forum thread began: a line with the thread's link, in the channel the server names (off:
+        nothing). One the bot was too late for is dropped; one whose thread is not made in time goes without the link."""
+        told = event.get("channel")
+        route = told if told in (*CHOICES, "off") else "notification"
+        if route == "off":
+            return
+        try:
+            if (datetime.now(UTC) - parse_iso(str(event.get("created_at")))).total_seconds() > STARTED_MAX_AGE:
+                return
+        except ValueError:
+            return
+        conversation = event.get("conversation") or (event.get("payload") or {}).get("conversation")
+        thread = await self.mirror.thread_of(conversation, THREAD_WAIT) if conversation else None
+        link = f"\n🔗 {thread.jump_url}" if thread is not None else ""
+        await self.channels[route].send(
+            f"▶️ **{event.get('title') or 'Clara'}**\n{event.get('text') or 'Started.'}{link}"
+        )
+
     async def deliver_ask(self, event: dict) -> None:
         """What a scheduled run says to you (`ask` events), by stage:
 
@@ -630,10 +659,22 @@ class ClaraBot(discord.Client):
         thread_post          a message in that thread       reminder   the same, in the thread when there is one
         finished, closed     a line in #general, then the thread is removed (after the answer being written is posted)
         thread_close         the thread is removed
+
+        A run that lives in a forum thread (`forum`) has every line but the answer written in that thread: nothing in
+        #general, nothing removed. Without its thread (history switched off, the mirror stopped) the line goes where
+        it went before, and no thread is opened in #general.
         """
         payload = event.get("payload") or {}
         conversation = payload.get("conversation") or event.get("conversation")
         stage = payload.get("stage")
+        # a run that lives in a forum thread has its lines written there, and #general hears nothing
+        if payload.get("forum") and conversation:
+            thread = await self.mirror.thread_of(conversation, THREAD_WAIT)
+            if thread is not None:
+                if stage not in ("said", "thread_close"):  # the answer is already there: the mirror wrote it
+                    for part in split_message(f"📓 **{event.get('title') or 'Clara'}**\n{event.get('text', '')}"):
+                        await thread.send(part)
+                return
         if stage in ("finished", "closed", "thread_close") and conversation:
             if conversation in self.answering:
                 self.finished[conversation] = event
@@ -658,7 +699,9 @@ class ClaraBot(discord.Client):
         for part in split_message(f"📓 **{title}**\n{event.get('text', '')}"):
             sent = await target.send(part)
             first = first or sent
-        wants_thread = stage == "thread_open" or (stage == "asked" and payload.get("thread"))
+        wants_thread = not payload.get("forum") and (
+            stage == "thread_open" or (stage == "asked" and payload.get("thread"))
+        )
         if existing is not None or not conversation or first is None:
             return
         if stage in ("reminder", "thread_post"):

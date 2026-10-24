@@ -49,6 +49,11 @@ class World:
         self.gmail_gets = 0  # message details fetched (what a backlog costs)
         self.gmail_sent: list[dict] = []
         self.gmail_drafts: list[dict] = []
+        self.gmail_labels: dict[str, str] = {}  # your labels: id -> name
+        self.gmail_labels_deleted: list[str] = []  # each labels.delete: a label, its messages kept
+        self.gmail_modified: list[dict] = []  # each messages.modify, as sent
+        self.gmail_trashed: list[str] = []  # each messages.trash
+        self.gmail_refused: list[str] = []  # each DELETE: Clara must never send one
         self.google_tokens = 0
         self.google_dead = False
         self.google_no_refresh = False
@@ -88,8 +93,52 @@ class World:
             return httpx.Response(401, json={"error": {"code": 401, "message": "bad token"}})
         path = request.url.path.removeprefix("/gmail/v1/users/me")
         params = request.url.params
+        found = re.fullmatch(r"/labels/([^/]+)", path)
+        if found and request.method == "DELETE":
+            label = unquote(found.group(1))
+            if label not in self.gmail_labels:
+                return httpx.Response(404, json={"error": {"code": 404, "message": "Label not found."}})
+            self.gmail_labels_deleted.append(label)
+            del self.gmail_labels[label]
+            for message in self.gmail.values():  # the label comes off its messages; the messages stay
+                message["labelIds"] = [item for item in message["labelIds"] if item != label]
+            return httpx.Response(204)
+        if request.method == "DELETE":  # a message's permanent delete: Clara must never send one
+            self.gmail_refused.append(path)
+            return httpx.Response(405, json={"error": {"code": 405, "message": "Method not allowed."}})
         if path == "/profile":
             return httpx.Response(200, json={"emailAddress": "me@gmail.com"})
+        if path == "/labels" and request.method == "GET":
+            system = [{"id": "INBOX", "name": "INBOX", "type": "system"}, {"id": "SENT", "name": "SENT", "type": "system"}]
+            own = [{"id": key, "name": name, "type": "user"} for key, name in self.gmail_labels.items()]
+            return httpx.Response(200, json={"labels": system + own})
+        if path == "/labels" and request.method == "POST":
+            name = json.loads(request.content)["name"]
+            if name in self.gmail_labels.values():
+                return httpx.Response(409, json={"error": {"code": 409, "message": "Label name exists or conflicts."}})
+            self.gmail_labels[f"Label_{len(self.gmail_labels) + 1}"] = name
+            return httpx.Response(200, json={"id": f"Label_{len(self.gmail_labels)}", "name": name, "type": "user"})
+        found = re.fullmatch(r"/messages/([^/]+)/modify", path)
+        if found and request.method == "POST":
+            message = self.gmail.get(unquote(found.group(1)))
+            if message is None:
+                return httpx.Response(404, json={"error": {"code": 404, "message": "Requested entity was not found."}})
+            body = json.loads(request.content)
+            known = set(self.gmail_labels) | {"INBOX", "SENT", "UNREAD", "TRASH"}
+            if not set(body.get("addLabelIds", []) + body.get("removeLabelIds", [])) <= known:
+                return httpx.Response(400, json={"error": {"code": 400, "message": "Invalid label: X"}})
+            self.gmail_modified.append({"message": message["id"], **body})
+            labels = [item for item in message["labelIds"] if item not in body.get("removeLabelIds", [])]
+            message["labelIds"] = list(dict.fromkeys([*labels, *body.get("addLabelIds", [])]))
+            return httpx.Response(200, json=message)
+        found = re.fullmatch(r"/messages/([^/]+)/trash", path)
+        if found and request.method == "POST":
+            message = self.gmail.get(unquote(found.group(1)))
+            if message is None:
+                return httpx.Response(404, json={"error": {"code": 404, "message": "Requested entity was not found."}})
+            self.gmail_trashed.append(message["id"])
+            message["labelIds"] = ["TRASH"]  # what Gmail does: out of the inbox, into the Trash
+            return httpx.Response(200, json=message)
         if path == "/messages" and request.method == "GET":
             self.gmail_queries.append({key: params.get_list(key) for key in set(params.keys())})
             after = re.search(r"after:(\d+)", params.get("q", ""))

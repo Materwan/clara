@@ -302,6 +302,13 @@ class Schedules(DueLoop):
             return moment
         return next_local(local, repeat, now - timedelta(seconds=1), tz, days)
 
+    def first_run(
+        self, at: str, timezone: str | None = None, repeat: str = "", weekdays: list[int] | None = None
+    ) -> datetime:
+        """When a schedule made with these would first run; ScheduleError when `create` would not accept them."""
+        local, zone_name, repeat, days = self._timing(at, timezone, repeat, weekdays or [])
+        return self._first(local, zone_name, repeat, days)
+
     def create(
         self,
         name: str,
@@ -330,8 +337,8 @@ class Schedules(DueLoop):
         now = now_iso()
         schedule_id = self.db.insert(
             "INSERT INTO schedules (name, prompt, documents, conversation_id, project_id, repeat, weekdays, local_at,"
-            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, deliver, created_at,"
-            " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, deliver, in_history,"
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._name(name),
                 self._prompt(prompt, docs),
@@ -351,6 +358,7 @@ class Schedules(DueLoop):
                 model.strip(),
                 self._attempts(attempts),
                 self._deliver(deliver, local_only),
+                int(delivery.forum(deliver)),
                 now,
                 now,
             ),
@@ -406,6 +414,8 @@ class Schedules(DueLoop):
             columns["deliver"] = self._deliver(
                 fields.get("deliver", old.deliver), bool(fields.get("local_only", old.local_only))
             )
+            if delivery.forum(columns["deliver"]) and not delivery.forum(old.deliver) and "in_history" not in fields:
+                columns["in_history"] = 1  # its runs live in a forum thread, made from "Show in history"
         enabled = bool(fields.get("enabled", old.enabled))
         if {"at", "timezone", "repeat", "weekdays"} & fields.keys() or enabled != old.enabled:
             at = fields.get("at") or old.local_at.isoformat(timespec="minutes")
@@ -692,6 +702,7 @@ class Schedules(DueLoop):
                         "conversation": row["conversation_id"],
                         "stage": "closed" if closed else "finished",
                         "run": run_id,
+                        **delivery.forum_mark(schedule.deliver),
                     },
                     targets=("web",) if schedule.local_only else ("web", "discord"),
                     source="schedules",
@@ -730,7 +741,7 @@ class Schedules(DueLoop):
 
     def _remind(self, now: datetime) -> None:
         for run in self.db.all(
-            "SELECT r.*, s.timezone, s.name, s.local_only FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            "SELECT r.*, s.timezone, s.name, s.local_only, s.deliver FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
             " WHERE r.status = 'waiting' AND r.reminded_at IS NULL AND r.waiting_since IS NOT NULL"
         ):
             if self._remind_instant(parse_iso(run["waiting_since"]), zone(run["timezone"])) > now:
@@ -740,7 +751,12 @@ class Schedules(DueLoop):
                 "ask",
                 run["name"],
                 "Still waiting for your answer: answer in the conversation to finish.",
-                payload={"conversation": run["conversation_id"], "stage": "reminder", "run": run["id"]},
+                payload={
+                    "conversation": run["conversation_id"],
+                    "stage": "reminder",
+                    "run": run["id"],
+                    **delivery.forum_mark(run["deliver"]),
+                },
                 targets=("web",) if run["local_only"] else ("web", "discord"),
                 source="schedules",
                 conversation_id=run["conversation_id"],
@@ -826,7 +842,7 @@ class Schedules(DueLoop):
                 (reply.strip() or summary) + (f"\n{note}" if note else ""),
                 conversation=conversation,
                 source="schedules",
-                payload={"schedule": schedule.id},
+                payload={"schedule": schedule.id, "forum": True},
             )
         if delivery.notifies(schedule.deliver, ok):
             self.events.publish(
