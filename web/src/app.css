@@ -149,6 +149,7 @@
   /* layout */
   --rail-w: 248px;
   --column: 920px; /* the width of the conversation and of the box you write in */
+  --side-w: 380px; /* the side panel of a conversation */
   --page-w: 1120px; /* the width of a page's column, its padding included */
   /* the space left of that column inside .content (the query container): the page's title, its tabs and its body all start
      here, so they share one left edge at any width, whatever the scrollbar takes */
@@ -423,7 +424,7 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 
 /* the ruled frame: a 2px rule across the top and a hairline around, not a floating card. Panels, tables, requests, forms and
    the calendar all use it; --frame-rule and --frame-edge are its two knobs (.frame.signal marks a step that waits for you). */
-.frame, .panel, table, .approval, .qcm, .cal {
+.frame, .panel, table, .approval, .ask, .cal {
   border: 1px solid var(--frame-edge, var(--line)); border-top: 2px solid var(--frame-rule, var(--text));
   border-radius: var(--r-xs) var(--r-xs) var(--r-md) var(--r-md);
 }
@@ -805,23 +806,96 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .file-card .info span { font-size: var(--fs-xs); color: var(--muted); }
 .file-card .file-body { border-top: 1px solid var(--line); padding: var(--sp-12) var(--sp-16); max-height: 60vh; overflow: auto; font-size: var(--fs-md); }
 
-/* a form Clara asks (QCM) */
-.qcm { --frame-edge: var(--line-strong); padding: var(--sp-16); display: flex; flex-direction: column; gap: var(--sp-16); font-size: var(--fs-md); line-height: 1.5; }
-.qcm h3 { font-family: var(--font-display); font-size: var(--fs-lg); margin: 0; }
-.qcm fieldset { border: none; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-8); }
-.qcm legend { padding: 0; font-weight: 650; margin-bottom: var(--sp-8); }
-.qcm-option { display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-12); border: 1px solid var(--line-strong); border-radius: var(--r-md); cursor: pointer; min-height: 44px; transition: border-color var(--dur-fast), background var(--dur-fast); }
-.qcm-option:hover { border-color: var(--text-2); background: var(--hover); }
-.qcm-option:has(input:checked) { border-color: var(--text); background: var(--select); box-shadow: inset 3px 0 0 var(--text); }
-.qcm-option:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
-.qcm-option .letter { flex: none; width: 1.3rem; color: var(--muted); font-weight: 700; font-size: var(--fs-sm); }
-.qcm-option.right { border-color: var(--ok); background: var(--ok-soft); }
-.qcm-option.wrong { border-color: var(--danger); background: var(--danger-soft); }
-.qcm fieldset:disabled .qcm-option { cursor: default; }
-.qcm textarea { width: 100%; min-height: 3.2rem; }
-.qcm-explain { margin: 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-xs); background: var(--panel-2); color: var(--text-2); font-size: var(--fs-sm); }
-.qcm-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-12); flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: var(--sp-12); }
-.qcm-score strong { font-family: var(--font-display); font-size: var(--fs-lg); }
+/* ---- the side panel of a conversation: the files Clara wrote and her QCMs ------------------------------------ */
+.chat-body { flex: 1; min-height: 0; display: flex; }
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.panel-toggle { display: inline-flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8); color: var(--muted); }
+.panel-toggle:hover:not(:disabled) { color: var(--text); }
+.panel-toggle[aria-expanded='true'] { color: var(--text); background: var(--select); }
+.side-scrim { display: none; }
+.side-panel { flex: none; width: var(--side-w); min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--bg); }
+.side-head { display: flex; align-items: center; gap: var(--sp-8); flex: none; min-height: 58px; padding: var(--sp-12) var(--sp-12) var(--sp-12) var(--sp-16); border-bottom: 1px solid var(--line); }
+.side-title { flex: 1; min-width: 0; margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.02em; }
+.side-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-12); }
+.side-body > .empty { padding-inline: var(--sp-8); }
+.cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-8); }
+.card, .quiz-chip { width: 100%; display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-10); border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--raised); text-align: left; font-size: var(--fs-md); }
+.card .info, .quiz-chip .info { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.card .info strong, .quiz-chip .info strong { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .info span, .quiz-chip .info span { font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quiz-card, .quiz-chip { cursor: pointer; }
+.quiz-card:hover:not(:disabled), .quiz-chip:hover:not(:disabled) { border-color: var(--text-2); background: var(--hover); }
+.card.openable { position: relative; } /* a file or a note: the card is a link to the Library (the anchor is stretched over it), the download button stays its own */
+.card .open { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-10); color: inherit; text-decoration: none; }
+.card .open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.card.openable .icon-btn { position: relative; z-index: 1; }
+.card.openable:hover { border-color: var(--text-2); background: var(--hover); }
+.card .open:focus-visible { outline: none; }
+.card.openable:has(.open:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
+.quiz-chip { width: min(100%, 440px); }
+.quiz-bubble .quiz-label { display: block; margin-bottom: var(--sp-4); font-size: var(--fs-2xs); font-weight: 650; color: var(--accent-text); }
+.quiz-bubble .markdown { font-size: var(--fs-md); }
+
+/* a QCM, one question at a time */
+.quiz { display: flex; flex-direction: column; gap: var(--sp-14); font-size: var(--fs-md); line-height: 1.5; }
+.quiz-top { display: flex; align-items: center; gap: var(--sp-8); }
+.quiz-title { flex: 1; min-width: 0; margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quiz-bar { display: flex; gap: var(--sp-2); }
+.seg { flex: 1; min-width: 8px; height: 24px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; justify-content: stretch; }
+.seg::before { content: ''; display: block; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+.seg.right::before { background: var(--ok); }
+.seg.wrong::before { background: var(--danger); }
+.seg.sent::before { background: var(--accent-line); }
+.seg.skipped::before { background: var(--warn); }
+.seg[aria-current='step']::before { outline: 2px solid var(--text); outline-offset: 1px; }
+.quiz-nav { display: flex; align-items: center; gap: var(--sp-4); }
+.quiz-count { flex: 1; text-align: center; font-weight: 650; font-variant-numeric: tabular-nums; }
+.quiz-q, .ask-q { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-8); }
+.quiz-q legend, .ask-q legend { padding: 0; margin-bottom: var(--sp-10); font-size: var(--fs-lg); font-weight: 650; line-height: 1.4; }
+.quiz-q textarea { width: 100%; min-height: 5rem; }
+.opt { display: flex; align-items: flex-start; gap: var(--sp-10); padding: var(--sp-10) var(--sp-12); min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--raised); cursor: pointer; transition: border-color var(--dur-fast), background var(--dur-fast); }
+.opt:hover { border-color: var(--text-2); background: var(--hover); }
+.opt.chosen { border-color: var(--text); background: var(--select); box-shadow: inset 3px 0 0 var(--text); }
+.opt:has(input:focus-visible) { outline: 2px solid var(--text); outline-offset: 2px; }
+.opt .letter { flex: none; width: 1.3rem; color: var(--muted); font-weight: 700; font-size: var(--fs-sm); line-height: 1.7; }
+.opt input[type='radio'], .opt .check { margin-top: var(--sp-2); }
+.opt-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.opt-text { overflow-wrap: anywhere; }
+.opt-desc { color: var(--muted); font-size: var(--fs-sm); }
+.opt.right { border-color: var(--ok); background: var(--ok-soft); box-shadow: none; }
+.opt.wrong { border-color: var(--danger); background: var(--danger-soft); box-shadow: none; }
+fieldset:disabled .opt { cursor: default; }
+fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--line-strong); background: var(--raised); }
+.opt.other { align-items: center; cursor: text; }
+.other-input { flex: 1; min-width: 0; border-color: transparent; background: transparent; padding-inline: var(--sp-6); }
+.other-input:focus, .other-input:not(:placeholder-shown) { border-color: var(--line-strong); }
+.quiz-note { display: flex; align-items: flex-start; gap: var(--sp-8); margin: 0; padding: var(--sp-8) var(--sp-12); border-radius: var(--r-xs); background: var(--panel-2); color: var(--text-2); font-size: var(--fs-sm); }
+.quiz-note .icon { flex: none; margin-top: var(--sp-2); }
+.quiz-note.hint { background: var(--accent-soft); color: var(--text); }
+.quiz-note.verdict.right { background: var(--ok-soft); color: var(--ok); }
+.quiz-note.verdict.wrong { background: var(--danger-soft); color: var(--danger); }
+.quiz-foot { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-8); padding-top: var(--sp-12); border-top: 1px solid var(--line); }
+.score { margin: 0; font-family: var(--font-display); font-size: var(--fs-4xl); line-height: 1.1; }
+.score strong { font-weight: 700; }
+.score .unit { margin-left: var(--sp-8); font-family: var(--font); font-size: var(--fs-lg); color: var(--muted); }
+.recap { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.recap-row { width: 100%; display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-8); border-color: transparent; border-radius: var(--r-sm); text-align: left; font-size: var(--fs-md); }
+.recap-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recap-state { flex: none; color: var(--muted); font-size: var(--fs-xs); }
+.dot-state { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line-strong); }
+.dot-state.right { background: var(--ok); border-color: var(--ok); }
+.dot-state.wrong { background: var(--danger); border-color: var(--danger); }
+.dot-state.sent { background: var(--accent-line); border-color: var(--accent-line); }
+.dot-state.skipped { border-color: var(--warn); }
+
+/* the questions Clara asks (ask_questions), in the place of the box you write in */
+.ask { --frame-edge: var(--line-strong); --frame-rule: var(--accent-line); background: var(--raised); padding: var(--sp-12) var(--sp-14); display: flex; flex-direction: column; gap: var(--sp-10); font-size: var(--fs-md); line-height: 1.5; max-height: 70dvh; overflow: auto; }
+.ask-head { display: flex; align-items: center; gap: var(--sp-8); }
+.ask-head .ask-step { flex: 1; font-size: var(--fs-xs); }
+.ask-foot { display: flex; align-items: center; gap: var(--sp-8); }
+.ask-review { margin: 0; display: flex; flex-direction: column; gap: var(--sp-10); }
+.ask-review dt { font-weight: 650; }
+.ask-review dd { margin: 0; color: var(--text-2); }
 
 /* ---- the calendar (tasks) -------------------------------------------------------------------------------- */
 .cal { overflow: hidden; }
@@ -878,6 +952,9 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
   .rail-top { padding-top: calc(var(--sp-14) + env(safe-area-inset-top, 0px)); }
   .rail.open { transform: none; visibility: visible; box-shadow: var(--shadow-lg); transition: transform var(--dur) var(--ease-out); }
   .rail-head .close-rail { display: inline-flex; }
+  .side-scrim { display: block; position: fixed; inset: 0; z-index: var(--z-scrim); background: var(--scrim); }
+  .side-panel { position: fixed; z-index: var(--z-rail); top: 0; right: 0; bottom: 0; width: min(92vw, 440px); border-left: 0; box-shadow: var(--shadow-lg); }
+  .side-head { padding-top: calc(var(--sp-12) + env(safe-area-inset-top, 0px)); }
   .page-head, .page-head.chat-head { padding: var(--sp-8) var(--sp-12); padding-top: calc(var(--sp-8) + env(safe-area-inset-top, 0px)); min-height: 54px; }
   .page-head .open-rail { display: inline-flex; }
   .settings-bar { padding: 0 var(--sp-4); } /* a tab's own padding brings its label to the page's 16px */

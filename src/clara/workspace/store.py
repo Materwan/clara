@@ -311,6 +311,42 @@ class Workspace:
                 entries.append({"commit": parts[0], "at": parts[1], "author": parts[2], "message": parts[3]})
         return entries
 
+    async def conversation_files(self, conversation_id: str, limit: int = 100) -> list[dict]:
+        """The files that tools changed in a conversation and that are still here, newest first: `path`, `created` (the
+        first change made in that conversation), `updated` and `size`. Found from the `Conversation:` line every
+        commit carries; the logs of the scripts (`runs/`, written by the host) are left out."""
+        if not re.fullmatch(r"c[0-9a-f]{16}", conversation_id):
+            return []
+        out = await self.git(
+            "-c",
+            "core.quotepath=false",
+            "log",
+            "--fixed-strings",
+            f"--grep=Conversation: {conversation_id}",
+            "--format=%x1e%aI",
+            "--name-status",
+            "--no-renames",
+        )
+        seen: dict[str, dict] = {}  # newest commit first
+        for block in out.split("\x1e")[1:]:
+            lines = block.splitlines()
+            when = lines[0]
+            for line in lines[1:]:
+                status, _, path = line.partition("\t")
+                if not path or path.startswith(('"', "runs/")) or status == "D":
+                    continue
+                found = seen.setdefault(path, {"path": path, "created": when, "updated": when})
+                found["created"] = when  # going back in time: ends as the first change
+        files = []
+        for found in seen.values():
+            try:
+                found["size"] = resolve(self.root, found["path"], must_exist=True).stat().st_size
+            except (PathError, OSError):
+                continue  # deleted or moved since, in this conversation or another
+            files.append(found)
+        files.sort(key=lambda item: item["created"], reverse=True)
+        return files[: max(1, limit)]
+
     async def show(self, commit: str) -> str:
         if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
             raise WorkspaceError("A commit is given by its id (hex).")

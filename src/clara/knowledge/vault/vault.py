@@ -22,6 +22,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from itertools import count
 from pathlib import Path
 
 from ...db import Database
@@ -36,6 +37,7 @@ SEARCH_LIMIT = 20
 LINK = re.compile(r"\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]")
 MOMENT = re.compile(r"\[[^\]]*\]|YYYY|YY|MM|M|DD|D|dddd|ddd")  # the tokens of Obsidian's date format
 BLOCK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
+CONVERSATION = re.compile(r"c[0-9a-f]{16}")  # a conversation's id (memory/conversations.py)
 CLOSED_BLOCK = (
     "## Second brain\nThe person's Obsidian vault (their notes, projects, ideas, knowledge) is available: "
     "call open_second_brain when it matters, then use the vault_* tools."
@@ -235,13 +237,17 @@ class Vault:
     # ------------------------------------------------------------------
     # Writing
     # ------------------------------------------------------------------
-    async def _commit(self, paths: list[str], message: str) -> None:
+    async def _commit(self, paths: list[str], message: str, conversation: str = "") -> None:
+        """One commit of these paths. In a conversation it ends with the line `Conversation: <id>`, as the workspace's
+        commits do: that is how the side panel finds the notes a conversation wrote."""
+        if conversation:
+            message += f"\n\nConversation: {conversation}"
         try:
             await asyncio.to_thread(self.git.commit, paths, message)
         except GitError as error:
             raise VaultError(f"Saved, but not committed: {error}") from None
 
-    async def write(self, note: str, content: str, mode: str) -> str:
+    async def write(self, note: str, content: str, mode: str, *, conversation: str = "") -> str:
         if len(content) > MAX_NOTE:
             raise VaultError("The note is too long for one call.")
         async with self._lock:
@@ -253,24 +259,32 @@ class Vault:
                     raise VaultError(f"{path} exists already: edit it, or replace it.")
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text(content, encoding="utf-8")
-                await self._commit([path], f"Clara: create {path}")
+                await self._commit([path], f"Clara: create {path}", conversation)
                 return f"Created {path}."
             path = self.find(note)
             file = self.root / path
             if mode == "replace":
                 file.write_text(content, encoding="utf-8")
-                await self._commit([path], f"Clara: rewrite {path}")
+                await self._commit([path], f"Clara: rewrite {path}", conversation)
                 return f"Replaced the text of {path} (the old one stays in the history)."
             if mode == "delete":
                 trash = self.root / ".trash" / path
                 trash.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(file, trash)
-                await self._commit([path, f".trash/{path}"], f"Clara: delete {path}")
+                await self._commit([path, f".trash/{path}"], f"Clara: delete {path}", conversation)
                 return f"Moved {path} to .trash/."
         raise VaultError("mode must be create, replace or delete.")
 
     async def edit(
-        self, note: str, old: str, new: str, *, append: str = "", heading: str = "", replace_all: bool = False
+        self,
+        note: str,
+        old: str,
+        new: str,
+        *,
+        append: str = "",
+        heading: str = "",
+        replace_all: bool = False,
+        conversation: str = "",
     ) -> str:
         async with self._lock:
             await asyncio.to_thread(self.git.pull, True)
@@ -315,7 +329,7 @@ class Vault:
                 updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
                 what = f"edit {path}"
             file.write_text(updated, encoding="utf-8")
-            await self._commit([path], f"Clara: {what}")
+            await self._commit([path], f"Clara: {what}", conversation)
         return f"Done: {what}."
 
     def daily_path(self, day: date | datetime) -> str:
@@ -380,7 +394,7 @@ class Vault:
         return head + text[end:]
 
     async def write_block(
-        self, day: date, body: str, block: str = "recap", heading: str = "Récap (Clara)"
+        self, day: date, body: str, block: str = "recap", heading: str = "Récap (Clara)", *, conversation: str = ""
     ) -> tuple[str, list[str]]:
         """Put a block in a day's daily note (made from the template when there is none): the block between the two
         comments of its name is replaced, or added at the end under a heading. Returns the note's path and the links
@@ -410,7 +424,7 @@ class Vault:
             text = self._touch_updated(text, datetime.now(zone(self.zone)).date())
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(text, encoding="utf-8")
-            await self._commit([path], f"Clara: daily note block {block} {path}")
+            await self._commit([path], f"Clara: daily note block {block} {path}", conversation)
         return path, dropped
 
     def day_span(self, day: date) -> tuple[str, str]:
@@ -419,14 +433,56 @@ class Vault:
         end = resolve_local(datetime.combine(day + timedelta(days=1), datetime.min.time()), tz) - timedelta(seconds=1)
         return iso(start), iso(end)
 
+    @staticmethod
+    def _is_note(path: str) -> bool:
+        """A path of the vault that is a note you see (not in a hidden folder, nor a template)."""
+        parts = path.split("/")
+        return (
+            path.lower().endswith(".md") and not any(part.startswith(".") for part in parts) and parts[0] not in HIDDEN
+        )
+
+    async def conversation_notes(self, conversation_id: str, limit: int = 100) -> list[dict]:
+        """The notes Clara wrote in a conversation and that are still here, newest first: `path`, `action` (`created` if
+        the conversation made the note, `edited` if it changed one that was there), `created` (the first change made in
+        that conversation), `updated` and `size`. Found from the `Conversation:` line her commits carry, so a note
+        written before that line existed is not listed. A note she deleted is gone from the list, a moved one is
+        listed at its new path."""
+        if not CONVERSATION.fullmatch(conversation_id):
+            return []
+        try:
+            commits = await asyncio.to_thread(self.git.conversation_changes, conversation_id)
+        except GitError:
+            return []
+        found: dict[str, dict] = {}  # path -> action, created, updated, and the order the note was first seen in
+        seen = count()
+        for when, changes in commits:  # oldest first
+            for code, before, after in changes:
+                entry = found.pop(before, None) if code in ("D", "R") else found.get(after)
+                if code == "D" or not self._is_note(after):
+                    continue
+                if code == "A" or entry is None:
+                    entry = {"action": "created" if code == "A" else "edited", "created": when, "seen": next(seen)}
+                found[after] = {**entry, "updated": when}
+        notes = []
+        for path, entry in found.items():
+            file = self.root / path
+            try:
+                if file.is_symlink() or not file.is_file():
+                    continue  # deleted or moved since, in this conversation or another
+                notes.append({"path": path, **entry, "size": file.stat().st_size})
+            except OSError:
+                continue
+        notes.sort(
+            key=lambda item: (item["created"], item["seen"]), reverse=True
+        )  # notes of one second: the last first
+        return [{key: value for key, value in note.items() if key != "seen"} for note in notes[: max(1, limit)]]
+
     def changes_on(self, day: date) -> list[dict]:
         """The notes changed by commits made on that local day (yours through Obsidian's git sync, and Clara's)."""
         since, until = self.day_span(day)
         rows = []
         for row in self.git.changes(since, until):
-            path = row["path"]
-            parts = path.split("/")
-            if not path.lower().endswith(".md") or any(part.startswith(".") for part in parts) or parts[0] in HIDDEN:
+            if not self._is_note(row["path"]):
                 continue
             rows.append({**row, "mine": all(author == self.git.author for author in row["authors"])})
         return rows
@@ -462,7 +518,7 @@ class Vault:
         lines.insert(end, line if line.endswith("\n") else line + "\n")
         return "".join(lines)
 
-    async def daily(self, action: str, text: str = "") -> str:
+    async def daily(self, action: str, text: str = "", *, conversation: str = "") -> str:
         today = datetime.now(zone(self.zone))
         path = self.daily_path(today)
         file = self.root / path
@@ -481,10 +537,10 @@ class Vault:
                 under_log if under_log is not None else existing + ("" if existing.endswith("\n") else "\n") + line,
                 encoding="utf-8",
             )
-            await self._commit([path], f"Clara: daily note {path}")
+            await self._commit([path], f"Clara: daily note {path}", conversation)
         return f"Added to {path}."
 
-    async def move(self, note: str, destination: str) -> str:
+    async def move(self, note: str, destination: str, *, conversation: str = "") -> str:
         async with self._lock:
             await asyncio.to_thread(self.git.pull, True)
             source = self.find(note)
@@ -511,7 +567,7 @@ class Vault:
                 if updated != text:
                     file.write_text(updated, encoding="utf-8")
                     changed.append(path)
-            await self._commit(changed, f"Clara: move {source} to {target}")
+            await self._commit(changed, f"Clara: move {source} to {target}", conversation)
         links = len(changed) - 2
         return f"Moved {source} to {target}" + (f"; updated links in {links} note(s)." if links else ".")
 

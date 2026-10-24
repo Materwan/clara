@@ -12,6 +12,7 @@ and Clara reads and searches them with tools (`read_project_file`, `search_proje
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ class Project:
     conversations: int = 0
     pinned: bool = False
     in_history: bool = False  # its conversations are listed in the web site's history
+    packs: tuple[str, ...] = ("web",)  # the special tools a new conversation of the project starts with
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,15 @@ class ProjectContext:
 
 def _now() -> str:
     return now_iso()
+
+
+def _packs(text: str) -> tuple[str, ...]:
+    """The packs stored with a project; web search when the text is not a list."""
+    try:
+        found = json.loads(text or "[]")
+    except ValueError:
+        return ("web",)
+    return tuple(str(item) for item in found) if isinstance(found, list) else ("web",)
 
 
 def _one_line(text: str) -> str:
@@ -218,6 +229,7 @@ class Projects:
             row["conversations"],
             bool(row["pinned"]),
             bool(row["in_history"]),
+            _packs(row["packs"]),
         )
 
     @staticmethod
@@ -231,12 +243,24 @@ class Projects:
         if instructions is not None and len(instructions) > MAX_INSTRUCTIONS:
             raise ProjectError(f"Instructions have at most {MAX_INSTRUCTIONS:,} characters.")
 
-    def create(self, name: str, description: str = "", instructions: str = "") -> Project:
+    def create(
+        self, name: str, description: str = "", instructions: str = "", packs: list[str] | None = None
+    ) -> Project:
+        """A new project. `packs` (already checked by the caller) are the special tools its new conversations start with;
+        none given: web search, as a conversation outside any project."""
         self._checked(name, description, instructions)
         now = _now()
         project_id = self.db.insert(
-            "INSERT INTO projects (name, description, instructions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (_one_line(name), description.strip(), instructions.strip(), now, now),
+            "INSERT INTO projects (name, description, instructions, packs, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                _one_line(name),
+                description.strip(),
+                instructions.strip(),
+                json.dumps(["web"] if packs is None else list(packs)),
+                now,
+                now,
+            ),
         )
         return self.get(project_id)  # type: ignore[return-value]
 
@@ -251,7 +275,12 @@ class Projects:
         return [self._project(row) for row in rows]
 
     def update(
-        self, project_id: int, name: str | None = None, description: str | None = None, instructions: str | None = None
+        self,
+        project_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        packs: list[str] | None = None,
     ) -> Project:
         self._checked(name, description, instructions)
         changes = {
@@ -260,6 +289,7 @@ class Projects:
                 ("name", _one_line(name) if name is not None else None),
                 ("description", description.strip() if description is not None else None),
                 ("instructions", instructions.strip() if instructions is not None else None),
+                ("packs", json.dumps(packs) if packs is not None else None),
             )
             if value is not None
         }

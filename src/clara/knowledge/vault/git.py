@@ -348,6 +348,31 @@ class GitSync:
             )
         return rows
 
+    def conversation_changes(self, conversation_id: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+        """The commits whose message has the line `Conversation: <id>` (Clara's, see `Vault._commit`), oldest first: each is
+        its date (ISO) and the files it touched as `(status letter, path before, path after)`; the two paths differ only
+        for a rename (`R`)."""
+        out = self.git(
+            "log",
+            "--reverse",
+            "--no-merges",
+            "-M",
+            "--fixed-strings",
+            f"--grep=Conversation: {conversation_id}",
+            "--name-status",
+            "--format=%x01%aI",
+            check=False,
+        )
+        commits: list[tuple[str, list[tuple[str, str, str]]]] = []
+        for line in out.splitlines():
+            if line.startswith("\x01"):
+                commits.append((line[1:], []))
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0] and commits:
+                commits[-1][1].append((parts[0][0], parts[1], parts[-1]))
+        return commits
+
     def numstat(self, since: str, until: str) -> dict[str, tuple[int, int]]:
         """Lines added and removed per file by the commits made from `since` to `until`."""
         out = self.git(

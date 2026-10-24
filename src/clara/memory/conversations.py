@@ -202,6 +202,9 @@ class Conversations:
                 now,
             ),
         )
+        if packs is None and project_id is not None:  # the special tools the project starts its conversations with
+            row = self.db.one("SELECT packs FROM projects WHERE id = ?", (project_id,))
+            packs = list(_packs(row["packs"])) if row is not None else None
         if packs is not None:
             self.update(conversation_id, packs=packs)
         created = self.get(conversation_id)

@@ -1,17 +1,21 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import ApprovalCard from '../components/ApprovalCard.svelte';
+  import AskQuestions from '../components/AskQuestions.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import FileCard from '../components/FileCard.svelte';
   import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
-  import QcmForm from '../components/QcmForm.svelte';
+  import SidePanel from '../components/SidePanel.svelte';
   import { ApiError, api, fileToBase64, stream, zone } from '../lib/api';
   import { type Document, repack, unpack } from '../lib/documents';
   import { grants, stop as stopGrants } from '../lib/grants.svelte';
   import { markdown } from '../lib/markdown';
-  import { conversations, go, route, toast, ui } from '../lib/state.svelte';
+  import { type PanelFile, type PanelNote, panel, remember } from '../lib/panel.svelte';
+  import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
+  import { conversations, go, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, argument, note, summary } from '../lib/tools';
 
   // A sub agent of the console works in a conversation of its own; it is shown under the `local_task` call that started it
@@ -28,6 +32,7 @@
     role: 'user' | 'assistant';
     content: string; // the message as it is stored: what you wrote, and the documents in it (a reply's text is in its parts)
     shown?: string; // your words alone: what the bubble draws (the documents are chips)
+    quiz?: { label: string; body: string }; // an answer sent from the QCM panel: drawn as a label and what was answered
     documents?: Document[]; // the documents of a stored message, kept to put them back when you edit it
     attachments: { name: string; chars?: number }[];
     parts: Part[];
@@ -49,12 +54,15 @@
   function yours(content: string): Message {
     const sent = unpack(content);
     const message = blank('user', content);
+    message.quiz = quizMessage(content) ?? undefined;
     message.shown = sent.text;
     message.documents = sent.documents;
     message.attachments = sent.documents.map(({ name, chars }) => ({ name, chars }));
     return message;
   }
   const SILENT = new Set(['qcm']); // the form is its own card
+  // calls that can leave a file or a note for the side panel
+  const WRITES = new Set(['ws_write', 'ws_edit', 'ws_move', 'ws_delete', 'ws_run', 'vault_write', 'vault_edit', 'vault_move', 'vault_daily', 'vault_daily_block']);
   const INTERRUPTED = '[This answer was interrupted'; // the note the server stores at the end of a reply cut off (turn.py)
   const PROMPT = 2000; // how much of its prompt Clara tells of a sub agent (PROMPT in memory/conversations.py)
 
@@ -64,6 +72,13 @@
   let orphans = $state<Sub[]>([]); // sub agents whose `local_task` call is not in the messages (shown after them)
   let draft = $state('');
   let attached = $state<File[]>([]);
+  // The side panel: what Clara made in this conversation (files, vault notes, QCMs), and the questions she waits on
+  let side = $state<{ files: PanelFile[]; notes: PanelNote[]; forms: Form[] }>({ files: [], notes: [], forms: [] });
+  let sideOpen = $state(false);
+  let quiz = $state<string | null>(null); // the QCM open in the panel (null: the list of cards)
+  let pendingAsk = $state<any>(null); // ask_questions: the questions that replace the box you write in
+  let outbox: string[] = []; // answers of a QCM to send Clara, one after the other, when she has finished the one before
+  let panelTimer: ReturnType<typeof setTimeout> | undefined;
   let busy = $state(false);
   const compacting = $derived(messages.some((message) => message.compacting));
   let dragging = $state(false);
@@ -95,10 +110,21 @@
     load(id);
   });
 
+  // The project of the conversation: its name for the header, and for a conversation not started yet the special tools the project begins
+  // its conversations with (the "+" menu can still change them); outside any project a new conversation has web search only.
   $effect(() => {
     const id = projectId;
     projectName = '';
-    if (id) api.get(`/v1/projects/${id}`).then((project) => { if (projectId === id) projectName = project.name; }).catch(() => {});
+    const fresher = untrack(() => !conversationId);
+    if (!id) {
+      if (fresher) fresh.packs = ['web'];
+      return;
+    }
+    api.get(`/v1/projects/${id}`).then((project) => {
+      if (projectId !== id) return;
+      projectName = project.name;
+      if (!conversationId) fresh.packs = project.packs;
+    }).catch(() => {});
   });
 
   let loads = 0; // the latest load: an older one that ends late draws nothing
@@ -116,6 +142,12 @@
     conversation = null;
     messages = [];
     orphans = [];
+    side = { files: [], notes: [], forms: [] };
+    sideOpen = false;
+    quiz = null;
+    pendingAsk = null;
+    outbox = [];
+    clearTimeout(panelTimer);
     models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
     packList = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
     projectList = (await api.get('/v1/projects').catch(() => ({ projects: [] }))).projects;
@@ -131,6 +163,7 @@
       if (mine !== loads) return;
       // An answer still being given is followed from its start: its approval cards come with it
       draw(found, history, found.answering ? [] : (found.approvals ?? []));
+      loadPanel(id, true);
       if (found.answering) attach(id, found, history);
     } catch (error) {
       if (mine !== loads) return;
@@ -151,6 +184,62 @@
     const found = await api.get(`/v1/conversations/${id}`);
     const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
     if (conversationId === id) draw(found, history, found.approvals ?? []);
+  }
+
+  // ---- the side panel -------------------------------------------------------------------------------------
+  const cards = $derived(side.files.length + side.notes.length + side.forms.length);
+  const showPanel = $derived(cards > 0 && sideOpen);
+
+  /** Read what the side panel shows. `first`: the conversation has just been opened (the panel starts closed, unless you left it open). */
+  async function loadPanel(id: string, first = false): Promise<void> {
+    try {
+      const found = await api.get(`/v1/conversations/${id}/panel`);
+      if (conversationId !== id) return;
+      const before = cards;
+      // a QCM Clara has just made is not stored until her message ends: it stays in the list until the server has it
+      const unsaved = side.forms.filter((form) => form.pending && !found.forms.some((item: Form) => item.ref === form.ref));
+      side = { files: found.files, notes: found.notes ?? [], forms: [...found.forms, ...unsaved] };
+      if (first) sideOpen = panel.choice === 'open' && cards > 0;
+      else if (cards > before && panel.choice !== 'closed') sideOpen = true;
+    } catch {
+      /* the panel is a convenience: the conversation does not depend on it */
+    }
+  }
+
+  function schedulePanel(id: string): void {
+    clearTimeout(panelTimer);
+    panelTimer = setTimeout(() => loadPanel(id), 400);
+  }
+
+  function togglePanel(): void {
+    sideOpen = !sideOpen;
+    remember(sideOpen ? 'open' : 'closed');
+  }
+
+  function closePanel(): void {
+    sideOpen = false;
+    remember('closed');
+  }
+
+  function openQuiz(ref: string): void {
+    quiz = ref;
+    sideOpen = true;
+  }
+
+  function progressed(ref: string, progress: Progress): void {
+    side.forms = side.forms.map((form) => (form.ref === ref ? { ...form, progress } : form));
+  }
+
+  /** An answer of the QCM for Clara: sent now, or when she has finished the one before (the next question is already there to answer). */
+  function tell(text: string): void {
+    if (busy || outbox.length) outbox.push(text);
+    else send(text);
+  }
+
+  function drain(): void {
+    const next = outbox.shift();
+    if (next !== undefined && !busy) send(next);
+    else if (next !== undefined) outbox.unshift(next);
   }
 
   function addText(message: Message, text: string): void {
@@ -288,6 +377,7 @@
           const call = openCall(current, event.name, true);
           if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
           else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
+          if (WRITES.has(event.name)) schedulePanel(id);
           break;
         }
         case 'approval':
@@ -295,9 +385,18 @@
           break;
         case 'qcm':
           current.parts.push({ kind: 'form', form: event.form });
+          if (!side.forms.some((form) => form.ref === event.form.ref)) side.forms.push(newForm(event.form));
+          openQuiz(event.form.ref);
+          break;
+        case 'questions':
+          pendingAsk = event.ask;
+          break;
+        case 'questions_done':
+          if (pendingAsk?.id === event.id) pendingAsk = null;
           break;
         case 'file':
           current.files.push(event);
+          schedulePanel(id);
           break;
         case 'retrying':
           current.notes.push(event.message);
@@ -321,6 +420,7 @@
           user.versions = event.versions?.length > 1 ? event.versions : undefined;
           user.version = user.versions ? user.versions.indexOf(event.message_id) + 1 : undefined;
           if (conversation?.id === id) conversation.context = event.context;
+          loadPanel(id);
           break;
         case 'error':
           current.error = event.message;
@@ -336,6 +436,8 @@
     if (controller !== mine) return; // left, or another stream has taken over
     controller = null;
     busy = false;
+    pendingAsk = null; // the answer is over: nobody waits for these questions any more
+    drain();
     if (!id) return;
     const latest = await api.get(`/v1/conversations/${id}`).catch(() => null);
     if (latest && conversationId === id) conversation = latest;
@@ -421,6 +523,8 @@
   /** Stop the answer. It goes on without us, so it is told to stop; then what it had said is read back, marked as cut. */
   async function stop(): Promise<void> {
     const id = conversationId;
+    outbox = [];
+    pendingAsk = null;
     if (id) await api.del(`/v1/conversations/${id}/run`).catch(() => {});
     controller?.abort();
     if (id) await refresh(id).catch(() => {});
@@ -563,12 +667,20 @@
 
   const percent = $derived(conversation?.context?.percent ?? 0);
 
+  // On a phone the panel is a drawer over the page: the keys go into it when it opens (the page behind is inert)
+  $effect(() => {
+    if (showPanel && narrow.rail) tick().then(() => document.querySelector<HTMLElement>('.side-panel .side-head button')?.focus());
+  });
+
   // Approve all next belongs to the conversation on screen and to this page: leaving either ends it
   $effect(() => {
     if (grants.conversation && grants.conversation !== conversationId) stopGrants();
   });
   $effect(() => stopGrants);
 </script>
+
+<!-- Escape closes the panel when it is a drawer over the page (a phone) and the keys are in it -->
+<svelte:window onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
 
 {#snippet callDetail(call: Shown)}
   <div class="call-detail">
@@ -636,7 +748,13 @@
       {:else if part.kind === 'approval'}
         <ApprovalCard approval={part.approval} allowGrant={!nested && part.approval.conversation === conversationId} />
       {:else}
-        <QcmForm form={part.form} onAnswer={(text) => send(text)} />
+        {@const made = side.forms.find((item) => item.ref === part.form.ref)}
+        <button class="quiz-chip" onclick={() => openQuiz(part.form.ref)} aria-label={`Open the quiz ${part.form.title || ''} in the side panel`.trim()}>
+          <Icon name="quiz" size={18} />
+          <span class="info"><strong>{part.form.title || 'Quiz'}</strong>
+            <span>{part.form.questions.length} questions{made && made.progress.summary.answered ? ` · ${made.progress.summary.answered} answered` : ''} · open in the panel</span></span>
+          <Icon name="chevron" size={16} />
+        </button>
       {/if}
     {/each}
     {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
@@ -693,7 +811,16 @@
         <Icon name="compress" size={18} />
       </button>
     {/if}
+    {#if cards}
+      <button class="ghost panel-toggle" aria-label={showPanel ? 'Close the side panel' : 'Open the side panel'} aria-expanded={showPanel}
+        title="Files, notes and quizzes made in this conversation" onclick={togglePanel}>
+        <Icon name="panel" size={18} /><span class="count">{cards}</span>
+      </button>
+    {/if}
   </header>
+
+  <div class="chat-body">
+  <div class="chat-main" inert={showPanel && narrow.rail}>
 
   <div class="messages" bind:this={scroller} onscroll={onScroll}>
     <div class="messages-inner">
@@ -724,11 +851,14 @@
                   </div>
                 </div>
               {:else}
-                {#if message.shown?.trim()}<div class="bubble markdown" use:markdown={message.shown}></div>{/if}
+                {#if message.quiz}
+                  <div class="bubble quiz-bubble"><span class="quiz-label">{message.quiz.label}</span>
+                    {#if message.quiz.body}<div class="markdown" use:markdown={message.quiz.body}></div>{/if}</div>
+                {:else if message.shown?.trim()}<div class="bubble markdown" use:markdown={message.shown}></div>{/if}
                 {#if message.attachments.length}
                   {@render files(message)}
                 {/if}
-                {#if message.versions || (message.id && !busy)}
+                {#if !message.quiz && (message.versions || (message.id && !busy))}
                   <div class="msg-actions">
                     {#if message.versions}
                       <button class="ghost" aria-label="Previous version" onclick={() => switchVersion(message, -1)} disabled={message.version === 1}><Icon name="left" size={16} /></button>
@@ -776,6 +906,11 @@
         <p class="composer-hint" role="status">This conversation is archived: you can read it, but it takes no new message.
           <button type="button" class="link" onclick={unarchive}>Unarchive</button></p>
       {/if}
+      {#if pendingAsk}
+        {#key pendingAsk.id}
+          <AskQuestions ask={pendingAsk} onDone={() => (pendingAsk = null)} />
+        {/key}
+      {:else}
       <div class="composer-inner">
         {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
           <div class="chips" aria-label="Tools of this conversation">
@@ -813,8 +948,18 @@
           {/if}
         </div>
       </div>
+      {/if}
       <p class="composer-hint">Enter sends, Shift+Enter starts a new line. Drop or paste files to attach them (4 at most).</p>
     </div>
   </div>
   <GrantBar />
+  </div>
+  {#if showPanel && conversationId}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (Escape closes the panel too) -->
+    <div class="side-scrim" onclick={closePanel} aria-hidden="true"></div>
+    <aside class="side-panel" aria-label="Made in this conversation">
+      <SidePanel conversation={conversationId} files={side.files} notes={side.notes} forms={side.forms} bind:quiz onClose={closePanel} onSend={tell} onProgress={progressed} />
+    </aside>
+  {/if}
+  </div>
 </section>

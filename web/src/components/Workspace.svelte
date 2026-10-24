@@ -2,10 +2,11 @@
   import Hint from './Hint.svelte';
   import Icon from './Icon.svelte';
   import Segmented from './Segmented.svelte';
+  import { untrack } from 'svelte';
   import { api, download, fileToBase64, saveBlob, size, when } from '../lib/api';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { markdown } from '../lib/markdown';
-  import { live, toast } from '../lib/state.svelte';
+  import { live, route, toast } from '../lib/state.svelte';
 
   type Tab = 'files' | 'history' | 'runs';
   const TABS: { value: Tab; label: string }[] = [{ value: 'files', label: 'Files' }, { value: 'history', label: 'History' }, { value: 'runs', label: 'Script runs' }];
@@ -35,6 +36,12 @@
     open = await api.get('/v1/workspace/file', { path });
     draft = null;
   }
+
+  // A link to #/library?path=notes/plan.md (a card of the chat's side panel) opens that file
+  $effect(() => {
+    const wanted = route.query.get('path');
+    if (wanted) untrack(() => view(wanted).catch((error) => toast((error as Error).message, 'error')));
+  });
 
   async function write(): Promise<void> {
     if (!open || draft === null) return;

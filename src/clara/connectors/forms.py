@@ -1,12 +1,15 @@
-"""QCM: a form of questions Clara asks through the `qcm` tool, answered on the web site.
+"""QCM: a form of questions Clara asks through the `qcm` tool, answered one question at a time in the web chat's side panel.
 
 A question is `single` (one option), `multiple` (any number of options) or `text` (a free answer). Choice
-questions may name their correct options, which makes the clients grade them; a `text` question may carry a
-reference answer, shown after the user has answered. The QCM is not blocking: the turn ends with the form
-displayed, and the answers come back as the user's next message, written like `format_answers` does, so that
-the model reads them and the form can be shown answered when the conversation is opened again.
+questions may name their correct options, which makes the clients grade them; a question may carry a hint
+(shown on request) and an explanation, a `text` question a reference answer (shown once answered). The QCM is not
+blocking: the turn ends with the form shown, and each answered question comes back as a message of its own
+(`answer_message`), which Clara corrects at once. A question can be skipped (nothing is sent). When every question is
+answered or skipped, one more line (`final_line`) tells Clara the score; an attempt that is only skipped to its end
+sends `finish_message` instead. The progress is kept by `Quizzes` (connectors/quizzes.py).
 
-The web site writes the same message in TypeScript (web/src/lib/qcm.ts): keep them in step.
+Conversations made before the panel hold the form's answers in one message (`[QCM answers ref]`): `with_answers`
+still reads them.
 """
 
 from __future__ import annotations
@@ -22,14 +25,16 @@ MAX_OPTIONS = 10
 MAX_TITLE = 120
 MAX_QUESTION = 500
 MAX_OPTION = 200
-MAX_NOTE = 500  # an explanation, or the reference answer of a text question
+MAX_NOTE = 500  # an explanation, a hint, or the reference answer of a text question
+MAX_TEXT_ANSWER = 4_000  # what you may type for a text question
 SINGLE, MULTIPLE, TEXT = "single", "multiple", "text"
 TYPES = (SINGLE, MULTIPLE, TEXT)
 CLIENTS = ("web",)  # the clients that can show a form
 
 NO_ANSWER = "(no answer)"
-_MARK = "[QCM answers {ref}]"
-_MARK_RE = re.compile(r"^\[QCM answers ([0-9a-f]{8})\]")
+ANSWER_MARK = "[QCM answer {ref} {number}/{count}]"
+FINISH_MARK = "[QCM finished {ref}]"
+_MARK_RE = re.compile(r"^\[QCM answers ([0-9a-f]{8})\]")  # the one message of the forms made before the panel
 LETTERS = "ABCDEFGHIJ"
 
 
@@ -95,6 +100,7 @@ def _question(raw: Any, number: int) -> dict:
         "options": [],
         "correct": None,
         "explanation": _note(raw.get("explanation"), f"{where}: explanation"),
+        "hint": _note(raw.get("hint"), f"{where}: hint"),
         "answer": "",
     }
     if kind == TEXT:
@@ -123,7 +129,7 @@ def reference(title: str, questions: list[dict]) -> str:
 
 def build_form(arguments: dict[str, Any]) -> dict:
     """The form the model asked for, checked and cleaned (ValueError says what to fix), as sent to the clients:
-    `{"ref", "title", "graded", "questions": [{"text", "type", "options", "correct", "explanation", "answer"}]}`."""
+    `{"ref", "title", "graded", "questions": [{"text", "type", "options", "correct", "explanation", "hint", "answer"}]}`."""
     questions = [_question(raw, number) for number, raw in enumerate(_list(arguments.get("questions"), "questions"), 1)]
     if not questions:
         raise ValueError("A QCM needs at least one question.")
@@ -156,33 +162,117 @@ def forms_in(tool_calls: list[dict] | None) -> list[dict]:
 
 
 # ---- the answers -------------------------------------------------------------------------------------
+# An entry of a form's progress is None (not touched), or {"status": "answered" | "skipped", "answer": ...} where the
+# answer is the list of the chosen option numbers (choice questions) or the typed text.
 
 
 def _token(question: dict, index: int) -> str:
     return f"{LETTERS[index]}. {question['options'][index]}"
 
 
-def format_answers(form: dict, answers: list) -> str:
-    """The message the user sends for a form: a choice question's answer is a list of option numbers, a
-    text question's a string."""
-    lines = [_MARK.format(ref=form["ref"]) + (f" {form['title']}" if form["title"] else "")]
-    for number, (question, answer) in enumerate(zip(form["questions"], answers), 1):
-        if question["type"] == TEXT:
-            given = str(answer or "").strip()
+def check_answer(question: dict, answer: Any) -> list[int] | str:
+    """The answer to one question, checked and cleaned (ValueError says what is wrong)."""
+    if question["type"] == TEXT:
+        text = "" if answer is None or isinstance(answer, (dict, list)) else str(answer).strip()
+        if not text:
+            raise ValueError("Write an answer, or skip the question.")
+        if len(text) > MAX_TEXT_ANSWER:
+            raise ValueError(f"The answer is too long ({len(text)} characters, at most {MAX_TEXT_ANSWER}).")
+        return text
+    if not isinstance(answer, (list, tuple)) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in answer
+    ):
+        raise ValueError("The answer is the list of the numbers of the chosen options.")
+    chosen = sorted(set(answer))
+    if not chosen:
+        raise ValueError("Choose an option, or skip the question.")
+    if chosen[0] < 0 or chosen[-1] >= len(question["options"]):
+        raise ValueError(f"The options are numbered 0 to {len(question['options']) - 1}.")
+    if question["type"] == SINGLE and len(chosen) != 1:
+        raise ValueError("This question takes one option.")
+    return chosen
+
+
+def given_text(question: dict, answer: Any) -> str:
+    """What was answered, as a line: "B. Canberra; C. Perth", or the typed text."""
+    if question["type"] == TEXT:
+        return str(answer or "").strip()
+    return "; ".join(_token(question, index) for index in sorted(answer or []))
+
+
+def is_right(question: dict, answer: Any) -> bool | None:
+    """Does the answer match the key? None: the question has no key (a free text, or a choice without `correct`)."""
+    if question["type"] == TEXT or question["correct"] is None:
+        return None
+    return sorted(answer or []) == question["correct"]
+
+
+def summary(form: dict, entries: list) -> dict:
+    """Where a form stands: `{"total", "answered", "skipped": [numbers], "open": [numbers], "right", "asked"}`
+    (numbers from 1; `right` of `asked` over the answered questions that have a key)."""
+    found: dict = {"total": len(form["questions"]), "answered": 0, "skipped": [], "open": [], "right": 0, "asked": 0}
+    for number, question in enumerate(form["questions"], 1):
+        entry = entries[number - 1] if number <= len(entries) else None
+        if entry is None:
+            found["open"].append(number)
+        elif entry["status"] == "skipped":
+            found["skipped"].append(number)
         else:
-            given = "; ".join(_token(question, index) for index in sorted(answer or []))
-        lines.append(f"\n{number}. {question['text']}\nAnswer: {given or NO_ANSWER}")
+            found["answered"] += 1
+            verdict = is_right(question, entry["answer"])
+            if verdict is not None:
+                found["asked"] += 1
+                found["right"] += verdict
+    return found
+
+
+def final_line(found: dict) -> str:
+    """The end of an attempt, as Clara is told it: "Final: 9 of 10 answered, score 7/9, skipped: 4"."""
+    line = f"Final: {found['answered']} of {found['total']} answered"
+    if found["asked"]:
+        line += f", score {found['right']}/{found['asked']}"
+    if found["skipped"]:
+        line += ", skipped: " + ", ".join(str(number) for number in found["skipped"])
+    return line + "."
+
+
+def _head(mark: str, form: dict, **fields) -> str:
+    return mark.format(ref=form["ref"], **fields) + (f" {form['title']}" if form["title"] else "")
+
+
+def answer_message(form: dict, number: int, answer: Any, final: dict | None = None) -> str:
+    """The message that sends one answer to Clara (`number` from 1); `final`, when it was the last question left,
+    adds the end of the attempt."""
+    question = form["questions"][number - 1]
+    lines = [
+        _head(ANSWER_MARK, form, number=number, count=len(form["questions"])),
+        f"Question: {question['text']}",
+        f"Answer: {given_text(question, answer) or NO_ANSWER}",
+    ]
+    verdict = is_right(question, answer)
+    if verdict is not None:
+        lines.append(f"Marked by the key: {'right' if verdict else 'wrong'}")
+    if final is not None:
+        lines += ["", "That was the last question. " + final_line(final)]
     return "\n".join(lines)
 
 
+def finish_message(form: dict, final: dict) -> str:
+    """The message sent when the last question left was skipped: no answer to correct, only the end of the attempt."""
+    return "\n".join([_head(FINISH_MARK, form), final_line(final)])
+
+
+# ---- the forms made before the panel: all the answers in one message ----------------------------------------
+
+
 def answered_ref(message: str) -> str | None:
-    """The form a user message answers, if it is the answers to one."""
+    """The form a user message answers, if it is the one message of answers the forms of before the panel sent."""
     found = _MARK_RE.match(message)
     return found.group(1) if found else None
 
 
 def parse_answers(form: dict, message: str) -> list | None:
-    """What `format_answers` wrote, back as one answer per question (None: the message is not for this form)."""
+    """The answers of such a message, one per question (None: the message is not for this form)."""
     if answered_ref(message) != form["ref"]:
         return None
     count = len(form["questions"])
@@ -209,17 +299,6 @@ def parse_answers(form: dict, message: str) -> list | None:
 def _chosen(token: str, given: str) -> bool:
     """Is `token` one of the "; "-separated choices of `given`?"""
     return given == token or given.startswith(token + "; ") or given.endswith("; " + token) or f"; {token}; " in given
-
-
-def grade(form: dict, answers: list) -> tuple[int, int]:
-    """`(right, asked)` over the choice questions that name their correct options."""
-    right = asked = 0
-    for question, answer in zip(form["questions"], answers):
-        if question["type"] == TEXT or question["correct"] is None:
-            continue
-        asked += 1
-        right += sorted(answer or []) == question["correct"]
-    return right, asked
 
 
 def with_answers(forms: list[dict], later: list[str]) -> list[dict]:

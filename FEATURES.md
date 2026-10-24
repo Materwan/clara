@@ -57,7 +57,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 
 | Page | What you do there |
 | --- | --- |
-| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); answer forms (`qcm`) and approval requests inline; edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); approval requests inline; the **side panel** on the right of a conversation (a button in its header, with a count; closed until something arrives, it opens by itself on the first card unless you closed it, and on a QCM when Clara makes one; your choice is kept in the browser; a drawer on a phone): one **card** for each workspace file Clara wrote in the conversation (name, folder, when it was first written, **Download**), for each vault note she created or edited in it (name, Created or Edited, folder, when, size) and for each QCM (title, questions, how far you are). A click on a file or a note leads to the **Library** and opens it there (`#/library?path=…` for a file, `#/library?view=vault&note=…` for a note): the Library is the whole workspace and the whole vault. A QCM card replaces the list with the quiz, one question at a time as in NotebookLM: a progress bar and arrows, lettered options, **Hint**, **Check** (right and wrong are coloured at once from Clara's key and her correction follows in the chat), **Skip** (Clara is not woken), the explanation, and at the end a score with each question's result and **Retry**; answers wait in a queue while Clara is still correcting the one before. The chat keeps a chip where the QCM was made. `ask_questions` replaces the box you write in with its questions, one after the other (keys 1 to 4, a last "Other" line where you write anything, **Back**, a review step before **Submit**, Escape dismisses); edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; a console sub agent's conversation opens as a block under the `local_task` call that started it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
 | Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. Two switches in the account menu, **Discord conversations** and **Console conversations** (on at first, kept in the browser), leave out of the list what those clients started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
@@ -65,8 +65,8 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first |
 | Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
 | Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
-| Projects | Upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions; **Show in history** lists its conversations in the rail |
-| Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. Another place is one more view |
+| Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with |
+| Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
 | Connections (Settings) | GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
@@ -279,12 +279,16 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **Versions:** editing a message or asking again keeps the earlier answer as another version; you move between them.
 - **Special tools (packs):** a pack is a name for a group of tools that exist only where it is switched on: **Web search**
   (on by default), **Second brain** (the vault open), **Mail** (your Gmail: search, read, draft, send, labels, the read mark and the Trash;
-  off until you switch it on, and offered only with a mailbox connected), **Day conversations**, **Day activity**, **Files created**, **Daily
+  off until you switch it on, and offered only with a mailbox connected), **QCM** (`qcm`: the quiz tool; chats only, off until you
+  switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
   schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
   and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
-  it, so it follows the conversation to every client, and a new conversation starts with web search only. A pack that
+  it, so it follows the conversation to every client, and a new conversation starts with web search only. A **project** can
+  start its conversations with other tools: its `packs` (chosen when the project is made or later, on its page) are copied to each
+  new conversation of the project, from any client, unless the request names its own; a conversation already begun keeps
+  its tools, and changing the project's list changes only the next ones. A pack that
   cannot be used says why (no vault, Discord bot not connected). A pack only decides which tools exist: the rule gate
   still decides each call. `GET /v1/packs` lists them.
 - **Titles and summaries:** a title is written after the first answer (by the side-jobs model). When a conversation
@@ -468,6 +472,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   sees a one-line mention and calls `open_second_brain` when your notes matter, which opens eight tools for that
   conversation. Search is FTS5 over titles and text. Moving a note updates every `[[link]]` to it (bare links stay
   bare). Deleted notes go to `.trash/`. The daily note follows the vault's own settings (`_clara/schema.json`: `daily.folder` and `daily.format`, or the Clara vault's `types.daily.folder` with `daily_format` such as `YYYY/YYYY-MM-DD`); a new one is made from `_templates/daily.md`, and a line added to today's note goes under its `## Log`.
+  Each change Clara makes in a conversation is a commit that ends with the line `Conversation: <id>` (as the workspace's do), which is how the side panel lists the notes a conversation created or edited; notes written before that line existed are not listed.
   Changes are committed and pushed (`CLARA_VAULT_PUSH`) a few seconds after the last one (never force-pushed; the
   token travels as an HTTP header, never in the URL); the vault is pulled every `CLARA_VAULT_PULL_SECONDS` (30). A
   failed push raises the `vault_push` alert.
@@ -488,8 +493,17 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   (from their git history; the vault's include yours, made through Obsidian), the Drive files Clara created, and the
   files you sent. `read_created_file` reads one by its reference when Clara needs it, whole or (`mode=diff`) as that
   day's diff only, a page at a time.
-- **Forms:** the `qcm` tool shows a form (single choice, multiple choice, free text; 20 questions, 10 options each,
-  LaTeX allowed) that you answer in the web chat; an optional key grades it.
+- **Forms:** two tools, both for the web chat only; `qcm` is in the **QCM** pack (off until switched on, see Special tools), `ask_questions` is always there. `qcm` creates a quiz (single choice, multiple choice, free text; 20
+  questions, 10 options each, LaTeX allowed, an optional key that marks each answer, a hint and an explanation per
+  question) that opens in the side panel and is answered **one question at a time**: each answered question reaches
+  Clara as a message of its own (`[QCM answer …]`, with what the key says) and she corrects it at once; a skipped
+  question sends nothing; when the last one is answered or skipped, one line gives her the final score (once per
+  attempt); **Retry** starts a new attempt. The progress is kept on the server (`quiz_attempts`, `quiz_answers`), so a
+  reload or another device shows it. `ask_questions` asks you 1 to 4 questions while she works (a short header, 2 to 4
+  options with a description, one or several choices; you can always write your own answer, "Other"): the questions
+  replace the box you write in and the turn waits (`CLARA_APPROVAL_WAIT`) for your answers, which are the result of
+  the call; dismissing them tells her you declined, and no answer in time withdraws them. Neither is offered to the
+  terminal, Discord or an unattended run.
 
 ## 7. Workspace and scripts
 
@@ -671,7 +685,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-75 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+76 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -690,7 +704,8 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `list_tasks` | Tasks, or one task in full | read |
 | `update_task` | Change a task (title, description, due, reminders, status, parent) | memory / write |
 | `delete_task` | Delete a task and its sub-tasks | memory / write |
-| `qcm` | Show a form you answer (web) | memory / write |
+| `qcm` | Create a QCM (a quiz) that opens in the side panel, answered one question at a time (pack QCM; web only) | memory / write |
+| `ask_questions` | Ask you 1 to 4 questions with choices, in place of the box you write in; the turn waits for your answers (web) | memory / write |
 | `read_conversation_file` | Read a file sent in this conversation (pictures are shown to the model) | read |
 | `list_project_files` | List the project's files | read |
 | `read_project_file` | Read a project file, with line numbers | read |
@@ -1041,7 +1056,7 @@ keep-alive every 15 s.
 | `POST /v1/turns/{turn_id}/tool-results` | Results of client-side tools |
 | `POST /v1/documents/extract` | The text of a document (as the chat would see it) |
 | `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any; `history=true` leaves out those of a project, schedule or hook not shown in the history; `hide=discord,console` leaves out what those clients started, the pinned ones apart; each names its `group`; a sub agent's conversation is never listed) |
-| `POST /v1/conversations` | Create one (incognito, local only, model, project) |
+| `POST /v1/conversations` | Create one (incognito, local only, model, project, `packs`; in a project, without `packs`, it starts with the project's) |
 | `GET /v1/conversations/{conversation_id}` | One conversation, with its context, files, waiting approvals and `subagents` (the console sub agents' conversations it started, each with the `prompt` it was given) |
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
 | `DELETE /v1/conversations/{conversation_id}` | Delete it, with its files |
@@ -1052,6 +1067,11 @@ keep-alive every 15 s.
 | `POST /v1/conversations/{conversation_id}/title` | Write its title again |
 | `POST /v1/conversations/{conversation_id}/version` | Choose which version of a message is shown |
 | `GET /v1/conversations/{conversation_id}/files/{file_id}` | Download a file sent in it |
+| `GET /v1/conversations/{conversation_id}/panel` | What the web chat's side panel shows: the workspace files Clara wrote in it (`files`: path, first and last change, size; found from the commits' `Conversation:` line, the logs of scripts left out), the vault notes she created or edited in it (`notes`: path, `action` created or edited, first and last change, size; found the same way in the vault's commits, none when there is no vault) and its QCMs with their progress |
+| `POST /v1/conversations/{conversation_id}/qcm/{ref}/answer` | Answer one question of a QCM (`question` from 1, `answer`: option numbers or text): returns the progress and the `message` to send Clara; an answered question cannot be answered again (409) |
+| `POST /v1/conversations/{conversation_id}/qcm/{ref}/skip` | Skip a question (no message, unless it was the last one left) |
+| `POST /v1/conversations/{conversation_id}/qcm/{ref}/retry` | Start the QCM again as a new attempt (nothing happens while the current attempt has no answer) |
+| `POST /v1/conversations/{conversation_id}/questions/{ask_id}` | Answer (`answers`: one `{options, other}` per question) or dismiss (`declined`) the questions `ask_questions` is waiting on; web tokens only, 409 when nobody waits for them any more |
 | `GET /v1/memory/facts` | Facts (by state, search) |
 | `POST /v1/memory/facts` | Add a fact (source `you`) |
 | `PATCH /v1/memory/facts/{fact_id}` | Change, pin, set expiry |
@@ -1078,9 +1098,9 @@ keep-alive every 15 s.
 | `POST /v1/events/ack` | Move your cursor |
 | `POST /v1/notifications` | Notify yourself |
 | `GET /v1/projects` | Projects |
-| `POST /v1/projects` | Create one |
+| `POST /v1/projects` | Create one (`packs`: the special tools its new conversations start with, web search by default) |
 | `GET /v1/projects/{project_id}` | One, with its files and sources |
-| `PATCH /v1/projects/{project_id}` | Change name, description, instructions, pin; `in_history` lists its conversations in the web history |
+| `PATCH /v1/projects/{project_id}` | Change name, description, instructions, `packs`, pin; `in_history` lists its conversations in the web history |
 | `DELETE /v1/projects/{project_id}` | Delete one |
 | `POST /v1/projects/{project_id}/files` | Upload files or archives (multipart) |
 | `DELETE /v1/projects/{project_id}/files` | Remove files |
@@ -1197,7 +1217,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Approval requests waiting per conversation | 10 |
 | Notifications | 3 per turn from Clara; 10 a minute from clients |
 | Event text | 2,000 characters (6,000 for what an automation or `discord_say` says in `#general`; the bot splits it into messages of 2,000, Discord's limit); title 100 |
-| Forms | 20 questions, 2 to 10 options |
+| Forms | QCM: 20 questions, 2 to 10 options, 4,000 characters for a typed answer. `ask_questions`: 4 questions, 2 to 4 options, a 12-character header, 5 calls per answer |
 | Projects | 90 MB and 1,000 files per upload; `CLARA_PROJECT_MAX_CHARS`, `CLARA_PROJECT_MAX_FILES`; a file over 30 MB in an archive is skipped; 600 MB unpacked per archive; GitHub archives 300 MB |
 | Workspace | `CLARA_WORKSPACE_MAX_SIZE`, `CLARA_WORKSPACE_MAX_FILE`; reads 1,000 lines at once; 80 search matches |
 | Vault note | 400,000 characters; 20 search results |

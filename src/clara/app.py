@@ -35,6 +35,7 @@ from .api import connections as connections_api
 from .api import conversations as conversations_api
 from .api import discord as discord_api
 from .api import events as events_api
+from .api import forms as forms_api
 from .api import gate as gate_api
 from .api import memory as memory_api
 from .api import models as models_api
@@ -49,6 +50,8 @@ from .api.common import install_error_handlers
 from .api.middleware import AuthMiddleware, BodyLimitMiddleware, SecurityHeadersMiddleware, TrafficMiddleware
 from .auth import FailureLimiter, Tokens, WebSessions
 from .connectors import setup as connectors_setup
+from .connectors.asks import Questions
+from .connectors.quizzes import Quizzes
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
 from .events import Events, delivery
 from .gate import Approvals, Audit, Gate, Grants, Rules
@@ -166,6 +169,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         audit=audit,
         approvals=Approvals(db, events, rules, audit, alerts, expire_after=settings.approval_expire),
         grants=Grants(runtime, audit),
+        questions=Questions(),
+        quizzes=Quizzes(db),
         providers=providers,
         catalog=catalog,
         router=Router(providers, catalog, runtime),
@@ -401,6 +406,7 @@ def create_app(s: Services) -> FastAPI:
         auth_api.router,
         chat_api.router,
         conversations_api.router,
+        forms_api.router,
         memory_api.router,
         time_api.router,
         events_api.router,

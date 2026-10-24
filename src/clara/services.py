@@ -14,6 +14,8 @@ from .ops.discord_report import DiscordReport
 if TYPE_CHECKING:
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
+    from .connectors.asks import Questions
+    from .connectors.quizzes import Quizzes
     from .db import Database
     from .events import Events
     from .gate import Approvals, Audit, Gate, Grants, Rules
@@ -60,6 +62,8 @@ class Services:
     audit: Audit
     approvals: Approvals
     grants: Grants
+    questions: Questions
+    quizzes: Quizzes
     providers: Providers
     catalog: Catalog
     router: Router

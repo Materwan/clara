@@ -145,6 +145,51 @@ def test_the_notes_changed_on_a_day_come_from_git(s, vault_dir):
 
 
 # ----------------------------------------------------------------------
+# The notes a conversation wrote (the side panel)
+# ----------------------------------------------------------------------
+async def test_the_notes_a_conversation_wrote_are_found_from_the_line_on_its_commits(s, vault_dir):
+    mine, other = "c" + "1" * 16, "c" + "2" * 16
+    await s.vault.write("Ideas/Kayak.md", "# Kayak\n", "create", conversation=mine)
+    await s.vault.write("Ideas/Draft.md", "# Draft\n", "create", conversation=mine)
+    await s.vault.write("Ideas/Elsewhere.md", "# Elsewhere\n", "create", conversation=other)
+    await s.vault.edit("Clara", "The assistant.", "The assistant, rebuilt.", conversation=mine)  # a note that was there
+    await s.vault.edit("Kayak", "", "", append="- paddles", conversation=mine)  # one she made, then changed
+    await s.vault.daily("append", "appelé le garage", conversation=mine)
+    await s.vault.move("Draft", "3-projects/Clara/Plan.md", conversation=mine)
+    await s.vault.write("Ideas/Gone.md", "# Gone\n", "create", conversation=mine)
+    await s.vault.write("Gone", "", "delete", conversation=mine)
+    await s.vault.write("Politique", "# Politique\nChanged.\n", "replace")  # no conversation: nobody's
+    assert s.vault.git.git("log", "-1", "--format=%B", "--", "Ideas/Elsewhere.md").strip() == (
+        f"Clara: create Ideas/Elsewhere.md\n\nConversation: {other}")
+    assert s.vault.git.git("log", "-1", "--format=%B", "--", "5-knowledge/Politique.md").strip() == "Clara: rewrite 5-knowledge/Politique.md"
+
+    notes = {note["path"]: note for note in await s.vault.conversation_notes(mine)}
+    today = s.vault.daily_path(datetime.now(ZoneInfo(PARIS)))
+    assert set(notes) == {"Ideas/Kayak.md", "3-projects/Clara/Plan.md", "3-projects/Clara/Clara.md", today}
+    assert notes["Ideas/Kayak.md"]["action"] == "created"  # changed afterwards, still a note she made
+    assert notes["3-projects/Clara/Plan.md"]["action"] == "created"  # moved, still a note she made, at its new path
+    assert notes["3-projects/Clara/Clara.md"]["action"] == "edited"
+    assert notes[today]["action"] == "created"  # the template made it
+    note = notes["Ideas/Kayak.md"]
+    assert note["size"] == len("# Kayak\n- paddles") and note["created"] <= note["updated"]
+    assert [item["path"] for item in await s.vault.conversation_notes(other)] == ["Ideas/Elsewhere.md"]
+    assert await s.vault.conversation_notes("c" + "3" * 16) == [] and await s.vault.conversation_notes("not an id") == []
+    assert len(await s.vault.conversation_notes(mine, limit=1)) == 1
+
+
+async def test_the_panel_lists_the_vault_notes_clara_wrote_in_that_conversation(client, s, llm):
+    cid = chat(s, "Notes", packs=["web", "second_brain"])
+    llm.replies = [calls(("vault_write", {"note": "Ideas/Kayak.md", "content": "# Kayak\n"}),
+                         ("vault_edit", {"note": "Clara", "old_text": "The assistant.", "new_text": "The agent."})),
+                   "Written."]
+    await s.agent.answer(ChatRequest(message="note it", client="web", conversation=cid))
+    notes = (await client.get(f"/v1/conversations/{cid}/panel")).json()["notes"]
+    assert {item["path"]: item["action"] for item in notes} == {"Ideas/Kayak.md": "created", "3-projects/Clara/Clara.md": "edited"}
+    assert all(item["created"] and item["size"] > 0 for item in notes)
+    assert (await client.get(f"/v1/conversations/{chat(s, 'Other')}/panel")).json()["notes"] == []
+
+
+# ----------------------------------------------------------------------
 # The conversations of a day
 # ----------------------------------------------------------------------
 def test_a_local_day_is_cut_in_its_own_zone():
@@ -470,3 +515,57 @@ async def test_the_api_lists_the_packs_and_saves_them_with_the_conversation(clie
     assert (await client.patch(f"/v1/conversations/{made['id']}", json={"packs": ["ask_person"]})).status_code == 422
     assert (await client.post("/v1/conversations", json={"packs": ["bogus"]})).status_code == 422
     assert (await client.get(f"/v1/conversations/{made['id']}")).json()["packs"]
+
+
+# ----------------------------------------------------------------------
+# The QCM pack, and the tools a project starts its conversations with
+# ----------------------------------------------------------------------
+async def test_the_qcm_is_a_pack_off_until_it_is_switched_on(client, s, llm):
+    async def offered(conversation: str, **request) -> set[str]:
+        llm.seen.clear()
+        llm.replies = ["ok"]
+        await s.agent.answer(ChatRequest(message="hello", conversation=conversation, client="web", **request))
+        return {tool["function"]["name"] for tool in llm.seen[0]["tools"]}
+
+    assert "qcm" not in await offered(chat(s, "plain"))
+    assert "qcm" in await offered(chat(s, "quiz", packs=["web", "qcm"]))
+    listing = {pack["id"]: pack for pack in (await client.get("/v1/packs", params={"where": "chat"})).json()["packs"]}
+    assert listing["qcm"]["tools"] == ["qcm"] and not listing["qcm"]["default"] and listing["qcm"]["available"]
+    assert "qcm" not in {pack["id"] for pack in s.packs.listing("schedule")}  # a run has nobody to answer it
+
+
+async def test_a_project_starts_its_conversations_with_its_tools(client, s, llm):
+    made = (await client.post("/v1/projects", json={"name": "Maths"})).json()
+    assert made["packs"] == ["web"]  # nothing chosen: as a conversation outside any project
+    project = (await client.post("/v1/projects", json={"name": "Lessons", "packs": ["qcm", "web", "second_brain"]})).json()
+    assert project["packs"] == ["web", "second_brain", "qcm"]  # the registry's order, as a conversation has them
+    assert (await client.get(f"/v1/projects/{project['id']}")).json()["packs"] == project["packs"]
+    assert next(item for item in (await client.get("/v1/projects")).json()["projects"] if item["id"] == project["id"])["packs"] == project["packs"]
+
+    # a new conversation of the project, from any client, starts with them; one given its own tools keeps those
+    started = (await client.post("/v1/conversations", json={"project": project["id"]})).json()
+    assert sorted(started["packs"]) == sorted(project["packs"]) and s.conversations.get(started["id"]).vault_open
+    assert (await client.post("/v1/conversations", json={"project": project["id"], "packs": ["day_activity"]})).json()["packs"] == ["day_activity"]
+    assert (await client.post("/v1/conversations", json={})).json()["packs"] == ["web"]
+    assert (await client.post("/v1/conversations", json={"project": made["id"]})).json()["packs"] == ["web"]
+
+    # the same when the chat itself starts the conversation, and then Clara has the QCM
+    llm.seen.clear()
+    llm.replies = ["ok"]
+    events = [event async for event in s.agent.turn(ChatRequest(message="teach me", client="web", project=project["id"]))]
+    assert "qcm" in {tool["function"]["name"] for tool in llm.seen[0]["tools"]}
+    assert "qcm" in s.conversations.get(events[-1]["conversation"]).packs
+
+    # changing the project's tools changes the next conversations only
+    changed = (await client.patch(f"/v1/projects/{project['id']}", json={"packs": []})).json()
+    assert changed["packs"] == [] and changed["name"] == "Lessons"
+    assert "qcm" in s.conversations.get(started["id"]).packs
+    assert (await client.post("/v1/conversations", json={"project": project["id"]})).json()["packs"] == []
+
+
+async def test_a_project_refuses_tools_that_do_not_exist_or_are_not_for_a_chat(client):
+    assert (await client.post("/v1/projects", json={"name": "A", "packs": ["bogus"]})).status_code == 422
+    assert (await client.post("/v1/projects", json={"name": "A", "packs": ["ask_person"]})).status_code == 422  # schedules only
+    project = (await client.post("/v1/projects", json={"name": "B"})).json()
+    assert (await client.patch(f"/v1/projects/{project['id']}", json={"packs": ["discord_thread"]})).status_code == 422
+    assert (await client.get(f"/v1/projects/{project['id']}")).json()["packs"] == ["web"]

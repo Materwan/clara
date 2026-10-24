@@ -1,9 +1,9 @@
 """Projects: files given once (uploads, folders, zips, GitHub snapshots) that the project's conversations use.
 
 GET    /v1/projects                         the projects
-POST   /v1/projects                         {name, description?, instructions?}
+POST   /v1/projects                         {name, description?, instructions?, packs?}
 GET    /v1/projects/{id}                    one project, its repositories and its files (paths and sizes)
-PATCH  /v1/projects/{id}                    {name?, description?, instructions?, pinned?, in_history?}
+PATCH  /v1/projects/{id}                    {name?, description?, instructions?, packs?, pinned?, in_history?}
 DELETE /v1/projects/{id}                    its files go; its conversations stay, in no project
 POST   /v1/projects/{id}/files              {files: [{path, data (base64)}]}: text, code, PDF, .docx, .zip
 GET    /v1/projects/{id}/file?path=         a file's text
@@ -62,6 +62,7 @@ def describe(project: Project, projects: Projects, window: int) -> dict:
         "updated_at": project.updated_at,
         "pinned": project.pinned,
         "in_history": project.in_history,
+        "packs": list(project.packs),
         "files": project.files,
         "size": project.size,
         "conversations": project.conversations,
@@ -131,12 +132,23 @@ class NewProject(BaseModel):
     name: str = Field(min_length=1, max_length=MAX_NAME)
     description: str = Field(default="", max_length=MAX_DESCRIPTION)
     instructions: str = Field(default="", max_length=MAX_INSTRUCTIONS)
+    packs: list[str] | None = Field(
+        default=None, max_length=20, description="The special tools its new conversations start with (default: web)"
+    )
+
+
+def _packs(request: Request, packs: list[str]) -> list[str]:
+    try:
+        return services(request).packs.check(packs, "chat")
+    except ValueError as error:
+        raise ApiError(422, str(error)) from None
 
 
 @router.post("", status_code=201)
 def create(body: NewProject, request: Request) -> dict:
+    packs = _packs(request, body.packs) if body.packs is not None else None
     try:
-        project = services(request).projects.create(body.name, body.description, body.instructions)
+        project = services(request).projects.create(body.name, body.description, body.instructions, packs)
     except ProjectError as error:
         raise ApiError(422, str(error)) from None
     return _details(request, project.id)
@@ -151,6 +163,7 @@ class ProjectChange(BaseModel):
     name: str | None = Field(default=None, max_length=MAX_NAME)
     description: str | None = Field(default=None, max_length=MAX_DESCRIPTION)
     instructions: str | None = Field(default=None, max_length=MAX_INSTRUCTIONS)
+    packs: list[str] | None = Field(default=None, max_length=20, description="The special tools, all of them")
     pinned: bool | None = None
     in_history: bool | None = None
 
@@ -159,9 +172,10 @@ class ProjectChange(BaseModel):
 def change(project_id: int, body: ProjectChange, request: Request) -> dict:
     _project(request, project_id)
     projects = services(request).projects
+    packs = _packs(request, body.packs) if body.packs is not None else None
     try:
-        if body.name is not None or body.description is not None or body.instructions is not None:
-            projects.update(project_id, body.name, body.description, body.instructions)
+        if any(item is not None for item in (body.name, body.description, body.instructions, packs)):
+            projects.update(project_id, body.name, body.description, body.instructions, packs)
         if body.pinned is not None:
             projects.pin(project_id, body.pinned)
         if body.in_history is not None:

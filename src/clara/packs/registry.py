@@ -101,6 +101,14 @@ PACKS: tuple[Pack, ...] = (
         check=_mail_needed,
     ),
     Pack(
+        "qcm",
+        "QCM",
+        "Make a quiz that opens in the side panel, one question at a time, and correct each answer. Web chat only.",
+        frozenset({"qcm"}),
+        where="chat",
+        icon="quiz",
+    ),
+    Pack(
         "day_conversations",
         "Day conversations",
         "Read what was said on a day, with the context of conversations begun earlier, or one conversation in full.",

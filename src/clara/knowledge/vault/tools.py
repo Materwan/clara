@@ -34,6 +34,11 @@ def _vault(context: ToolContext):
     return context.services.vault
 
 
+def _in(context: ToolContext) -> str:
+    """The conversation a change is made in: it goes on the commit, for the side panel."""
+    return context.turn.conversation_id or ""
+
+
 def _target(arguments: dict, key: str = "note") -> str:
     return "vault:" + str(arguments.get(key) or "").strip()
 
@@ -89,7 +94,7 @@ def _describe_write(context: ToolContext, arguments: dict) -> Action:
 
 async def _write(context: ToolContext, note: str, mode: str = "create", content: str = "") -> str:
     try:
-        return await _vault(context).write(str(note), str(content), str(mode))
+        return await _vault(context).write(str(note), str(content), str(mode), conversation=_in(context))
     except VaultError as error:
         raise ToolError(str(error)) from None
 
@@ -113,6 +118,7 @@ async def _edit(
             append=str(append or ""),
             heading=str(heading or ""),
             replace_all=flag(replace_all),
+            conversation=_in(context),
         )
     except VaultError as error:
         raise ToolError(str(error)) from None
@@ -133,7 +139,7 @@ def _describe_daily(context: ToolContext, arguments: dict) -> Action:
 
 async def _daily(context: ToolContext, action: str = "read", text: str = "") -> str:
     try:
-        return await _vault(context).daily(str(action or "read"), str(text or ""))
+        return await _vault(context).daily(str(action or "read"), str(text or ""), conversation=_in(context))
     except VaultError as error:
         raise ToolError(str(error)) from None
 
@@ -154,7 +160,9 @@ async def _daily_block(
 ) -> str:
     day = resolve_day(context, date)
     try:
-        path, dropped = await _vault(context).write_block(day, str(content), str(block or "recap"), str(heading or ""))
+        path, dropped = await _vault(context).write_block(
+            day, str(content), str(block or "recap"), str(heading or ""), conversation=_in(context)
+        )
     except VaultError as error:
         raise ToolError(str(error)) from None
     text = f"Block « {block or 'recap'} » of {day} written in {path} (it replaces the one written before)."
@@ -169,7 +177,7 @@ async def _daily_block(
 
 async def _move(context: ToolContext, note: str, destination: str) -> str:
     try:
-        return await _vault(context).move(str(note), str(destination))
+        return await _vault(context).move(str(note), str(destination), conversation=_in(context))
     except VaultError as error:
         raise ToolError(str(error)) from None
 

@@ -14,6 +14,8 @@ const NOTES: Record<string, [string, string, string?]> = {
   list_tasks: ['tasks', 'Read your tasks'],
   update_task: ['tasks', 'Updated a task', 'title'],
   delete_task: ['tasks', 'Deleted a task'],
+  qcm: ['quiz', 'Made a quiz', 'title'],
+  ask_questions: ['chat', 'Asked you a question'],
   read_conversation_file: ['clip', 'Read the file', 'name'],
   list_project_files: ['folder', "Listed the project's files"],
   read_project_file: ['folder', 'Read', 'path'],

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..connectors import asks
 from ..connectors.forms import CLIENTS as FORM_CLIENTS
 from ..knowledge.attachments import Attached, Image, without_documents
 from ..knowledge.projects import READ_CHARS_LIMIT
@@ -47,7 +48,7 @@ from ..llm import Choice, NoModel, ToolCall
 from ..memory.conversations import Conversation, StoredMessage, TurnRow
 from ..timeutil import zone
 from ..tools.base import CallResult, ToolContext, TurnState
-from ..tools.knowledge_tools import CONVERSATION_FILE_TOOLS, PROJECT_TOOLS, QCM
+from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PROJECT_TOOLS, QCM
 from .compaction import build_transcript, chunk_messages, summary_request, transcript_budget
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
 from .model import Budget, ModelRunner, RoundResult
@@ -381,6 +382,12 @@ class Agent:
             waits_for_approvals=(
                 request.mode == "interactive" and request.wait_for_approvals and self.settings.approval_wait > 0
             ),
+            can_ask=(
+                request.mode == "interactive"
+                and request.wait_for_approvals
+                and self.settings.approval_wait > 0
+                and request.client in FORM_CLIENTS
+            ),
             timezone=request.timezone or self.settings.timezone,
             project_id=conversation.project_id if conversation else None,
             incognito=bool(conversation and conversation.incognito),
@@ -403,6 +410,8 @@ class Agent:
             hidden |= {name for name in names if name.startswith(OUTSIDE_TOOL_PREFIXES)}
         if request.client not in FORM_CLIENTS:
             hidden.add(QCM)
+        if not state.can_ask:
+            hidden.add(ASK)
         if conversation is None or not self.s.conversation_files.of(conversation.id):
             hidden |= CONVERSATION_FILE_TOOLS
         if state.project_id is None or self.s.projects.inline(state.project_id, choice.window):
@@ -781,6 +790,7 @@ class Agent:
                 raise
             finally:
                 self.s.approvals.release(state.turn_id)  # requests this turn held and did not take the answer of
+                self.s.questions.release(state.turn_id)  # questions it was still waiting for you to answer
                 if not finished and stored:
                     if self._keep_interrupted(
                         request, conversation.id, state, rows, current.text if round_open else "", reason
@@ -934,6 +944,10 @@ class Agent:
             )
             asked: list[tuple[str, ToolCall, CallResult, ToolContext]] = []
             for (call_id, call), outcome, context in zip(batch, outcomes, contexts):
+                if context.asks:  # ask_questions: the questions replace the box you write in, and the turn waits
+                    async for event in self._ask(call_id, call, outcome, context, results):
+                        yield event
+                    continue
                 if outcome.approval is not None and state.waits_for_approvals:
                     asked.append((call_id, call, outcome, context))
                     continue
@@ -980,6 +994,25 @@ class Agent:
             results.update(await self._wait_for_client(state.turn_id))
         finally:
             self._pending.pop(state.turn_id, None)
+
+    async def _ask(
+        self, call_id: str, call: ToolCall, outcome: CallResult, context: ToolContext, results: dict[str, str]
+    ) -> AsyncIterator[dict]:
+        """Show the questions of an `ask_questions` call, wait for the answers (as long as an approval is waited for),
+        and make them the result of the call."""
+        pending = context.asks[0]
+        yield {"type": "questions", "ask": pending.describe()}
+        reply = await self.s.questions.wait(pending, self.settings.approval_wait)
+        declined = reply is not None and bool(reply.get("declined"))
+        if reply is None:
+            text = asks.TIMED_OUT
+        elif declined:
+            text = asks.DECLINED
+        else:
+            text = asks.format_replies(pending.ask, reply["answers"])
+        results[call_id] = text
+        yield {"type": "questions_done", "id": pending.id, "declined": declined, "timed_out": reply is None}
+        yield self._tool_event(call, text, outcome)
 
     @staticmethod
     def _tool_event(call: ToolCall, text: str, outcome: CallResult) -> dict:

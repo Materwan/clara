@@ -1,10 +1,11 @@
-"""Knowledge tools: files sent in the conversation, the project's files, and forms."""
+"""Knowledge tools: files sent in the conversation, the project's files, and what Clara asks you (a QCM, questions)."""
 
 from __future__ import annotations
 
 import base64
 from typing import Any
 
+from ..connectors import asks
 from ..connectors.forms import MAX_OPTION, MAX_OPTIONS, MAX_QUESTION, MAX_QUESTIONS, MIN_OPTIONS, TYPES, build_form
 from ..knowledge.attachments import Image, picture_frames
 from ..knowledge.ingest import IngestError
@@ -13,6 +14,7 @@ from ..knowledge.projects import read_lines
 from .base import Tool, ToolContext, ToolError, fixed, flag, optional_number
 
 QCM = "qcm"
+ASK = "ask_questions"
 
 
 def _read_conversation_file(context: ToolContext, file: Any = None, name: str = "", start_line: Any = 1) -> str:
@@ -77,12 +79,26 @@ def _qcm(context: ToolContext, questions: Any, title: str = "") -> str:
     form = build_form({"title": title, "questions": questions})
     context.turn.counts[QCM] = 1
     context.events.append({"type": "qcm", "form": form})
-    graded = " The client scores it and shows the corrections." if form["graded"] else ""
+    graded = " The site scores each answer against your key." if form["graded"] else ""
     return (
-        f"The QCM ({len(form['questions'])} questions) is now shown to the person, who answers it themselves.{graded} "
-        "Do not answer or repeat its questions: say at most one short sentence and stop. Their answers come in their "
-        "next message."
+        f"The QCM ({len(form['questions'])} questions) is now in the person's side panel, where they answer it one "
+        f"question at a time.{graded} Do not answer or repeat the questions: say at most one short sentence and stop. "
+        "Each answer comes as a message starting with [QCM answer …]: correct that question only (right or wrong, and why, "
+        "in two or three sentences) and wait for the next. A question they skip sends nothing. The message of the last "
+        "question settled ends with the final score: sum up in a sentence or two."
     )
+
+
+def _ask_questions(context: ToolContext, questions: Any) -> str:
+    if context.turn.counts.get(ASK, 0) >= asks.MAX_ASKS_PER_TURN:
+        raise ToolError(
+            f"At most {asks.MAX_ASKS_PER_TURN} calls of ask_questions per answer: go on with what you know."
+        )
+    ask = asks.build_ask({"questions": questions})
+    context.turn.counts[ASK] = context.turn.counts.get(ASK, 0) + 1
+    # the turn shows the questions and waits for the answers (Agent._run_tools): this text is replaced by them
+    context.asks.append(context.services.questions.create(context.turn.conversation_id, context.turn.turn_id, ask))
+    return "The questions are shown to the person."
 
 
 def knowledge_tools() -> list[Tool]:
@@ -141,12 +157,15 @@ def knowledge_tools() -> list[Tool]:
         Tool(
             name=QCM,
             description=(
-                "Show a QCM the person answers in a form: to quiz them or collect several answers at once, not for one "
-                f"question. LaTeX allowed ($x^2$, $$...$$). At most {MAX_QUESTIONS} questions, one QCM per answer; "
-                "the turn ends there and their answers come in their next message."
+                "Create a QCM (a quiz) that opens in the person's side panel, one question at a time: to test or "
+                "teach them, not to ask what you need to work (use ask_questions). LaTeX allowed ($x^2$, $$...$$). "
+                f"At most {MAX_QUESTIONS} questions, one QCM per answer. Give `correct` so the site marks each "
+                "answer; add a short `hint` and an `explanation` to each question. The turn ends there; each answered "
+                "question then comes as its own message, starting [QCM answer …], for you to correct (right or wrong "
+                "and why, briefly); the last one settled ends with the final score, which you sum up."
             ),
             function=_qcm,
-            describe=fixed("memory", "write", "forms", lambda a: f"Show a form: {a.get('title') or 'QCM'}"),
+            describe=fixed("memory", "write", "forms", lambda a: f"Create a QCM: {a.get('title') or 'QCM'}"),
             parameters={
                 "title": {"type": "string"},
                 "questions": {
@@ -172,9 +191,56 @@ def knowledge_tools() -> list[Tool]:
                                 "description": "Optional: the right options, from 0; gives a score.",
                             },
                             "explanation": {"type": "string", "description": "Optional: why, shown after."},
+                            "hint": {
+                                "type": "string",
+                                "description": "Optional: a clue that does not give the answer.",
+                            },
                             "answer": {"type": "string", "description": "text only, optional: the expected answer."},
                         },
                         "required": ["text"],
+                    },
+                },
+            },
+            required=("questions",),
+        ),
+        Tool(
+            name=ASK,
+            description=(
+                "Ask the person up to "
+                f"{asks.MAX_QUESTIONS} questions with choices, shown in place of the box they write in; your turn waits and "
+                "their answers are the result of this call. Use it when you need a decision or a missing detail to "
+                "go on (a preference, a choice between approaches), not for what you can find out or decide yourself, "
+                'and not to quiz them (that is the qcm tool, when you have it). They can always write their own answer, so never add an "Other" '
+                'option. If you recommend one, put it first and end its label with "(Recommended)".'
+            ),
+            function=_ask_questions,
+            describe=fixed("memory", "write", "forms", "Ask the person questions"),
+            parameters={
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "The whole question, ending with ?"},
+                            "header": {
+                                "type": "string",
+                                "description": f"A very short label (at most {asks.MAX_HEADER} characters).",
+                            },
+                            "multi_select": {"type": "boolean", "description": "true: several options may be chosen."},
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string", "description": "1-5 words."},
+                                        "description": {"type": "string", "description": "What choosing it means."},
+                                    },
+                                    "required": ["label"],
+                                },
+                                "description": f"{asks.MIN_OPTIONS}-{asks.MAX_OPTIONS} different options.",
+                            },
+                        },
+                        "required": ["question", "options"],
                     },
                 },
             },

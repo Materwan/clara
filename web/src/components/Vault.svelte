@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Hint from './Hint.svelte';
   import Icon from './Icon.svelte';
   import { api, ApiError } from '../lib/api';
   import { markdown } from '../lib/markdown';
-  import { toast } from '../lib/state.svelte';
+  import { route, toast } from '../lib/state.svelte';
 
   let info = $state<any>(null);
   let missing = $state(false); // the server has no vault
@@ -32,8 +33,21 @@
   }
 
   async function open(path: string): Promise<void> {
-    note = await api.get('/v1/vault/note', { path });
+    try {
+      note = await api.get('/v1/vault/note', { path });
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
   }
+
+  // A link to #/library?view=vault&note=Ideas/Kayak.md (a card of the chat's side panel) opens that note, once the vault is known
+  let linked = '';
+  $effect(() => {
+    const wanted = route.query.get('note') ?? '';
+    if (!wanted || !info || wanted === linked) return;
+    linked = wanted;
+    untrack(() => open(wanted));
+  });
 
   async function act(what: 'sync' | 'reindex'): Promise<void> {
     const done = await api.post(`/v1/vault/${what}`);

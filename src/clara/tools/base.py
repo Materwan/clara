@@ -45,6 +45,7 @@ class TurnState:
     client: str
     mode: str = "interactive"  # or unattended
     waits_for_approvals: bool = False  # the turn holds the requests it asks for until they are answered
+    can_ask: bool = False  # the turn can stop to ask the person questions (ask_questions) and wait for the answers
     timezone: str = "UTC"
     project_id: int | None = None
     incognito: bool = False
@@ -67,6 +68,7 @@ class ToolContext:
     services: Services
     turn: TurnState
     events: list[dict] = field(default_factory=list)  # for the client, sent after the call's result (a form, a card)
+    asks: list = field(default_factory=list)  # questions the call put to the person: the turn waits for their answers
 
 
 Describe = Callable[[ToolContext, dict], Action]
