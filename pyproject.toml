@@ -1,52 +1,79 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
 
 [project]
-name = "clara-server"
-version = "0.3.0"
-description = "Clara: one AI with one memory, served over HTTP to any number of clients"
-requires-python = ">=3.11"
+name = "clara"
+version = "1.0.0"
+description = "Clara: a personal AI agent for one person, on one Linux machine, reachable only over Tailscale"
+readme = "README.md"
+license = { text = "All rights reserved" }
+requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
-    "ollama>=0.4",
-    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "httpx>=0.28",
     "python-dotenv>=1.0",
-    "prompt_toolkit>=3.0",
-    "pypdf>=4.0",  # the text of PDF documents attached on the web site
-    "cryptography>=3.1",  # pypdf needs it for the PDFs encrypted with AES (most of the "protected" ones)
-    "tzdata; sys_platform == 'win32'",  # Windows has no timezone database of its own
+    "cryptography>=43",      # AES-GCM secrets store, scrypt, Ed25519 release signatures, encrypted PDFs
+    "pypdf>=5.0",            # text of PDF attachments and project files
+    "pillow>=11.0",          # frames of animated pictures sent to models
+    "prompt_toolkit>=3.0",   # clara-chat and clara-admin
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
-discord = ["discord.py>=2.4"]  # the Discord bot (built in, or on its own: clara-discord)
+discord = ["discord.py>=2.4"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pip-audit>=2.10.1",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.8",
+    "vulture>=2.16",
+]
 
 [project.scripts]
-clara-server = "clara.server:main"
-clara-chat = "clara.client:main"
-clara-admin = "clara.admin:main"
-clara-discord = "clara.discord_bot.standalone:run"
+clara = "clara.cli.ops:main"
+clara-server = "clara.app:main"
+clara-chat = "clara.cli.chat:main"
+clara-admin = "clara.cli.admin:main"
+clara-launcher = "clara.ops.launcher:main"
+clara-discord = "clara_discord.bot:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-clara = ["web/*", "web/fonts/*", "web/katex/*", "web/katex/fonts/*"]  # the web site, its fonts, and KaTeX (formulas)
+[tool.hatch.build.targets.wheel]
+packages = ["src/clara", "src/clara_discord"]
+# The built web site is ignored by git (scripts/build-web.sh makes it) but ships in the wheel.
+artifacts = ["src/clara/web/dist/**"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B"]  # pycodestyle, pyflakes, import order, bugbear
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "G", "RUF100"]
 ignore = [
-    "E501",  # long lines are left to the author's judgement
-    "B905",  # zip() without strict=
+    "E501",   # long lines are left to judgement
+    "B905",   # zip() without strict=
+    "S101",   # assert is fine in tests and invariants
+    "S311",   # random is not used for secrets (secrets is)
+    "S603",   # subprocess calls are made with lists, never a shell
+    "S607",   # tools are found on PATH on purpose (git, podman, tailscale, restic)
+    "ASYNC109", # `timeout` arguments here are what a script or a wait may last, not a cancellation scope
+    "S608",   # SQL is composed only from the code's own column names and fixed fragments; values are always parameters
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S104", "S105", "S106", "S108", "ASYNC240"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+]

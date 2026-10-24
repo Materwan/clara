@@ -1,24 +1,42 @@
-# Install:
-#   sudo cp deploy/clara.service /etc/systemd/system/clara.service
-#   (edit User and the paths below)
-#   sudo systemctl daemon-reload && sudo systemctl enable --now clara
-# Logs: journalctl -u clara -f
-# With CLARA_TAILSCALE: sudo tailscale set --operator=clara   (lets the service user drive tailscale)
+# Clara's server, run by clara-launcher (which switches releases and rolls back). Installed by deploy/install.sh.
+#   sudo systemctl enable --now clara        journalctl -u clara -f
 [Unit]
-Description=Clara AI server
+Description=Clara, a personal AI agent
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+# the server is a child of the launcher: it sends READY=1 and WATCHDOG=1 itself
+NotifyAccess=all
 User=clara
-WorkingDirectory=/opt/clara
-# Holds CLARA_TOKENS, CLARA_LOCAL_MODEL / CLARA_CLOUD_MODEL, OLLAMA_API_KEY, CLARA_DATA_DIR...
-# (see .env.example)
-EnvironmentFile=/opt/clara/.env
-ExecStart=/opt/clara/.venv/bin/clara-server
+Group=clara
+Environment=CLARA_ENV_FILE=/etc/clara/clara.env
+Environment=CLARA_RELEASES_DIR=/opt/clara/releases
+StateDirectory=clara
+StateDirectoryMode=0700
+# the key that opens the secrets store: never in the data folder. Make it with
+#   sudo -u clara /opt/clara/current/.venv/bin/clara secrets new-key | sudo systemd-creds encrypt --name=clara-secret-key - /etc/clara/secret-key.cred
+LoadCredentialEncrypted=clara-secret-key:/etc/clara/secret-key.cred
+ExecStart=/opt/clara/current/.venv/bin/clara-launcher
 Restart=on-failure
-RestartSec=3
+RestartSec=5
+# above the drain limit (CLARA_DRAIN_SECONDS, 120 s): the server gets to finish what runs
+TimeoutStopSec=180
+KillMode=mixed
+WatchdogSec=180
+# Hardening that rootless Podman allows. NoNewPrivileges is not set: rootless Podman needs the setuid
+# newuidmap/newgidmap helpers. Scripts get no-new-privileges inside their own containers.
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=false
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/clara /var/lib/clara-home /opt/clara
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

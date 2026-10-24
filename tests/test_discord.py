@@ -1,411 +1,888 @@
-"""What the Discord bot needs from the server: accounts signed in (or registered) by the bot, group spaces with
-their members, messages kept as context or answered only when Clara has something to add, the relationship, and
-one event stream for the whole surface."""
+"""Gate 5: the Discord bot lives in your private server: it answers one user id in one channel, ignores DMs and every
+other server, has no member list, sends each kind of message to its own channel, and uses its own token."""
+
+from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+import fcntl
+from datetime import timedelta
+from types import SimpleNamespace
 
+import discord
 import pytest
-from conftest import FakeBackend, call, fake_providers, say, untimed
-from fastapi.testclient import TestClient
 
-from clara.agent import ChatRequest, passed
-from clara.commands import registry
-from clara.llm import LlmChunk, ToolCall
-from clara.memory import Person
-from clara.notifications import Notifier
-from clara.server import create_app
+from clara.timeutil import iso, utcnow
+from clara_discord import bot as bot_module
+from clara_discord.api import ClaraError
+from clara_discord.bot import ChannelError, ClaraBot, split_message
+from clara_discord.settings import CHANNEL_SETTINGS, Settings, SettingsError
 
-BOT = {"Authorization": "Bearer secret-discord"}
-ADMIN = {"Authorization": "Bearer secret-admin"}
-PASSWORD = "correct horse battery"
-GUILD = "discord:guild:1"
-CHANNEL = "discord:channel:10"
+GENERAL, NOTIFICATION, APPROVAL, ALERTS = 101, 102, 103, 104
+GUILD = 900
 
 
-@pytest.fixture
-def discord_settings(settings):
-    return replace(settings, login_surfaces=frozenset({"discord"}))
+def env_for(tmp_path, **more) -> dict[str, str]:
+    (tmp_path / "discord-token").write_text("discord-secret")
+    (tmp_path / "clara-token").write_text("clara_1_" + "x" * 43)
+    return {"CREDENTIALS_DIRECTORY": str(tmp_path), "CLARA_DISCORD_USER_ID": "42", "CLARA_TIMEZONE": "Europe/Paris",
+            "CLARA_DISCORD_STATE": str(tmp_path / "state.json"),
+            "CLARA_DISCORD_CHANNEL_GENERAL": str(GENERAL), "CLARA_DISCORD_CHANNEL_NOTIFICATION": str(NOTIFICATION),
+            "CLARA_DISCORD_CHANNEL_APPROVAL": str(APPROVAL), "CLARA_DISCORD_CHANNEL_ALERTS": str(ALERTS), **more}
 
 
 @pytest.fixture
-def make_client(discord_settings):
-    clients = []
-
-    def build(*rounds):
-        backend = FakeBackend(*rounds)
-        client = TestClient(create_app(discord_settings, fake_providers(discord_settings, backend)))
-        client.__enter__()
-        client.backend = backend
-        clients.append(client)
-        return client
-
-    yield build
-    for client in clients:
-        client.__exit__(None, None, None)
+def settings(tmp_path):
+    return Settings.load(env_for(tmp_path))
 
 
-def account(user_id="111", name="Erwan"):
-    return {"surface": "discord", "user_id": user_id, "user_name": name}
+class FakeChannel:
+    """A text channel that remembers what was sent to it."""
+
+    def __init__(self, channel_id: int):
+        self.id = channel_id
+        self.name = f"channel-{channel_id}"
+        self.sent: list[tuple[str, object]] = []
+
+    async def send(self, content=None, view=None, file=None):
+        message = SimpleNamespace(content=content, view=view, edits=[])
+
+        async def edit(**fields):
+            message.edits.append(fields)
+
+        message.edit = edit
+        self.sent.append((content, view))
+        return message
+
+    def typing(self):
+        class Typing:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return Typing()
 
 
-def register(client, user_id="111", username="erwan", name="Erwan", password=PASSWORD):
-    return client.post(
-        "/v1/accounts/register", json={**account(user_id, name), "username": username, "password": password}, headers=BOT
-    )
+@pytest.fixture
+async def bot(settings):
+    found = ClaraBot(settings)
+    found.channels = {name: FakeChannel(channel_id) for name, channel_id in settings.channels.items()}
+    found.guild_id = GUILD
+    yield found
+    await found.clara.close()
 
 
-def chat(client, user_id="111", message="hi", **extra):
-    return client.post("/v1/chat", json={"surface": "discord", "user_id": user_id, "message": message, **extra}, headers=BOT)
+def texts(channel: FakeChannel) -> list[str]:
+    return [content for content, _ in channel.sent]
 
 
-# --- signing in ------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Settings
+# ----------------------------------------------------------------------
+def test_settings_need_an_owner_four_channels_and_both_credentials(tmp_path):
+    with pytest.raises(SettingsError):
+        Settings.load({"CLARA_DISCORD_USER_ID": "42"})
+    with pytest.raises(SettingsError):
+        Settings.load({"CREDENTIALS_DIRECTORY": str(tmp_path), "CLARA_DISCORD_USER_ID": "not-a-number"})
+    with pytest.raises(SettingsError):  # a good owner and credentials, but no channels
+        Settings.load({k: v for k, v in env_for(tmp_path).items() if "CHANNEL" not in k})
 
 
-def test_an_account_must_register_before_talking(make_client):
-    client = make_client(say("Hello"))
-    refused = chat(client)
-    assert refused.status_code == 403 and "not signed in" in refused.json()["detail"]
-    assert client.get("/v1/accounts/me", params={"surface": "discord", "user_id": "111"}, headers=BOT).json() == {
-        "signed_in": False
+def test_every_missing_channel_is_named_at_once(tmp_path):
+    env = env_for(tmp_path, CLARA_DISCORD_CHANNEL_APPROVAL="general", CLARA_DISCORD_CHANNEL_ALERTS="")
+    with pytest.raises(SettingsError) as error:
+        Settings.load(env)
+    assert "CLARA_DISCORD_CHANNEL_APPROVAL" in str(error.value) and "CLARA_DISCORD_CHANNEL_ALERTS" in str(error.value)
+    assert "CLARA_DISCORD_CHANNEL_GENERAL" not in str(error.value)
+
+
+def test_the_channels_are_read_by_kind(settings):
+    assert settings.channels == {"general": GENERAL, "notification": NOTIFICATION, "approval": APPROVAL, "alerts": ALERTS}
+    assert set(CHANNEL_SETTINGS) == set(settings.channels)
+
+
+# ----------------------------------------------------------------------
+# Intents and who is answered
+# ----------------------------------------------------------------------
+async def test_guild_intents_only_and_no_direct_messages(bot):
+    intents = bot.intents
+    assert intents.guilds and intents.guild_messages and intents.message_content
+    assert not intents.dm_messages and not intents.dm_reactions and not intents.dm_typing
+    assert not intents.members and not intents.presences
+
+
+async def test_only_you_in_general_are_answered(bot, monkeypatch):
+    asked = []
+
+    async def ask(channel, body, remember=True, mirrored=False):
+        asked.append((channel, body))
+
+    monkeypatch.setattr(bot, "ask", ask)
+
+    def message(author_id, channel_id, content="hi", is_bot=False):
+        return SimpleNamespace(author=SimpleNamespace(id=author_id, bot=is_bot), channel=FakeChannel(channel_id),
+                               attachments=[], content=content)
+
+    await bot.on_message(message(7, GENERAL))  # a stranger in #general
+    await bot.on_message(message(42, GENERAL, is_bot=True))
+    for elsewhere in (NOTIFICATION, APPROVAL, ALERTS, 555):  # you, but not in #general (or in another server)
+        await bot.on_message(message(42, elsewhere))
+    direct = SimpleNamespace(author=SimpleNamespace(id=42, bot=False), channel=discord.DMChannel.__new__(discord.DMChannel),
+                             attachments=[], content="hi")  # a DM has no id to match
+    direct.channel.id = 12345
+    await bot.on_message(direct)
+    assert asked == []
+    told = message(42, GENERAL)  # #general is not a chat: it points to the forum
+    await bot.on_message(told)
+    assert asked == [] and "Conversations forum" in texts(told.channel)[-1]
+
+
+def test_long_answers_are_split_for_discord():
+    parts = split_message("word " * 1000)
+    assert all(len(part) <= 2000 for part in parts) and len(parts) == 3
+
+
+# ----------------------------------------------------------------------
+# Finding the channels
+# ----------------------------------------------------------------------
+class Text(discord.TextChannel):
+    def __init__(self, channel_id: int, guild_id: int = GUILD):  # no Discord connection in a test
+        self.id = channel_id
+        self.guild = SimpleNamespace(id=guild_id)
+
+
+def reply_with(bot, found: dict):
+    async def fetch_channel(channel_id):
+        result = found[channel_id]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    bot.fetch_channel = fetch_channel
+
+
+def refusal(status: int, reason: str) -> discord.HTTPException:
+    return discord.NotFound(SimpleNamespace(status=status, reason=reason), reason)
+
+
+async def test_the_four_channels_are_found_in_one_server(settings):
+    bot = ClaraBot(settings)
+    reply_with(bot, {i: Text(i) for i in (GENERAL, NOTIFICATION, APPROVAL, ALERTS)})
+    await bot.resolve_channels()
+    assert set(bot.channels) == {"general", "notification", "approval", "alerts"} and bot.guild_id == GUILD
+    await bot.clara.close()
+
+
+@pytest.mark.parametrize("problem, expected", [
+    ({APPROVAL: refusal(404, "Unknown Channel")}, "#approval"),
+    ({ALERTS: object()}, "#alerts"),  # not a text channel
+    ({NOTIFICATION: Text(NOTIFICATION, guild_id=GUILD + 1)}, "one server"),
+])
+async def test_a_wrong_channel_is_refused_with_no_dm_fallback(settings, problem, expected):
+    bot = ClaraBot(settings)
+    found = {i: Text(i) for i in (GENERAL, NOTIFICATION, APPROVAL, ALERTS)} | problem
+    reply_with(bot, found)
+    with pytest.raises(ChannelError, match=expected):
+        await bot.resolve_channels()
+    await bot.clara.close()
+
+
+# ----------------------------------------------------------------------
+# Approvals: #approval, with a pointer in #general
+# ----------------------------------------------------------------------
+async def test_approvals_come_with_buttons_in_the_approval_channel(bot):
+    approval = bot.channels["approval"]
+    assert await bot.show_approval({"id": 1, "level": "write", "summary": "Comment on issue #3", "reason": "default"})
+    assert await bot.show_approval({"id": 2, "level": "destructive", "summary": "Delete notes/old.md", "reason": "default"})
+    assert not await bot.show_approval({"id": 1, "level": "write", "summary": "again", "reason": ""})  # shown once
+    (first, buttons), (second, none) = approval.sent
+    assert "#1" in first and [item.custom_id for item in buttons.children] == [
+        "clara:approval:1:allow_once", "clara:approval:1:allow_always", "clara:approval:1:refuse_once",
+        "clara:approval:1:refuse_always"]
+    assert none is None and "web site or with clara-admin" in second
+    assert not any(bot.channels[name].sent for name in ("general", "notification", "alerts"))
+
+    await bot.deliver({"type": "approval_resolved", "payload": {"approval": {"id": 1, "summary": "Comment", "status": "done"}}})
+    assert bot.asked.get(1) is None
+
+
+async def test_a_request_during_a_chat_is_pointed_to_from_general(bot, monkeypatch):
+    approval = {"id": 5, "level": "write", "summary": "Create a file", "reason": ""}
+
+    async def stream(method, path, body=None, **options):
+        yield {"type": "turn", "conversation": "c1"}
+        yield {"type": "approval", "approval": approval}
+        yield {"type": "approval", "approval": approval}  # the same request again: shown once
+        yield {"type": "done", "reply": "Done.", "files": []}
+
+    monkeypatch.setattr(bot.clara, "stream", stream)
+    monkeypatch.setattr(bot, "set_conversation", lambda conversation: None)
+    await bot.ask(bot.channels["general"], {"message": "make it"})
+    assert texts(bot.channels["general"]) == [f"🔐 Waiting for your answer in <#{APPROVAL}>.", "Done."]
+    assert len(bot.channels["approval"].sent) == 1
+
+
+# ----------------------------------------------------------------------
+# Events: each kind to its own channel
+# ----------------------------------------------------------------------
+async def test_events_go_to_the_channel_of_their_kind(bot):
+    await bot.deliver({"type": "reminder", "title": "Reminder", "text": "Call the plumber"})
+    await bot.deliver({"type": "alert", "title": "The disk is nearly full", "text": "91% used."})
+    await bot.deliver({"type": "notification", "title": "Answer ready", "text": "Your summary is done."})
+    await bot.deliver({"type": "task", "title": "Task: taxes", "text": "Due tomorrow."})
+    await bot.deliver({"type": "schedule", "title": "Scheduled task: news", "text": "Three items."})
+    await bot.deliver({"type": "update", "title": "Updated to v1.2.0", "text": "The new release is running."})
+    await bot.deliver({"type": "server", "state": "running"})  # logged, not sent
+    assert texts(bot.channels["alerts"]) == ["⚠️ **The disk is nearly full**\n91% used."]
+    assert texts(bot.channels["notification"]) == [
+        "⏰ Call the plumber", "🔔 **Answer ready**\nYour summary is done.", "📋 **Task: taxes**\nDue tomorrow.",
+        "🗓 **Scheduled task: news**\nThree items.", "⬆️ **Updated to v1.2.0**\nThe new release is running."]
+    assert not bot.channels["general"].sent and not bot.channels["approval"].sent
+
+
+# ----------------------------------------------------------------------
+# Routes chosen on the web site, and test messages
+# ----------------------------------------------------------------------
+async def test_the_channel_the_server_names_wins_and_off_posts_nothing(bot):
+    await bot.deliver({"type": "reminder", "text": "Call", "channel": "general"})
+    await bot.deliver({"type": "notification", "title": "New email", "text": "x: y", "channel": "alerts"})
+    await bot.deliver({"type": "task", "title": "Task: taxes", "text": "Due.", "channel": "off"})
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "full", "channel": "notification"})
+    assert texts(bot.channels["general"]) == ["⏰ Call"]
+    assert texts(bot.channels["alerts"]) == ["🔔 **New email**\nx: y"]
+    assert texts(bot.channels["notification"]) == ["⚠️ **Disk**\nfull"]
+    assert not bot.channels["approval"].sent
+
+
+@pytest.mark.parametrize("told", ["approval", "elsewhere", "", None, 7, ["general"]])
+async def test_a_channel_the_bot_does_not_take_from_the_server_means_its_own_table(bot, told):
+    """#approval carries only what waits for your answer, whatever a server says."""
+    await bot.deliver({"type": "reminder", "text": "Call", "channel": told})
+    assert texts(bot.channels["notification"]) == ["⏰ Call"]
+    assert not bot.channels["approval"].sent and not bot.channels["general"].sent
+
+
+def watch_heartbeats(bot, monkeypatch) -> list:
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((method, path, options.get("json")))
+        return {}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    return calls
+
+
+def a_test(channel: str, event: int = 7, age: float = 0.0, **more) -> dict:
+    from datetime import UTC, datetime, timedelta
+
+    from clara.timeutil import iso
+
+    return {"id": event, "type": "notification", "source": "discord-test", "channel": channel,
+            "title": "Test from Clara's web site", "text": f"This is #{channel}.",
+            "created_at": iso(datetime.now(UTC) - timedelta(seconds=age)), **more}
+
+
+async def test_a_test_message_is_posted_in_the_channel_it_names_and_the_result_is_reported_at_once(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(a_test("approval"))
+    assert texts(bot.channels["approval"]) == ["🧪 **Test from Clara's web site**\nThis is #approval."]
+    assert not any(bot.channels[name].sent for name in ("general", "notification", "alerts"))
+    [(method, path, body)] = calls
+    assert (method, path) == ("POST", "/v1/clients/heartbeat")
+    assert body["state"] == "connected" and body["bot"] == "Clara#1234" and body["test"] == {"event": 7, "ok": True, "error": ""}
+
+
+async def test_a_test_message_the_bot_may_not_post_is_reported_with_discord_s_reason(bot, monkeypatch):
+    class Refusing(FakeChannel):
+        async def send(self, content=None, view=None, file=None):
+            raise refusal(403, "Missing Permissions")
+
+    bot.channels["alerts"] = Refusing(ALERTS)
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(a_test("alerts", event=9))
+    assert calls[0][2]["test"] == {"event": 9, "ok": False, "error": "Missing Permissions"}
+
+
+@pytest.mark.parametrize("event", [a_test("general", age=121), a_test("elsewhere"), a_test("general", created_at="yesterday"),
+                                   a_test("general", created_at=None)])
+async def test_a_stale_or_unaddressed_test_is_dropped_without_a_word(bot, monkeypatch, event):
+    """The bot was away when it was asked: the message would arrive hours later and mean nothing."""
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.deliver(event)
+    assert not any(channel.sent for channel in bot.channels.values()) and not calls
+
+
+async def test_a_message_that_only_looks_like_a_test_is_posted_by_its_kind(bot):
+    """Only the server's own test source means a test; the channel a notification names is still limited to three."""
+    await bot.deliver({"type": "notification", "source": "client:script", "title": "Hi", "text": "x", "channel": "approval"})
+    assert texts(bot.channels["notification"]) == ["🔔 **Hi**\nx"] and not bot.channels["approval"].sent
+
+
+async def test_the_heartbeat_tells_who_the_bot_is_and_what_it_sees_in_each_channel(bot, monkeypatch):
+    class Rights:
+        def __init__(self, lacks):
+            self.lacks = lacks
+
+        def __getattr__(self, right):
+            return right not in self.lacks
+
+    lacks = {GENERAL: {"manage_threads"}, NOTIFICATION: set(), APPROVAL: {"send_messages", "attach_files"}, ALERTS: set()}
+    live = {channel_id: SimpleNamespace(name=f"live-{channel_id}", permissions_for=lambda me, c=channel_id: Rights(lacks[c]))
+            for channel_id in lacks}
+    monkeypatch.setattr(bot, "get_guild", lambda guild_id: SimpleNamespace(me=object()))
+    monkeypatch.setattr(bot, "get_channel", live.get)
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.beat()
+    [(_, _, body)] = calls
+    assert body == {"state": "connected", "bot": "Clara#1234", "channels": {
+        "general": {"name": f"live-{GENERAL}", "missing": ["manage_threads"]},
+        "notification": {"name": f"live-{NOTIFICATION}", "missing": []},
+        "approval": {"name": f"live-{APPROVAL}", "missing": ["send_messages", "attach_files"]},
+        "alerts": {"name": f"live-{ALERTS}", "missing": []}}}
+
+
+async def test_a_bot_that_is_not_ready_says_only_that_it_is_not(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: False)
+    calls = watch_heartbeats(bot, monkeypatch)
+    await bot.beat(test={"event": 1, "ok": True, "error": ""})
+    assert calls == [("POST", "/v1/clients/heartbeat", {"state": "disconnected"})]
+
+
+async def test_a_heartbeat_that_fails_is_not_fatal(bot, monkeypatch):
+    monkeypatch.setattr(bot, "is_ready", lambda: True)
+    monkeypatch.setattr(ClaraBot, "user", "Clara#1234")
+
+    async def call(method, path, **options):
+        raise ClaraError(0, "Clara cannot be reached")
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    await bot.beat()  # logged, not raised
+
+
+# ----------------------------------------------------------------------
+# Slash commands: your server, you only
+# ----------------------------------------------------------------------
+def interaction(user_id: int, guild_id: int | None):
+    said = []
+
+    async def send_message(content, ephemeral=False):
+        said.append((content, ephemeral))
+
+    return SimpleNamespace(user=SimpleNamespace(id=user_id), guild_id=guild_id,
+                           response=SimpleNamespace(send_message=send_message)), said
+
+
+async def test_commands_work_for_you_in_your_server_only(bot):
+    command = bot.tree.get_command("new")
+    contexts = command.allowed_contexts
+    assert contexts.guild and not contexts.dm_channel and not contexts.private_channel
+    for who, where in ((7, GUILD), (42, GUILD + 1), (42, None)):
+        call, said = interaction(who, where)
+        await command.callback(call)
+        assert said == [("Not for you.", True)]
+    call, said = interaction(42, GUILD)
+    await command.callback(call)
+    assert said == [("The Conversations forum is not made yet.", True)]  # /new opens a thread in it, once it exists
+
+
+async def test_command_results_are_ephemeral_but_errors_stay_visible(bot, monkeypatch):
+    answers = {
+        "/v1/admin/status": {"version": "1.0", "state": "ok", "models": {"default": "m"}, "approvals_pending": 0,
+                             "alerts": {}},
+        "/v1/tasks": {"tasks": [{"id": 1, "title": "Taxes", "due_at": None}]},
+        "/v1/reminders": {"reminders": [{"id": 2, "local": "10:00", "text": "Call", "system": False}]},
+        "/v1/approvals": {"approvals": []},
     }
+    failing = False
+
+    async def call(method, path, **options):
+        if failing:
+            raise bot_module.ClaraError(503, "down")
+        return answers[path]
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    for name in ("new", "status", "tasks", "reminders", "approvals"):
+        command = bot.tree.get_command(name)
+        failing = False
+        ok, said = interaction(42, GUILD)
+        await command.callback(ok)
+        assert len(said) == 1 and said[0][1] is True, name
+        if name == "new":
+            continue
+        failing = True
+        bad, said = interaction(42, GUILD)
+        await command.callback(bad)
+        assert len(said) == 1 and said[0][0].startswith("⚠️") and said[0][1] is False, name
+
+
+async def test_tasks_show_their_deadline_on_their_own_clock_not_in_utc(bot, monkeypatch):
+    """Audit (data integrity, high): `due_at[:16]` showed the stored UTC time as if it were local."""
+    found = [
+        {"id": 1, "title": "Taxes", "due_at": "2026-10-21T19:30:00+00:00", "timezone": "Europe/Paris"},
+        {"id": 2, "title": "Call", "due_at": "2026-01-05T12:00:00+00:00", "timezone": "Not/AZone"},
+        {"id": 3, "title": "Idle", "due_at": None, "timezone": "Europe/Paris"},
+    ]
+
+    async def call(method, path, **options):
+        return {"tasks": found}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    ok, said = interaction(42, GUILD)
+    await bot.tree.get_command("tasks").callback(ok)
+    lines = said[0][0].splitlines()
+    assert lines[0] == "[1] Taxes — due Wed 2026-10-21 21:30 CEST"  # 19:30 UTC is 21:30 in Paris
+    assert lines[1] == "[2] Call — due Mon 2026-01-05 13:00 CET"  # an unknown zone: the bot's own (Paris)
+    assert lines[2] == "[3] Idle"
+
+
+# ----------------------------------------------------------------------
+# Running it
+# ----------------------------------------------------------------------
+async def test_closing_twice_says_goodbye_once_and_does_not_fail(bot, monkeypatch):
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((method, path, options.get("json")))
+        return {}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    await bot.close()
+    await bot.close()  # discord.py closes on a refused intent, then the runner closes again
+    assert calls == [("POST", "/v1/clients/heartbeat", {"state": "disconnected"})]
+
+
+def test_a_second_bot_with_the_same_state_file_does_not_start(tmp_path, monkeypatch):
+    for key, value in env_for(tmp_path).items():
+        monkeypatch.setenv(key, value)
+    with open(tmp_path / "state.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert bot_module.main() == bot_module.EXIT_RUNNING
+
+
+def test_wrong_settings_exit_with_the_code_that_is_not_retried(tmp_path, monkeypatch):
+    for key in env_for(tmp_path):
+        monkeypatch.delenv(key, raising=False)
+    assert bot_module.main() == bot_module.EXIT_SETTINGS
+
+
+# ----------------------------------------------------------------------
+# The end-of-day check-in: a thread under the question
+# ----------------------------------------------------------------------
+class FakeThread(discord.Thread):
+    def __init__(self, thread_id: int, parent_id: int, log: list | None = None, may_delete: bool = True):
+        self.id = thread_id  # no Discord connection in a test
+        self.parent_id = parent_id
+        self.sent: list[tuple[str, object]] = []
+        self.deleted = self.archived = False
+        self.may_delete = may_delete
+        self.log = log if log is not None else []
+
+    async def send(self, content=None, view=None, file=None):
+        self.sent.append((content, view))
+        self.log.append(("thread", content))
+
+    async def delete(self):
+        if not self.may_delete:
+            raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+        self.deleted = True
+        self.log.append(("deleted", self.id))
+
+    async def edit(self, **fields):
+        self.archived = bool(fields.get("archived"))
+
+    def typing(self):
+        return FakeChannel(self.id).typing()
+
+
+class ThreadingChannel(FakeChannel):
+    """#general, where a message can start a thread (or the bot may not)."""
 
-    made = register(client)
-    assert made.status_code == 201
-    assert made.json()["user"] == "erwan" and made.json()["person"]["name"] == "Erwan"
-    assert "discord:111" in made.json()["accounts"]
-    assert chat(client).json()["reply"] == "Hello"
-
-    me = client.get("/v1/accounts/me", params={"surface": "discord", "user_id": "111"}, headers=BOT).json()
-    assert me["signed_in"] and me["user"] == "erwan" and me["relation"] is None and me["facts"] == []
-    listed = client.get("/v1/accounts/signed-in", params={"surface": "discord"}, headers=BOT).json()
-    assert listed == {"accounts": [{"user_id": "111", "user": "erwan", "name": "Erwan"}]}
-
-
-def test_the_registered_user_signs_in_on_the_web_with_the_same_memories(make_client):
-    client = make_client()
-    register(client)
-    person = client.app.state.memory.find_person("discord", "111")
-    client.app.state.memory.add_fact(person.id, "Likes jazz")
-    login = client.post("/v1/auth/login", json={"username": "erwan", "password": PASSWORD, "surface": "web"})
-    assert login.status_code == 200
-    token = {"Authorization": f"Bearer {login.json()['token']}"}
-    facts = client.get("/v1/memory/facts", params={"surface": "web", "user_id": "erwan"}, headers=token).json()
-    assert [f["text"] for f in facts["facts"]] == ["Likes jazz"]
-
-
-def test_registering_checks_the_name_and_password_and_leaves_nothing_behind(make_client):
-    client = make_client()
-    people = len(client.app.state.memory.summaries())
-    assert register(client, password="short").status_code == 422
-    assert register(client, username="Not valid!").status_code == 422
-    assert len(client.app.state.memory.summaries()) == people  # no person left without a user
-    assert register(client).status_code == 201
-    assert register(client, user_id="222", username="erwan").status_code == 409  # name taken
-    assert register(client).status_code == 409  # this account is already signed in
-
-
-def test_registering_is_limited_per_account(make_client):
-    client = make_client()
-    for number in range(3):
-        assert register(client, username=f"user{number}").status_code == 201
-        client.post("/v1/accounts/logout", json={"surface": "discord", "user_id": "111"}, headers=BOT)
-    assert register(client, username="user9").status_code == 429
-
-
-def test_login_needs_the_password_and_logout_ends_it(make_client):
-    client = make_client(say("ok"))
-    client.app.state.users.create("erwan", PASSWORD)
-    body = {**account(), "username": "erwan", "password": "wrong password"}
-    assert client.post("/v1/accounts/login", json=body, headers=BOT).status_code == 401
-    body["password"] = PASSWORD
-    assert client.post("/v1/accounts/login", json=body, headers=BOT).json()["user"] == "erwan"
-    assert chat(client).status_code == 200
-    out = client.post("/v1/accounts/logout", json={"surface": "discord", "user_id": "111"}, headers=BOT)
-    assert out.json() == {"signed_out": True}
-    assert chat(client).status_code == 403
-
-
-def test_wrong_passwords_are_limited_per_account(make_client, discord_settings):
-    client = make_client()
-    client.app.state.users.create("erwan", PASSWORD)
-    body = {**account(), "username": "erwan", "password": "wrong password"}
-    for _ in range(discord_settings.auth_max_failures):
-        client.post("/v1/accounts/login", json=body, headers=BOT)
-    body["password"] = PASSWORD
-    assert client.post("/v1/accounts/login", json=body, headers=BOT).status_code == 429
-    # another account of the same bot is not blocked
-    other = {**account("222"), "username": "erwan", "password": PASSWORD}
-    assert client.post("/v1/accounts/login", json=other, headers=BOT).status_code == 200
-
-
-def test_signing_in_as_another_user_moves_the_account_without_merging_anybody(make_client):
-    client = make_client()
-    memory = client.app.state.memory
-    register(client, username="alice", name="Alice")
-    alice = memory.find_person("discord", "111")
-    memory.add_fact(alice.id, "Alice likes tea")
-    client.post("/v1/accounts/logout", json={"surface": "discord", "user_id": "111"}, headers=BOT)
-
-    client.app.state.users.create("bob", PASSWORD)
-    body = {**account(), "username": "bob", "password": PASSWORD}
-    assert client.post("/v1/accounts/login", json=body, headers=BOT).status_code == 200
-    bob = memory.find_person("discord", "111")
-    assert bob.id != alice.id and memory.person_by_id(alice.id) is not None
-    assert [f.text for f in memory.facts(alice.id)] == ["Alice likes tea"]
-    assert memory.facts(bob.id) == []
-
-
-def test_a_new_password_or_a_disabled_user_signs_the_account_out(make_client):
-    client = make_client()
-    users = client.app.state.users
-    register(client)
-    assert users.account_user("discord", "111").name == "erwan"
-    users.set_password("erwan", "another long password")
-    assert users.account_user("discord", "111") is None
-
-    client.post("/v1/accounts/login", json={**account(), "username": "erwan", "password": "another long password"}, headers=BOT)
-    users.create("root", PASSWORD, admin=True)
-    users.set_disabled("erwan", True)
-    assert chat(client).status_code == 403
-    users.set_disabled("erwan", False)
-    assert users.account_user("discord", "111") is None  # disabling signed it out for good
-
-
-def test_erasing_a_person_signs_their_accounts_out(make_client):
-    client = make_client()
-    register(client)
-    memory = client.app.state.memory
-    memory.delete_person(memory.find_person("discord", "111").id)
-    assert client.app.state.users.signed_in_accounts("discord") == {}
-
-
-def test_only_the_login_surfaces_sign_in_and_users_cannot(make_client):
-    client = make_client()
-    body = {"surface": "cli", "user_id": "x", "username": "erwan", "password": PASSWORD}
-    assert client.post("/v1/accounts/register", json=body, headers={"Authorization": "Bearer secret-cli"}).status_code == 403
-
-
-# --- spaces, members, chime in ---------------------------------------------------------------------------
-
-
-def test_the_roster_and_the_people_mentioned_reach_the_prompt(make_client):
-    client = make_client(say("Hi all"))
-    memory = client.app.state.memory
-    register(client)
-    register(client, user_id="222", username="bob", name="Bob")
-    memory.add_fact(memory.find_person("discord", "222").id, "Bob plays chess")
-    memory.resolve("discord", "333", "Ghost")  # known, but not signed in: left out
-    roster = [{"user_id": "111", "name": "Erwan"}, {"user_id": "222", "name": "Bobby"}, {"user_id": "333", "name": "Ghost"}]
-    reply = chat(client, message="hello", conversation=CHANNEL, space=GUILD, roster=roster, focus=["222", "333"])
-    assert reply.status_code == 200
-    messages, tools = client.backend.calls[0]
-    system = messages[0]["content"]
-    assert "@Erwan, @Bobby" in system and "Ghost" not in system
-    assert "What you remember about Bobby (mentioned)" in system and "Bob plays chess" in system
-    assert untimed(messages[-1]["content"]) == "Erwan: hello"  # in a group, everybody's messages carry a name
-    assert "about_person" in [tool["function"]["name"] for tool in tools]
-
-
-def test_the_instructions_of_a_server_replace_the_personality_there_only(make_client):
-    client = make_client(say("a"), say("b"), say("c"))
-    register(client)
-    client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": GUILD, "name": "Guild"}]}, headers=BOT)
-    items = [{"text": "You are a  pirate.", "enabled": True}, {"text": "Never speak of cats.", "enabled": False}]
-    done = client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": items}, headers=ADMIN).json()
-    assert [i["text"] for i in done["instructions"]] == ["You are a pirate.", "Never speak of cats."] and done["chime"] is None
-    chat(client, message="hello", conversation=CHANNEL, space=GUILD)
-    system = client.backend.calls[0][0][0]["content"]
-    assert "- You are a pirate." in system and "cats" not in system and "helpful personal AI assistant" not in system
-    chat(client, message="in private")  # no space: the usual personality
-    assert "pirate" not in client.backend.calls[1][0][0]["content"]
-    client.patch(f"/v1/admin/spaces/{GUILD}", json={"instructions": []}, headers=ADMIN)  # nothing defined: the default
-    chat(client, message="again", conversation=CHANNEL, space=GUILD)
-    assert "pirate" not in client.backend.calls[2][0][0]["content"]
-    assert client.patch("/v1/admin/spaces/discord:guild:404", json={"instructions": []}, headers=ADMIN).status_code == 404
-
-
-def test_about_person_is_only_offered_with_other_people(make_client):
-    client = make_client(say("hi"))
-    register(client)
-    chat(client)
-    assert "about_person" not in [tool["function"]["name"] for tool in client.backend.calls[0][1]]
-
-
-def test_about_person_reads_a_member_of_the_roster_only(make_client):
-    client = make_client([LlmChunk(tool_calls=[ToolCall("about_person", {"name": "bob"})])], say("He plays chess"))
-    memory = client.app.state.memory
-    register(client)
-    register(client, user_id="222", username="bob", name="Bob")
-    memory.add_fact(memory.find_person("discord", "222").id, "Bob plays chess")
-    roster = [{"user_id": "111", "name": "Erwan"}, {"user_id": "222", "name": "Bob"}]
-    chat(client, message="what about bob?", conversation=CHANNEL, space=GUILD, roster=roster)
-    result = client.backend.calls[1][0][-1]
-    assert result["role"] == "tool" and "Bob plays chess" in result["content"]
-
-
-def test_a_space_must_be_of_the_surface(make_client):
-    client = make_client()
-    register(client)
-    assert chat(client, conversation=CHANNEL, space="cli:guild:1").status_code == 403
-    assert chat(client, roster=[{"user_id": "111"}]).status_code == 422  # a roster needs a space
-
-
-def test_an_observed_message_is_stored_without_the_model(make_client):
-    client = make_client()
-    register(client)
-    done = chat(client, message="talking to Bob", conversation=CHANNEL, space=GUILD, mode="observe").json()
-    assert done["reply"] == "" and done["observed"] is True
-    assert client.backend.calls == []
-    assert [m.content for m in client.app.state.memory.history(CHANNEL, 10)] == ["talking to Bob"]
-
-
-def test_maybe_is_only_observed_where_chime_in_is_off(make_client):
-    client = make_client(say("<pass>"), say("Actually, it is 42."))
-    memory = client.app.state.memory
-    register(client)
-    memory.sync_spaces("discord", [(GUILD, "Guild")])
-    off = chat(client, message="m1", conversation=CHANNEL, space=GUILD, mode="maybe").json()
-    assert off.get("observed") and client.backend.calls == []
-
-    memory.set_space_chime(GUILD, True)
-    declined = chat(client, message="m2", conversation=CHANNEL, space=GUILD, mode="maybe").json()
-    assert declined["reply"] == "" and declined["passed"] is True
-    assert "not addressed to you" in client.backend.calls[0][0][-1]["content"]
-    answered = chat(client, message="what is 6x7?", conversation=CHANNEL, space=GUILD, mode="maybe").json()
-    assert answered["reply"] == "Actually, it is 42." and answered["passed"] is False
-    assert [m.content for m in memory.history(CHANNEL, 10)] == ["m1", "m2", "what is 6x7?", "Actually, it is 42."]
-
-
-@pytest.mark.parametrize("reply", ["<pass>", " <PASS>. ", "", "pass", "`<pass>`"])
-def test_what_counts_as_passing(reply):
-    assert passed(reply)
-
-
-def test_a_real_answer_does_not_pass():
-    assert not passed("I pass the salt") and not passed("Passing by: hi!")
-
-
-def test_spaces_are_synced_and_switched_by_an_administrator(make_client):
-    client = make_client()
-    body = {"surface": "discord", "spaces": [{"id": GUILD, "name": "Guild"}, {"id": "discord:guild:2", "name": "Two"}]}
-    synced = client.put("/v1/spaces", json=body, headers=BOT).json()
-    assert synced["default_chime"] is False and [s["id"] for s in synced["spaces"]] == [GUILD, "discord:guild:2"]
-    assert client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": "cli:x"}]}, headers=BOT).status_code == 422
-
-    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=ADMIN).json()["chime_effective"] is True
-    assert client.patch("/v1/admin/spaces", json={"default_chime": True}, headers=ADMIN).status_code == 200
-    listed = {s["id"]: s for s in client.get("/v1/admin/spaces", headers=ADMIN).json()["spaces"]}
-    assert listed["discord:guild:2"]["chime"] is None and listed["discord:guild:2"]["chime_effective"] is True
-    assert client.patch(f"/v1/admin/spaces/{GUILD}", json={"chime": True}, headers=BOT).status_code == 401
-
-    client.put("/v1/spaces", json={"surface": "discord", "spaces": [{"id": GUILD, "name": "Renamed"}]}, headers=BOT)
-    after = {s.id: s for s in client.app.state.memory.spaces()}
-    assert after[GUILD].name == "Renamed" and after[GUILD].chime is True and not after["discord:guild:2"].present
-
-
-async def test_the_chime_command(memory, discord_settings):
-    from clara.commands import CommandContext
-
-    ctx = CommandContext(discord_settings, memory, None, None, 0.0, "here")  # type: ignore[arg-type]
-    memory.sync_spaces("discord", [(GUILD, "My Guild")])
-    assert "Default: off" in (await registry.execute("/chime", ctx)).output
-    assert "now on" in (await registry.execute("/chime my guild on", ctx)).output  # a name with spaces, any case
-    await registry.execute(f"/chime {GUILD} off", ctx)
-    assert not memory.chime_allowed(GUILD)
-    await registry.execute(f"/chime {GUILD} on", ctx)
-    assert memory.chime_allowed(GUILD)
-    await registry.execute(f"/chime {GUILD} default", ctx)
-    assert not memory.chime_allowed(GUILD)
-    await registry.execute("/chime default on", ctx)
-    assert memory.chime_allowed(GUILD) and memory.chime_allowed("discord:guild:unknown")
-    assert "Usage" in (await registry.execute("/chime nope maybe", ctx)).output
-
-
-# --- relationship ----------------------------------------------------------------------------------------
-
-
-def test_clara_adjusts_the_relationship_once_per_answer(make_client):
-    client = make_client(call("adjust_relation", change=99, reason="kind"), call("adjust_relation", change=4), say("Thanks!"))
-    register(client)
-    chat(client, message="you are great")
-    person = client.app.state.memory.find_person("discord", "111")
-    assert client.app.state.memory.relation(person.id) == 60  # 50 + at most 10
-    second_result = client.backend.calls[2][0][-1]["content"]
-    assert "already adjusted" in second_result
-
-
-def test_the_relationship_sets_the_tone_in_the_prompt(make_client):
-    client = make_client(say("a"), say("b"))
-    register(client)
-    chat(client)
-    assert "None yet: be neutral and polite." in client.backend.calls[0][0][0]["content"]
-    memory = client.app.state.memory
-    memory.set_relation(memory.find_person("discord", "111").id, 20)
-    chat(client)
-    assert "20/100 (very bad)" in client.backend.calls[1][0][0]["content"]
-
-
-async def test_the_relation_command_and_the_admin_route(make_client, memory, discord_settings):
-    from clara.commands import CommandContext
-
-    ctx = CommandContext(discord_settings, memory, None, None, 0.0, "here")  # type: ignore[arg-type]
-    person = memory.resolve("cli", "erwan", "Erwan Le Gall")
-    assert "none yet" in (await registry.execute("/relation Erwan Le Gall", ctx)).output
-    assert "70/100" in (await registry.execute(f"/relation {person.id} 70", ctx)).output
-    assert "60/100" in (await registry.execute(f"/relation {person.id} -10", ctx)).output
-    assert "60/100" in (await registry.execute("/relation", ctx)).output
-    await registry.execute(f"/relation {person.id} reset", ctx)
-    assert memory.relation(person.id) is None
-    assert "0 to 100" in (await registry.execute(f"/relation {person.id} 150", ctx)).output
-
-    client = make_client()
-    other = client.app.state.memory.resolve("cli", "zoe", "Zoe")
-    done = client.patch(f"/v1/admin/people/{other.id}", json={"relation": 90}, headers=ADMIN).json()
-    assert done["relation"] == 90 and done["relation_label"] == "excellent"
-    people = client.get("/v1/admin/people", headers=ADMIN).json()["people"]
-    assert next(p for p in people if p["id"] == other.id)["relation"] == 90
-    assert client.patch(f"/v1/admin/people/{other.id}", json={"relation": 101}, headers=ADMIN).status_code == 422
-
-
-def test_merging_people_keeps_a_relationship(memory):
-    a, b = memory.resolve("cli", "a", "A"), memory.resolve("app", "b", "B")
-    memory.set_relation(a.id, 80)
-    memory.link_account("cli", "a", b)
-    assert memory.relation(b.id) == 80
-
-
-# --- the event stream of the whole surface ---------------------------------------------------------------
-
-
-async def test_the_surface_stream_gives_each_event_with_its_accounts(memory):
-    notifier = Notifier(memory)
-    erwan = memory.resolve("discord", "111", "Erwan")
-    memory.link_account("discord", "112", erwan)  # a second Discord account of the same person
-    zoe = memory.resolve("app", "zoe", "Zoe")  # no Discord account
-
-    def recipients(person_id):
-        return [e for s, e in memory.accounts_of(person_id) if s == "discord"]
-
-    stream = notifier.surface_events("bot", "discord", recipients)
-    assert (await anext(stream))["type"] == "server"
-    notifier.notify(zoe.id, "for zoe")
-    notifier.notify(erwan.id, "only in the app", targets=["app"])
-    notifier.broadcast("everybody")
-    notifier.notify(erwan.id, "for erwan")
-    event = await asyncio.wait_for(anext(stream), 2)
-    assert event["text"] == "for erwan" and event["accounts"] == ["111", "112"]
-    await stream.aclose()
-
-
-def test_the_surface_stream_is_for_clients_of_that_surface(make_client):
-    client = make_client()
-    response = client.get(
-        "/v1/notifications/stream", params={"surface": "discord", "user_id": "1", "all": "true"}, headers=BOT
-    )
-    assert response.status_code == 422
-
-
-def test_a_group_request_in_the_agent_carries_roster_people():
-    request = ChatRequest("discord", "1", None, "hi", space=GUILD, roster=(Person(1, "A"),))
-    assert request.group and request.roster[0].name == "A"
+    def __init__(self, channel_id: int, forbidden: bool = False):
+        super().__init__(channel_id)
+        self.forbidden = forbidden
+        self.threads: list[tuple[str, FakeThread]] = []
+
+    async def send(self, content=None, view=None, file=None):
+        message = await super().send(content, view, file)
+
+        async def create_thread(name, auto_archive_duration):
+            if self.forbidden:
+                raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
+            thread = FakeThread(777, self.id)
+            self.threads.append((name, thread))
+            return thread
+
+        message.create_thread = create_thread
+        return message
+
+
+CHECKIN = {"type": "ask", "title": "Bilan du dimanche 18 octobre 2026", "text": "Voici ta journée… Et le reste ?",
+           "payload": {"conversation": "c-checkin", "stage": "asked", "thread": True}, "conversation": "c-checkin"}
+
+
+async def test_a_check_in_is_posted_in_general_with_a_thread_that_carries_your_answer(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    bot.set_conversation("c-current")
+    await bot.deliver(CHECKIN)
+    assert texts(general) == ["📓 **Bilan du dimanche 18 octobre 2026**\nVoici ta journée… Et le reste ?"]
+    assert general.threads[0][0] == "Bilan du dimanche 18 octobre 2026"
+    assert bot.threads() == {"777": "c-checkin"} and bot.conversation() == "c-current"  # yours is left alone
+    assert not bot.channels["notification"].sent
+
+
+async def test_what_you_write_in_the_thread_goes_to_the_check_in_not_to_the_current_chat(bot, monkeypatch):
+    asked = []
+
+    async def ask(channel, body, remember=True):
+        asked.append((channel, body, remember))
+
+    monkeypatch.setattr(bot, "ask", ask)
+    bot.set_conversation("c-current")
+    bot.remember_thread(777, "c-checkin")
+
+    def message(channel, author_id=42):
+        return SimpleNamespace(author=SimpleNamespace(id=author_id, bot=False), channel=channel, attachments=[], content="j'ai couru")
+
+    await bot.on_message(message(FakeThread(777, GENERAL), author_id=7))  # a stranger
+    await bot.on_message(message(FakeThread(888, GENERAL)))  # a thread that is not a check-in
+    await bot.on_message(message(FakeThread(777, NOTIFICATION)))  # the same id under another channel
+    assert asked == []
+    thread = FakeThread(777, GENERAL)
+    await bot.on_message(message(thread))
+    assert asked[0][0] is thread and asked[0][1]["conversation"] == "c-checkin" and asked[0][2] is False
+    await bot.on_message(message(FakeChannel(GENERAL)))  # #general no longer continues the current conversation
+    assert len(asked) == 1
+
+
+async def test_an_answer_in_the_thread_does_not_make_it_the_current_conversation(bot, monkeypatch):
+    class Clara:
+        async def stream(self, method, path, body=None, read=0):
+            yield {"type": "turn", "conversation": "c-checkin"}
+            yield {"type": "done", "reply": "Noté.", "files": []}
+
+    monkeypatch.setattr(bot, "clara", Clara())
+    bot.set_conversation("c-current")
+    thread = FakeThread(777, GENERAL)
+    await bot.ask(thread, {"message": "j'ai couru", "conversation": "c-checkin"}, remember=False)
+    assert bot.conversation() == "c-current" and thread.sent[0][0] == "Noté."
+
+
+async def test_without_the_right_to_open_threads_the_check_in_becomes_the_current_conversation(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL, forbidden=True)
+    await bot.deliver(CHECKIN)
+    assert bot.conversation() == "c-checkin" and bot.threads() == {}
+    assert len(general.sent) == 2 and "Réponds ici" in general.sent[1][0]
+
+
+async def test_the_reminder_and_the_closing_notice_go_in_the_thread(bot):
+    thread = FakeThread(777, GENERAL)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    await bot.deliver({**CHECKIN, "title": "Bilan en attente", "text": "Toujours en attente.",
+                       "payload": {"conversation": "c-checkin", "stage": "reminder"}})
+    assert thread.sent[0][0] == "📓 **Bilan en attente**\nToujours en attente." and not bot.channels["general"].sent
+
+
+def test_the_threads_are_kept_next_to_the_current_conversation_and_are_limited(bot):
+    bot.set_conversation("c-current")
+    for number in range(40):
+        bot.remember_thread(1000 + number, f"c-{number}")
+    bot.set_conversation("c-other")
+    threads = bot.threads()
+    assert len(threads) == 30 and "1039" in threads and "1000" not in threads and bot.conversation() == "c-other"
+    bot.remember_thread(1039, "c-new")  # a conversation has one thread
+    assert bot.threads()["1039"] == "c-new" and len(bot.threads()) == 30
+
+
+# ----------------------------------------------------------------------
+# The thread goes once the recap is written
+# ----------------------------------------------------------------------
+WRITTEN = {"type": "ask", "title": "Récap écrit", "text": "Le récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md.",
+           "payload": {"conversation": "c-checkin", "stage": "finished"}, "conversation": "c-checkin"}
+
+
+def with_thread(bot, may_delete: bool = True) -> tuple[FakeThread, list]:
+    order: list = []
+    thread = FakeThread(777, GENERAL, order, may_delete)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    return thread, order
+
+
+async def test_the_thread_is_deleted_and_general_says_where_the_recap_is(bot):
+    thread, _ = with_thread(bot)
+    bot.set_conversation("c-current")
+    await bot.deliver(WRITTEN)
+    assert texts(bot.channels["general"]) == ["📓 **Récap écrit**\nLe récap du dimanche 18 octobre 2026 est écrit dans 1-daily/2026/2026-10-18.md."]
+    assert thread.deleted and bot.threads() == {} and bot.conversation() == "c-current"  # yours is left alone
+
+
+async def test_when_the_recap_is_written_during_your_answer_the_answer_is_posted_before_the_thread_goes(bot, monkeypatch):
+    thread, order = with_thread(bot)
+    real_send = bot.channels["general"].send
+
+    async def general_send(content=None, view=None, file=None):
+        order.append(("general", content))
+        return await real_send(content, view, file)
+
+    bot.channels["general"].send = general_send
+
+    class Clara:
+        async def stream(self, method, path, body=None, read=0):
+            yield {"type": "turn", "conversation": "c-checkin"}
+            await bot.deliver(WRITTEN)  # the event arrives while the answer is still being written
+            assert not thread.deleted
+            yield {"type": "done", "reply": "C'est écrit dans la note.", "files": []}
+
+    monkeypatch.setattr(bot, "clara", Clara())
+    await bot.ask(thread, {"message": "voilà", "conversation": "c-checkin"}, remember=False)
+    assert [kind for kind, _ in order] == ["thread", "general", "deleted"]
+    assert order[0][1] == "C'est écrit dans la note." and bot.threads() == {} and not bot.finished and not bot.answering
+
+
+async def test_a_thread_the_bot_may_not_delete_is_archived_and_still_answers(bot):
+    thread, _ = with_thread(bot, may_delete=False)
+    await bot.deliver(WRITTEN)
+    assert thread.archived and not thread.deleted and bot.threads() == {"777": "c-checkin"}  # a late answer still goes in
+    assert len(bot.channels["general"].sent) == 1
+
+
+async def test_a_check_in_closed_without_your_answer_also_removes_its_thread(bot):
+    thread, _ = with_thread(bot)
+    await bot.deliver({**WRITTEN, "title": "Bilan clos sans réponse", "text": "Tu n'as pas répondu…",
+                       "payload": {"conversation": "c-checkin", "stage": "closed"}})
+    assert thread.deleted and texts(bot.channels["general"])[0].startswith("📓 **Bilan clos sans réponse**")
+
+
+async def test_a_thread_already_gone_is_not_an_error(bot):
+    async def fetch_channel(channel_id):
+        raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Channel")
+
+    bot.fetch_channel = fetch_channel
+    bot.remember_thread(777, "c-checkin")
+    await bot.deliver(WRITTEN)
+    assert bot.threads() == {} and len(bot.channels["general"].sent) == 1
+
+
+async def test_a_check_in_that_became_the_current_chat_stops_being_it_once_written(bot):
+    bot.set_conversation("c-checkin")  # the bot could not open a thread
+    await bot.deliver(WRITTEN)
+    assert bot.conversation() is None and len(bot.channels["general"].sent) == 1
+
+
+async def test_a_correction_after_the_thread_is_gone_only_says_where_the_recap_is(bot):
+    await bot.deliver(WRITTEN)  # no thread known any more (the correction was asked on the web site)
+    assert len(bot.channels["general"].sent) == 1 and bot.threads() == {}
+
+
+# ----------------------------------------------------------------------
+# What a scheduled run says: ask, post, reminder, thread of its own
+# ----------------------------------------------------------------------
+async def test_a_question_without_the_thread_pack_makes_the_run_the_current_conversation(bot):
+    await bot.deliver({**CHECKIN, "payload": {"conversation": "c-checkin", "stage": "asked", "thread": False}})
+    assert bot.conversation() == "c-checkin" and bot.threads() == {}
+    assert texts(bot.channels["general"])[0].startswith("📓 **Bilan du dimanche") and "Réponds ici" in texts(bot.channels["general"])[1]
+
+
+async def test_a_second_question_goes_in_the_thread_that_exists(bot):
+    thread, _ = with_thread(bot)
+    await bot.deliver(CHECKIN)
+    assert thread.sent[0][0].startswith("📓 **Bilan du dimanche") and not bot.channels["general"].sent
+
+
+SAID = {"type": "ask", "title": "Facture", "text": "Facture 42 : 120 EUR.\nÀ payer avant le 1er novembre.",
+        "payload": {"conversation": "c-mail", "stage": "said"}, "conversation": "c-mail"}
+
+
+async def test_a_message_to_answer_is_posted_in_general_and_its_conversation_becomes_the_current_one(bot):
+    bot.set_conversation("c-before")
+    await bot.deliver(SAID)
+    assert texts(bot.channels["general"])[0] == "📓 **Facture**\nFacture 42 : 120 EUR.\nÀ payer avant le 1er novembre."
+    assert "Réponds ici" in texts(bot.channels["general"])[1]
+    assert bot.conversation() == "c-mail" and bot.threads() == {}
+    assert not bot.channels["notification"].sent  # a ping goes there, a conversation does not
+
+
+async def test_a_message_to_answer_for_a_conversation_with_a_thread_goes_in_the_thread_and_leaves_the_current_chat(bot):
+    thread, _ = with_thread(bot)
+    bot.set_conversation("c-before")
+    await bot.deliver({**SAID, "payload": {"conversation": "c-checkin", "stage": "said"}, "conversation": "c-checkin"})
+    assert thread.sent[0][0].startswith("📓 **Facture**") and not bot.channels["general"].sent
+    assert bot.conversation() == "c-before"
+
+
+async def test_a_long_answer_is_said_in_several_messages(bot):
+    paragraph = "Une ligne de détail de la facture. " * 20
+    await bot.deliver({**SAID, "text": "\n\n".join([paragraph] * 6)})
+    sent = texts(bot.channels["general"])
+    assert len(sent) > 2 and all(len(part) <= 2000 for part in sent) and "Réponds ici" in sent[-1]
+
+
+async def test_a_run_can_open_write_in_and_remove_a_thread_by_itself(bot):
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    event = {"type": "ask", "title": "Rapport", "text": "Premier message", "conversation": "c-run",
+             "payload": {"conversation": "c-run", "stage": "thread_open", "thread": True}}
+    await bot.deliver(event)
+    assert general.threads[0][0] == "Rapport" and bot.threads() == {"777": "c-run"}
+    thread = general.threads[0][1]
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    await bot.deliver({**event, "text": "La suite", "payload": {"conversation": "c-run", "stage": "thread_post"}})
+    assert thread.sent[0][0] == "📓 **Rapport**\nLa suite"
+    await bot.deliver({**event, "payload": {"conversation": "c-run", "stage": "thread_close"}})
+    assert thread.deleted and bot.threads() == {} and len(general.sent) == 1  # no line in #general for a plain close
+
+
+async def test_the_tools_command_lists_and_switches_the_packs_of_the_conversation(bot, monkeypatch):
+    listing = [{"id": "web", "label": "Web search", "available": True, "reason": ""},
+               {"id": "day_conversations", "label": "Day conversations", "available": True, "reason": ""},
+               {"id": "daily_notes", "label": "Daily notes", "available": False, "reason": "No vault is set up."}]
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((method, path, options.get("json")))
+        if path == "/v1/packs":
+            return {"packs": listing}
+        if path == "/v1/conversations" and method == "POST":
+            return {"id": "c-new", "packs": options["json"]["packs"]}
+        return {"packs": ["web"]}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    text = await bot.tools_text(None, None)
+    assert "✅ `web`" in text and "▫️ `day_conversations`" in text and "(No vault is set up.)" in text
+    text = await bot.tools_text("Day conversations", "on")  # no conversation yet: one is made with it
+    assert bot.conversation() == "c-new" and ("POST", "/v1/conversations", {"packs": ["web", "day_conversations"]}) in calls
+    bot.set_conversation("c-1")
+    await bot.tools_text("web", None)  # no state: the other one
+    assert ("PATCH", "/v1/conversations/c-1", {"packs": []}) in calls
+    assert "No tool called" in await bot.tools_text("nothing", "on")
+
+
+# ----------------------------------------------------------------------
+# A run that delivers to Discord lives in one forum thread: nothing in #general, the link in #notification
+# ----------------------------------------------------------------------
+class ForumThread(FakeThread):
+    jump_url = f"https://discord.com/channels/{GUILD}/555"
+
+
+def forum_thread(bot, conversation: str = "c-run") -> ForumThread:
+    thread = ForumThread(555, 600)
+
+    async def fetch_channel(channel_id):
+        return thread
+
+    bot.fetch_channel = fetch_channel
+    bot.mirror.threads[conversation] = "555"  # the mirror made it as the run's first turn began
+    return thread
+
+
+FORUM = {"type": "ask", "title": "Bilan du dimanche", "text": "Et le reste ?", "conversation": "c-run",
+         "payload": {"conversation": "c-run", "stage": "asked", "thread": False, "forum": True}}
+
+
+def said_in_forum(**payload) -> dict:
+    return {**FORUM, "payload": {"conversation": "c-run", "forum": True, **payload}}
+
+
+async def test_a_forum_run_asks_in_its_forum_thread_and_general_hears_nothing(bot):
+    thread = forum_thread(bot)
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    bot.set_conversation("c-current")
+    await bot.deliver(FORUM)
+    assert texts(thread) == ["📓 **Bilan du dimanche**\nEt le reste ?"]
+    assert not general.sent and not general.threads and not bot.channels["notification"].sent
+    assert bot.conversation() == "c-current" and bot.threads() == {}  # nothing became the current chat, no thread in #general
+
+
+async def test_its_reminder_and_its_end_are_written_in_its_thread_which_stays(bot):
+    thread = forum_thread(bot)
+    await bot.deliver({**said_in_forum(stage="reminder"), "title": "Bilan", "text": "Toujours en attente."})
+    await bot.deliver({**said_in_forum(stage="finished"), "title": "Bilan", "text": "Récap écrit dans la note du jour."})
+    assert texts(thread) == ["📓 **Bilan**\nToujours en attente.", "📓 **Bilan**\nRécap écrit dans la note du jour."]
+    assert not thread.deleted and not thread.archived and not bot.channels["general"].sent  # it is the conversation: it stays
+
+
+async def test_the_end_waits_for_nothing_even_while_you_are_answering(bot):
+    thread = forum_thread(bot)
+    bot.answering.add("c-run")  # a check-in thread would hold the end back until your answer was written
+    await bot.deliver({**said_in_forum(stage="closed"), "title": "Bilan", "text": "Fermé sans réponse."})
+    assert texts(thread) == ["📓 **Bilan**\nFermé sans réponse."] and "c-run" not in bot.finished
+
+
+async def test_its_answer_is_not_said_again_because_the_mirror_wrote_it_in_the_thread(bot):
+    thread = forum_thread(bot)
+    await bot.deliver({**SAID, "conversation": "c-run", "payload": {"conversation": "c-run", "stage": "said", "forum": True}})
+    assert not thread.sent and not bot.channels["general"].sent and bot.conversation() != "c-run"
+
+
+async def test_without_its_thread_a_forum_run_goes_where_it_went_before_and_still_opens_no_thread(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "THREAD_WAIT", 0.0)  # its history is switched off, or the mirror is stopped
+    bot.channels["general"] = general = ThreadingChannel(GENERAL)
+    await bot.deliver({**FORUM, "payload": {**FORUM["payload"], "thread": True}})
+    assert texts(general)[0] == "📓 **Bilan du dimanche**\nEt le reste ?" and "Réponds ici" in texts(general)[1]
+    assert bot.conversation() == "c-run" and not general.threads
+    await bot.deliver({**SAID, "conversation": "c-run", "payload": {"conversation": "c-run", "stage": "said", "forum": True}})
+    assert texts(general)[2].startswith("📓 **Facture**")  # its answer is not lost
+    await bot.deliver({**said_in_forum(stage="finished"), "title": "Bilan", "text": "Fini."})
+    assert texts(general)[-1] == "📓 **Bilan**\nFini." and bot.conversation() is None
+
+
+def started(**more) -> dict:
+    return {"type": "notification", "title": "Scheduled task: Bilan", "text": "Started.", "source": "automations",
+            "conversation": "c-run", "channel": "notification", "created_at": iso(utcnow()),
+            "payload": {"schedule": 1, "run": 3, "conversation": "c-run", "thread": ""}, **more}
+
+
+async def test_a_started_run_is_announced_in_notification_with_the_link_of_its_forum_thread(bot):
+    forum_thread(bot)
+    await bot.deliver(started())
+    assert texts(bot.channels["notification"]) == [
+        f"▶️ **Scheduled task: Bilan**\nStarted.\n🔗 https://discord.com/channels/{GUILD}/555"]
+    assert not bot.channels["general"].sent and not bot.channels["alerts"].sent
+
+
+async def test_the_notice_follows_the_channel_the_server_names_and_off_posts_nothing(bot):
+    forum_thread(bot)
+    await bot.deliver(started(channel="general"))
+    assert texts(bot.channels["general"])[0].startswith("▶️ **Scheduled task: Bilan**") and not bot.channels["notification"].sent
+    await bot.deliver(started(channel="off"))
+    assert len(bot.channels["general"].sent) == 1 and not bot.channels["notification"].sent
+
+
+async def test_a_notice_for_a_thread_that_is_made_after_it_waits_for_it(bot):
+    async def made_later():
+        await asyncio.sleep(0.2)
+        forum_thread(bot)
+
+    maker = asyncio.create_task(made_later())
+    await bot.deliver(started())
+    await maker
+    assert texts(bot.channels["notification"])[0].endswith(f"🔗 https://discord.com/channels/{GUILD}/555")
+
+
+async def test_a_notice_whose_thread_never_comes_is_posted_without_a_link_and_a_stale_one_is_dropped(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "THREAD_WAIT", 0.0)
+    await bot.deliver(started())
+    assert texts(bot.channels["notification"]) == ["▶️ **Scheduled task: Bilan**\nStarted."]
+    await bot.deliver(started(created_at=iso(utcnow() - timedelta(minutes=20))))  # the bot was away: it is not news
+    await bot.deliver(started(created_at="not a date"))
+    assert len(bot.channels["notification"].sent) == 1

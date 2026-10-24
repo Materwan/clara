@@ -1,0 +1,74 @@
+# A tag vX.Y.Z makes a release: the sandbox image pushed to ghcr.io and pinned by digest, the tarball, manifest.json,
+# SHA256SUMS and (with the CLARA_RELEASE_SIGNING_KEY secret) SHA256SUMS.sig. Nothing installs by itself: you pick the
+# release on your machine (/update or the Admin page), and it checks all of this again before switching.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox:
+    name: Sandbox image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pin the base image by digest
+        id: base
+        run: |
+          digest=$(docker buildx imagetools inspect docker.io/library/python:3.12-slim --format '{{json .Manifest}}' | jq -r .digest)
+          echo "base=docker.io/library/python:3.12-slim@${digest}" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/clara-sandbox" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: sandbox
+          file: sandbox/Containerfile
+          push: true
+          provenance: false
+          build-args: BASE=${{ steps.base.outputs.base }}
+          tags: ${{ steps.base.outputs.name }}:${{ github.ref_name }}
+      - id: pin
+        run: echo "image=${{ steps.base.outputs.name }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release ${{ github.ref_name }}
+    needs: sandbox
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --all-extras
+      - run: uv run --frozen ruff check src tests scripts
+      - run: uv run --frozen pytest -q
+      - name: Build, sign and check
+        env:
+          SANDBOX_IMAGE: ${{ needs.sandbox.outputs.image }}
+          CLARA_RELEASE_SIGNING_KEY: ${{ secrets.CLARA_RELEASE_SIGNING_KEY }}
+          CLARA_RELEASE_PUBKEY: ${{ vars.CLARA_RELEASE_PUBKEY }}
+        run: scripts/build-release.sh "${GITHUB_REF_NAME}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v tag="${GITHUB_REF_NAME}" '/^## /{p = ($2 == tag)} p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release ${GITHUB_REF_NAME}." > notes.md
+          gh release create "${GITHUB_REF_NAME}" dist/release/"${GITHUB_REF_NAME}"/* \
+            --title "Clara ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag

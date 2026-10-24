@@ -1,0 +1,39 @@
+# The Discord bot of your private server: a separate process, a separate Clara token, its own Discord token.
+#   sudo systemctl enable --now clara-discord
+# Use this OR CLARA_DISCORD_AUTOSTART=true in clara.env (the server then starts the bot itself), never both.
+# /etc/clara/discord.env holds CLARA_DISCORD_USER_ID and the four CLARA_DISCORD_CHANNEL_* ids.
+[Unit]
+Description=Clara's Discord bot (your private server)
+After=clara.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clara
+Group=clara
+Environment=CLARA_URL=http://127.0.0.1:8765
+EnvironmentFile=-/etc/clara/discord.env
+StateDirectory=clara-discord
+Environment=CLARA_DISCORD_STATE=/var/lib/clara-discord/state.json
+LoadCredentialEncrypted=discord-token:/etc/clara/discord-token.cred
+LoadCredentialEncrypted=clara-token:/etc/clara/discord-clara-token.cred
+ExecStart=/opt/clara/current/.venv/bin/clara-discord
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
