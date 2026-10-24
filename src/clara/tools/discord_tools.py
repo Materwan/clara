@@ -56,14 +56,14 @@ def scope_of(kind: str, target: str = "") -> tuple[str, tuple]:
         return "id = ?", (target,)
     if kind == "loose":
         return (
-            "project_id IS NULL AND incognito = 0 AND local_only = 0 AND parent_id IS NULL"
+            "project_id IS NULL AND incognito = 0 AND local_only = 0"
             " AND id NOT IN (SELECT conversation_id FROM schedule_runs WHERE conversation_id IS NOT NULL)"
             " AND id NOT IN (SELECT conversation_id FROM trigger_runs WHERE conversation_id IS NOT NULL)"
             " AND id NOT IN (SELECT conversation_id FROM schedules WHERE conversation_id IS NOT NULL)",
             (),
         )
     if kind == "incognito":
-        return "incognito = 1 AND parent_id IS NULL", ()
+        return "incognito = 1", ()
     if kind == "project":
         return "project_id = ?", (int(target),)
     if kind == "schedule":

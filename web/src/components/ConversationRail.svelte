@@ -7,7 +7,7 @@
 
   // The list of conversations, in the rail under the pages: on every page, scrolling with the rest of the rail.
   // The conversations of a project, of a schedule or of a hook are grouped under its name; they are listed only when that
-  // project, schedule or hook is switched on for the history, and those of Discord or the console only when the account menu
+  // project, schedule or hook is switched on for the history, and those of Discord only when the account menu
   // shows them (a search looks through all of them; so do pinned conversations).
   type Group = { key: string; kind: 'project' | 'schedule' | 'hook'; name: string; items: any[] };
   const ICONS = { project: 'folder', schedule: 'clock', hook: 'bolt' } as const;

@@ -50,7 +50,6 @@ const NOTES: Record<string, [string, string, string?]> = {
   vault_edit: ['book', 'Edited the note', 'note'],
   vault_daily: ['book', 'Opened the daily note'],
   vault_move: ['book', 'Moved the note', 'note'],
-  local_task: ['sparkle', 'Sub agent', 'description'], // the console's: its conversation opens under the call
   automation_list: ['play', 'Looked at your automations'],
   automation_create: ['play', 'Made an automation', 'name'],
   automation_update: ['play', 'Changed an automation', 'name'],
@@ -65,8 +64,8 @@ const NOTES: Record<string, [string, string, string?]> = {
 
 export type Call = { name: string; arguments: any; result?: string; running?: boolean; granted?: number }; // granted: the Approve all next that allowed it
 
-/** A text argument of a call, trimmed ("" when it has none). The arguments may still be the JSON text the model wrote. */
-export function argument(call: Call, key: string): string {
+export function note(call: Call): { icon: string; label: string; detail: string } {
+  const [icon, label, key] = NOTES[call.name] ?? ['bolt', call.name.replaceAll('_', ' ')];
   let args = call.arguments;
   if (typeof args === 'string') {
     try {
@@ -75,12 +74,7 @@ export function argument(call: Call, key: string): string {
       args = {};
     }
   }
-  return args && typeof args[key] === 'string' ? args[key].trim() : '';
-}
-
-export function note(call: Call): { icon: string; label: string; detail: string } {
-  const [icon, label, key] = NOTES[call.name] ?? ['bolt', call.name.replaceAll('_', ' ')];
-  const raw = key ? argument(call, key) : '';
+  const raw = key && args && typeof args[key] === 'string' ? args[key].trim() : '';
   return { icon, label, detail: raw.length > 80 ? raw.slice(0, 79) + '…' : raw };
 }
 

@@ -1,19 +1,16 @@
 // What the list of conversations shows, chosen in the account menu and kept in this browser: the conversations a client
-// started (Discord, the console) can be left out of it. A pinned conversation, a search and a link always reach them.
+// started (Discord) can be left out of it. A pinned conversation, a search and a link always reach them.
 
 import { conversations } from './state.svelte';
 
-export const CLIENTS = [
-  { id: 'discord', label: 'Discord' },
-  { id: 'console', label: 'Console' },
-] as const;
+export const CLIENTS = [{ id: 'discord', label: 'Discord' }] as const;
 
 export type Client = (typeof CLIENTS)[number]['id'];
 
 const KEY = 'clara-display';
 
 function remembered(): Record<Client, boolean> {
-  const shown = { discord: true, console: true };
+  const shown = { discord: true };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
     for (const { id } of CLIENTS) if (saved?.[id] === false) shown[id] = false;

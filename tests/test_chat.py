@@ -175,54 +175,6 @@ async def test_the_history_lists_the_groups_you_switched_on(client, services):
     assert (await client.get("/v1/schedules")).json()["schedules"][1]["in_history"] is False
 
 
-async def test_a_sub_agents_conversation_is_shown_in_its_parent_and_kept_with_it(client, services, llm):
-    """The console's sub agent works in an incognito conversation of its own: out of every list, in its parent's detail."""
-    llm.replies = ["Found it."]
-    parent = (await client.post("/v1/conversations", json={})).json()["id"]
-    response = await client.post("/v1/chat/stream", json={"message": "Find the needle", "incognito": True, "parent": parent})
-    assert response.status_code == 200
-    child = parse_sse(response.text)[-1]["conversation"]
-    assert services.conversations.get(child).parent_id == parent
-
-    for params in ({"kind": "any"}, {"kind": "any", "q": "needle"}, {"kind": "any", "history": "true"}):
-        found = (await client.get("/v1/conversations", params=params)).json()["conversations"]
-        assert child not in [item["id"] for item in found]
-    detail = (await client.get(f"/v1/conversations/{parent}")).json()
-    assert [(item["id"], item["prompt"], item["parent"]) for item in detail["subagents"]] == [(child, "Find the needle", parent)]
-    assert (await client.get(f"/v1/conversations/{child}")).json()["parent"] == parent
-    assert (await client.get(f"/v1/conversations/{child}/messages")).json()["messages"][-1]["content"] == "Found it."
-
-    services.db.execute("UPDATE conversations SET updated_at = '2020-01-01T00:00:00+00:00'")
-    assert services.conversations.sweep_incognito(24) == 0  # it lives as long as its parent
-    assert services.conversations.get(child) is not None
-    assert (await client.delete(f"/v1/conversations/{parent}")).status_code == 200
-    assert services.conversations.get(child) is None
-
-
-async def test_a_sub_agents_conversation_goes_with_a_swept_parent(client, services, llm):
-    llm.replies = ["Hi.", "Done."]
-    first = await client.post("/v1/chat/stream", json={"message": "hi", "incognito": True})
-    parent = parse_sse(first.text)[-1]["conversation"]
-    second = await client.post("/v1/chat/stream", json={"message": "task", "incognito": True, "parent": parent})
-    child = parse_sse(second.text)[-1]["conversation"]
-    services.db.execute("UPDATE conversations SET updated_at = '2020-01-01T00:00:00+00:00'")
-    assert services.conversations.sweep_incognito(24) == 1
-    assert services.conversations.get(parent) is None and services.conversations.get(child) is None
-
-
-async def test_a_conversation_is_put_in_a_parent_only_when_it_starts_and_only_one_level_deep(client, services, llm):
-    llm.replies = ["Done.", "Done.", "Done."]
-    parent = (await client.post("/v1/conversations", json={})).json()["id"]
-    child = parse_sse((await client.post("/v1/chat/stream", json={"message": "a", "parent": parent})).text)[-1]["conversation"]
-    missing = await client.post("/v1/chat/stream", json={"message": "a", "parent": "c" + "0" * 16})
-    assert missing.status_code == 404
-    nested = await client.post("/v1/chat/stream", json={"message": "a", "parent": child})
-    assert nested.status_code == 422 and "sub agents of its own" in nested.text
-    other = (await client.post("/v1/conversations", json={})).json()["id"]
-    late = await client.post("/v1/chat/stream", json={"message": "a", "conversation": other, "parent": parent})
-    assert late.status_code == 422 and services.conversations.get(other).parent_id is None
-
-
 async def test_the_list_can_leave_out_the_clients_you_do_not_want_to_see(client, services):
     conversations = services.conversations
     web = conversations.create("web", title="Web").id

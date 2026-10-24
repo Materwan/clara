@@ -161,7 +161,6 @@ class ChatRequest:
     fork_of: int | None = None  # the question asked again or edited (its id)
     incognito: bool = False  # for a new conversation
     local_only: bool = False  # for a new conversation
-    parent: str | None = None  # for a new conversation: the one it is shown in (a sub agent's conversation)
     title: str = ""  # for a new conversation
     conversation_kind: str = "chat"
     mode: str = "interactive"
@@ -305,19 +304,6 @@ class Agent:
                 raise ValueError(f"Tool name used twice, or reserved by the server: {name}")
             names.add(name)
 
-    def _parent(self, request: ChatRequest, conversation: Conversation | None) -> str | None:
-        """The conversation a new one is shown in: it must exist, and be a conversation of its own, not another's."""
-        if not request.parent:
-            return None
-        if conversation is not None:
-            raise ValueError("A conversation is put in another one when it starts, not afterwards.")
-        parent = self.s.conversations.get(request.parent)
-        if parent is None:
-            raise NoSuchConversation(f"No conversation {request.parent}.")
-        if parent.parent_id is not None:
-            raise ValueError("A sub agent's conversation cannot have sub agents of its own.")
-        return parent.id
-
     def _reads_pictures(self, choice: Choice) -> bool | None:
         return self.s.catalog.capabilities(choice.ref).vision
 
@@ -349,7 +335,6 @@ class Agent:
                     )
                 else:
                     raise NoSuchConversation(f"No conversation {request.conversation}.")
-        parent = self._parent(request, conversation)
         local_only = conversation.local_only if conversation else request.local_only
         choice = self.s.router.choose(request.model or (conversation.model if conversation else ""), local_only)
         if request.images and self._reads_pictures(choice) is False:
@@ -372,7 +357,6 @@ class Agent:
                 project_id=request.project,
                 incognito=request.incognito,
                 local_only=request.local_only,
-                parent_id=parent,
             )
         state = TurnState(
             turn_id=uuid.uuid4().hex,

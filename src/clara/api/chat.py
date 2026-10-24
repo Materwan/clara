@@ -58,11 +58,6 @@ class ChatBody(BaseModel):
     instructions: str = Field(default="", max_length=20_000)
     incognito: bool = False
     local_only: bool = False
-    parent: str | None = Field(
-        default=None,
-        pattern=r"^c[0-9a-f]{16}$",
-        description="With a new conversation: the one it is shown in (a sub agent's)",
-    )
     ref: str = Field(default="", max_length=40, description="The message's id on Discord, when the bot sends it")
     mirror_thread: str = Field(
         default="", max_length=40, description="A new conversation started in a Discord forum post: its thread"
@@ -111,7 +106,6 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         fork_of=body.fork_of,
         incognito=body.incognito,
         local_only=body.local_only,
-        parent=body.parent,
         wait_for_approvals=wait,
         ref=body.ref,
         mirror_thread=body.mirror_thread,

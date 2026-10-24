@@ -58,7 +58,6 @@ LABELS: dict[str, str] = {
     "vault_edit": "Edited the note",
     "vault_daily": "Opened the daily note",
     "vault_move": "Moved the note",
-    "local_task": "Sub agent",
 }
 MAX_LINE = 100  # Discord's limit for a thread's name is 100 characters; the same bound keeps the tool line short
 MAX_KINDS = 3

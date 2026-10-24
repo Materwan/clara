@@ -24,7 +24,6 @@ from .facts import fts_query
 
 MAX_TITLE = 100
 PREVIEW = 300
-PROMPT = 2_000
 ANY = "any"
 NONE = "none"
 
@@ -48,7 +47,6 @@ class Conversation:
     created_at: str
     updated_at: str
     packs: tuple[str, ...] = ("web",)
-    parent_id: str | None = None  # the conversation this one is shown in (a sub agent's), else None
     archived_at: str | None = None  # archived: it can be read, and takes no new message
     archived_by: str = ""  # who archived it: 'you', 'discord' (its idle week there), 'group' (its history switched off)
 
@@ -72,7 +70,6 @@ class Conversation:
             "updated_at": self.updated_at,
             "summarised": bool(self.summary),
             "packs": self.active_packs(),
-            "parent": self.parent_id,
             "archived": self.archived_at is not None,
             "archived_by": self.archived_by,
         }
@@ -131,7 +128,6 @@ def _conversation(row) -> Conversation:
         row["created_at"],
         row["updated_at"],
         _packs(row["packs"]),
-        row["parent_id"],
         row["archived_at"],
         row["archived_by"],
     )
@@ -180,13 +176,12 @@ class Conversations:
         local_only: bool = False,
         conversation_id: str | None = None,
         packs: list[str] | None = None,
-        parent_id: str | None = None,
     ) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
         self.db.execute(
             "INSERT INTO conversations (id, title, titled_by, client, kind, project_id, model, incognito, local_only,"
-            " parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 conversation_id,
                 title[:MAX_TITLE],
@@ -197,7 +192,6 @@ class Conversations:
                 model,
                 int(incognito),
                 int(local_only),
-                parent_id,
                 now,
                 now,
             ),
@@ -250,8 +244,8 @@ class Conversations:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
         `group` (its schedule, else its hook, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
         leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
-        the conversations the listed clients started. A sub agent's conversation is never listed: it is shown in its parent's."""
-        where = ["c.parent_id IS NULL"]
+        the conversations the listed clients started."""
+        where = []
         params: list = []
         if archived is not None:  # False: the ones not archived (the default); True: only the archived ones
             where.append("c.archived_at IS NOT NULL" if archived else "c.archived_at IS NULL")
@@ -287,24 +281,13 @@ class Conversations:
             f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
             f" {self._HOOK} AS hook_id, (SELECT t.name FROM triggers t WHERE t.id = {self._HOOK}) AS hook_name,"
             " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
-            f" FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
+            f" FROM conversations c WHERE {' AND '.join(where) or '1'} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
         )
         return [
             {**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)}
             for row in rows
         ]
-
-    def subagents(self, conversation_id: str) -> list[dict]:
-        """The conversations of the sub agents the conversation started, oldest first, each with the `prompt` it was given
-        (its first question, cut to PROMPT characters): the site matches it with the tool call that started it."""
-        rows = self.db.all(
-            "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
-            " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS prompt"
-            " FROM conversations c WHERE c.parent_id = ? ORDER BY c.created_at, c.id",
-            (PROMPT, conversation_id),
-        )
-        return [{**_conversation(row).describe(), "prompt": row["prompt"] or ""} for row in rows]
 
     @staticmethod
     def _group(row) -> dict | None:
@@ -382,14 +365,11 @@ class Conversations:
             return tx.execute(f"DELETE FROM conversations WHERE {where}", params).rowcount
 
     def sweep_incognito(self, hours: int) -> int:
-        """Delete incognito conversations idle for longer than `hours`. A sub agent's (always incognito) lives and dies with
-        its parent: it goes when the parent is swept or deleted."""
+        """Delete incognito conversations idle for longer than `hours`."""
         limit = iso(utcnow() - timedelta(hours=hours))
         with self.db.transaction() as tx:
-            self._trash(tx, "incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,))
-            return tx.execute(
-                "DELETE FROM conversations WHERE incognito = 1 AND parent_id IS NULL AND updated_at <= ?", (limit,)
-            ).rowcount
+            self._trash(tx, "incognito = 1 AND updated_at <= ?", (limit,))
+            return tx.execute("DELETE FROM conversations WHERE incognito = 1 AND updated_at <= ?", (limit,)).rowcount
 
     # ------------------------------------------------------------------
     # Summary state
