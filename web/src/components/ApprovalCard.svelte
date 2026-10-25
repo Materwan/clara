@@ -2,13 +2,18 @@
   import { api } from '../lib/api';
   import { press } from '../lib/grants.svelte';
   import { loadPending } from '../lib/live';
-  import { session, toast } from '../lib/state.svelte';
+  import { live, session, toast } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
 
   // allowGrant: only the chat that shows the request can offer « Approve all next » (it keeps its banner and its beat)
   let { approval, allowGrant = false }: { approval: any; allowGrant?: boolean } = $props();
   let answered = $state<string | null>(null);
-  const status = $derived(answered ?? approval.status ?? 'pending');
+  // What the server says about it now: this card is drawn once, but the request may be answered from another client
+  // (the desktop island, Discord, another tab), which the event stream tells (live.settled).
+  const verdict = $derived(live.settled[approval.id] ?? approval);
+  const status = $derived(answered ?? verdict.status ?? 'pending');
+  const elsewhere = $derived(answered === null && status !== 'pending' && verdict.decided_by ? verdict : null);
+  const WORDS: Record<string, string> = { allow_once: 'Allowed', allow_always: 'Always allowed', refuse_once: 'Refused', refuse_always: 'Always refused' };
   let busy = $state(false);
 
   async function answer(choice: string): Promise<void> {
@@ -48,6 +53,7 @@
   </div>
   <p class="approval-summary">{approval.summary}</p>
   {#if approval.reason}<p class="approval-reason">Why it asks: {approval.reason}</p>{/if}
+  {#if elsewhere}<p class="muted small">{WORDS[elsewhere.answer] ?? 'Answered'} from {elsewhere.decided_by}.</p>{/if}
   {#if status === 'pending'}
     {#if answerable}
       <div class="row">

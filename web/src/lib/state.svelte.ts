@@ -10,6 +10,7 @@ export const live = $state({
   approvals: [] as any[],
   alerts: {} as Record<string, string>,
   feed: [] as any[],
+  settled: {} as Record<number, any>, // requests answered (here or by another client), by id: an open card follows them
   refresh: 0, // bumped when something changed that open pages may want to reload
 });
 

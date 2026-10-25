@@ -46,6 +46,11 @@ function handle(event: any): void {
   live.feed.unshift(event);
   live.feed.splice(50);
   if (event.type === 'approval' || event.type === 'approval_resolved') {
+    const settled = event.payload?.approval;
+    if (event.type === 'approval_resolved' && settled) {
+      live.settled[settled.id] = settled;
+      for (const id of Object.keys(live.settled).slice(0, -100)) delete live.settled[Number(id)];
+    }
     loadPending();
     live.refresh++;
     return;
