@@ -7,14 +7,17 @@ import base64
 import io
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import subprocess
 import sys
 import tarfile
 import textwrap
+import zipfile
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -27,7 +30,7 @@ from clara.gate import Action, Decision, Situation
 from clara.ops.backups import verify
 from clara.ops.discord_bot import DiscordBot, bot_environment
 from clara.ops.tailscale import FunnelOn, Output, Tailscale, check_funnel_now, funnel_ports
-from clara.ops.updater import UpdateError, check_signature, check_sums, safe_extract
+from clara.ops.updater import UpdateError, Updater, check_signature, check_sums, safe_extract
 from clara.settings import load_settings
 from clara.timeutil import iso, utcnow
 from clara.tools.base import ToolContext, TurnState
@@ -103,6 +106,27 @@ def test_release_archives_cannot_escape(tmp_path):
         tar.addfile(info)
     with pytest.raises(UpdateError):
         safe_extract(linked, tmp_path / "out2")
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_a_new_release_venv_still_runs_after_the_folder_is_renamed(tmp_path):
+    """The updater builds the venv in `.<tag>.partial` and renames the folder: a plain venv writes the old folder in
+    the first line of its scripts, and neither the preflight nor the launcher could start the release."""
+    partial = tmp_path / ".v1.0.0.partial"
+    partial.mkdir()
+    (partial / "requirements.lock").write_text("")
+    dist = "clara-1.0.0.dist-info"
+    with zipfile.ZipFile(partial / "clara-1.0.0-py3-none-any.whl", "w") as wheel:  # one console script, no dependency
+        wheel.writestr("clara_probe.py", "def main():\n    print('probe ran')\n")
+        wheel.writestr(f"{dist}/METADATA", "Metadata-Version: 2.1\nName: clara\nVersion: 1.0.0\n")
+        wheel.writestr(f"{dist}/WHEEL", "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        wheel.writestr(f"{dist}/entry_points.txt", "[console_scripts]\nprobe = clara_probe:main\n")
+        wheel.writestr(f"{dist}/RECORD", "")
+    python = f"{sys.version_info.major}.{sys.version_info.minor}"
+    asyncio.run(Updater(SimpleNamespace())._venv(partial, {"python": python}))
+    partial.rename(tmp_path / "v1.0.0")
+    run = subprocess.run([str(tmp_path / "v1.0.0" / ".venv" / "bin" / "probe")], capture_output=True, text=True)
+    assert (run.returncode, run.stdout.strip()) == (0, "probe ran"), run.stderr
 
 
 def free_port() -> int:

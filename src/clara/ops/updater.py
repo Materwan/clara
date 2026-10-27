@@ -259,7 +259,8 @@ class Updater:
     async def _venv(self, root: Path, manifest: dict) -> None:
         uv = shutil.which("uv") or "/usr/local/bin/uv"
         python = manifest.get("python", "3.12")
-        await self._run(uv, "venv", "--python", python, str(root / ".venv"))
+        # relocatable: `_prepare` builds in `.<tag>.partial` and renames the folder, which a plain venv's scripts do not survive
+        await self._run(uv, "venv", "--relocatable", "--python", python, str(root / ".venv"))
         interpreter = str(root / ".venv" / "bin" / "python")
         await self._run(
             uv, "pip", "install", "--python", interpreter, "--require-hashes", "-r", str(root / "requirements.lock")
