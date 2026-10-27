@@ -346,6 +346,9 @@ class Approvals:
             approval.action_class not in FOR_A_CONVERSATION or self.allowances is None or not approval.conversation_id
         ):
             raise ApprovalError("This request cannot be allowed for the conversation: allow it once instead.")
+        if answer == "allow_always" and approval.action_class in FOR_A_CONVERSATION:
+            # a rule for `folder:.env` would let every folder opened later read its own `.env`: one conversation at most
+            raise ApprovalError("This request cannot be allowed for good: allow it once, or for the conversation.")
         if answer.endswith("_always"):  # before the answer is committed: a rule that cannot be made leaves it pending
             try:
                 check_fields(effect, approval.tool.strip(), approval.target.strip(), "", approval.level.strip())

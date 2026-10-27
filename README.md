@@ -2,7 +2,7 @@
 
 Clara is a personal AI agent for **one person**, running on **one Linux machine**, reachable **only from that
 person's own devices over Tailscale**. She chats from a web site, a terminal, an admin console, a Discord server of
-your own or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
+your own, a small Windows island, an Android app (the last two are a separate, private project) or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
 writes files in her own workspace, runs scripts in isolated containers, and works with GitHub, Google Drive, your
 Gmail, your Obsidian vault and the web. Every action she takes goes through rules you set: allowed, asked, or refused.
 

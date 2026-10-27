@@ -746,6 +746,11 @@
           <Mark size={56} />
           <h2 class="greeting">{greeting()}</h2>
           <p>Ask Clara anything. The notes she writes are saved in your workspace and show here as cards.</p>
+          {#if !models.default}
+            <div class="flag-notes" role="status">
+              <p class="flag-note"><Icon name="chip" size={16} /><span>No default model is chosen yet, so Clara cannot answer. <a href="#/models">Choose one on Models</a> (a local Ollama model, or one of the providers whose key you add under Admin &gt; Secrets).</span></p>
+            </div>
+          {/if}
           {#if !conversationId && (fresh.incognito || fresh.local_only)}
             <div class="flag-notes" role="status">
               {#if fresh.incognito}<p class="flag-note"><Icon name="incognito" size={16} />Incognito: no facts are read or written, and the conversation is deleted 24 hours after its last message.</p>{/if}

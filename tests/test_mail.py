@@ -195,6 +195,24 @@ async def test_gmail_sends_in_the_thread_it_answers(world):
     assert [part.get_filename() for part in sent.iter_attachments()] == ["note.txt"]
 
 
+async def test_a_send_is_not_repeated_after_a_503_but_a_refused_one_is(world):
+    """A 503 can come after Gmail accepted the message: sending again would send it twice. A 429 is a refusal."""
+    mail_out = mail.Outgoing(("alice@example.com",), (), (), "Hi", "Hello.")
+    world.gmail_failures.append(("POST", "/messages/send", 503))
+    with pytest.raises(mail.MailError):
+        await gmail().send(mail_out, "me@gmail.com")
+    assert not world.gmail_sent and not world.gmail_failures  # one attempt, no second one
+    world.gmail_failures.append(("POST", "/messages/send", 429))
+    await gmail().send(mail_out, "me@gmail.com")
+    assert len(world.gmail_sent) == 1  # the refused try did not send, the retry did
+
+
+async def test_a_read_is_repeated_after_a_503(world):
+    world.gmail_failures.append(("GET", "/profile", 503))
+    assert await gmail().whoami() == "me@gmail.com"
+    assert not world.gmail_failures
+
+
 async def test_gmail_draft_is_saved_not_sent(world):
     made = await gmail().draft(mail.Outgoing((), subject="Later", body="x"), "me@gmail.com")
     assert made.id == "draft-1" and "authuser=me@gmail.com" in made.link

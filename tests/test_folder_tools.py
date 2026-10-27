@@ -7,9 +7,11 @@ import asyncio
 import contextlib
 import json
 
+import httpx
 import pytest
 
 from clara.agent.turn import ChatRequest
+from clara.app import create_app
 from clara.gate import Action, Decision, Situation
 from clara.gate.actions import CLASSES, FOR_A_CONVERSATION, NOT_PUBLISHED
 from clara.gate.approvals import ApprovalError
@@ -79,6 +81,18 @@ def test_the_folder_tools_are_described_by_their_class(services, conversation):
     services.folders.remember_clear(conversation, ["docs/a.txt", "docs/.env"])
     assert tools.action("folder_read", ctx, {"path": "docs/a.txt"}).klass == "folder_read"
     assert tools.action("folder_read", ctx, {"path": "docs/.env"}).klass == "folder_sensitive"
+
+
+def test_a_search_that_starts_inside_a_hidden_folder_asks_like_one_that_includes_hidden_files(services, conversation):
+    tools = services.toolbox
+    ctx = context(services, conversation)
+    for name in ("folder_grep", "folder_find"):
+        assert tools.action(name, ctx, {"pattern": "x", "path": ".ssh"}).klass == "folder_sensitive"
+        assert tools.action(name, ctx, {"pattern": "x", "path": "app/.git/hooks"}).klass == "folder_sensitive"
+        assert tools.action(name, ctx, {"pattern": "x", "path": "app/src"}).klass == "folder_read"
+        assert tools.action(name, ctx, {"pattern": "x"}).klass == "folder_read"
+    listing = tools.action("folder_list", ctx, {"path": ".ssh"})
+    assert listing.klass == "folder_read"  # names only, marked [hidden] by the page: a read of content is what asks
 
 
 def test_the_folder_classes_and_their_defaults(services):
@@ -213,6 +227,44 @@ async def test_an_allowance_is_only_for_folder_reads_of_a_conversation(services,
     token = services.tokens.create("browser", "web")[0]
     with pytest.raises(ApprovalError):
         await services.approvals.decide(approval.id, "allow_conversation", token)
+
+
+async def test_always_is_not_an_answer_for_a_request_that_lasts_one_conversation(services, conversation):
+    """A rule for `folder:.env` would apply to the `.env` of every folder opened later."""
+    ctx = context(services, conversation)
+    action = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
+    approval = services.approvals.create(action, Situation("interactive"), ctx, {"path": ".env"}, Decision("ask", "test"))
+    token = services.tokens.create("browser", "web")[0]
+    with pytest.raises(ApprovalError, match="cannot be allowed for good"):
+        await services.approvals.decide(approval.id, "allow_always", token)
+    assert services.approvals.get(approval.id).status == "pending"  # still there to answer
+    assert not services.rules.list()
+    await services.approvals.decide(approval.id, "allow_conversation", token)
+    assert services.allowances.covers(conversation, "folder_read", "folder:.env")
+
+
+async def test_a_request_that_names_a_file_of_your_computer_is_shown_and_answered_by_the_web_only(services, conversation):
+    ctx = context(services, conversation)
+    action = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
+    approval = services.approvals.create(action, Situation("interactive"), ctx, {"path": ".env"}, Decision("ask", "test"))
+    app = create_app(services)
+
+    def http(client: str, approvals: str | None = None) -> httpx.AsyncClient:
+        token = services.tokens.create(f"t-{client}-{approvals}", client, approvals)[1]
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://clara.test",
+                                 headers={"Authorization": f"Bearer {token}"})
+
+    for client, approvals in (("discord", None), ("script", "all"), ("cli", None)):
+        async with http(client, approvals) as other:
+            listed = (await other.get("/v1/approvals", params={"status": "pending"})).json()["approvals"]
+            assert approval.id not in [item["id"] for item in listed]
+            assert (await other.post(f"/v1/approvals/{approval.id}/decide", json={"answer": "allow_once"})).status_code == 404
+    async with http("web") as web:
+        listed = (await web.get("/v1/approvals", params={"status": "pending"})).json()["approvals"]
+        assert approval.id in [item["id"] for item in listed]
+        refused = await web.post(f"/v1/approvals/{approval.id}/decide", json={"answer": "allow_always"})
+        assert refused.status_code == 422
+        assert (await web.post(f"/v1/approvals/{approval.id}/decide", json={"answer": "allow_once"})).status_code == 200
 
 
 async def test_a_remote_tool_is_never_run_on_the_server(services, conversation):

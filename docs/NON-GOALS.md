@@ -42,6 +42,8 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
   deleting a label, the read mark and moving a message to the Trash are in (see [DECISIONS.md](DECISIONS.md)). The Gmail
   token has no scope for the settings, and no tool calls the permanent delete.
 - **Translation or stemming in memory search.**
-- **A mobile app.** The web site works on a phone over the tailnet.
+- **Native apps beyond the two that exist.** The Windows island and the Android phone app (a separate, private
+  repository, `clara_coucou`) are the only native clients: no iOS app, no store release, no public build (they carry
+  artwork that is not ours to share). The web site works on a phone over the tailnet.
 - **Rewriting git history to erase deleted files** in the workspace or the vault. Deletion there is undoable on
   purpose; erase by hand if you must.

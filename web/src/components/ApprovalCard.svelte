@@ -62,7 +62,7 @@
           title="Allow this and the next {approval.tool} requests of this conversation without asking, until you leave this page, press Stop, or a limit set in Admin > Settings is reached">Approve all next</button>{/if}
         {#if approval.class === 'folder_sensitive'}<button class="small" disabled={busy} onclick={() => answer('allow_conversation')}
           title="Allow Clara to read this file again for the rest of this conversation (other files are asked for again)">Allow for this conversation</button>{/if}
-        <button class="small" disabled={busy} onclick={() => answer('allow_always')}>Allow always</button>
+        {#if approval.class !== 'folder_sensitive'}<button class="small" disabled={busy} onclick={() => answer('allow_always')}>Allow always</button>{/if}
         <button class="small" disabled={busy} onclick={() => answer('refuse_once')}>Refuse once</button>
         <button class="small danger" disabled={busy} onclick={() => answer('refuse_always')}>Refuse always</button>
       </div>

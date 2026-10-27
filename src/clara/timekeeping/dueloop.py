@@ -18,6 +18,7 @@ from datetime import datetime
 from ..timeutil import utcnow
 
 MAX_SLEEP = 30.0
+RETRY_FIRST = 1.0  # seconds to wait after a pass that raised; doubled at each failure in a row, at most MAX_SLEEP
 
 
 class DueLoop:
@@ -29,6 +30,7 @@ class DueLoop:
         self.stopping = False  # the server is stopping: what comes due waits for the next start
         self.busy_firing = False  # what came due is being handled (a stop waits for it)
         self.last_pass = time.monotonic()
+        self.failures = 0  # passes in a row that raised: what is still due is not tried again at once
 
     def wake(self) -> None:
         self._wake.set()
@@ -50,7 +52,9 @@ class DueLoop:
                     fired = self.fire_due()
                     if inspect.isawaitable(fired):
                         await fired
+                self.failures = 0
             except Exception:
+                self.failures += 1
                 log.exception("%s: could not fire what is due", self.name)
             finally:
                 self.busy_firing = False
@@ -60,5 +64,8 @@ class DueLoop:
                 log.exception("%s: could not find what is due next", self.name)
                 upcoming = None
             delay = MAX_SLEEP if upcoming is None or self.stopping else (upcoming - self._clock()).total_seconds()
+            # an item that stays due because firing it fails would otherwise be retried without a pause
+            if self.failures:
+                delay = max(delay, min(MAX_SLEEP, RETRY_FIRST * 2 ** min(self.failures - 1, 5)))
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), max(0.0, min(delay, MAX_SLEEP)))

@@ -32,6 +32,8 @@ All clients speak the same HTTP API (section 15) with their own token, and share
 | `clara-chat` | Terminal chat | `cli` |
 | `clara-admin` | Terminal admin console (the console commands below) | `console` |
 | `clara-discord` | Discord bot in your private server, answers your user id only: its conversations are threads in forums, `#general` says what is pending (separate process) | `discord` |
+| Desktop island | A Windows app (Tauri, a separate repository: `clara_coucou`): a small island at the top of the screen with her status, the requests and questions waiting for you, a quick chat and notices; a private build | `script`, `approvals: all` |
+| Phone app | The same for Android (in the same repository): the polls, the chat, the requests and questions, notices; a private build | `script`, `approvals: all` |
 | Your scripts | The HTTP API and its event stream | `script` |
 
 ### Web site
@@ -465,7 +467,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   Archives are read in memory, never unpacked to disk: `..` and links are refused, nested archives skipped, a file
   over 30 MB is not read, and one archive may unpack to 600 MB at most.
 - **Files sent in a conversation:** kept with the conversation (20 per conversation) and readable later by number.
-- **A folder on your computer (web chat, Chromium browsers):** the **+** menu's *Folder on this computer* lets the browser open one folder (its picker, one per conversation, with a budget you can set; default `folder_budget`, at most `folder_budget_max`). Clara walks it with `folder_list`, `folder_find`, `folder_grep` and `folder_read`; the server never reads your disk, the browser answers each call. Read-only, conversations only (never a reminder, task, schedule or hook). Hidden files (a name starting with a dot) and files ignored by a `.gitignore` are listed, but reading one asks, and its card can say *Allow for this conversation*; search skips them unless asked. Reads count against the budget, and so do the matches a search returns (a listing does not); what is read stays in the conversation under the usual rule (the last five tool results). The grant ends when the tab closes or the conversation changes. Chat-only rules: the tab stays open during a walk, and a file's name is never sent to Discord (its approval is not published). Decision: DECISIONS.md, « Folders on your computer ».
+- **A folder on your computer (web chat, Chromium browsers):** the **+** menu's *Folder on this computer* lets the browser open one folder (its picker, one per conversation, with a budget you can set; default `folder_budget`, at most `folder_budget_max`). Clara walks it with `folder_list`, `folder_find`, `folder_grep` and `folder_read`; the server never reads your disk, the browser answers each call. Read-only, conversations only (never a reminder, task, schedule or hook). Hidden files (a name starting with a dot, in the file's own name or in any folder above it) and files ignored by a `.gitignore` are listed, but reading one asks, and its card can say *Allow for this conversation* (there is no *Allow always* for it: a rule for `.env` would reach every folder opened later); search skips them unless asked, and a search that starts inside a hidden folder asks like one with `include_hidden`. A name pattern is matched without a regular expression, and a regular expression of `folder_grep` runs in a worker that is ended after 2 seconds, so a pattern that never finishes cannot freeze the tab. Reads count against the budget, and so do the matches a search returns (a listing does not); what is read stays in the conversation under the usual rule (the last five tool results). The grant ends when the tab closes or the conversation changes. Chat-only rules: the tab stays open during a walk, and a file's name is never sent to Discord (its approval is not published, and `GET /v1/approvals` and the answer route show it to web tokens only). Decision: DECISIONS.md, « Folders on your computer ».
 - **Notes:** Clara's notes are Markdown files in the workspace folder `notes/` (with its git history and undo).
 - **Second brain (Obsidian vault):** a git clone of your vault (`CLARA_VAULT_PATH`). It is closed by default: the model
   sees a one-line mention and calls `open_second_brain` when your notes matter, which opens eight tools for that
@@ -716,7 +718,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `search_project` | Search the project's files | read |
 | `folder_list` | List a folder of the folder you opened on your computer in a web chat: its entries, hidden and ignored ones too, 500 at most (the browser runs it; untrusted) | folder_read / read |
 | `folder_find` | Find files and folders by name, from a folder down (`*` and `?`), 100 matches at most, which count against the folder's budget; hidden and ignored files are skipped unless `include_hidden`, which asks (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
-| `folder_grep` | Search the text of the files, plain or a regular expression, with line numbers, 100 lines at most, which count against the budget; binary files are skipped; hidden and ignored files as `folder_find` (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
+| `folder_grep` | Search the text of the files, plain or a regular expression (stopped after 2 s), with line numbers, 100 lines at most, which count against the budget; binary files are skipped; hidden and ignored files as `folder_find` (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
 | `folder_read` | Read a text file of that folder, numbered, 40,000 characters from a line; it counts against the folder's budget; a hidden or ignored file, or one no listing named yet, asks (untrusted) | folder_read / read; folder_sensitive / read |
 | `ws_list` | The workspace tree with sizes | read |
 | `ws_read` | Read a workspace file, with line numbers (in parts) | read |
@@ -1125,7 +1127,7 @@ keep-alive every 15 s.
 | `DELETE /v1/rules/{rule_id}` | Delete a rule |
 | `PUT /v1/rules/tainted` | The tainted-turn rule on or off |
 | `POST /v1/rules/test` | Which rule decides this call |
-| `GET /v1/approvals` | Approval requests (by status) |
+| `GET /v1/approvals` | Approval requests (by status); the requests of a web chat's folder that name a hidden or ignored file are listed for web tokens only |
 | `POST /v1/approvals/{approval_id}/decide` | Answer one |
 | `POST /v1/approvals/{approval_id}/grant` | **Approve all next** on a waiting request: allow it, and the next requests of its tool and class in its conversation, until the page stops beating or a limit is reached (web tokens only; 422 for any other class than a workspace or vault change) |
 | `PUT /v1/conversations/{conversation_id}/grants` | The page's beat (every 10 s): the grants on, with calls used and time left, and the ones that ended since the last beat |

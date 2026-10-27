@@ -7,7 +7,7 @@
 #
 # What it does, each step said as it runs: the `clara` system user and its rootless Podman needs (subuid/subgid,
 # linger), /opt/clara/releases and the `current` link, /etc/clara (settings, credentials), the secret key as an
-# encrypted systemd credential, the systemd units, `tailscale set --operator=clara`, two first tokens.
+# encrypted systemd credential, the systemd units, `tailscale set --operator=clara`, three first tokens.
 set -euo pipefail
 
 say() { printf '\n== %s\n' "$*"; }
@@ -71,12 +71,14 @@ install -m 644 deploy/clara-discord.service /etc/systemd/system/clara-discord.se
 systemctl daemon-reload
 
 say "First tokens (shown once: keep them)"
-key=$(systemd-creds decrypt --name=clara-secret-key /etc/clara/secret-key.cred -)
+# The key goes in the environment, never on a command line (every user can read /proc/*/cmdline, not /proc/*/environ).
+CLARA_SECRET_KEY=$(systemd-creds decrypt --name=clara-secret-key /etc/clara/secret-key.cred -)
+export CLARA_SECRET_KEY
 for client in console cli web; do
-    sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DIR=/var/lib/clara CLARA_SECRET_KEY="$key" \
+    sudo --preserve-env=CLARA_SECRET_KEY -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DIR=/var/lib/clara \
         /opt/clara/current/.venv/bin/clara token create "$client" "$client" || true
 done
-unset key
+unset CLARA_SECRET_KEY
 
 say "Checks"
 sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DIR=/var/lib/clara XDG_RUNTIME_DIR=/run/user/$(id -u clara) \

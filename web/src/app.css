@@ -677,6 +677,9 @@ tr.off td { opacity: .5; }
 .run-head:hover:not(:disabled) { color: var(--text-2); background: var(--hover); }
 .run-head > .icon:first-child { transition: transform var(--dur-fast) ease; }
 .run.open > .run-head > .icon:first-child { transform: rotate(90deg); }
+details.setup { margin-top: var(--sp-6); }
+details.setup > summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-sm); padding-block: var(--sp-6); }
+details.setup > summary:hover { color: var(--text); }
 .run-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-summary b { color: var(--text-2); font-weight: 650; }
 .run-list { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-4) 0 var(--sp-2) var(--sp-20); }

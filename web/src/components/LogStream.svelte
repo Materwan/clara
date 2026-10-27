@@ -136,6 +136,7 @@
   {:else}Connecting…{/if}
 </p>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex: a region that scrolls must take the keyboard, or its lines cannot be reached without a mouse -->
 <div class="panel log negative" role="log" aria-label="Server log" aria-live="off" tabindex="0" bind:this={box} onscroll={scrolled}>
   {#each lines as line (line.id)}
     <div class="line {line.level.toLowerCase()}">

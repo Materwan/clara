@@ -31,6 +31,7 @@ KINDS = (
     "ask",
 )
 LISTENER_IDLE_DAYS = 30
+CATCH_UP_PAGE = 500  # events read at once for a client that was away; it reads on page by page
 MAX_TEXT = 2_000
 MAX_SAID = 6_000  # what an automation's answer may say in Discord's #general (an `ask` event): the bot splits it
 MAX_TITLE = 100
@@ -178,10 +179,14 @@ class Events:
                 start = self.last_id()
                 self.acknowledge(token_id, start)
             seen = start
-            for event in self.after(start):
-                seen = event.id
-                if event.for_client(client):
-                    yield event
+            while True:  # a long absence is more than one page: read on until nothing older than now is left
+                page = self.after(seen, CATCH_UP_PAGE)
+                for event in page:
+                    seen = event.id
+                    if event.for_client(client):
+                        yield event
+                if len(page) < CATCH_UP_PAGE:
+                    break
             while not self.closed:
                 event = await queue.get()
                 if event is None:  # the server is going away: the stream ends

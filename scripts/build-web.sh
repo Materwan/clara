@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the web site (web/ → src/clara/web/dist) in a pinned Node image: no Node on the host, no root in the container.
-#   scripts/build-web.sh          install (npm ci), type-check (svelte-check), build
+#   scripts/build-web.sh          install (npm ci), type-check (svelte-check), test (the folder reader), build
 #   scripts/build-web.sh --quick  skip npm ci when node_modules is there
 set -euo pipefail
 
@@ -23,6 +23,6 @@ fi
 "$ENGINE" run --rm "${as_you[@]}" \
   -e HOME=/tmp -e npm_config_cache=/tmp/npm-cache -e npm_config_update_notifier=false \
   -v "$ROOT:/repo" -w /repo/web "$NODE_IMAGE" \
-  sh -c "$install && npm run check && npm run build"
+  sh -c "$install && npm run check && npm test && npm run build"
 
 echo "Built: $ROOT/src/clara/web/dist"

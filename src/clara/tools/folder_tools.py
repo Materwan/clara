@@ -178,6 +178,9 @@ def _search(verb: str) -> Callable[[ToolContext, dict], Action]:
             return _action(
                 "folder_sensitive", path, f"{verb} {pattern!r} in {_shown(path)}, hidden and ignored files included"
             )
+        # a search that starts inside `.ssh` or `.git` reads hidden files, whatever include_hidden says
+        if hidden(path):
+            return _action("folder_sensitive", path, f"{verb} {pattern!r} in {path}, a hidden folder")
         return _action("folder_read", path, f"{verb} {pattern!r} in {_shown(path)}")
 
     return describe
@@ -282,12 +285,13 @@ LIST_DESCRIPTION = (
 FIND_DESCRIPTION = (
     "Find files and folders by name in the folder the person opened on their computer, from a folder down: a pattern "
     "with * and ? (for example *.pdf or invoice*). Hidden and ignored files are skipped unless include_hidden is true, "
-    "which asks the person first. Up to 100 matches."
+    "which asks the person first; so does starting from a hidden folder. Up to 100 matches."
 )
 GREP_DESCRIPTION = (
     "Search the text of the files in the folder the person opened on their computer, from a folder down, and give each "
     "matching line with its file and line number. Hidden and ignored files are skipped unless include_hidden is true, "
-    "which asks the person first. Binary files are skipped. Up to 100 matching lines."
+    "which asks the person first; so does starting from a hidden folder. Binary files are skipped. A regular "
+    "expression that takes too long is stopped. Up to 100 matching lines."
 )
 READ_DESCRIPTION = (
     "Read a text file of the folder the person opened on their computer: its lines, numbered, up to 40,000 characters "

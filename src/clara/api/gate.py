@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, GrantError, NoRuleError, RuleError, Situation
+from ..gate.actions import NOT_PUBLISHED
 from ..gate.grants import BEAT
 from ..tools.base import ToolContext, ToolError, TurnState
 from .common import ApiError, caller, services
@@ -144,7 +145,13 @@ def approvals(
 ) -> dict:
     found = services(request).approvals.list(status or None, limit)
     who = caller(request)
-    return {"approvals": [{**item.describe(), "may_answer": who.token.may_answer(item.level)} for item in found]}
+    return {
+        "approvals": [
+            {**item.describe(), "may_answer": who.token.may_answer(item.level)}
+            for item in found
+            if item.action_class not in NOT_PUBLISHED or who.token.client == "web"
+        ]
+    }
 
 
 class Decision(BaseModel):
@@ -153,14 +160,23 @@ class Decision(BaseModel):
 
 @router.post("/approvals/{approval_id}/decide")
 async def decide(approval_id: int, body: Decision, request: Request) -> dict:
+    s = services(request)
+    who = caller(request)
+    found = s.approvals.get(approval_id)
+    # a request of these classes names a file of your computer: only the web chat shows it and answers it
+    if found is not None and found.action_class in NOT_PUBLISHED and who.token.client != "web":
+        raise ApiError(404, f"No request {approval_id}.")
     try:
-        approval = await services(request).approvals.decide(approval_id, body.answer, caller(request).token)
+        approval = await s.approvals.decide(approval_id, body.answer, who.token)
     except AlreadyAnswered as error:
         raise ApiError(409, str(error)) from None
     except NoRuleError as error:
         raise ApiError(400, str(error)) from None
     except ApprovalError as error:
-        raise ApiError(403 if "may not answer" in str(error) else 404, str(error)) from None
+        message = str(error)
+        raise ApiError(
+            403 if "may not answer" in message else 422 if "cannot be allowed" in message else 404, message
+        ) from None
     return approval.describe()
 
 

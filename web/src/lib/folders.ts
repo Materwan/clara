@@ -34,15 +34,38 @@ export function cleanPath(value: unknown): string {
   return parts.join('/');
 }
 
-/** A name pattern with `*` (any characters) and `?` (one character), case-insensitive, for one name. */
-export function nameRegex(pattern: string): RegExp {
-  let source = '';
-  for (const char of pattern) {
-    if (char === '*') source += '.*';
-    else if (char === '?') source += '.';
-    else source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+/**
+ * Does `name` match a pattern with `*` (any characters) and `?` (one character), case-insensitive? The pattern is the
+ * model's: it is matched without a regular expression, so a pattern like `*a*a*a*a*b` cannot make the tab hang.
+ */
+export function globMatch(pattern: string, name: string): boolean {
+  const p = pattern.toLowerCase();
+  const n = name.toLowerCase();
+  let pi = 0;
+  let ni = 0;
+  let star = -1;
+  let mark = 0;
+  while (ni < n.length) {
+    if (pi < p.length && (p[pi] === '?' || p[pi] === n[ni])) {
+      pi++;
+      ni++;
+    } else if (pi < p.length && p[pi] === '*') {
+      star = pi++;
+      mark = ni;
+    } else if (star >= 0) {
+      pi = star + 1;
+      ni = ++mark;
+    } else {
+      return false;
+    }
   }
-  return new RegExp(`^${source}$`, 'i');
+  while (pi < p.length && p[pi] === '*') pi++;
+  return pi === p.length;
+}
+
+/** A path with a dot name anywhere in it: its files are hidden, whatever their own names are. */
+export function isHiddenPath(path: string): boolean {
+  return path.split('/').some((part) => part.startsWith('.'));
 }
 
 export type Rule = { base: string; test: RegExp; negate: boolean; dirOnly: boolean };
@@ -130,8 +153,11 @@ function isBinary(bytes: Uint8Array): boolean {
 
 class Tree {
   private own = new Map<string, Rule[]>();
+  private root: FileSystemDirectoryHandle;
 
-  constructor(private root: FileSystemDirectoryHandle) {}
+  constructor(root: FileSystemDirectoryHandle) {
+    this.root = root;
+  }
 
   async folder(path: string): Promise<FileSystemDirectoryHandle> {
     let handle = this.root;
@@ -197,7 +223,7 @@ async function* walk(
     }
     const path = dirPath ? `${dirPath}/${name}` : name;
     const isDir = handle.kind === 'directory';
-    const hidden = name.startsWith('.');
+    const hidden = isHiddenPath(path);
     const ignored = !hidden && isIgnored(rules, path, isDir);
     yield { path, isDir, hidden, ignored, handle };
     if (isDir && (includeHidden || (!hidden && !ignored))) {
@@ -230,7 +256,7 @@ async function list(tree: Tree, args: Record<string, any>): Promise<Answer> {
   const clear: string[] = [];
   for (const entry of found.slice(0, LIST_LIMIT)) {
     const childPath = path ? `${path}/${entry.name}` : entry.name;
-    const hidden = entry.name.startsWith('.');
+    const hidden = isHiddenPath(childPath);
     const ignored = !hidden && isIgnored(rules, childPath, entry.isDir);
     lines.push(`${childPath}${entry.isDir ? '/' : ''}${hidden ? '  [hidden]' : ''}${ignored ? '  [ignored]' : ''}`);
     if (!entry.isDir && !hidden && !ignored) clear.push(childPath);
@@ -243,8 +269,8 @@ async function find(tree: Tree, args: Record<string, any>): Promise<Answer> {
   const path = cleanPath(args.path);
   const pattern = String(args.pattern ?? '').trim();
   if (!pattern) throw new Error('the pattern is required');
-  const test = nameRegex(pattern);
-  const includeHidden = args.include_hidden === true;
+  // starting inside a hidden folder is a search of hidden files: the server asked for it, so it is made
+  const includeHidden = args.include_hidden === true || isHiddenPath(path);
   const start = await tree.folder(path);
   const rules = await tree.rulesIn(path);
   const budget: Budget = { scanned: 0, cut: false };
@@ -252,7 +278,7 @@ async function find(tree: Tree, args: Record<string, any>): Promise<Answer> {
   const clear: string[] = [];
   for await (const entry of walk(tree, start, path, rules, includeHidden, budget)) {
     if (!includeHidden && (entry.hidden || entry.ignored)) continue;
-    if (!test.test(entry.path.split('/').pop() ?? '')) continue;
+    if (!globMatch(pattern, entry.path.split('/').pop() ?? '')) continue;
     lines.push(`${entry.path}${entry.isDir ? '/' : ''}${entry.ignored ? '  [ignored]' : ''}`);
     if (!entry.isDir && !entry.hidden && !entry.ignored) clear.push(entry.path);
     if (lines.length >= MATCH_LIMIT) break;
@@ -260,46 +286,111 @@ async function find(tree: Tree, args: Record<string, any>): Promise<Answer> {
   return answer(lines, clear, notes(budget, lines.length, MATCH_LIMIT, 'matches'));
 }
 
+/** The few members of a worker that the search uses (a test hands in its own). */
+export interface LineWorker {
+  onmessage: ((event: { data: number[] }) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  postMessage(job: { pattern: string; lines: string[]; room: number }): void;
+  terminate(): void;
+}
+
+const REGEX_MS = 2_000; // a regular expression gets this long on one file
+const limit = { ms: REGEX_MS };
+
+let makeWorker = (): LineWorker => new Worker(new URL('./grepWorker.ts', import.meta.url), { type: 'module' }) as unknown as LineWorker;
+
+/** For the tests: the worker the regular expressions run in. */
+export function useWorker(make: () => LineWorker, ms = REGEX_MS): void {
+  makeWorker = make;
+  limit.ms = ms;
+}
+
+/** Which lines of a file match: plain text on the page, a regular expression in a worker that is ended if it hangs. */
+class Matcher {
+  private needle = '';
+  private worker: LineWorker | null = null;
+  private pattern: string;
+  private regex: boolean;
+
+  constructor(pattern: string, regex: boolean) {
+    this.pattern = pattern;
+    this.regex = regex;
+    if (regex) {
+      try {
+        new RegExp(pattern, 'i'); // compiled to be told of a mistake, never run here
+      } catch (error) {
+        throw new Error(`not a regular expression: ${(error as Error).message}`);
+      }
+    } else {
+      this.needle = pattern.toLowerCase();
+    }
+  }
+
+  async lines(all: string[], room: number, where: string): Promise<number[]> {
+    if (!this.regex) {
+      const found: number[] = [];
+      for (let index = 0; index < all.length && found.length < room; index++) {
+        if (all[index].toLowerCase().includes(this.needle)) found.push(index);
+      }
+      return found;
+    }
+    this.worker ??= makeWorker();
+    const worker = this.worker;
+    return new Promise<number[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.close();
+        reject(new Error(`the regular expression took more than ${limit.ms / 1000} s on ${where}: write a simpler one, or search for plain text`));
+      }, limit.ms);
+      worker.onmessage = (event) => {
+        clearTimeout(timer);
+        resolve(event.data);
+      };
+      worker.onerror = () => {
+        clearTimeout(timer);
+        this.close();
+        reject(new Error('the regular expression could not be run'));
+      };
+      worker.postMessage({ pattern: this.pattern, lines: all, room });
+    });
+  }
+
+  close(): void {
+    this.worker?.terminate();
+    this.worker = null;
+  }
+}
+
 async function grep(tree: Tree, args: Record<string, any>): Promise<Answer> {
   const path = cleanPath(args.path);
   const pattern = String(args.pattern ?? '');
   if (!pattern) throw new Error('the pattern is required');
-  let matches: (line: string) => boolean;
-  if (args.regex === true) {
-    let re: RegExp;
-    try {
-      re = new RegExp(pattern, 'i');
-    } catch (error) {
-      throw new Error(`not a regular expression: ${(error as Error).message}`);
-    }
-    matches = (line) => re.test(line);
-  } else {
-    const needle = pattern.toLowerCase();
-    matches = (line) => line.toLowerCase().includes(needle);
-  }
-  const includeHidden = args.include_hidden === true;
+  const matcher = new Matcher(pattern, args.regex === true);
+  // starting inside a hidden folder is a search of hidden files: the server asked for it, so it is made
+  const includeHidden = args.include_hidden === true || isHiddenPath(path);
   const start = await tree.folder(path);
   const rules = await tree.rulesIn(path);
   const budget: Budget = { scanned: 0, cut: false };
   const lines: string[] = [];
   const clear: string[] = [];
-  for await (const entry of walk(tree, start, path, rules, includeHidden, budget)) {
-    if (!includeHidden && (entry.hidden || entry.ignored)) continue;
-    if (entry.isDir) continue;
-    const file = await (entry.handle as FileSystemFileHandle).getFile();
-    if (file.size > GREP_FILE_BYTES) continue;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (isBinary(bytes)) continue;
-    const fileLines = new TextDecoder().decode(bytes).split(/\r?\n/);
-    let hit = false;
-    for (let index = 0; index < fileLines.length && lines.length < MATCH_LIMIT; index++) {
-      if (!matches(fileLines[index])) continue;
-      hit = true;
-      const suffix = entry.ignored ? '  [ignored]' : '';
-      lines.push(`${entry.path}:${index + 1}: ${fileLines[index].slice(0, LINE_CHARS)}${suffix}`);
+  try {
+    for await (const entry of walk(tree, start, path, rules, includeHidden, budget)) {
+      if (!includeHidden && (entry.hidden || entry.ignored)) continue;
+      if (entry.isDir) continue;
+      const file = await (entry.handle as FileSystemFileHandle).getFile();
+      if (file.size > GREP_FILE_BYTES) continue;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (isBinary(bytes)) continue;
+      const fileLines = new TextDecoder().decode(bytes).split(/\r?\n/);
+      const hits = await matcher.lines(fileLines, MATCH_LIMIT - lines.length, entry.path);
+      for (const index of hits) {
+        const suffix = entry.ignored ? '  [ignored]' : '';
+        lines.push(`${entry.path}:${index + 1}: ${fileLines[index].slice(0, LINE_CHARS)}${suffix}`);
+      }
+      if (hits.length && !entry.hidden && !entry.ignored) clear.push(entry.path);
+      if (lines.length >= MATCH_LIMIT) break;
     }
-    if (hit && !entry.hidden && !entry.ignored) clear.push(entry.path);
-    if (lines.length >= MATCH_LIMIT) break;
+  } finally {
+    matcher.close();
   }
   return answer(lines, clear, notes(budget, lines.length, MATCH_LIMIT, 'matching lines'));
 }

@@ -58,6 +58,7 @@ class World:
         self.google_dead = False
         self.google_no_refresh = False
         self.google_calls: list[str] = []
+        self.gmail_failures: list[tuple[str, str, int]] = []  # (method, path ending, status): the next such call fails once
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -93,6 +94,11 @@ class World:
             return httpx.Response(401, json={"error": {"code": 401, "message": "bad token"}})
         path = request.url.path.removeprefix("/gmail/v1/users/me")
         params = request.url.params
+        for index, (method, ending, status) in enumerate(self.gmail_failures):
+            if request.method == method and path.endswith(ending):
+                del self.gmail_failures[index]
+                return httpx.Response(status, json={"error": {"code": status, "message": "Try again."}},
+                                      headers={"retry-after": "0"})
         found = re.fullmatch(r"/labels/([^/]+)", path)
         if found and request.method == "DELETE":
             label = unquote(found.group(1))

@@ -179,10 +179,12 @@
       <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok">{info.google.account}</span>{/if}
         {#if info.google.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.google.configured}
-        <p class="muted small">Google Drive is not set up on this server. Create a Google Cloud OAuth client of type “web
-          application”, with the redirect <code>&lt;your Clara address&gt;/v1/connections/google/callback</code>, then set
-          <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret <code>google_client_secret</code>. Clara asks only for
-          <code>drive.file</code>: the files she creates and those you open to her.</p>
+        <p class="muted small">Google Drive is not set up on this server. Clara asks only for <code>drive.file</code>: the files she creates and those you open to her.</p>
+        <details class="setup"><summary>How to set it up</summary>
+          <p class="muted small">Create a Google Cloud OAuth client of type “web application”, with the redirect
+            <code>&lt;your Clara address&gt;/v1/connections/google/callback</code>, then set <code>CLARA_GOOGLE_CLIENT_ID</code>
+            and the secret <code>google_client_secret</code> (Admin &gt; Secrets), and restart Clara.</p>
+        </details>
       {:else}
         <div class="row">
           <button class="primary" onclick={startGoogle}>{info.google.connected ? 'Connect again' : 'Connect Google Drive'}</button>
@@ -201,11 +203,13 @@
       <h2><Icon name="mail" size={18} /> Gmail {#if info.gmail.connected}<span class="tag ok">{info.gmail.account}</span>{/if}
         {#if info.gmail.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.gmail.configured}
-        <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
-          <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
-          <code>gmail.readonly</code>, <code>gmail.compose</code> and <code>gmail.modify</code> to its consent screen (Data Access; if the picker does not list them,
-          paste their full addresses in <i>Manually add scopes</i>). Clara asks for nothing else: she cannot
-          archive, delete a message for good or change any setting of your mailbox.</p>
+        <p class="muted small">Gmail is not set up on this server. Clara cannot archive, delete a message for good or change any setting of your mailbox.</p>
+        <details class="setup"><summary>How to set it up</summary>
+          <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
+            <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
+            <code>gmail.readonly</code>, <code>gmail.compose</code> and <code>gmail.modify</code> to its consent screen (Data Access; if the picker does not list them,
+            paste their full addresses in <i>Manually add scopes</i>).</p>
+        </details>
       {:else}
         <div class="row">
           <button class="primary" onclick={() => startMailbox('gmail')}>{info.gmail.connected ? 'Connect again' : 'Connect Gmail'}</button>

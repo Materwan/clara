@@ -457,7 +457,11 @@ class MailClient:
             if response.status_code == 401 and attempt == 1:
                 self._access = None
                 continue
-            if response.status_code in (429, 503) and attempt < 3:
+            # 429 means the request was refused before it was handled; a 503 may come after a message was sent, and a
+            # second try would send it again: only a read or a replace is repeated after one
+            if (
+                response.status_code == 429 or (response.status_code == 503 and method.upper() != "POST")
+            ) and attempt < 3:
                 try:
                     wait = float(response.headers.get("retry-after", "1"))
                 except ValueError:
