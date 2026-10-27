@@ -55,6 +55,7 @@ from .connectors.quizzes import Quizzes
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
 from .events import Events, delivery
 from .gate import Approvals, Audit, Gate, Grants, Rules
+from .gate.allowances import Allowances
 from .knowledge import vault as vault_setup
 from .knowledge.conversation_files import ConversationFiles
 from .knowledge.github_snapshot import GitHub as GitHubSnapshots
@@ -87,6 +88,7 @@ from .timekeeping.schedules import Run, Schedule, instructions_of, message_of
 from .timeutil import parse_iso, zone
 from .tools.base import Toolbox, ToolContext, TurnState
 from .tools.discord_tools import can_say, discord_tools
+from .tools.folder_tools import FolderGrants, folder_tools
 from .tools.knowledge_tools import knowledge_tools
 from .tools.memory_tools import memory_tools
 from .tools.time_tools import time_tools
@@ -174,12 +176,16 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         providers=providers,
         catalog=catalog,
         router=Router(providers, catalog, runtime),
+        allowances=Allowances(db),
+        folders=FolderGrants(db, runtime),
     )
     s.github_snapshots = GitHubSnapshots()
-    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools()
+    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
     s.toolbox.grants = s.grants
+    s.toolbox.allowances = s.allowances
+    s.approvals.allowances = s.allowances
     runner = ModelRunner(
         providers,
         s.usage,
@@ -407,6 +413,7 @@ def create_app(s: Services) -> FastAPI:
         chat_api.router,
         conversations_api.router,
         forms_api.router,
+        forms_api.questions_router,
         memory_api.router,
         time_api.router,
         events_api.router,

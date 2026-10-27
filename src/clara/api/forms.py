@@ -5,6 +5,7 @@ POST /v1/conversations/{id}/qcm/{ref}/answer       answer a question of a QCM (r
 POST /v1/conversations/{id}/qcm/{ref}/skip         skip one (no message, unless it was the last one left)
 POST /v1/conversations/{id}/qcm/{ref}/retry        start the QCM again, as a new attempt
 POST /v1/conversations/{id}/questions/{ask_id}     answer (or dismiss) the questions `ask_questions` is waiting on
+GET  /v1/questions                                 the questions waiting for an answer, in every conversation
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..connectors.asks import AskError, NotWaiting
-from ..connectors.forms import CLIENTS as FORM_CLIENTS
 from ..connectors.forms import forms_in, with_answers
 from ..connectors.quizzes import QuizError
 from ..services import Services
@@ -23,6 +23,7 @@ from ..workspace.store import WorkspaceError
 from .common import ApiError, caller, services
 
 router = APIRouter(prefix="/v1/conversations", tags=["forms"])
+questions_router = APIRouter(prefix="/v1", tags=["forms"])
 
 
 def conversation_forms(s: Services, conversation_id: str) -> list[dict]:
@@ -115,6 +116,9 @@ def qcm_retry(conversation_id: str, ref: str, request: Request) -> dict:
     return {"progress": services(request).quizzes.retry(conversation_id, form)}
 
 
+QUESTIONS_REFUSED = "Only the web site, and a script token that may answer approvals, answer Clara's questions."
+
+
 class QuestionReply(BaseModel):
     answers: list[dict] | None = Field(
         default=None, max_length=10, description="One per question: {options: [numbers from 0], other: text}"
@@ -124,8 +128,8 @@ class QuestionReply(BaseModel):
 
 @router.post("/{conversation_id}/questions/{ask_id}")
 def reply_to_questions(conversation_id: str, ask_id: str, body: QuestionReply, request: Request) -> dict:
-    if caller(request).client not in FORM_CLIENTS:
-        raise ApiError(403, "Only the web site answers Clara's questions.")
+    if not caller(request).may_answer_questions:
+        raise ApiError(403, QUESTIONS_REFUSED)
     if not body.declined and body.answers is None:
         raise ApiError(422, "Give the answers, or declined: true.")
     try:
@@ -135,3 +139,12 @@ def reply_to_questions(conversation_id: str, ask_id: str, body: QuestionReply, r
     except AskError as error:
         raise ApiError(422, str(error)) from None
     return {"ok": True}
+
+
+@questions_router.get("/questions")
+def waiting_questions(request: Request) -> dict:
+    """What `ask_questions` is waiting on, whichever client's chat asked it (the island and the phone poll this, as they
+    poll the approvals)."""
+    if not caller(request).may_answer_questions:
+        raise ApiError(403, QUESTIONS_REFUSED)
+    return {"questions": [item.describe() for item in services(request).questions.all()]}

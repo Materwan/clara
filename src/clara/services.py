@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .db import Database
     from .events import Events
     from .gate import Approvals, Audit, Gate, Grants, Rules
+    from .gate.allowances import Allowances
     from .knowledge.conversation_files import ConversationFiles
     from .knowledge.projects import Projects
     from .llm import Catalog, Providers, Router
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from .settings import Settings
     from .timekeeping import Reminders, Schedules, Tasks
     from .tools.base import Toolbox
+    from .tools.folder_tools import FolderGrants
 
 
 @dataclass
@@ -67,6 +69,8 @@ class Services:
     providers: Providers
     catalog: Catalog
     router: Router
+    allowances: Allowances
+    folders: FolderGrants
     toolbox: Toolbox = None  # type: ignore[assignment]
     agent: Agent = None  # type: ignore[assignment]
     lifecycle: Lifecycle = None  # type: ignore[assignment]

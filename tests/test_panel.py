@@ -13,6 +13,7 @@ from clara.agent.turn import ChatRequest
 from clara.app import create_app
 from clara.connectors import asks
 from clara.connectors.forms import answer_message, build_form, check_answer, final_line, summary
+from conftest import parse_sse
 from fakes import calls
 
 FORM = {
@@ -323,3 +324,61 @@ async def test_the_answers_come_through_the_api(client, web, services, llm):
     assert (await web.post(url, json={"answers": good})).status_code == 409  # answered once
     events = await turn
     assert "Answer: Postgres" in next(event["result"] for event in events if event["type"] == "tool")
+
+
+# ---- the island and the phone app: scripts that may answer approvals ----------------------------------------------
+
+
+def api(services, name: str, client: str, approvals: str | None = None) -> httpx.AsyncClient:
+    token = services.tokens.create(name, client, approvals)[1]
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(services)), base_url="http://clara.test",
+                             headers={"Authorization": f"Bearer {token}"})
+
+
+async def test_a_script_that_may_answer_approvals_is_shown_the_questions_and_answers_them(services, llm):
+    llm.replies = [calls(("ask_questions", {"questions": QUESTIONS})), "Postgres then."]
+    good = [{"options": [1], "other": ""}, {"options": [0, 2], "other": ""}]
+    async with api(services, "island", "script", "all") as island, api(services, "web", "web") as web:
+        chat = asyncio.ensure_future(island.post("/v1/chat/stream", json={"message": "build it"}))
+        waiting = []
+        for _ in range(100):
+            waiting = (await island.get("/v1/questions")).json()["questions"]
+            if waiting:
+                break
+            await asyncio.sleep(0.02)
+        assert [item["questions"][0]["header"] for item in waiting] == ["Database"]
+        assert waiting[0]["questions"][0]["options"][1] == {"label": "Postgres", "description": "A server"}
+        assert (await web.get("/v1/questions")).json()["questions"] == waiting  # a question is everyone's
+        url = f"/v1/conversations/{waiting[0]['conversation']}/questions/{waiting[0]['id']}"
+        assert (await island.post(url, json={"answers": good})).json() == {"ok": True}
+        assert (await web.post(url, json={"answers": good})).status_code == 409  # answered once, whoever came first
+        events = parse_sse((await chat).text)
+        assert (await island.get("/v1/questions")).json() == {"questions": []}  # nothing waits once the turn is over
+    assert "questions" in [event["type"] for event in events]
+    assert "Answer: Postgres" in next(event["result"] for event in events if event["type"] == "tool")
+
+
+async def test_only_the_clients_that_show_questions_may_list_and_answer_them(services, llm):
+    async with api(services, "bot", "script", "none") as quiet, api(services, "pc", "script", "safe") as safe:
+        async with api(services, "robot", "cli") as cli, api(services, "chat", "discord") as discord:
+            for refused in (quiet, cli, discord):
+                assert (await refused.get("/v1/questions")).status_code == 403
+                answer = await refused.post(f"/v1/conversations/c{'1' * 16}/questions/abc", json={"declined": True})
+                assert answer.status_code == 403
+        assert (await safe.get("/v1/questions")).json() == {"questions": []}
+        # the conversation does not exist, but the caller is allowed to ask: Clara is simply not waiting
+        gone = await safe.post(f"/v1/conversations/c{'1' * 16}/questions/abc", json={"declined": True})
+        assert gone.status_code == 409
+
+
+async def test_a_script_is_offered_the_questions_only_when_it_may_answer(services, llm):
+    async def offered(approvals: str) -> bool:
+        llm.seen.clear()
+        llm.replies = ["ok"]
+        async with api(services, f"s-{approvals}", "script", approvals) as http:
+            response = await http.post("/v1/chat/stream", json={"message": "hello"})
+        assert response.status_code == 200
+        return "ask_questions" in {tool["function"]["name"] for tool in llm.seen[0]["tools"]}
+
+    assert await offered("all") and await offered("safe")
+    assert not await offered("none")

@@ -7,9 +7,9 @@
   // buttons that toggle (aria-pressed) and a select, not menu items.
   type Pack = { id: string; label: string; description: string; icon: string; available: boolean; reason: string };
   type Project = { id: number; name: string };
-  let { packs, active, projects, project, onFiles, onToggle, onProject }: {
+  let { packs, active, projects, project, onFiles, onFolder, folderSupported, onToggle, onProject }: {
     packs: Pack[]; active: string[]; projects: Project[]; project: number | null;
-    onFiles: () => void; onToggle: (id: string) => void; onProject: (id: number | null) => void;
+    onFiles: () => void; onFolder: () => void; folderSupported: boolean; onToggle: (id: string) => void; onProject: (id: number | null) => void;
   } = $props();
   let open = $state(false);
   let root = $state<HTMLElement>();
@@ -38,6 +38,11 @@
     <div class="plus-menu frame" id="plus-menu" role="group" aria-label="Files and tools">
       <button type="button" class="plus-item" onclick={() => { open = false; onFiles(); }}>
         <Icon name="clip" size={18} /><span class="plus-text"><b>Add files</b><small>PDF, Word, text, pictures (4 at most)</small></span>
+      </button>
+      <button type="button" class="plus-item" disabled={!folderSupported}
+        title={folderSupported ? 'Clara walks one folder of this computer and reads what she needs' : 'Needs Chrome, Edge or Opera: other browsers cannot open a folder from a web page'}
+        onclick={() => { open = false; onFolder(); }}>
+        <Icon name="folder" size={18} /><span class="plus-text"><b>Folder on this computer</b><small>Clara walks it and reads what she needs; nothing is uploaded</small></span>
       </button>
       <p class="plus-head">Tools for this conversation</p>
       {#each packs as pack (pack.id)}

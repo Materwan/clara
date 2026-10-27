@@ -9,6 +9,7 @@ Targets name what is touched, with a prefix:
     github:<owner/repo>                            drive:<file id>          vault:<note path>
     mail:gmail             a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
     domain:<host>      a web address's host        net                      a script that asks for the network
+    folder:<path>      a path in the folder you opened on your computer (a web chat; the empty path is its top)
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server
@@ -63,7 +64,22 @@ CLASSES: dict[str, tuple[str, str, str]] = {
         "ask",
         "Delete a conversation, a project or an automation because its Discord thread or forum was deleted",
     ),
+    "folder_read": (
+        "allow",
+        "refuse",
+        "Read a folder on your computer (a web chat): list, find, search, or read a file that is not hidden or ignored",
+    ),
+    "folder_sensitive": (
+        "ask",
+        "refuse",
+        "Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat",
+    ),
 }
+# Classes an approval card may allow for the rest of its conversation ("Allow for this conversation")
+FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
+# Classes whose requests are not published as events: their summary names a file of the person's computer, which must
+# not reach Discord's #approval or another client; the web chat shows them on its turn
+NOT_PUBLISHED = frozenset({"folder_sensitive"})
 # Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
 RAISED_WHEN_TAINTED = frozenset(
     {
@@ -107,7 +123,7 @@ LEAVES_MACHINE = OUTSIDE | frozenset(
     }
 )
 
-PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:")
+PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:", "folder:")
 SPECIAL_TARGETS = (
     "net",
     "search",

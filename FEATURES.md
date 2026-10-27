@@ -465,6 +465,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   Archives are read in memory, never unpacked to disk: `..` and links are refused, nested archives skipped, a file
   over 30 MB is not read, and one archive may unpack to 600 MB at most.
 - **Files sent in a conversation:** kept with the conversation (20 per conversation) and readable later by number.
+- **A folder on your computer (web chat, Chromium browsers):** the **+** menu's *Folder on this computer* lets the browser open one folder (its picker, one per conversation, with a budget you can set; default `folder_budget`, at most `folder_budget_max`). Clara walks it with `folder_list`, `folder_find`, `folder_grep` and `folder_read`; the server never reads your disk, the browser answers each call. Read-only, conversations only (never a reminder, task, schedule or hook). Hidden files (a name starting with a dot) and files ignored by a `.gitignore` are listed, but reading one asks, and its card can say *Allow for this conversation*; search skips them unless asked. Reads count against the budget, and so do the matches a search returns (a listing does not); what is read stays in the conversation under the usual rule (the last five tool results). The grant ends when the tab closes or the conversation changes. Chat-only rules: the tab stays open during a walk, and a file's name is never sent to Discord (its approval is not published). Decision: DECISIONS.md, « Folders on your computer ».
 - **Notes:** Clara's notes are Markdown files in the workspace folder `notes/` (with its git history and undo).
 - **Second brain (Obsidian vault):** a git clone of your vault (`CLARA_VAULT_PATH`). It is closed by default: the model
   sees a one-line mention and calls `open_second_brain` when your notes matter, which opens eight tools for that
@@ -491,7 +492,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   (from their git history; the vault's include yours, made through Obsidian), the Drive files Clara created, and the
   files you sent. `read_created_file` reads one by its reference when Clara needs it, whole or (`mode=diff`) as that
   day's diff only, a page at a time.
-- **Forms:** two tools, both for the web chat only; `qcm` is in the **QCM** pack (off until switched on, see Special tools), `ask_questions` is always there. `qcm` creates a quiz (single choice, multiple choice, free text; 20
+- **Forms:** two tools; `qcm` is for the web chat only and is in the **QCM** pack (off until switched on, see Special tools), `ask_questions` is always there. `qcm` creates a quiz (single choice, multiple choice, free text; 20
   questions, 10 options each, LaTeX allowed, an optional key that marks each answer, a hint and an explanation per
   question) that opens in the side panel and is answered **one question at a time**: each answered question reaches
   Clara as a message of its own (`[QCM answer …]`, with what the key says) and she corrects it at once; a skipped
@@ -500,8 +501,11 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   reload or another device shows it. `ask_questions` asks you 1 to 4 questions while she works (a short header, 2 to 4
   options with a description, one or several choices; you can always write your own answer, "Other"): the questions
   replace the box you write in and the turn waits (`CLARA_APPROVAL_WAIT`) for your answers, which are the result of
-  the call; dismissing them tells her you declined, and no answer in time withdraws them. Neither is offered to the
-  terminal, Discord or an unattended run.
+  the call; dismissing them tells her you declined, and no answer in time withdraws them. `ask_questions` is offered
+  to the web chat and to a `script` token that may answer approvals (`approvals` all or safe: the desktop island and
+  the phone app), and those clients also see the questions waiting in any other chat and answer them (the first
+  answer settles it, the others get a 409); it is not offered to the terminal, Discord, a script token with
+  `approvals` none or an unattended run, and `qcm` only to the web chat.
 
 ## 7. Workspace and scripts
 
@@ -615,6 +619,8 @@ neither read nor change rules, and no tool answers a request.
 | `discord`: open, write in or remove a Discord thread, or say something in `#general` | allow | allow |
 | `automation`: create, change or delete an automation, a schedule or a hook (the Automations pack) | ask | refuse |
 | `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | ask | ask |
+| `folder_read`: read a folder on your computer in a web chat: list, find, search, or read a file that is not hidden or ignored | allow | refuse |
+| `folder_sensitive`: read a hidden or ignored file of that folder, or search them (a card can allow it for the conversation) | ask | refuse |
 
 ### Rules
 
@@ -683,7 +689,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-76 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+80 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -703,11 +709,15 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `update_task` | Change a task (title, description, due, reminders, status, parent) | memory / write |
 | `delete_task` | Delete a task and its sub-tasks | memory / write |
 | `qcm` | Create a QCM (a quiz) that opens in the side panel, answered one question at a time (pack QCM; web only) | memory / write |
-| `ask_questions` | Ask you 1 to 4 questions with choices, in place of the box you write in; the turn waits for your answers (web) | memory / write |
+| `ask_questions` | Ask you 1 to 4 questions with choices, in place of the box you write in; the turn waits for your answers (web, island, phone) | memory / write |
 | `read_conversation_file` | Read a file sent in this conversation (pictures are shown to the model) | read |
 | `list_project_files` | List the project's files | read |
 | `read_project_file` | Read a project file, with line numbers | read |
 | `search_project` | Search the project's files | read |
+| `folder_list` | List a folder of the folder you opened on your computer in a web chat: its entries, hidden and ignored ones too, 500 at most (the browser runs it; untrusted) | folder_read / read |
+| `folder_find` | Find files and folders by name, from a folder down (`*` and `?`), 100 matches at most, which count against the folder's budget; hidden and ignored files are skipped unless `include_hidden`, which asks (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
+| `folder_grep` | Search the text of the files, plain or a regular expression, with line numbers, 100 lines at most, which count against the budget; binary files are skipped; hidden and ignored files as `folder_find` (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
+| `folder_read` | Read a text file of that folder, numbered, 40,000 characters from a line; it counts against the folder's budget; a hidden or ignored file, or one no listing named yet, asks (untrusted) | folder_read / read; folder_sensitive / read |
 | `ws_list` | The workspace tree with sizes | read |
 | `ws_read` | Read a workspace file, with line numbers (in parts) | read |
 | `ws_search` | Search the workspace | read |
@@ -1011,6 +1021,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `tainted_rule` | The tainted-turn rule (on) |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
 | `approve_all_calls` | Calls an **Approve all next** button lets through without asking (50; 1 to 1,000) |
+| `folder_budget` | Bytes of file content Clara may read from a folder opened in a web chat, per grant (1,000,000; 0 to 100,000,000) |
+| `folder_budget_max` | The most a folder grant's budget may be raised to, in bytes (16,000,000; 1 to 100,000,000) |
 | `debug_until` | The debug content log's end (empty: off) |
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
@@ -1069,7 +1081,8 @@ keep-alive every 15 s.
 | `POST /v1/conversations/{conversation_id}/qcm/{ref}/answer` | Answer one question of a QCM (`question` from 1, `answer`: option numbers or text): returns the progress and the `message` to send Clara; an answered question cannot be answered again (409) |
 | `POST /v1/conversations/{conversation_id}/qcm/{ref}/skip` | Skip a question (no message, unless it was the last one left) |
 | `POST /v1/conversations/{conversation_id}/qcm/{ref}/retry` | Start the QCM again as a new attempt (nothing happens while the current attempt has no answer) |
-| `POST /v1/conversations/{conversation_id}/questions/{ask_id}` | Answer (`answers`: one `{options, other}` per question) or dismiss (`declined`) the questions `ask_questions` is waiting on; web tokens only, 409 when nobody waits for them any more |
+| `POST /v1/conversations/{conversation_id}/questions/{ask_id}` | Answer (`answers`: one `{options, other}` per question) or dismiss (`declined`) the questions `ask_questions` is waiting on; web tokens and `script` tokens that may answer approvals, 409 when nobody waits for them any more |
+| `GET /v1/questions` | The questions `ask_questions` is waiting on, in every conversation (each with `id`, `conversation`, `questions` and their `options`); web tokens and `script` tokens that may answer approvals |
 | `GET /v1/memory/facts` | Facts (by state, search) |
 | `POST /v1/memory/facts` | Add a fact (source `you`) |
 | `PATCH /v1/memory/facts/{fact_id}` | Change, pin, set expiry |

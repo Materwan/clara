@@ -12,7 +12,7 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 | Discord for other people: shared servers, chime-in, observe mode, mentions, members, direct messages | Reading other people is a privacy problem and a large product of its own | A bot in a private server of your own: it answers your id only, in one channel, and has no member list |
 | Music (Music Assistant tools and site) | A separate product | — |
 | The relationship score | A hidden mood that changed tone was surprising, not useful | A fixed persona file |
-| Server-folder access (`res_*`) and the desktop "computer folders" | Folders on the server could hold Clara's own secrets | The workspace, and `clara-chat --local-tools` for your own machine's files |
+| Server-folder access (`res_*`) and the desktop "computer folders" | Folders on the server could hold Clara's own secrets | The workspace; a folder on your computer read in the browser, one per web conversation (DECISIONS.md, « Folders on your computer »); and `clara-chat --local-tools` for your own machine's files |
 | Embeddings and semantic search | Heavy, and FTS5 serves one person's notes | FTS5 for facts, messages and the vault |
 | Public exposure (Funnel, a public URL) | The tailnet is the perimeter | `tailscale serve`; Funnel is refused |
 | A shared GitHub token | Copying any private repository the token reached | Your fine-grained token and an explicit repository list |

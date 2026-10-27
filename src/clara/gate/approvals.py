@@ -4,8 +4,9 @@
                  In a chat, the turn shows it and waits for your answer (CLARA_APPROVAL_WAIT, 10 minutes).
                  Unattended, the turn never waits: you are alerted and the run goes on without it.
     pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…)
-    answered     allow once / allow always / refuse once / refuse always. The two "always" answers write a rule, so
-                 the rule list only grows through your decisions. An allowed action runs exactly as it was frozen.
+    answered     allow once / allow always / refuse once / refuse always, and allow for this conversation (a hidden or
+                 ignored file of a folder on your computer). The two "always" answers write a rule, so the rule list only
+                 grows through your decisions. An allowed action runs exactly as it was frozen.
                  If no turn is waiting for it any more, a short follow-up turn tells Clara how it ended.
     expired      after 24 hours nobody answered: it is not done, and Clara is told at her next turn there.
 
@@ -29,7 +30,7 @@ from ..auth.tokens import TokenInfo
 from ..db import Database
 from ..events import Events
 from ..timeutil import iso, now_iso, parse_iso, utcnow
-from .actions import Action, Decision, Situation
+from .actions import FOR_A_CONVERSATION, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
 from .grants import GRANTABLE
 from .rules import RuleError, Rules, check_fields
@@ -37,10 +38,11 @@ from .rules import RuleError, Rules, check_fields
 if TYPE_CHECKING:
     from ..ops.alerts import Alerts
     from ..tools.base import Toolbox, ToolContext
+    from .allowances import Allowances
 
 log = logging.getLogger(__name__)
 
-ANSWERS = ("allow_once", "allow_always", "refuse_once", "refuse_always")
+ANSWERS = ("allow_once", "allow_always", "refuse_once", "refuse_always", "allow_conversation")
 PUSH_AFTER = 60  # seconds a request from a chat waits before it is pushed to your other clients
 KEEP_DAYS = 30  # finished requests are kept this long (the audit log keeps the decisions longer)
 FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
@@ -182,6 +184,7 @@ class Approvals:
         self.expire_after = expire_after
         self.push_after = push_after
         self.toolbox: Toolbox | None = None
+        self.allowances: Allowances | None = None  # « Allow for this conversation » writes here (FOR_A_CONVERSATION)
         self.context_factory: ContextFactory | None = None  # builds the context an approved call runs in
         self.followup: FollowUp | None = None  # runs the turn that tells Clara how her held requests ended
         self.followup_delay = FOLLOWUP_DELAY
@@ -265,6 +268,8 @@ class Approvals:
     def push(self, approval: Approval) -> None:
         """Send the request to your clients (they show it; the Discord bot adds buttons)."""
         self.db.execute("UPDATE approvals SET notified = 1 WHERE id = ?", (approval.id,))
+        if approval.action_class in NOT_PUBLISHED:
+            return
         self.events.publish(
             "approval",
             "Clara needs your permission",
@@ -337,6 +342,10 @@ class Approvals:
             )
         allow = answer.startswith("allow")
         effect = "allow" if allow else "refuse"
+        if answer == "allow_conversation" and (
+            approval.action_class not in FOR_A_CONVERSATION or self.allowances is None or not approval.conversation_id
+        ):
+            raise ApprovalError("This request cannot be allowed for the conversation: allow it once instead.")
         if answer.endswith("_always"):  # before the answer is committed: a rule that cannot be made leaves it pending
             try:
                 check_fields(effect, approval.tool.strip(), approval.target.strip(), "", approval.level.strip())
@@ -350,6 +359,8 @@ class Approvals:
         ).rowcount
         if not changed:
             raise AlreadyAnswered(f"Request #{approval_id} was answered a moment ago.")
+        if answer == "allow_conversation" and self.allowances is not None:
+            self.allowances.add(approval.conversation_id, approval.tool, approval.target, approval_id)
         if answer.endswith("_always"):
             try:
                 rule = self.rules.add(
@@ -382,13 +393,14 @@ class Approvals:
     async def _announce(self, approval_id: int, *, handed_over: bool) -> Approval:
         settled = self.get(approval_id)
         assert settled is not None
-        self.events.publish(
-            "approval_resolved",
-            "Request settled",
-            f"{settled.summary}: {settled.status}",
-            payload={"approval": settled.describe()},
-            conversation_id=settled.conversation_id,
-        )
+        if settled.action_class not in NOT_PUBLISHED:
+            self.events.publish(
+                "approval_resolved",
+                "Request settled",
+                f"{settled.summary}: {settled.status}",
+                payload={"approval": settled.describe()},
+                conversation_id=settled.conversation_id,
+            )
         if not handed_over and settled.conversation_id:
             self.followup_soon(settled.conversation_id)
         return settled
@@ -514,13 +526,14 @@ class Approvals:
                 if waiter is not None and not waiter.done():
                     waiter.set_result(None)
                 self.finish(expired.id, "expired", "", told=False)
-                self.events.publish(
-                    "approval_resolved",
-                    "Request expired",
-                    expired.summary,
-                    payload={"approval": expired.describe()},
-                    conversation_id=expired.conversation_id,
-                )
+                if expired.action_class not in NOT_PUBLISHED:
+                    self.events.publish(
+                        "approval_resolved",
+                        "Request expired",
+                        expired.summary,
+                        payload={"approval": expired.describe()},
+                        conversation_id=expired.conversation_id,
+                    )
 
     def recover(self) -> int:
         """At start: requests approved but not finished when the server stopped are not run again (they may have been

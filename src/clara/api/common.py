@@ -20,6 +20,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import CLIENTS, TokenInfo
+from ..connectors.forms import CLIENTS as FORM_CLIENTS
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -89,6 +90,12 @@ class Caller:
     @property
     def name(self) -> str:
         return self.token.name
+
+    @property
+    def may_answer_questions(self) -> bool:
+        """Is this caller shown Clara's questions (`ask_questions`) and allowed to answer them? The web site, and a script
+        token that may answer approvals (the desktop island, the phone app): one with `approvals: none` is not."""
+        return self.client in FORM_CLIENTS or (self.token.client == "script" and self.token.approvals != "none")
 
 
 def caller(request: Request) -> Caller:

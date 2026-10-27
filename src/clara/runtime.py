@@ -75,6 +75,17 @@ KNOBS: dict[str, Knob] = {
     "approve_all_calls": Knob(
         50, _whole(1, 1000), "Calls an Approve all next button lets through without asking (at most 1,000)."
     ),
+    "folder_budget": Knob(
+        1_000_000,
+        _whole(0, 100_000_000),
+        "Bytes of file content Clara may read from a folder opened in a web chat, per grant (1 MB; the folder's size "
+        "has no limit).",
+    ),
+    "folder_budget_max": Knob(
+        16_000_000,
+        _whole(1, 100_000_000),
+        "The most a folder grant's budget may be raised to, in bytes (16 MB).",
+    ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),
     "hidden_tools": Knob(

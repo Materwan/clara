@@ -200,6 +200,10 @@ class Questions:
         else:
             pending.future.set_result({"answers": check_replies(pending.ask, answers)})
 
+    def all(self) -> list[Pending]:
+        """Every question waiting, whichever conversation asked it."""
+        return list(self._pending.values())
+
     def waiting(self, conversation_id: str) -> list[Pending]:
         return [item for item in self._pending.values() if item.conversation_id == conversation_id]
 

@@ -10,6 +10,7 @@
   import PlusMenu from '../components/PlusMenu.svelte';
   import SidePanel from '../components/SidePanel.svelte';
   import { ApiError, api, fileToBase64, stream, zone } from '../lib/api';
+  import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
   import { grants, stop as stopGrants } from '../lib/grants.svelte';
   import { markdown } from '../lib/markdown';
@@ -68,6 +69,12 @@
   let messages = $state<Message[]>([]);
   let draft = $state('');
   let attached = $state<File[]>([]);
+  // A folder on this computer (DECISIONS.md, « Folders on your computer »): the browser reads it for Clara's folder tools.
+  // It belongs to the conversation it was opened in (or to the first message sent from it); leaving that ends it.
+  type Folder = { id: string; name: string; handle: FileSystemDirectoryHandle; budgetMb: string; conversation: string | null };
+  let folder = $state<Folder | null>(null);
+  let turnFolder: Folder | null = null; // the folder the turn in progress was sent with: its tool calls read this one only
+  const folderSupported = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
   // The side panel: what Clara made in this conversation (files, vault notes, QCMs), and the questions she waits on
   let side = $state<{ files: PanelFile[]; notes: PanelNote[]; forms: Form[] }>({ files: [], notes: [], forms: [] });
   let sideOpen = $state(false);
@@ -104,6 +111,14 @@
       return;
     }
     load(id);
+  });
+
+  // Leaving the conversation a folder was opened in ends the folder (a folder opened in a new chat waits for its first message)
+  $effect(() => {
+    const id = conversationId;
+    untrack(() => {
+      if (folder?.conversation && folder.conversation !== id) folder = null;
+    });
   });
 
   // The project of the conversation: its name for the header, and for a conversation not started yet the special tools the project begins
@@ -382,6 +397,9 @@
         case 'error':
           current.error = event.message;
           break;
+        case 'tool_requests':
+          void answerFolderCalls(event, turnFolder);
+          break;
       }
       scrollDown();
     }
@@ -400,6 +418,28 @@
     if (latest && conversationId === id) conversation = latest;
   }
 
+  /** Opens a folder on this computer for this conversation: the browser's picker, read-only, with a budget set in the chip. */
+  async function pickFolder(): Promise<void> {
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: 'read' }) as FileSystemDirectoryHandle;
+      folder = { id: crypto.randomUUID(), name: handle.name, handle, budgetMb: '', conversation: conversationId };
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') toast((error as Error).message, 'error');
+    }
+  }
+
+  /** The browser answers a turn's folder calls from the folder that turn was sent with, and nothing else. */
+  async function answerFolderCalls(event: any, granted: Folder | null): Promise<void> {
+    const results: { id: string; content: string }[] = [];
+    for (const call of event.calls ?? []) {
+      const content = granted && isFolderTool(call.name)
+        ? await answerFolderCall(granted.handle, call.name, call.arguments ?? {})
+        : JSON.stringify({ error: 'The folder is no longer open in this conversation: open it again.' });
+      results.push({ id: call.id, content });
+    }
+    await api.post(`/v1/turns/${event.turn}/tool-results`, { results }).catch((error) => toast((error as Error).message, 'error'));
+  }
+
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
     if (conversation?.archived) return;
     if (busy || (!text.trim() && !attached.length)) return;
@@ -409,6 +449,7 @@
     const files = carried ?? await Promise.all(attached.map(async (file) => ({ name: file.name, data: await fileToBase64(file) })));
     let id = conversationId;
     let current: Message | undefined;
+    const granted = folder;
     try {
       if (!id) {
         const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs });
@@ -417,6 +458,8 @@
         go('/chat/' + id);
         conversation = made;
       }
+      if (granted && !granted.conversation) granted.conversation = id;
+      turnFolder = granted;
       if (forkOf !== null) {
         const index = messages.findIndex((message) => message.id === forkOf);
         if (index >= 0) messages = messages.slice(0, index);
@@ -432,7 +475,10 @@
       attached = [];
       scrollDown(true);
       // keep_running: the answer goes on if this page is closed or left, and is followed again from where it is
-      const body = { message: text, conversation: id, attachments: files, timezone: zone, fork_of: forkOf ?? undefined, keep_running: true };
+      const body = {
+        message: text, conversation: id, attachments: files, timezone: zone, fork_of: forkOf ?? undefined, keep_running: true,
+        folder: granted ? { id: granted.id, name: granted.name, budget_bytes: budgetBytes(granted.budgetMb) } : undefined,
+      };
       await follow(stream('POST', '/v1/chat/stream', body, mine.signal), user, current, id);
       current.streaming = false;
       messages = [...messages];
@@ -440,6 +486,7 @@
       if ((error as Error).name !== 'AbortError') toast((error as Error).message, 'error');
     } finally {
       if (current) current.streaming = false;
+      turnFolder = null;
       finished(mine, id);
     }
   }
@@ -851,11 +898,21 @@
             {/each}
           </div>
         {/if}
+        {#if folder}
+          <div class="chips">
+            <span class="chip folder-chip" title="A folder on your computer: Clara walks it and reads what she needs. Only this conversation.">
+              <Icon name="folder" size={14} /><span class="name">{folder.name}</span>
+              <label class="folder-budget">budget <input type="number" min="0" max="100" step="0.5" inputmode="decimal" placeholder="1"
+                bind:value={folder.budgetMb} aria-label="How many MB of file content Clara may read from this folder (empty: the default)" /> MB</label>
+              <button aria-label={`Close the folder ${folder.name}`} title="Close the folder" onclick={() => (folder = null)}><Icon name="close" size={14} /></button>
+            </span>
+          </div>
+        {/if}
         <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
           onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived}></textarea>
         <div class="composer-bar">
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
-            onToggle={togglePack} onProject={chooseProject} />
+            onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
           <input type="file" multiple hidden bind:this={picker} onchange={pick} />
           <select class="model-select" aria-label="Model" value={conversationId ? conversation?.model ?? '' : fresh.model}
             onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>

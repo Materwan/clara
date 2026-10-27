@@ -47,7 +47,8 @@ from ..knowledge.projects import READ_CHARS_LIMIT
 from ..llm import Choice, NoModel, ToolCall
 from ..memory.conversations import Conversation, StoredMessage, TurnRow
 from ..timeutil import zone
-from ..tools.base import CallResult, ToolContext, TurnState
+from ..tools.base import CallResult, Dispatch, ToolContext, TurnState
+from ..tools.folder_tools import TOOL_FOLDERS, FolderRequest
 from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PROJECT_TOOLS, QCM
 from .compaction import build_transcript, chunk_messages, summary_request, transcript_budget
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
@@ -174,6 +175,8 @@ class ChatRequest:
     only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (a hook's allow-list)
     ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
     mirror_thread: str = ""  # a new conversation started in a Discord forum post: its thread
+    folder: FolderRequest | None = None  # a folder on the person's computer, opened in this web chat (folder tools)
+    can_answer_questions: bool = False  # not the web site, but a client that shows Clara's questions (island, phone)
 
 
 @dataclass
@@ -370,7 +373,7 @@ class Agent:
                 request.mode == "interactive"
                 and request.wait_for_approvals
                 and self.settings.approval_wait > 0
-                and request.client in FORM_CLIENTS
+                and (request.client in FORM_CLIENTS or request.can_answer_questions)
             ),
             timezone=request.timezone or self.settings.timezone,
             project_id=conversation.project_id if conversation else None,
@@ -379,6 +382,13 @@ class Agent:
             tainted=request.tainted,
             read_chars=self._read_chars(choice.window),
         )
+        if (
+            request.folder is not None
+            and conversation is not None
+            and request.client == "web"
+            and state.mode == "interactive"
+        ):
+            state.folder = self.s.folders.begin(conversation.id, request.folder)
         return TurnPlan(conversation, choice, state, self._hidden(request, conversation, state, choice))
 
     def _hidden(
@@ -388,6 +398,8 @@ class Agent:
         if request.ephemeral or request.no_tools:
             return set(names)
         hidden: set[str] = set()
+        if state.folder is None:  # a folder on the person's computer is only read when a web chat has opened one
+            hidden |= TOOL_FOLDERS
         if state.incognito:
             hidden |= {"remember", "forget", "recall_facts"}
         if state.local_only:  # the gate refuses them anyway; not offering them saves the model a refusal
@@ -912,10 +924,11 @@ class Agent:
         offered: frozenset[str],
     ) -> AsyncIterator[dict]:
         """Run a round's calls: server tools here (consecutive read-only ones together), through the gate; client tools
-        on the client, in one `tool_requests` event."""
+        and the folder tools (the person's browser runs them) in one `tool_requests` event, settled when it is answered."""
         remote = [(call_id, call) for call_id, call in calls if call.name in client_tools]
         local = [(call_id, call) for call_id, call in calls if call.name not in client_tools]
         toolbox = self.s.toolbox
+        sent: list[tuple[str, ToolCall, Dispatch, int]] = []  # the browser's calls: call, dispatch, approval id (or 0)
         for batch in self._batches(local):
             for _, call in batch:
                 yield {"type": "tool_start", "name": call.name, "arguments": call.arguments}
@@ -937,6 +950,9 @@ class Agent:
                     continue
                 if outcome.approval is not None and state.mode == "interactive":
                     self.s.approvals.push(outcome.approval)  # nobody waits here: your clients are asked at once
+                if outcome.dispatch is not None:
+                    sent.append((call_id, call, outcome.dispatch, 0))
+                    continue
                 results[call_id] = outcome.text
                 yield self._tool_event(call, outcome.text, outcome)
                 for extra in context.events:
@@ -955,7 +971,15 @@ class Agent:
                     if answer is None:
                         text = outcome.text  # still waiting: the request stays, and Clara is told later
                     elif answer.startswith("allow"):
-                        text, ok = await toolbox.execute(call.name, context, call.arguments)
+                        # the person's browser runs a folder call, once its answer is settled below
+                        if toolbox.is_remote(call.name):
+                            found = toolbox.dispatch_approved(call.name, context, call.arguments, approval.id)
+                            if found.dispatch is not None:
+                                sent.append((call_id, call, found.dispatch, approval.id))
+                                continue
+                            text, ok = found.text, False
+                        else:
+                            text, ok = await toolbox.execute(call.name, context, call.arguments)
                         self.s.approvals.finish(approval.id, "done" if ok else "failed", text, told=True)
                         for extra in context.events:
                             yield extra
@@ -964,20 +988,39 @@ class Agent:
                         self.s.approvals.finish(approval.id, "denied", "", told=True)
                     results[call_id] = text
                     yield self._tool_event(call, text, outcome)
-        if not remote:
+        if not remote and not sent:
             return
+        browser = [(call_id, call) for call_id, call, _, _ in sent]
         self._pending[state.turn_id] = _Pending(
-            request.token_id, frozenset(call_id for call_id, _ in remote), asyncio.get_running_loop().create_future()
+            request.token_id,
+            frozenset(call_id for call_id, _ in [*remote, *browser]),
+            asyncio.get_running_loop().create_future(),
         )
         try:
             yield {
                 "type": "tool_requests",
                 "turn": state.turn_id,
-                "calls": [{"id": call_id, "name": call.name, "arguments": call.arguments} for call_id, call in remote],
+                "calls": [
+                    {"id": call_id, "name": call.name, "arguments": call.arguments}
+                    for call_id, call in [*remote, *browser]
+                ],
             }
             results.update(await self._wait_for_client(state.turn_id))
+        except Exception:
+            for _, _, _, approval_id in sent:  # an allowed call that the page never answered: not done
+                if approval_id:
+                    self.s.approvals.finish(approval_id, "failed", "the folder did not answer in time", told=True)
+            raise
         finally:
             self._pending.pop(state.turn_id, None)
+        for call_id, call, dispatch, approval_id in sent:
+            text, ok = toolbox.settle(dispatch, results[call_id])
+            if approval_id:
+                self.s.approvals.finish(approval_id, "done" if ok else "failed", text, told=True)
+            results[call_id] = text
+            yield self._tool_event(call, text, CallResult(text, ran=True))
+            for extra in dispatch.context.events:
+                yield extra
 
     async def _ask(
         self, call_id: str, call: ToolCall, outcome: CallResult, context: ToolContext, results: dict[str, str]

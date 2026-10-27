@@ -23,6 +23,7 @@ from ..agent.turn import ChatRequest
 from ..knowledge import ingest
 from ..knowledge.attachments import MAX_ATTACHMENTS, Attached, FileError, prepare
 from ..knowledge.ingest import IngestError
+from ..tools.folder_tools import FolderRequest
 from .common import (
     ApiError,
     caller,
@@ -46,6 +47,19 @@ class Attachment(BaseModel):
     data: str = Field(max_length=MAX_ATTACHMENT_CHARS, description="The file's bytes, base64")
 
 
+class FolderBody(BaseModel):
+    id: str = Field(
+        pattern=r"^[0-9a-zA-Z-]{8,64}$", description="The browser's id for this grant: a new one per folder picked"
+    )
+    name: str = Field(min_length=1, max_length=200, description="The folder's name, as the browser shows it")
+    budget_bytes: int | None = Field(
+        default=None,
+        ge=0,
+        le=100_000_000,
+        description="Bytes of file content Clara may read (None: the runtime setting)",
+    )
+
+
 class ChatBody(BaseModel):
     message: str = Field(default="", max_length=MAX_MESSAGE)
     conversation: str | None = Field(default=None, pattern=r"^c[0-9a-f]{16}$")
@@ -65,6 +79,9 @@ class ChatBody(BaseModel):
     keep_running: bool = Field(
         default=False,
         description="The answer goes on if the stream is closed (follow it again with GET /v1/conversations/{id}/run)",
+    )
+    folder: FolderBody | None = Field(
+        default=None, description="A folder on the person's computer, opened in this web conversation (folder tools)"
     )
 
 
@@ -109,6 +126,8 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         wait_for_approvals=wait,
         ref=body.ref,
         mirror_thread=body.mirror_thread,
+        can_answer_questions=who.may_answer_questions,
+        folder=FolderRequest(body.folder.id, body.folder.name, body.folder.budget_bytes) if body.folder else None,
     )
 
 

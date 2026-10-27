@@ -44,10 +44,6 @@
     if (single) {
       picked[q] = [option];
       otherOn[q] = false;
-      if (review && q === step) {
-        step += 1; // one answer ends a single question: on to the next
-        focusFirst();
-      }
     } else {
       picked[q] = picked[q].includes(option) ? picked[q].filter((n) => n !== option) : [...picked[q], option].sort((a, b) => a - b);
     }
