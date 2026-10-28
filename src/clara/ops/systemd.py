@@ -1,4 +1,5 @@
-"""Talking to systemd without a dependency: `READY=1` once serving, `WATCHDOG=1` while every loop turns, `STOPPING=1`.
+"""Talking to systemd without a dependency: `READY=1` once serving, `WATCHDOG=1` while every loop turns, `STOPPING=1`
+(not by a server run by the launcher: it may only be handing over to another release, and systemd knows when the unit stops).
 
 The unit sets `NotifyAccess=all` because the server runs as a child of clara-launcher, not as the main process.
 """

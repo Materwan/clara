@@ -3,7 +3,7 @@
 * every 10 s: approval requests (push after a minute, expire after 24 h);
 * every minute: the debug switch's hour; the disk (alert above CLARA_DISK_ALERT_PERCENT); the Discord bot's heartbeat
   (alert after 5 minutes of silence, when CLARA_DISCORD_EXPECTED or CLARA_DISCORD_AUTOSTART); the systemd watchdog,
-  fed only while every loop has turned within the last two minutes;
+  fed only while every loop turns on time: a pass is expected every period, two minutes of lateness are allowed;
 * every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted;
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
   sessions, and the events of hooks older than 30 days (those a run still needs stay);
@@ -32,13 +32,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-LOOP_STALL = 120.0
+LOOP_STALL = 120.0  # seconds a loop may be late before the watchdog stops being fed
 
 
 class Upkeep:
     def __init__(self, services: Services):
         self.s = services
-        self.passes: dict[str, float] = {}
+        self.passes: dict[str, float] = {}  # when each watched loop last began a pass
+        self.periods: dict[str, float] = {}  # how often it is expected to (a loop of 10 minutes is not stalled at 3)
         self._tasks: list[asyncio.Task] = []
 
     def start(self) -> None:
@@ -75,6 +76,8 @@ class Upkeep:
                 await task
 
     async def _loop(self, name: str, seconds: float, job, *, watched: bool = True) -> None:
+        if watched:
+            self.periods[name] = seconds
         while True:
             if watched:
                 self.passes[name] = time.monotonic()
@@ -137,14 +140,20 @@ class Upkeep:
         if s.triggers is not None:
             s.triggers.prune(s.settings.retention_days)
 
+    def stalled(self) -> list[str]:
+        """The watched loops that are late: a pass is expected every period (the time-driven loops, every 30 s at most),
+        and LOOP_STALL more is allowed."""
+        now = time.monotonic()
+        late = [name for name, last in self.passes.items() if now - last >= self.periods[name] + LOOP_STALL]
+        return late + [loop.name for loop in self.s.due_loops() if now - loop.last_pass >= LOOP_STALL]
+
     async def _watchdog(self, interval: float) -> None:
         while True:
-            now = time.monotonic()
-            loops = [loop.last_pass for loop in self.s.due_loops()] + list(self.passes.values())
-            if all(now - last < LOOP_STALL for last in loops):
+            late = self.stalled()
+            if not late:
                 notify("WATCHDOG=1")
             else:
-                log.error("a loop has not turned for %g s: the watchdog is not fed", LOOP_STALL)
+                log.error("a loop is more than %g s late (%s): the watchdog is not fed", LOOP_STALL, ", ".join(late))
             await asyncio.sleep(interval)
 
 

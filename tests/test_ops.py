@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import time
 import zipfile
 from datetime import timedelta
 from pathlib import Path
@@ -201,6 +203,61 @@ def test_a_broken_update_rolls_back_and_restores_the_database(tmp_path):
         assert db.execute("PRAGMA user_version").fetchone()[0] == 1
         assert db.execute("SELECT text FROM facts").fetchall() == [("kept",)]
         assert not db.execute("SELECT name FROM sqlite_master WHERE name = 'only_new'").fetchall()
+
+
+@pytest.mark.parametrize(("launched", "says_stopping"), [("1", False), ("", True)])
+async def test_only_a_server_systemd_supervises_says_it_is_stopping(services, monkeypatch, launched, says_stopping):
+    """STOPPING=1 from a server run by the launcher makes the whole unit "deactivating" (it may only be handing over to
+    the next release) and systemd kills it at TimeoutStopSec: it happened after every update."""
+    from clara import app as app_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(app_module, "notify", sent.append)
+    monkeypatch.setenv("CLARA_LAUNCHED", launched)
+    app = app_module.create_app(services)
+    async with app.router.lifespan_context(app):
+        pass
+    assert "READY=1" in sent and ("STOPPING=1" in sent) is says_stopping
+
+
+def test_a_slow_loop_is_not_a_stalled_loop(services):
+    """Seen on a real machine: the 10-minute and hourly loops looked stalled after two minutes, so the watchdog was not
+    fed and systemd killed the server about 4.5 minutes after every start."""
+    from clara.ops.upkeep import LOOP_STALL, Upkeep
+
+    upkeep = Upkeep(services)
+    now = time.monotonic()
+    upkeep.periods = {"approvals": 10.0, "minute": 60.0, "incognito": 600.0, "hourly": 3600.0}
+    upkeep.passes = {"approvals": now - 5, "minute": now - 40, "incognito": now - 300, "hourly": now - 300}
+    assert upkeep.stalled() == []
+    upkeep.passes["minute"] = now - 60 - LOOP_STALL - 1  # a loop that really stopped turning
+    upkeep.passes["hourly"] = now - 3600 - LOOP_STALL - 1
+    assert upkeep.stalled() == ["minute", "hourly"]
+
+
+def test_the_scripts_the_workflows_run_are_executable():
+    """CI and the release workflow call these scripts directly: one committed as 100644 fails with "Permission denied"
+    (from Windows: git update-index --chmod=+x <file>)."""
+    root = Path(__file__).resolve().parent.parent
+    try:
+        listing = subprocess.run(["git", "ls-files", "-s", "--", "*.sh"], cwd=root, capture_output=True, text=True,
+                                 check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("not a git checkout")
+    modes = {line.split("\t")[1]: line.split()[0] for line in listing.splitlines()}
+    workflows = "".join(path.read_text(encoding="utf-8") for path in (root / ".github" / "workflows").glob("*.yml"))
+    called = set(re.findall(r"(?:scripts|deploy)/[\w.-]+\.sh", workflows))
+    assert called and called <= set(modes)
+    assert {name: mode for name, mode in modes.items() if mode != "100755"} == {}
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+def test_the_installer_and_the_release_scripts_are_valid_shell():
+    """The suite cannot run the installer (root, systemd), but a typo in it should not wait for a machine to show."""
+    root = Path(__file__).resolve().parent.parent
+    for script in ("deploy/install.sh", "scripts/build-release.sh", "scripts/build-web.sh"):
+        done = subprocess.run(["bash", "-n", str(root / script)], capture_output=True, text=True)
+        assert done.returncode == 0, f"{script}: {done.stderr}"
 
 
 async def test_backups_are_private_verified_and_kept(services):

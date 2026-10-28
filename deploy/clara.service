@@ -27,11 +27,17 @@ KillMode=mixed
 WatchdogSec=180
 # Hardening that rootless Podman allows. NoNewPrivileges is not set: rootless Podman needs the setuid
 # newuidmap/newgidmap helpers. Scripts get no-new-privileges inside their own containers.
+# Three usual options are left out because they broke Podman on a real machine (a reboot, then an update):
+#   ProtectHome=true      hides /run/user, where rootless Podman keeps its runtime, so images could not be pulled
+#                         (InaccessiblePaths below closes /home and /root all the same);
+#   ProtectKernelLogs=true  over-mounts /proc/kmsg in the unit's mount namespace; Podman's shared pause process keeps the
+#                         namespace of whoever started it first (this unit, at boot), and every container then failed with
+#                         "mount 'proc': Operation not permitted";
+#   PrivateTmp=true       gives each start of the unit its own /tmp and /var/tmp; the pause process keeps the deleted ones
+#                         of the previous start, so `podman pull` failed after any restart (an update, a watchdog kill).
 ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
+InaccessiblePaths=/home /root
 ProtectKernelModules=true
-ProtectKernelLogs=true
 ProtectControlGroups=false
 RestrictRealtime=true
 LockPersonality=true

@@ -381,7 +381,12 @@ def create_app(s: Services) -> FastAPI:
         try:
             yield
         finally:
-            notify("STOPPING=1")
+            if os.environ.get("CLARA_LAUNCHED") != "1":
+                # Not under the launcher: this process is what systemd supervises. Under the launcher it may only be
+                # handing over (an update, a restart, a rollback) while the launcher, the unit's main process, goes on:
+                # systemd would then call the unit "deactivating" for good and kill it at TimeoutStopSec. When the unit
+                # is stopped, systemd knows it already.
+                notify("STOPPING=1")
             for task in tasks:
                 task.cancel()
             await upkeep.stop()

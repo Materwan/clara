@@ -180,7 +180,15 @@ earlier server: the new Clara starts empty.
   repeated now; a 429 is still retried); `deploy/install.sh` put the secret key on a command line while it made the first tokens (it is in the
   environment now); an empty chat with no default model says so and links to Models. A rehearsal of the update (real releases, real launcher,
   a stand-in for GitHub) found that no update could ever succeed: the new release's virtualenv was built in a `.partial` folder and renamed,
-  which left its scripts pointing at the old folder, so the preflight failed with "No such file or directory". It is built relocatable now.
+  which left its scripts pointing at the old folder, so the preflight failed with "No such file or directory". It is built relocatable now. The
+  same kind of rehearsal on a real Ubuntu machine, under systemd, found more: the watchdog was not fed after two minutes (the 10-minute and
+  hourly loops counted as stalled), so systemd killed the server about 4.5 minutes after every start; a server that exited for an update told
+  systemd the unit was stopping, which left it "deactivating" and killed after 180 s (a server run by the launcher no longer says it); the unit's
+  `ProtectHome`, `ProtectKernelLogs` and `PrivateTmp` broke rootless Podman (no image pull, then no sandbox after a boot or a restart), so they are
+  out and `InaccessiblePaths=/home /root` closes the same doors; and
+  `scripts/build-release.sh`, `scripts/build-web.sh` and `deploy/install.sh` were committed without the executable bit, so CI and the release
+  workflow failed with "Permission denied". `deploy/install.sh` also stopped on a fresh Ubuntu 24.04 (no `/etc/sysusers.d`), failed when the
+  release was unpacked in a home directory (the `clara` user cannot enter it), and ran its final `clara doctor` without the secret key.
 - **New settings:** all of them (see FEATURES.md, section 14). New here: `CLARA_MAIL_POLL_SECONDS`, `CLARA_GITHUB_POLL_SECONDS`; the runtime settings `discord_routes`, `mail_notify` and `mail_notify_senders`; the secret
   `gmail_refresh_token`; the alert `gmail`.
 - **Migrations:** schema version 20 (0020: the folder grants and allowances; 0019: a conversation no longer has a parent, the sub agents are gone; 0018: the special tools a project's new conversations start with; 0017: the progress of a QCM; 0016: the Mail pack; 0015: automations that deliver to Discord are shown in the history; 0014: the Brave Search connection; 0013: the Discord mirror and archived conversations; 0012: where an automation's result goes; 0011: where the GitHub poll had reached, `github_cursors`; 0010: a hook's own history group, the project made for each hook goes when it was empty; 0009: hooks, the tables `trigger_events`, `triggers` and `trigger_runs`; 0008: Gmail as a connection, which rebuilds `connections` and keeps every repository and Drive file you added, and where the new-mail notifications stopped; 0002: a model you showed or hid yourself is told from one you never decided about; 0003: the daily recap's days; 0004: tool packs, the new fields of schedules and their runs, the files Clara made on Drive; the recap's table is kept for one start so its days become runs; 0005: which projects and schedules list their conversations in the web history, all off at first; 0007: `attempts` of a schedule, 3 by default).
