@@ -85,7 +85,7 @@ The installer creates the `clara` system user (with what rootless Podman needs),
 
 1. Edit `/etc/clara/clara.env` (your zone, your Ollama hosts, `CLARA_RELEASE_REPO`). Every setting is in
    [FEATURES.md](FEATURES.md#14-settings).
-2. Pull or build the sandbox image as `clara` (`clara doctor --pull`, or `podman build -t localhost/clara-sandbox:latest sandbox/`).
+2. Pull or build the sandbox image as `clara`, from `/` (the steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md), step 4).
 3. `sudo systemctl enable --now clara`, then open `https://<machine>.<tailnet>.ts.net` and paste the web token.
 
 The full procedure, with SearXNG, Drive, GitHub, the vault, Discord and backups, is in

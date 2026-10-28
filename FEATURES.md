@@ -907,7 +907,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 - **Debug switch:** `/debug on` writes full prompts and answers, and the text of failed model calls, to
   `logs/debug-content.jsonl` (0600) for one hour, then switches itself off and deletes the file.
 - **`clara doctor`:** settings, permissions, the database, the secrets key, Podman (rootless, cgroups, subuid/subgid,
-  the image, isolation; `--pull` pulls the image first), Funnel, Tailscale, each Ollama host, SearXNG, restic, the disk.
+  the image, isolation: a test container started with the options of a real run; `--pull` pulls the image first, when its
+  name is a registry's), Funnel, Tailscale, each Ollama host, SearXNG, restic, the disk.
 - **Status:** `/status`, the Admin page and `GET /v1/admin/status`: version and release, state, uptime, turns, models,
   providers, storage, scripts, vault, Tailscale, backups, event listeners, clients seen, alerts, debug, today's usage,
   pending approvals.

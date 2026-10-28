@@ -93,8 +93,10 @@ cat <<EOF
 
 Next:
   1. Edit /etc/clara/clara.env (zone, Ollama hosts, release repository).
-  2. The sandbox image, as clara: sudo -u clara podman pull <image manifest.json names>, then
-     sudo -u clara podman tag <that image> localhost/clara-sandbox:latest   (or: podman build -t localhost/clara-sandbox:latest sandbox/)
+  2. The sandbox image, as clara, from / (clara cannot enter your home directory): cd / && sudo -u clara podman pull
+     <image manifest.json names>, then sudo -u clara podman tag <that image> localhost/clara-sandbox:latest
+     (or: podman build -t localhost/clara-sandbox:latest sandbox/). Then clara doctor: its first run copies the image
+     for the scripts (a few minutes on a small machine).
   3. sudo systemctl enable --now clara
   4. Discord (optional, your private server: docs/OPERATIONS.md): either set CLARA_DISCORD_AUTOSTART=true, the ids
      (CLARA_DISCORD_USER_ID, CLARA_DISCORD_CHANNEL_GENERAL/_NOTIFICATION/_APPROVAL/_ALERTS) and the two token files

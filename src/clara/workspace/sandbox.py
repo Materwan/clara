@@ -18,9 +18,12 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..db import Database
 from ..settings import Settings
@@ -32,6 +35,12 @@ log = logging.getLogger(__name__)
 
 LOG_MAX_BYTES = 10 * 1024 * 1024
 CHECK_TIMEOUT = 60.0
+PROBE_TIMEOUT = 1200.0  # the first start of an image can copy all of it (see `Sandbox.probe`)
+CANARY_BYTES = 128 * 1024  # more than the 64k tmpfs over `.git`: a repository this big used to make every run fail
+PROBE_COMMAND = (
+    "(getent hosts example.com || curl -sm3 http://1.1.1.1) >/dev/null 2>&1 && echo NETWORK || echo ISOLATED; "
+    "test -e /workspace/.git/canary && echo GIT-VISIBLE || echo GIT-HIDDEN"
+)
 
 
 @dataclass(frozen=True)
@@ -83,6 +92,15 @@ def podman_args(
     ]
 
 
+def _probe_workspace() -> str:
+    """A workspace for `Sandbox.probe`: a `.git` with a file bigger than the tmpfs that hides it."""
+    root = tempfile.mkdtemp(prefix="clara-probe-")
+    git = Path(root, ".git")
+    git.mkdir()
+    (git / "canary").write_bytes(b"x" * CANARY_BYTES)
+    return root
+
+
 class Sandbox:
     def __init__(self, settings: Settings, workspace: Workspace, db: Database, image: str):
         self.settings = settings
@@ -108,7 +126,7 @@ class Sandbox:
     async def _exec(self, *args: str, timeout: float = CHECK_TIMEOUT) -> tuple[int, str]:
         try:
             process = await asyncio.create_subprocess_exec(
-                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=_minimal_env()
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=_minimal_env(), cwd="/"
             )
         except FileNotFoundError:
             return 127, f"{args[0]} is not installed"
@@ -154,26 +172,35 @@ class Sandbox:
         )
         code, out = await self._exec(self.settings.podman, "image", "exists", self.image)
         results.append(
-            ("image", code == 0, self.image if code == 0 else f"{self.image} is missing (clara doctor --pull)")
+            ("image", code == 0, self.image if code == 0 else f"{self.image} is missing (docs/OPERATIONS.md, step 4)")
         )
         if all(ok for _, ok, _ in results):
-            code, out = await self._exec(
-                self.settings.podman,
-                "run",
-                "--rm",
-                "--network=none",
-                "--read-only",
-                "--cap-drop=all",
-                self.image,
-                "bash",
-                "-c",
-                "(getent hosts example.com || curl -sm3 http://1.1.1.1) >/dev/null 2>&1 && "
-                "echo NETWORK || echo ISOLATED",
-                timeout=120,
-            )
-            isolated = code == 0 and "ISOLATED" in out
-            results.append(("isolation", isolated, "no network inside" if isolated else out[:300]))
+            self.problem = "preparing the sandbox image: its first start takes a few minutes"
+            ok, detail = await self.probe(self.image)
+            results.append(("isolation", ok, detail))
         return self._done(results)
+
+    async def probe(self, image: str) -> tuple[bool, str]:
+        """Start `image` the way a run does (same options, same user and user namespace) over a throw-away workspace whose
+        `.git` is bigger than the tmpfs that hides it, and check that there is no network and no `.git` inside. With
+        `--userns=keep-id`, some Podman versions copy the whole image the first time it starts (minutes on a small
+        machine, then seconds): that is paid here, in the background, and not by the first script, which its own
+        timeout would kill, again and again."""
+        root = await asyncio.to_thread(_probe_workspace)
+        name = f"clara-probe-{uuid.uuid4().hex[:6]}"
+        begun = time.monotonic()
+        try:
+            args = podman_args(self.settings, image, root, "", False, 60, name)
+            code, out = await self._exec(*args, PROBE_COMMAND, timeout=PROBE_TIMEOUT)
+            if code == 124:
+                await self._exec(self.settings.podman, "rm", "--force", name, timeout=30)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, root, ignore_errors=True)
+        seconds = time.monotonic() - begun
+        if code == 0 and "ISOLATED" in out and "GIT-HIDDEN" in out:
+            slow = f" (first start of this image: {seconds:.0f} s)" if seconds > 20 else ""
+            return True, "no network inside, no .git" + slow
+        return False, out[:300] or f"the test container exited with code {code}"
 
     def _done(self, results: list[tuple[str, bool, str]]) -> list[tuple[str, bool, str]]:
         failed = [f"{name}: {detail}" for name, ok, detail in results if not ok]
@@ -240,6 +267,7 @@ class Sandbox:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=_minimal_env(),
+            cwd="/",
         )
         assert process.stdout is not None
         captured = bytearray()

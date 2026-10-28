@@ -205,6 +205,45 @@ def test_the_tmpfs_over_dot_git_is_not_filled_from_the_host_repository(services)
     assert mount.startswith("--tmpfs=/workspace/.git:") and "notmpcopyup" in mount.split(":", 1)[1].split(",")
 
 
+@pytest.mark.parametrize("code, out, ok", [
+    (0, "ISOLATED\nGIT-HIDDEN", True), (0, "NETWORK\nGIT-HIDDEN", False), (0, "ISOLATED\nGIT-VISIBLE", False),
+    (126, "Error: OCI runtime error: crun: write: No space left on device", False)])
+async def test_the_readiness_probe_starts_the_image_as_a_run_does(services, monkeypatch, code, out, ok):
+    """Over a `.git` bigger than its tmpfs, with the real options (keep-id included: the first start of an image with it
+    can copy the whole image), and with time to do that: a probe that was lighter said "ready" while every run failed."""
+    seen = {}
+
+    async def fake_exec(*args, timeout=60.0):
+        volume = next(a for a in args if a.startswith("--volume=")).removeprefix("--volume=").split(":")[0]
+        seen.update(args=args, timeout=timeout, root=volume, canary=os.path.getsize(f"{volume}/.git/canary"))
+        return code, out
+
+    monkeypatch.setattr(services.sandbox, "_exec", fake_exec)
+    assert (await services.sandbox.probe("img"))[0] is ok
+    assert {"--userns=keep-id", "--read-only", "--network=none"} <= set(seen["args"])
+    assert any("notmpcopyup" in a for a in seen["args"])
+    assert seen["canary"] > 64 * 1024 and seen["timeout"] >= 600
+    assert not os.path.exists(seen["root"])  # the throw-away workspace is gone
+
+
+async def test_a_probe_that_times_out_removes_its_container(services, monkeypatch):
+    calls = []
+
+    async def fake_exec(*args, timeout=60.0):
+        calls.append(args)
+        return (124, "timed out") if "run" in args else (0, "")
+
+    monkeypatch.setattr(services.sandbox, "_exec", fake_exec)
+    assert (await services.sandbox.probe("img")) == (False, "timed out")
+    assert calls[-1][1:3] == ("rm", "--force") and calls[-1][3].startswith("clara-probe-")
+
+
+async def test_podman_is_started_from_the_root_folder(services, tmp_path, monkeypatch):
+    """`sudo -u clara clara doctor` from a home directory clara cannot enter: Podman fails with "cannot chdir"."""
+    monkeypatch.chdir(tmp_path)
+    assert await services.sandbox._exec(shutil.which("pwd") or "/bin/pwd") == (0, "/")
+
+
 @pytest.mark.skipif(shutil.which("podman") is None, reason="needs rootless podman (integration)")
 async def test_a_script_sees_no_network_no_git_and_no_host_files(environ, llm):
     """The real sandbox (the image localhost/clara-sandbox:latest). CI sets CLARA_REQUIRE_SANDBOX=1: no silent skip."""

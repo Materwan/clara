@@ -276,6 +276,44 @@ def test_a_rolled_back_update_puts_the_old_sandbox_image_back(services):
     assert "v9.9.9" in services.alerts.active["update"]
 
 
+async def test_older_sandbox_images_go_but_the_running_one_and_the_rollback_one_stay(services, monkeypatch):
+    """Three updates left 3 GB (four images, and the copy Podman makes of each for scripts)."""
+    from clara.ops.updater import UpdateError, Updater
+
+    repo, calls = "ghcr.io/me/clara-sandbox", []
+    listing = "\n".join(f"{name}@sha256:{digest}" for name, digest in [
+        (repo, "old"), (repo, "busy"), (repo, "before"), (repo, "new"), (repo, "new"),
+        ("localhost/clara-sandbox", "x"), ("docker.io/library/node", "n")]) + f"\n{repo}@<none>\nlocalhost/x@<none>"
+
+    async def fake_run(*args, **kw):
+        calls.append(args)
+        if args[1] == "images":
+            return listing
+        if args[2].endswith("busy"):
+            raise UpdateError("image is in use")
+        return ""
+
+    updater = Updater(services)
+    monkeypatch.setattr(updater, "_run", fake_run)
+    await updater._prune_images(f"{repo}@sha256:new", {f"{repo}@sha256:new", f"{repo}@sha256:before"})
+    assert [c[2] for c in calls if c[1] == "rmi"] == [f"{repo}@sha256:busy", f"{repo}@sha256:old"]  # busy: tried, kept going
+
+
+async def test_an_image_not_pinned_by_digest_is_never_pruned(services, monkeypatch):
+    from clara.ops.updater import Updater
+
+    calls = []
+
+    async def fake_run(*args, **kw):
+        calls.append(args)
+        return "localhost/clara-sandbox@sha256:abc"
+
+    updater = Updater(services)
+    monkeypatch.setattr(updater, "_run", fake_run)
+    await updater._prune_images("localhost/clara-sandbox:latest", {"localhost/clara-sandbox:latest"})
+    assert [c[1] for c in calls] == ["images"]
+
+
 def test_a_successful_update_is_reported_by_the_server_that_is_already_running(services):
     """The launcher writes the success once the new release has answered /health, which is after its start."""
     from clara.ops.upkeep import Upkeep

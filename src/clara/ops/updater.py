@@ -214,7 +214,14 @@ class Updater:
             if image and self.s.sandbox is not None and self.s.settings.run == "auto":
                 self._progress("image", image)
                 await self._run(settings.podman, "pull", image, timeout=1200)
+                # The first start of an image can copy all of it (minutes on a small machine): here, while the running
+                # release still serves, and not in the first script's timeout or in the new release's first minutes.
+                self._progress("image", f"{image}: first start (it can take minutes)")
+                ok, detail = await self.s.sandbox.probe(image)
+                if not ok:
+                    raise UpdateError(f"The new sandbox image does not start as a script run does: {detail}")
                 self.s.runtime.set("sandbox_image", image)
+                await self._prune_images(image, {image, image_before or ""})
             self._progress("backup")
             stamp = utcnow().strftime("%Y%m%d-%H%M%S")
             backup = backup_database(self.s.db.connection, settings.backups_dir / "pre-update" / f"clara-{stamp}.db")
@@ -270,6 +277,25 @@ class Updater:
         if process.returncode != 0:
             raise UpdateError(f"{Path(args[0]).name} {args[1] if len(args) > 1 else ''} failed: {text[-800:]}")
         return text
+
+    async def _prune_images(self, image: str, keep: set[str]) -> None:
+        """Remove the older sandbox images of this repository (about 600 MB each, and the copy made for scripts doubles
+        it). `keep`: the one that will run and the one a rollback goes back to. Failures are only logged."""
+        podman = self.s.settings.podman
+        repository = image.split("@", 1)[0]
+        try:
+            listed = await self._run(podman, "images", "--format", "{{.Repository}}@{{.Digest}}", timeout=60)
+        except UpdateError as error:
+            log.warning("update: could not list the sandbox images: %s", error)
+            return
+        for ref in sorted({line.strip() for line in listed.splitlines()}):
+            if not ref.startswith(f"{repository}@sha256:") or ref in keep:
+                continue
+            try:
+                await self._run(podman, "rmi", ref, timeout=300)
+                log.info("update: removed the old sandbox image %s", ref)
+            except UpdateError as error:  # in use, for one
+                log.warning("update: could not remove the old sandbox image %s: %s", ref, error)
 
     async def _venv(self, root: Path, manifest: dict) -> None:
         uv = shutil.which("uv") or "/usr/local/bin/uv"

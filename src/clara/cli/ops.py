@@ -135,14 +135,23 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
         material = load_key_material(settings.secret_key_file, settings.secret_key)
         results.append(("secret key", OK, f"from {material.origin}"))
     except SecretError as error:
-        results.append(("secret key", FAIL, str(error)))
+        results.append(("secret key", FAIL, f"{error} (by hand, use the `clara` alias of docs/OPERATIONS.md)"))
     if settings.run == "auto":
         from ..workspace.sandbox import Sandbox
         from ..workspace.store import Workspace
 
         workspace = Workspace(settings.workspace_dir, settings.workspace_max_bytes, settings.workspace_max_file_bytes)
         sandbox = Sandbox(settings, workspace, None, settings.sandbox_image)  # type: ignore[arg-type]
-        if pull and shutil.which(settings.podman):
+        if pull and settings.sandbox_image.startswith("localhost/"):  # no registry holds that name
+            results.append(
+                (
+                    "image pull",
+                    WARN,
+                    f"{settings.sandbox_image} is a local name: pull the image the release names in manifest.json and "
+                    "tag it, or build it (docs/OPERATIONS.md, step 4)",
+                )
+            )
+        elif pull and shutil.which(settings.podman):
             code, out = await sandbox._exec(settings.podman, "pull", settings.sandbox_image, timeout=1200)
             results.append(
                 ("image pull", OK if code == 0 else FAIL, out.splitlines()[-1] if out else settings.sandbox_image)
