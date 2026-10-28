@@ -3,7 +3,7 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
-## v1.0.0 — unreleased
+## v1.0.0 — 28/10/2026
 
 First release of the rewrite: Clara for one person on one machine, built from zero following
 [the rebuild plan](clara-rebuild-plan.md) and [the review](docs/REVIEW-RESPONSE.md). Nothing is migrated from the
