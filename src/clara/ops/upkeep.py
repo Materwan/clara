@@ -107,6 +107,8 @@ class Upkeep:
         if until and parse_iso(until) <= utcnow():
             s.runtime.set("debug_until", "")
             s.traffic.end_debug()
+        if s.updater is not None:
+            s.updater.report()
         percent = disk_percent(s.settings.data_dir)
         if percent >= s.settings.disk_alert_percent:
             s.alerts.raise_(

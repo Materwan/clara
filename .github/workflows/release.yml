@@ -70,5 +70,7 @@ jobs:
         run: |
           awk -v tag="${GITHUB_REF_NAME}" '/^## /{p = ($2 == tag)} p' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release ${GITHUB_REF_NAME}." > notes.md
+          flags=()
+          case "${GITHUB_REF_NAME}" in *-*) flags=(--prerelease) ;; esac  # v1.0.0-rc1 is not "Latest"
           gh release create "${GITHUB_REF_NAME}" dist/release/"${GITHUB_REF_NAME}"/* \
-            --title "Clara ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+            --title "Clara ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag "${flags[@]}"

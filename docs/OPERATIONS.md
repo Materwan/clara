@@ -28,9 +28,11 @@ alias clara='sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DI
    the backups** (a password manager). Without it, the encrypted secrets in a backup cannot be read.
 3. Edit `/etc/clara/clara.env`: `CLARA_TIMEZONE`, `CLARA_OLLAMA_HOSTS`, `CLARA_RELEASE_REPO` (and
    `CLARA_RELEASE_PUBKEY` once releases are signed). Every setting: [FEATURES.md](../FEATURES.md#14-settings).
-4. The sandbox image: `sudo -u clara podman pull <the image the release names in manifest.json>` (or, for a source
-   install, `sudo -u clara podman build -t localhost/clara-sandbox:latest sandbox/`). Then `clara doctor` until
-   nothing says FAIL.
+4. The sandbox image, under the name Clara looks for until the first update pins the release's own:
+   `sudo -u clara podman pull <the image the release names in manifest.json>`, then
+   `sudo -u clara podman tag <that image> localhost/clara-sandbox:latest` (for a source install, instead
+   `sudo -u clara podman build -t localhost/clara-sandbox:latest sandbox/`). Then `clara doctor` until nothing says
+   FAIL.
 5. `systemctl enable --now clara`. `journalctl -u clara -f` shows the start; Clara serves
    `https://<machine>.<tailnet>.ts.net` (port 443 by default).
 
@@ -287,7 +289,8 @@ clara backup now
    builds the virtualenv, runs a preflight against a copy of the database, pulls the pinned sandbox image, takes a
    backup, and restarts into the new release. If it does not come up within 60 s, the launcher puts the old release
    and the old database back, and you get the `update` alert with the reason.
-3. Old releases stay in `/opt/clara/releases/`; remove those you no longer want (never the one `current` points to).
+3. Old releases stay in `/opt/clara/releases/`, and so do the folders of updates that were refused after unpacking or rolled back
+   (with `.staging/`); remove those you no longer want (never the one `current` points to).
 
 ### Signing releases (recommended)
 

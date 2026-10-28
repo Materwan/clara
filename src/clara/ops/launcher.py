@@ -134,7 +134,14 @@ def main() -> int:
                 if schema_of(settings.database) > int(plan["schema_before"]):
                     restore(settings.database, Path(plan["backup"]))
                 (run_dir / RESULT).write_text(
-                    json.dumps({"result": "rolled_back", "tag": plan["tag"], "reason": problem})
+                    json.dumps(
+                        {
+                            "result": "rolled_back",
+                            "tag": plan["tag"],
+                            "reason": problem,
+                            "sandbox_image_before": plan.get("sandbox_image_before"),
+                        }
+                    )
                 )
                 continue
             (run_dir / RESULT).write_text(json.dumps({"result": "ok", "tag": plan["tag"]}))

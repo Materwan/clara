@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import tarfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -89,6 +90,18 @@ def safe_extract(archive: Path, destination: Path) -> None:
         tar.extractall(destination, filter="data")
 
 
+def _github_refused(response: httpx.Response) -> str:
+    """Why GitHub said no: out of the 60 requests an hour an anonymous caller gets, or something else."""
+    if response.status_code in (403, 429) and response.headers.get("x-ratelimit-remaining") == "0":
+        reset = response.headers.get("x-ratelimit-reset", "")
+        when = f" (it resets at {datetime.fromtimestamp(int(reset), UTC):%H:%M} UTC)" if reset.isdigit() else ""
+        return (
+            f"GitHub's rate limit is used up{when}: it allows 60 requests an hour without a token. "
+            "A GitHub token in the release_token secret raises it."
+        )
+    return f"GitHub answered HTTP {response.status_code}."
+
+
 class Updater:
     def __init__(self, s: Services):
         self.s = s
@@ -122,7 +135,7 @@ class Updater:
         async with httpx.AsyncClient(timeout=20, headers=self._headers(), follow_redirects=True) as http:
             response = await http.get(f"{API}/repos/{repo}/releases", params={"per_page": 20})
         if response.is_error:
-            raise UpdateError(f"GitHub answered HTTP {response.status_code}.")
+            raise UpdateError(_github_refused(response))
         found = []
         for release in response.json():
             if release.get("draft") or not TAG.match(str(release.get("tag_name", ""))):
@@ -197,6 +210,7 @@ class Updater:
             self._progress("preflight", "the new code against a copy of the database")
             await self._preflight(target, staging)
             image = manifest.get("sandbox_image")
+            image_before = self.s.runtime.get("sandbox_image")
             if image and self.s.sandbox is not None and self.s.settings.run == "auto":
                 self._progress("image", image)
                 await self._run(settings.podman, "pull", image, timeout=1200)
@@ -211,6 +225,7 @@ class Updater:
                 "tag": tag,
                 "backup": str(backup),
                 "schema_before": schema_version(self.s.db.connection),
+                "sandbox_image_before": image_before,  # the new release's image is set above: a rollback puts this back
                 "at": utcnow().isoformat(timespec="seconds"),
             }
             plan_path = settings.run_dir / PLAN
@@ -280,7 +295,8 @@ class Updater:
         )
 
     def report(self) -> None:
-        """At start: what the launcher found after the last update (a success, or a rollback and why)."""
+        """What the launcher found after the last update (a success, or a rollback and why): at start, and every minute
+        after, because the launcher writes a success only once the new release has proved healthy, i.e. after its start."""
         path = self.s.settings.run_dir / RESULT
         if not path.exists():
             return
@@ -293,6 +309,8 @@ class Updater:
             self.s.events.publish("update", f"Updated to {result.get('tag')}", "The new release is running.")
             self.s.alerts.clear("update")
         elif result:
+            if result.get("sandbox_image_before") is not None:  # the failed release's image was set before the restart
+                self.s.runtime.set("sandbox_image", result["sandbox_image_before"])
             self.s.alerts.raise_(
                 "update",
                 f"The update to {result.get('tag')} was rolled back",

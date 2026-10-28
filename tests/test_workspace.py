@@ -198,6 +198,13 @@ def test_the_container_is_locked_down(services):
     assert "--network=pasta" in " ".join(podman_args(services.settings, "img", "/w", "", True, 5, "run-2"))
 
 
+def test_the_tmpfs_over_dot_git_is_not_filled_from_the_host_repository(services):
+    """Podman copies the host's `.git` into a `--tmpfs` unless told not to: a fresh `git init` is more than the 64k
+    and every run failed ("crun: write: No space left on device"); and the repository was inside the container."""
+    (mount,) = [a for a in podman_args(services.settings, "img", "/w", "", False, 5, "run-3") if "/workspace/.git" in a]
+    assert mount.startswith("--tmpfs=/workspace/.git:") and "notmpcopyup" in mount.split(":", 1)[1].split(",")
+
+
 @pytest.mark.skipif(shutil.which("podman") is None, reason="needs rootless podman (integration)")
 async def test_a_script_sees_no_network_no_git_and_no_host_files(environ, llm):
     """The real sandbox (the image localhost/clara-sandbox:latest). CI sets CLARA_REQUIRE_SANDBOX=1: no silent skip."""

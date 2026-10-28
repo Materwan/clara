@@ -21,6 +21,7 @@ from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -152,7 +153,7 @@ GOOD = textwrap.dedent('''
     if (run / "update-result.json").exists():
         sys.exit(0)  # the rollback brought us back: the rehearsal is over
     plan = {"from": os.environ["OLD"], "to": os.environ["NEW"], "tag": "v9.9.9", "backup": os.environ["BACKUP"],
-            "schema_before": 1}
+            "schema_before": 1, "sandbox_image_before": "old-image"}
     (run / "update.json").write_text(json.dumps(plan))
     sys.exit(75)
 ''')
@@ -199,6 +200,7 @@ def test_a_broken_update_rolls_back_and_restores_the_database(tmp_path):
     assert (tmp_path / "opt" / "current").resolve() == old
     result = json.loads((data / "run" / "update-result.json").read_text())
     assert result["result"] == "rolled_back" and result["tag"] == "v9.9.9"
+    assert result["sandbox_image_before"] == "old-image"  # the server that comes back puts it in place again
     with sqlite3.connect(database) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 1
         assert db.execute("SELECT text FROM facts").fetchall() == [("kept",)]
@@ -258,6 +260,47 @@ def test_the_installer_and_the_release_scripts_are_valid_shell():
     for script in ("deploy/install.sh", "scripts/build-release.sh", "scripts/build-web.sh"):
         done = subprocess.run(["bash", "-n", str(root / script)], capture_output=True, text=True)
         assert done.returncode == 0, f"{script}: {done.stderr}"
+
+
+def test_a_rolled_back_update_puts_the_old_sandbox_image_back(services):
+    """The updater sets the new release's image before the restart; the old release must not keep running on it."""
+    from clara.ops.updater import Updater
+
+    run = services.settings.run_dir
+    run.mkdir(parents=True, exist_ok=True)
+    services.runtime.set("sandbox_image", "ghcr.io/me/clara-sandbox@sha256:failed")
+    (run / "update-result.json").write_text(json.dumps({"result": "rolled_back", "tag": "v9.9.9", "reason": "no /health",
+                                                        "sandbox_image_before": "ghcr.io/me/clara-sandbox@sha256:old"}))
+    Updater(services).report()
+    assert services.runtime.get("sandbox_image") == "ghcr.io/me/clara-sandbox@sha256:old"
+    assert "v9.9.9" in services.alerts.active["update"]
+
+
+def test_a_successful_update_is_reported_by_the_server_that_is_already_running(services):
+    """The launcher writes the success once the new release has answered /health, which is after its start."""
+    from clara.ops.upkeep import Upkeep
+
+    run = services.settings.run_dir
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "update-result.json").write_text(json.dumps({"result": "ok", "tag": "v9.9.9"}))
+    Upkeep(services).every_minute()
+    assert not (run / "update-result.json").exists()
+    assert [event.title for event in services.events.recent(5, ["update"])] == ["Updated to v9.9.9"]
+
+
+async def test_github_says_when_its_rate_limit_is_used_up(monkeypatch):
+    from types import SimpleNamespace
+
+    from clara.ops import updater as updater_module
+
+    def github(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(updater_module.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(github), **kw))
+    s = SimpleNamespace(settings=SimpleNamespace(release_repo="me/clara"), secrets=SimpleNamespace(get=lambda name: None))
+    with pytest.raises(UpdateError, match=r"rate limit is used up \(it resets at 00:00 UTC\).*release_token"):
+        await updater_module.Updater(s).releases()  # type: ignore[arg-type]
 
 
 async def test_backups_are_private_verified_and_kept(services):
