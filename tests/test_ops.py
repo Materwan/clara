@@ -276,6 +276,30 @@ def test_a_rolled_back_update_puts_the_old_sandbox_image_back(services):
     assert "v9.9.9" in services.alerts.active["update"]
 
 
+async def test_doctor_checks_the_image_the_server_runs(services, monkeypatch):
+    """The server runs the image the last release pinned, else CLARA_SANDBOX_IMAGE (`workspace/setup.py`); a doctor that
+    tried the setting alone said PASS in 4 s on an image whose first start takes 3 minutes."""
+    import dataclasses
+
+    from clara.cli.ops import _doctor, _pinned_image
+    from clara.workspace.sandbox import Sandbox
+
+    settings = dataclasses.replace(services.settings, run="auto")
+    assert _pinned_image(settings) == ""
+    seen = []
+
+    async def fake_check(self):
+        seen.append(self.image)
+        return []
+
+    monkeypatch.setattr(Sandbox, "check", fake_check)
+    await _doctor(settings, False)
+    services.runtime.set("sandbox_image", "ghcr.io/me/clara-sandbox@sha256:pinned")
+    assert _pinned_image(settings) == "ghcr.io/me/clara-sandbox@sha256:pinned"
+    await _doctor(settings, False)
+    assert seen == [settings.sandbox_image, "ghcr.io/me/clara-sandbox@sha256:pinned"]
+
+
 async def test_older_sandbox_images_go_but_the_running_one_and_the_rollback_one_stay(services, monkeypatch):
     """Three updates left 3 GB (four images, and the copy Podman makes of each for scripts)."""
     from clara.ops.updater import UpdateError, Updater

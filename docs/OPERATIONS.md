@@ -295,6 +295,11 @@ clara backup now
    removes the sandbox images older than the running one and the one a rollback goes back to, takes a
    backup, and restarts into the new release. If it does not come up within 60 s, the launcher puts the old release
    and the old database back, and you get the `update` alert with the reason.
+   Each image kept costs about 1.25 GB (the image and the copy Podman makes of it for scripts); expect three on the disk.
+   The image you tagged `localhost/clara-sandbox:latest` at install is never removed: it is what the server falls back
+   to, and what a rollback of the very first update returns to. Once an update has succeeded, free it with
+   `cd / && sudo -u clara podman rmi localhost/clara-sandbox:latest` (the next update then removes the rest of that
+   image); keep it if you build the image yourself.
 3. Old releases stay in `/opt/clara/releases/`, and so do the folders of updates that were refused after unpacking or rolled back
    (with `.staging/`); remove those you no longer want (never the one `current` points to).
 

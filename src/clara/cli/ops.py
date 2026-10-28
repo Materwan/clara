@@ -18,9 +18,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
 import os
 import shutil
+import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -119,6 +122,17 @@ def secrets(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------
+def _pinned_image(settings: Settings) -> str:
+    """The sandbox image the last release pinned (runtime setting `sandbox_image`), read without write access; '' when
+    there is none, so the caller falls back to CLARA_SANDBOX_IMAGE as the server does."""
+    try:
+        with closing(sqlite3.connect(f"file:{settings.database}?mode=ro", uri=True)) as db:
+            row = db.execute("SELECT value FROM settings WHERE key = 'sandbox_image'").fetchone()
+        return json.loads(row[0]) if row else ""
+    except (sqlite3.Error, ValueError):
+        return ""
+
+
 async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
     results: list[tuple[str, str, str]] = [("settings", OK, f"Clara {__version__}, zone {settings.timezone}")]
     problems = check_private(settings.env_file, settings.data_dir, settings.secret_key_file)
@@ -141,21 +155,20 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
         from ..workspace.store import Workspace
 
         workspace = Workspace(settings.workspace_dir, settings.workspace_max_bytes, settings.workspace_max_file_bytes)
-        sandbox = Sandbox(settings, workspace, None, settings.sandbox_image)  # type: ignore[arg-type]
-        if pull and settings.sandbox_image.startswith("localhost/"):  # no registry holds that name
+        image = _pinned_image(settings) or settings.sandbox_image  # what the server runs, as setup.py picks it
+        sandbox = Sandbox(settings, workspace, None, image)  # type: ignore[arg-type]
+        if pull and image.startswith("localhost/"):  # no registry holds that name
             results.append(
                 (
                     "image pull",
                     WARN,
-                    f"{settings.sandbox_image} is a local name: pull the image the release names in manifest.json and "
+                    f"{image} is a local name: pull the image the release names in manifest.json and "
                     "tag it, or build it (docs/OPERATIONS.md, step 4)",
                 )
             )
         elif pull and shutil.which(settings.podman):
-            code, out = await sandbox._exec(settings.podman, "pull", settings.sandbox_image, timeout=1200)
-            results.append(
-                ("image pull", OK if code == 0 else FAIL, out.splitlines()[-1] if out else settings.sandbox_image)
-            )
+            code, out = await sandbox._exec(settings.podman, "pull", image, timeout=1200)
+            results.append(("image pull", OK if code == 0 else FAIL, out.splitlines()[-1] if out else image))
         for name, ok, detail in await sandbox.check():
             results.append((f"sandbox: {name}", OK if ok else FAIL, detail))
     else:
