@@ -12,7 +12,7 @@
 #   SKIP_WEB=1 …   reuse the site already in src/clara/web/dist
 set -euo pipefail
 
-tag="${1:?give the tag, for example v1.1.0}"
+tag="${1:?give the tag, for example v1.2.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 UV="${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}"

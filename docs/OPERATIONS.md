@@ -19,8 +19,8 @@ alias clara='sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DI
    (`sha256sum -c --ignore-missing SHA256SUMS`), unpack it and run its installer:
 
    ```bash
-   mkdir clara && tar -xzf clara-v1.1.0.tar.gz -C clara
-   sudo clara/deploy/install.sh clara-v1.1.0.tar.gz
+   mkdir clara && tar -xzf clara-v1.2.0.tar.gz -C clara
+   sudo clara/deploy/install.sh clara-v1.2.0.tar.gz
    ```
 
    It says each step as it runs, and ends with `clara doctor`. Keep the three tokens it prints (console, terminal,
@@ -293,7 +293,7 @@ clara backup now
 
 1. `/update list` (or Admin → updates) shows the releases and their notes. Read the notes: migrations and new settings
    are listed there.
-2. `/update v1.1.0`. Clara downloads, checks sums (and the signature when `CLARA_RELEASE_PUBKEY` is set), unpacks,
+2. `/update v1.2.0`. Clara downloads, checks sums (and the signature when `CLARA_RELEASE_PUBKEY` is set), unpacks,
    builds the virtualenv, runs a preflight against a copy of the database, pulls the pinned sandbox image and starts
    it once (the copy Podman makes for scripts takes minutes on a small machine: the running release serves meanwhile),
    removes the sandbox images older than the running one and the one a rollback goes back to, takes a

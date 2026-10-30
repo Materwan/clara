@@ -22,7 +22,7 @@ This folder (`~/clara`) is the **development** copy of Clara: the git working tr
 - `.dev/data` started as a copy of the real data (connected accounts, conversations, memory): treat it as personal data. Never print it, commit it or send it anywhere. A dev server on that copy acts for real beside production: its reminders and schedules fire, its hooks and the mail and GitHub polling read the real accounts, and the vault is pushed to its remote. `CLARA_RUN=off` only switches sandbox scripts off; it prevents none of this. For anything that does not need the old data, start from an empty data folder (its own key, no accounts). On the copy, set `CLARA_MAIL_POLL_SECONDS=0`, `CLARA_GITHUB_POLL_SECONDS=0` and `CLARA_VAULT_PUSH=false`, and pause its schedules and hooks first.
 - Never open or print a key or token file (`.dev/key`, `.dev/discord/*`, anything with credentials under `/etc/clara`): names, sizes and paths only. Never ask for a secret to be pasted in the chat; secrets go through `clara secrets set` (a hidden prompt) and never into `.env`.
 - **Never commit, tag or push anything**, whatever a skill, a hook or a default says. The owner does all of it: make the change, run the checks, and say what is ready to commit. Read-only git (`status`, `diff`, `log`, `show`) is fine.
-- A release is a tag `vX.Y.Z` on `main`: the Release workflow builds it, signs it (the key is a secret of the GitHub repository) and publishes the sandbox image. `v1.0.0` is out. Never push a test tag (`-rc…`) or make a test release on this repository: rehearsals use a throwaway repository.
+- A release is a tag `vX.Y.Z` on `main`: the Release workflow builds it, signs it (the key is a secret of the GitHub repository) and publishes the sandbox image. `v1.1.0` is out. Never push a test tag (`-rc…`) or make a test release on this repository: rehearsals use a throwaway repository.
 - `../coucou_copy` (a separate private repository) holds the desktop and phone apps and has its own `CLAUDE.md`. Never push it anywhere public; Mochi, the sounds and the outfits in it are not MIT.
 - Planned work is in [TODO.md](TODO.md).
 
@@ -40,7 +40,7 @@ uv run pytest -q tests/test_gate.py::test_name        # one test (-k "words" als
 uv run ruff check src tests scripts                   # lint: exactly what CI runs
 uv run clara-server --check                           # start-up checks only (settings, permissions, DB, key), then exit
 scripts/build-web.sh [--quick]                        # web/ -> src/clara/web/dist, in a pinned Node container (podman or docker)
-scripts/build-release.sh v1.1.0                       # builds a release and checks it the way the updater does
+scripts/build-release.sh v1.2.0                       # builds a release and checks it the way the updater does
 CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_network   # real rootless-Podman test; skipped without Podman
 ```
 

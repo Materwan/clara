@@ -3,6 +3,53 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.2.0 — 30/10/2026
+
+**A memory for each project, schedule and hook.** Next to the global memory, every project, schedule and hook keeps a memory
+of its own, shared by all its conversations and runs: what Clara learns in one, the next one knows. A standing rule such as
+« remove the newsletters of Acme » reaches every run that needs it. Clara chooses where each fact goes (`remember` takes a
+`scope`) whenever the conversation has a project or an automation; nothing is chosen for her otherwise. The Memory page keeps
+the global memory; the others are on their own pages: the **Memory** panel of a project, and the **Memory** button of a
+schedule or a hook.
+
+- **Which memories a conversation reads:** the global one, its project's and its automation's. `recall_facts` searches them,
+  and `forget` reaches only them.
+- **Waiting facts:** after outside content (a web page, a mail, a Drive file, an issue), what Clara saves for a project or an
+  automation is stored unconfirmed and hidden from every conversation until you confirm it on that page. A run nobody watches
+  that leaves one sends one notification, without the fact's words.
+- **Limits:** 100 live facts per project, schedule or hook, of which 20 may wait for your confirmation. The prompt shows each
+  memory within `CLARA_SCOPE_FACTS_TOKEN_BUDGET` (1,000 tokens), pinned facts first.
+- **Deletion:** deleting a project, a schedule or a hook deletes its memory with it, every fact included (expired and replaced
+  ones too). The delete dialogs and the Discord request say how many.
+- **Private conversations:** an incognito conversation reads and writes none of it. A local-only one reads its project's and
+  its automation's memories but never writes to them.
+
+**Changes you will notice:**
+
+- **A conversation that has read untrusted content stays tainted for the rest of it.** In 1.1.0 the taint lasted while the
+  content was still in the prompt. Now every later turn is tainted too, so an outside write (sending mail, a GitHub or Drive
+  change, a networked script, a change to an automation) asks in those turns as well, even when the page was read long before.
+  The last level of a chat still suspends this rule, as before.
+- **Only Confirm confirms a fact.** In 1.1.0 editing a fact confirmed it, pinning included. Now pinning, dating, categorising or
+  editing a fact that waits leaves it waiting until you press Confirm.
+- **A fact that waits cannot be replaced.** Confirm it, or delete it, first.
+
+**Interface changes:**
+
+- **New route:** `GET /v1/memory/scopes`: for each project, schedule and hook that has a memory, its live facts (`facts`), how
+  many wait for you (`waiting`) and every fact it keeps (`total`).
+- **Changed:** `GET` and `POST /v1/memory/facts` take `scope`: empty for the global memory, else `project:<id>`,
+  `schedule:<id>` or `hook:<id>`.
+- **Tools:** `remember` takes `scope` (`global`, `project` or `automation`); `recall_facts` and `forget` reach the conversation's
+  memories as well as the global one.
+- **Setting:** `CLARA_SCOPE_FACTS_TOKEN_BUDGET` (1000).
+
+**Migrations:** 0023 adds a scope to every fact (the facts that exist stay in the global memory), gives the tombstones a scope,
+and deletes a memory together with its project, schedule or hook. The server takes its backup before running it.
+
+**Docs:** [DECISIONS.md](docs/DECISIONS.md) (« A memory for each project, schedule and hook », with the decisions of this
+release) and [FEATURES.md](FEATURES.md).
+
 ## v1.1.0 — 30/10/2026
 
 **Auto levels.** What happens to a call when no rule matches is no longer a fixed table of chat and unattended defaults:
