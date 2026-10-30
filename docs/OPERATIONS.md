@@ -19,8 +19,8 @@ alias clara='sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DI
    (`sha256sum -c --ignore-missing SHA256SUMS`), unpack it and run its installer:
 
    ```bash
-   mkdir clara && tar -xzf clara-v1.0.0.tar.gz -C clara
-   sudo clara/deploy/install.sh clara-v1.0.0.tar.gz
+   mkdir clara && tar -xzf clara-v1.1.0.tar.gz -C clara
+   sudo clara/deploy/install.sh clara-v1.1.0.tar.gz
    ```
 
    It says each step as it runs, and ends with `clara doctor`. Keep the three tokens it prints (console, terminal,

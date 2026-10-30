@@ -3,6 +3,75 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.1.0 — 30/10/2026
+
+**Auto levels.** What happens to a call when no rule matches is no longer a fixed table of chat and unattended defaults:
+each conversation runs at a **level**, and the level decides, tool by tool, what is refused, asked or run. **Read the
+"Changes you will notice" list below before updating**: several things that asked in a chat, or ran in a schedule, now sit at
+a level of their own.
+
+- **The ladder:** level 0 refuses every tool, the last level runs every tool, and four stand between at first (1 Trusted
+  read, 2 Any read, 3 Files and vault, 4 Mail; the last is Everything). You can add, rename and remove the levels between the
+  first and the last (at most 10 in all). A new level acts like the one below it until you edit it, and removing one never
+  makes anything more permissive: what was set to it moves down (a conversation, a default) or up (a tool's threshold).
+- **Tool thresholds:** each tool has the level it **asks** from and the level it **runs** from; below the first it is refused.
+  A tool follows the default of its action class (the table in FEATURES.md, « Auto levels ») until you change it. They are
+  kept class by class: a script with network (`run_network`) and one without (`run`), an address you wrote (`fetch_trusted`)
+  and any other (`fetch_other`), a normal and a hidden file of your computer's folder each have their own default, and a
+  change to one leaves the others as they were. A setting without a class covers all the classes of a tool.
+- **Where a conversation's level comes from:** its own level, else the schedule or hook it belongs to, else its project, else the
+  server default (new runtime settings `auto_level_default` for a chat and `auto_level_unattended` for a schedule, reminder or
+  hook run, both 3 at first, on the Admin page). A conversation with none of its own *follows*, so changing a project's level
+  changes all its conversations that follow it. The level is read again at every tool call: lowering it stops the next tool
+  of a turn that is running.
+- **Where you set it:** a **level selector** in the chat (a new conversation can be started at a level; choosing the last level
+  asks first), the **Auto level** of a project, of a schedule and of a hook, the **Auto mode** page in Settings (the ladder, the two
+  defaults, and every tool's thresholds with a bar showing refuse, ask and run at each level, changed one tool or one action
+  class at a time), `/level` in the console (`/level tool <name> [<class>] [<ask> <run> | reset]` and the rest), `/level` in
+  `clara-chat` and in Discord (inside a conversation), and the API.
+- **A refusal of the level is final:** no rule can open a tool the level refuses, so level 0 really means no tool. Where the
+  level asks or runs, your rules still decide first (an `ask` rule asks, a `refuse` rule refuses). A request you already
+  answered runs as it was shown, whatever the level became meanwhile.
+- **The last level of a chat suspends the tainted-turn rule and the secret check** (your choice; the selector and the Auto mode
+  page say so). Levels 1 to 4 keep both, and a run nobody watches never has them suspended. The folder of your computer
+  (`folder_read`, `folder_sensitive`) is refused to a run nobody watches at every level.
+- **Who may change a level:** a level lets calls run without a card, so it is an answer given in advance. A token that may
+  answer every request (web, terminal, console) may change anything; the Discord bot may lower a conversation's level or keep it,
+  never raise it, and cannot change the ladder, the defaults, the thresholds or the level of a project, a schedule or a hook;
+  a script token may change nothing. The model has no tool for it, and the Automations tool has no level field.
+- **The turn after an approval** keeps the level of its conversation: in a chat, the default of a chat, not the default of
+  runs nobody watches. It still waits for no answer, and the raises still hold.
+- **Audit log:** each call a level lets through is a `ran` line whose detail names the level (« level 3 (Files and vault) »), and
+  each change of a level, a default or a tool's thresholds is a line with the outcome `level`.
+- **Approve all next** is unchanged: it still answers an `ask` for a while, and a level that asks is an `ask` it can answer.
+
+**Changes you will notice** (the new defaults follow the ladder, not the old table; change a tool or a whole class on the
+Auto mode page to get the old behaviour back):
+
+- Any URL is fetched without asking from level 2 (it asked in a chat and was refused unattended). A turn that read untrusted
+  content can therefore put text in an address it fetches; only content that looks like a secret is raised.
+- Overwriting and deleting workspace files and vault notes run without asking at level 3 (they asked).
+- Mail drafts, labels, marking read and the Trash run from level 4 and ask at level 3; the first three ran in a chat before. A hook
+  that drafts mail is held until it has level 4.
+- Sending mail, GitHub and Drive changes, scripts with network, automations and the Discord tools are refused below level 4,
+  ask at level 4 and run at level 5. With both defaults at 3, **a chat that sent mail or opened a pull request after a card now
+  needs level 4 first.**
+- Every schedule, reminder and hook runs at `auto_level_unattended` (3) until you give it, or its project, a level.
+
+**Interface changes:**
+
+- **New routes:** `GET` and `POST /v1/levels`, `PATCH` and `DELETE /v1/levels/{position}`, `PUT /v1/levels/defaults`,
+  `PUT` and `DELETE /v1/levels/tools/{tool}` (with `class`), `GET` and `PUT /v1/conversations/{id}/level`, and `PUT`
+  `/v1/projects/{id}/level`, `/v1/schedules/{id}/level`, `/v1/triggers/{id}/level`. `POST /v1/chat` and
+  `POST /v1/conversations` take `auto_level`.
+- **Changed:** the `defaults` of `GET /v1/rules` list each class with `ask_from` and `approve_from` (they had `interactive`
+  and `unattended`) and the response carries the ladder; the rule tester (`POST /v1/rules/test`) takes a `level`.
+- **Migrations:** 0021 (the ladder in `auto_levels`, the thresholds in `tool_levels`, an `auto_level` column on conversations,
+  projects, schedules and hooks) and 0022 (thresholds kept per action class). The server takes its backup before running them.
+
+**Docs:** [TODO.md](TODO.md) (planned work), a new [code review](CODE_REVIEW.md) and an [audit](docs/audits/audit-2026-10-21.md)
+of `src/`, the decisions of the levels in [DECISIONS.md](docs/DECISIONS.md), and the threat model and the data map brought up to date.
+
 ## v1.0.0 — 28/10/2026
 
 First release of the rewrite: Clara for one person on one machine, built from zero following

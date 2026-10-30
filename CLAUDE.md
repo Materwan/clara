@@ -40,7 +40,7 @@ uv run pytest -q tests/test_gate.py::test_name        # one test (-k "words" als
 uv run ruff check src tests scripts                   # lint: exactly what CI runs
 uv run clara-server --check                           # start-up checks only (settings, permissions, DB, key), then exit
 scripts/build-web.sh [--quick]                        # web/ -> src/clara/web/dist, in a pinned Node container (podman or docker)
-scripts/build-release.sh v1.0.0                       # builds a release and checks it the way the updater does
+scripts/build-release.sh v1.1.0                       # builds a release and checks it the way the updater does
 CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_network   # real rootless-Podman test; skipped without Podman
 ```
 
