@@ -481,9 +481,15 @@ class Agent:
             used += cost
         return kept
 
-    def _replay(
-        self, stored: list[StoredMessage], window: int, readable: Mapping[str, int], state: TurnState
-    ) -> list[dict]:
+    def _read_untrusted(self, conversation_id: str) -> bool:
+        """Has any turn of the conversation read untrusted content? The prompt shows only its last turns and the results
+        of a few of them, but the model's replies and its summary carry what it read on: the whole path counts."""
+        return any(
+            (tool := self.s.toolbox.get(name)) is not None and tool.taints
+            for name in self.s.conversations.tool_names(conversation_id)
+        )
+
+    def _replay(self, stored: list[StoredMessage], window: int, readable: Mapping[str, int]) -> list[dict]:
         recent = self._recent_tool_rows(stored, window)
         questions = [index for index, message in enumerate(stored) if message.role == "user"]
         whole = set(questions[-(DOCUMENT_TURNS - 1) :]) if DOCUMENT_TURNS > 1 else set()
@@ -504,9 +510,6 @@ class Agent:
                 messages.append(entry)
             else:
                 full = index in recent
-                tool = self.s.toolbox.get(message.tool_name or "")
-                if full and tool is not None and tool.taints:
-                    state.tainted = True  # untrusted content is still in the prompt
                 messages.append(
                     {"role": "tool", "tool_name": message.tool_name, "content": message.content if full else OMITTED}
                 )
@@ -576,7 +579,9 @@ class Agent:
                     conversation.id, self.settings.history_turns, conversation.summary_upto
                 )
                 readable = self.s.conversation_files.readable(conversation.id) if files else {}
-                messages.extend(self._replay(stored, plan.choice.window, readable, state))
+                if self._read_untrusted(conversation.id):
+                    state.tainted = True  # for the whole conversation, not only while its results are in the prompt
+                messages.extend(self._replay(stored, plan.choice.window, readable))
         content = f"{request.prefix}\n\n{request.message}" if request.prefix else request.message
         if not request.ephemeral:
             content = f"[time: {now.strftime('%H:%M')}]\n\n{content}"  # never stored: the prompt above stays cached

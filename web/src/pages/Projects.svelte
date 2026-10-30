@@ -10,6 +10,7 @@
   import { excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { ladder } from '../lib/levels.svelte';
+  import { keptNote } from '../lib/memory';
   import { conversations as history, go, route, toast } from '../lib/state.svelte';
 
   // A project is made in steps, as an automation is: what it is, where its files come from, and the special tools its new conversations
@@ -33,7 +34,7 @@
   let project = $state<any>(null);
   let conversations = $state<any[]>([]);
   let packs = $state<any[]>([]);
-  let memory = $state<Record<string, { facts: number; waiting: number }>>({}); // the facts each project remembers, by scope
+  let memory = $state<Record<string, { facts: number; waiting: number; total: number }>>({}); // the facts each project remembers, by scope
   let repo = $state('');
   let viewing = $state<any>(null);
   let busy = $state(false);
@@ -49,7 +50,8 @@
 
   const packLabel = (packId: string): string => packs.find((pack) => pack.id === packId)?.label ?? packId;
   const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
-  const remembered = (projectId: number): { facts: number; waiting: number } => memory[`project:${projectId}`] ?? { facts: 0, waiting: 0 };
+  const remembered = (projectId: number): { facts: number; waiting: number; total: number } =>
+    memory[`project:${projectId}`] ?? { facts: 0, waiting: 0, total: 0 };
   // The tools a project starts with, other than the web search every conversation has: for its card in the list
   const extras = (item: any): string => item.packs.filter((packId: string) => packId !== 'web').map(packLabel).join(' · ');
 
@@ -252,8 +254,7 @@
   }
 
   async function removeProject(): Promise<void> {
-    const facts = remembered(id as number).facts;
-    const message = `Delete this project and its files? Its conversations stay.${facts ? ` The ${plural(facts, 'fact')} it remembers are deleted too.` : ''}`;
+    const message = `Delete this project and its files? Its conversations stay.${keptNote(remembered(id as number))}`;
     if (!(await confirmDialog({ title: 'Delete a project', message, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/projects/${id}`);
     go('/projects');

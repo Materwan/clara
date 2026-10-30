@@ -4,9 +4,9 @@ A fact belongs to the global memory or to the memory of a project or an automati
 conversation and run of it reads. Clara chooses where each fact goes (`scope`) whenever the conversation has a project or an
 automation; nothing is chosen for her.
 
-A fact Clara saves in a tainted turn (one that read untrusted content) is stored as source `tool` and unconfirmed. In the
-global memory it is shown tagged until you confirm it; in a project's or an automation's it is hidden until you do, and
-that turn can neither replace nor delete a fact there. A local-only conversation reads those memories but never writes
+A conversation that has read untrusted content stays tainted in all its later turns, so a fact Clara saves in one is stored
+as source `tool` and unconfirmed. In the global memory it is shown tagged until you confirm it; in a project's or an
+automation's it is hidden until you do, and such a turn can neither replace nor delete a fact there. A local-only conversation reads those memories but never writes
 to them. Incognito conversations are offered none of the memory tools.
 """
 

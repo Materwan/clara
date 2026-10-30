@@ -27,12 +27,11 @@ def _expiry(request: Request, text: str | None) -> str | None:
 
 
 def _scope(request: Request, scope: str) -> str:
-    """The scope, which must be the global memory (empty) or a project, schedule or hook that exists."""
+    """The scope, which must be the global memory (empty) or a project, schedule or hook that exists, as it is stored."""
     try:
-        services(request).facts.check_scope(scope)
+        return services(request).facts.check_scope(scope)
     except FactError as error:
         raise ApiError(404 if str(error).startswith("No ") else 422, str(error)) from None
-    return scope
 
 
 @router.get("/facts")
@@ -56,7 +55,8 @@ def listing(
 
 @router.get("/scopes")
 def scopes(request: Request) -> dict:
-    """The projects, schedules and hooks that have a memory: its live facts and how many wait for your confirmation."""
+    """The projects, schedules and hooks that keep a memory: its live facts, how many wait for your confirmation, and every
+    fact it keeps (`total`), which is what deleting it removes."""
     return {"scopes": services(request).facts.scopes()}
 
 

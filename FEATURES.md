@@ -328,10 +328,12 @@ The same sentence may stand in several memories.
 
 - **Facts** are short sentences (300 characters) with a category, a pin, a **source** (`you`, `model` or `tool`), the
   conversation they came from, and dates (created, confirmed, expires).
-- A fact you add has source `you`; one Clara saves has source `model`, or `tool` when she saves it during a turn that
-  read untrusted content (a web page, a fetched file, an issue). A `tool` fact is **unconfirmed**: in the global memory it
-  is shown to the model tagged `[unconfirmed]` until you confirm it.
+- A fact you add has source `you`; one Clara saves has source `model`, or `tool` when she saves it in a conversation that
+  has read untrusted content (a web page, a fetched file, an issue), in any of its turns. A `tool` fact is **unconfirmed**:
+  in the global memory it is shown to the model tagged `[unconfirmed]` until you confirm it. Only **confirm** confirms it:
+  pinning, dating, categorising or editing it leaves it waiting.
 - **Supersede:** a new fact can replace an old one (`replaces`) of the same memory; the old one is kept, marked superseded.
+  Only a confirmed fact can be replaced.
 - **Expiry:** a fact true for a while (`expires`) stops being shown after that instant.
 - **Forget** deletes the fact and leaves a tombstone (in its memory), so the same sentence is not saved again by the
   model; you can still add it yourself.
@@ -353,8 +355,9 @@ The same sentence may stand in several memories.
 - **What the prompt says:** below the global facts, one block for the project and one for the automation, each within
   `CLARA_SCOPE_FACTS_TOKEN_BUDGET` (1,000 tokens; pinned facts always), shown even when empty so Clara sees the memory
   exists. They are told as your standing wishes for that project or automation, which never give a tool or a permission.
-- **After outside content, a scoped fact waits.** In a turn that read untrusted content (a hook's run is one from its first
-  word, a chat that read mail or the web too), a fact saved for a project or an automation is stored as `tool`, unconfirmed
+- **After outside content, a scoped fact waits.** In a conversation that has read untrusted content, in any of its turns (a
+  hook's run is one from its first word, a chat that read mail or the web stays so), a fact saved for a project or an
+  automation is stored as `tool`, unconfirmed
   and **hidden**: no conversation sees it, in the prompt or in `recall_facts`, until you confirm it on the project's or the
   automation's page. Such a turn can neither `replace` nor `forget` a fact of those memories, so it cannot remove a rule you
   made. Clara is told the fact does not apply yet, and says so. A run nobody watches that leaves one waiting sends
@@ -362,11 +365,12 @@ The same sentence may stand in several memories.
 - **Private conversations:** an incognito conversation reads and writes none of it. A local-only conversation reads the
   memories of its project and automation but never writes to them (it may still write the global one, as before).
 - **You** add, edit, pin, confirm and forget these facts on the project's or the automation's page, like the global
-  ones (`scope` on `GET` and `POST /v1/memory/facts`); a fact you write is a standing instruction of your own, and needs no confirmation.
+  ones (`scope` on `GET` and `POST /v1/memory/facts`); a fact you write is a standing instruction of your own, and needs no
+  confirmation. Editing or pinning a fact that waits leaves it waiting: only confirm confirms it.
 - **Limits:** 100 live facts per project, schedule or hook, of which at most 20 may wait for your confirmation (a hostile
   mail cannot fill the memory with them).
 - **Deletion:** the facts go with their project, schedule or hook (a trigger of the database, so a delete from the web
-  site, the API, the console or an approved Discord deletion all take them); the dialogs and the Discord request say how many.
+  site, the API, the console or an approved Discord deletion all take them); the dialogs and the Discord request say how many, expired and replaced ones included.
   A project's conversations stay, as before.
 - It is in the database: backups carry it.
 
@@ -403,7 +407,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
     run's conversation, so Clara still has the run in front of her (the mail she read, what she found): « add it to my
     reminders, an hour before » works. The run is told its answer is a message you will answer, so it may end with a
     proposal or a question. A reply is an ordinary chat turn in that conversation: all her tools (a hook's tool list limits the run, not
-    your reply), and the turn is tainted while a mail the run read is still in the prompt, so an outside write still asks.
+    your reply), and the conversation is tainted from the mail the run read on, so an outside write still asks.
     A run that failed always tells you the way `notice` does, and **announce** off keeps a good one quiet. A local-only automation
     cannot deliver to Discord (it is outside the machine), nor can a hook that only notifies (no conversation to answer in).
   - A run more than an hour late is skipped and recorded as missed unless `missed` says otherwise. 100 schedules.
@@ -721,8 +725,9 @@ counted.
   on the Rules page (an "always" answer whose rule cannot be written, a target over 400 characters, is refused with
   HTTP 400 and the request stays pending: answer it once). In a local-only conversation the mail tools are not offered and the gate refuses them.
 - **Labels, the read mark and the Trash:** a label (`mail_label_create`, `mail_label`), a mark read (`mail_mark_read`) and a trash (`mail_trash`) ask at level 3 and run from level 4. A trash is at the `destructive` level, like Drive's trash, so the Discord token cannot approve it; a turn that has read mail does not raise it (the owner chose that, so that a sort of many mails does not ask for each one), and « Approve all next » covers it. Deleting a label (`mail_label_delete`) asks from level 4 and runs at level 5, at the `destructive` level, is raised after untrusted content, and « Approve all next » does not cover it, because a deleted label cannot be taken back. Every one is refused in a local-only conversation. Nothing here archives or empties the Trash.
-- **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
-  Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
+- **Tainted turns:** once a conversation has read untrusted content (a web page or search result, a GitHub file or thread, a
+  Drive file, an email or an attachment; and every run a hook starts, from its first word), each of its later turns is
+  tainted too, and outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
   scripts (`run_network`) and changes to your automations (`automation`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
   Rules page switches it off. The last auto level of a chat suspends this rule and the next one (see Auto levels above); no other level does.
 - **Secrets going out:** see section 8.
@@ -1164,7 +1169,7 @@ keep-alive every 15 s.
 | `POST /v1/conversations/{conversation_id}/questions/{ask_id}` | Answer (`answers`: one `{options, other}` per question) or dismiss (`declined`) the questions `ask_questions` is waiting on; web tokens and `script` tokens that may answer approvals, 409 when nobody waits for them any more |
 | `GET /v1/questions` | The questions `ask_questions` is waiting on, in every conversation (each with `id`, `conversation`, `questions` and their `options`); web tokens and `script` tokens that may answer approvals |
 | `GET /v1/memory/facts` | Facts of one memory (by state, search; `scope`: empty for the global memory, else `project:<id>`, `schedule:<id>` or `hook:<id>`), with how many are live and how many wait for you |
-| `GET /v1/memory/scopes` | The projects, schedules and hooks that have a memory: for each, its live facts and how many wait for your confirmation |
+| `GET /v1/memory/scopes` | The projects, schedules and hooks that have a memory: for each, its live facts (`facts`), how many wait for your confirmation (`waiting`) and every fact it keeps (`total`: expired and replaced ones too, which a delete removes) |
 | `POST /v1/memory/facts` | Add a fact (source `you`; `scope` as above) |
 | `PATCH /v1/memory/facts/{fact_id}` | Change, pin, set expiry |
 | `POST /v1/memory/facts/{fact_id}/confirm` | Confirm an unconfirmed fact |

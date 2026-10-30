@@ -456,6 +456,14 @@ class Conversations:
         )
         return [_message(row) for row in rows]
 
+    def tool_names(self, conversation_id: str) -> set[str]:
+        """The tools whose results are on the path of a conversation, in any of its turns (summarised ones too)."""
+        rows = self.db.all(
+            "SELECT DISTINCT tool_name FROM messages WHERE conversation_id = ? AND role = 'tool' AND active = 1",
+            (conversation_id,),
+        )
+        return {row[0] for row in rows if row[0]}
+
     def messages_after(self, conversation_id: str, after_id: int = 0) -> list[StoredMessage]:
         rows = self.db.all(
             f"{self._COLUMNS} WHERE conversation_id = ? AND id > ? AND active = 1 ORDER BY id",

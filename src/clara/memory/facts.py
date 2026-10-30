@@ -9,9 +9,11 @@
 * **source** `you` (you wrote it: Memory page, `/remember`, the API), `model` (Clara saved it with `remember` in a
   turn that read nothing untrusted) or `tool` (she saved it in a *tainted* turn, after reading a web page, a fetched
   file, an issue…). `tool` facts start **unconfirmed**: they are shown to Clara tagged `[unconfirmed]` until you
-  confirm or delete them on the Memory page.
+  confirm or delete them on the Memory page. A turn is tainted for the whole conversation once any of its turns read
+  untrusted content, so the reply that repeated a planted note cannot save it as confirmed later.
+* **confirm** is the only thing that confirms a fact: pinning, dating, categorising or editing one leaves it waiting.
 * **supersede**: a newer fact can replace an older one (`remember` with `replaces`); the old one is kept as history
-  and no longer shown.
+  and no longer shown. Only a confirmed fact can be replaced.
 * **expiry**: a fact can say until when it holds ("in Lyon until Friday"); once past, it is no longer shown.
 * **pinned** facts are always in the prompt first; the others fill the token budget, newest first.
 * **forget** deletes the fact and remembers its folded text: Clara cannot save the same fact again by herself
@@ -150,7 +152,7 @@ class Facts:
         scope: str = GLOBAL,
     ) -> tuple[Fact, bool]:
         """Store a fact in a scope. (the fact, True) when new; (the live fact with the same text, False) when known already."""
-        self.check_scope(scope)
+        scope = self.check_scope(scope)
         text = " ".join(str(text).split())
         if not text:
             raise FactError("The fact is empty.")
@@ -175,13 +177,18 @@ class Facts:
         now = now_iso()
         with self.db.transaction() as tx:
             if scope:
-                self._check_room(tx, scope, waiting=not confirmed)
+                self._check_room(tx, scope, waiting=not confirmed, replacing=replaces is not None)
             if replaces is not None:
                 old = tx.execute(
-                    "SELECT id FROM facts WHERE id = ? AND scope = ? AND superseded_by IS NULL", (replaces, scope)
+                    "SELECT confirmed FROM facts WHERE id = ? AND scope = ? AND superseded_by IS NULL",
+                    (replaces, scope),
                 ).fetchone()
                 if old is None:
                     raise FactError(f"No live fact {replaces} to replace.")
+                if not old[0]:
+                    raise FactError(
+                        f"Fact {replaces} waits for the person's confirmation: it cannot be replaced until then."
+                    )
             if source == "you":
                 tx.execute("DELETE FROM forgotten WHERE scope = ? AND text_key = ?", (scope, key))
             fact_id = tx.execute(
@@ -209,24 +216,27 @@ class Facts:
         assert fact is not None
         return fact, True
 
-    def check_scope(self, scope: str) -> None:
-        """The scope is the global memory or a project, schedule or hook that exists."""
+    def check_scope(self, scope: str) -> str:
+        """The scope is the global memory or a project, schedule or hook that exists. Returns it as facts store it: `project:03`
+        and `project:3` are the same memory, and only the canonical spelling is stored, so no fact is left under another name."""
         if scope == GLOBAL:
-            return
+            return GLOBAL
         found = split_scope(scope)
         if found is None:
             raise FactError("A scope is empty (everything), project:<id>, schedule:<id> or hook:<id>.")
         kind, number = found
         if self.db.one(f"SELECT 1 FROM {SCOPE_TABLES[kind]} WHERE id = ?", (number,)) is None:
             raise FactError(f"No {kind} {number}.")
+        return scope_name(kind, number)
 
     @staticmethod
-    def _check_room(tx, scope: str, *, waiting: bool) -> None:
+    def _check_room(tx, scope: str, *, waiting: bool, replacing: bool) -> None:
         now = now_iso()
         total, waits = tx.execute(
             f"SELECT COUNT(*), COALESCE(SUM(confirmed = 0), 0) FROM facts WHERE scope = ? AND {LIVE}", (scope, now)
         ).fetchone()
-        if total >= MAX_SCOPED_FACTS:
+        taken = total - (1 if replacing else 0)  # a replacement takes the place of the fact it supersedes
+        if taken >= MAX_SCOPED_FACTS:
             raise FactError(f"This memory holds {MAX_SCOPED_FACTS} facts already: delete some before adding more.")
         if waiting and waits >= MAX_WAITING_FACTS:
             raise FactError(f"{MAX_WAITING_FACTS} facts already wait for the person's confirmation: no more for now.")
@@ -257,13 +267,18 @@ class Facts:
         )
 
     def scopes(self) -> dict[str, dict[str, int]]:
-        """For each project, schedule or hook that has a memory: its live facts and how many of them wait for you."""
-        rows = self.db.all(
+        """For each project, schedule or hook that keeps a memory: its live facts, how many of them wait for you, and every
+        fact it keeps (`total`: expired and replaced ones too, since a delete removes them all)."""
+        live = self.db.all(
             "SELECT scope, COUNT(*) AS facts, COALESCE(SUM(confirmed = 0), 0) AS waiting FROM facts"
             f" WHERE scope != '' AND {LIVE} GROUP BY scope",
             (now_iso(),),
         )
-        return {row["scope"]: {"facts": row["facts"], "waiting": row["waiting"]} for row in rows}
+        kept = self.db.all("SELECT scope, COUNT(*) AS total FROM facts WHERE scope != '' GROUP BY scope")
+        found = {row["scope"]: {"facts": 0, "waiting": 0, "total": row["total"]} for row in kept}
+        for row in live:
+            found[row["scope"]].update(facts=row["facts"], waiting=row["waiting"])
+        return found
 
     def listing(self, state: str = "live", scope: str = GLOBAL) -> list[Fact]:
         """For the Memory page and the pages of a project or an automation: live, unconfirmed, expired, superseded or all."""
@@ -318,7 +333,8 @@ class Facts:
         pinned: bool | None = None,
         expires_at: str | None | bool = False,
     ) -> Fact:
-        """Your edit of a fact (the Memory page): it becomes yours, and confirmed. `expires_at` False: unchanged."""
+        """Your edit of a fact (the Memory page): a new text becomes yours (source `you`). It does not confirm the fact: only
+        `confirm` does, so pinning or dating a fact that waits leaves it waiting. `expires_at` False: unchanged."""
         fact = self.get(fact_id)
         if fact is None:
             raise FactError(f"No fact {fact_id}.")
@@ -338,7 +354,6 @@ class Facts:
             fields["expires_at"] = expires_at
         if not fields:
             return fact
-        fields.update(confirmed=1, confirmed_at=fact.confirmed_at or now_iso())
         assignments = ", ".join(f"{name} = ?" for name in fields)
         try:
             self.db.execute(f"UPDATE facts SET {assignments} WHERE id = ?", (*fields.values(), fact_id))

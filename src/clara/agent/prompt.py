@@ -109,8 +109,9 @@ def render(persona: str, parts: PromptParts) -> str:
 
 
 def scoped_block(memory: ScopedFacts) -> str:
-    """The notes of a project or an automation. Only the facts the person confirmed or wrote reach it, so they are the
-    standing wishes of the person for this project or automation; they never widen what Clara may do."""
+    """The notes of a project or an automation. Only confirmed facts reach it: those the person wrote or confirmed, and those
+    Clara saved in a turn that read nothing from outside. They are the standing wishes of the person for this project or
+    automation; they never widen what Clara may do."""
     known = "\n".join(memory.lines) or "(nothing yet)"
     if memory.omitted:
         known += f"\n[{memory.omitted} older facts not shown: use recall_facts]"

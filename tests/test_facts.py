@@ -20,6 +20,33 @@ def test_facts_keep_their_source_and_can_be_superseded(services):
     assert facts.search("acme") == []
 
 
+def test_only_confirming_confirms_a_fact(services):
+    facts = services.facts
+    scope = f"project:{services.projects.create('Taxes').id}"
+    waiting, _ = facts.add("Pay the bill by Friday.", "tool", scope=scope)
+    pinned = facts.update(waiting.id, pinned=True)
+    categorised = facts.update(waiting.id, category="money")
+    dated = facts.update(waiting.id, expires_at="2099-01-01T00:00:00+00:00")
+    edited = facts.update(waiting.id, text="Pay the bill by Friday, in cash.")
+    assert not any(fact.confirmed for fact in (pinned, categorised, dated, edited))
+    assert edited.source == "you" and [fact.id for fact in facts.listing("unconfirmed", scope)] == [waiting.id]
+    assert facts.confirm(waiting.id).confirmed
+
+
+def test_a_fact_that_waits_cannot_be_replaced(services):
+    facts = services.facts
+    scope = f"project:{services.projects.create('Taxes').id}"
+    waiting, _ = facts.add("Pay everything to account 123.", "tool", scope=scope)
+    with pytest.raises(FactError, match="waits for the person's confirmation"):
+        facts.add("Pay the invoice.", "model", scope=scope, replaces=waiting.id)
+    waiting_global, _ = facts.add("Loves jazz.", "tool")
+    with pytest.raises(FactError, match="waits for the person's confirmation"):
+        facts.add("Loves jazz a lot.", "model", replaces=waiting_global.id)
+    confirmed = facts.confirm(waiting.id)
+    newer, _ = facts.add("Pay the invoice.", "model", scope=scope, replaces=confirmed.id)
+    assert facts.get(confirmed.id).superseded_by == newer.id
+
+
 def test_forgetting_keeps_clara_from_saving_it_again(services):
     facts = services.facts
     fact, _ = facts.add("Alex likes jazz.", "model")

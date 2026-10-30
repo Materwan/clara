@@ -12,6 +12,7 @@
   import { ATTEMPTS, RETRY_HELP, excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { ladder } from '../lib/levels.svelte';
+  import { keptNote } from '../lib/memory';
   import { conversations, live, toast } from '../lib/state.svelte';
 
   // What Clara does without being asked, in one list and one form. An item is a schedule (`on` is TIME: she runs at a time) or a hook
@@ -150,7 +151,7 @@
   let toolFilter = $state('');
   let inspect = $state<{ item: any; rows: any[] } | null>(null); // the runs of one item, when that panel is open
   let remembering = $state<any>(null); // the item whose memory is open
-  let memory = $state<Record<string, { facts: number; waiting: number }>>({}); // the facts each item remembers, by scope
+  let memory = $state<Record<string, { facts: number; waiting: number; total: number }>>({}); // the facts each item remembers, by scope
   let probe = $state<any>(null); // { hook, events, pick, result }
   let seen = $state<any[] | null>(null); // the events stored, when that panel is open
   let newButton = $state<HTMLButtonElement>();
@@ -165,7 +166,8 @@
   // Does a hook's list of tools (names or globs such as mail_*) offer this tool?
   const offers = (item: any, name: string): boolean =>
     item.effective_tools.some((pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(name));
-  const remembered = (item: any): { facts: number; waiting: number } => memory[scopeOf(item)] ?? { facts: 0, waiting: 0 };
+  const remembered = (item: any): { facts: number; waiting: number; total: number } =>
+    memory[scopeOf(item)] ?? { facts: 0, waiting: 0, total: 0 };
   const fields = $derived<Record<string, string>>(kinds.find((kind) => kind.kind === form.on)?.fields ?? {});
   const readTools = $derived<string[]>([...(kinds.find((kind) => kind.kind === form.on)?.read_tools ?? []), 'notify']);
   const shownTools = $derived(toolNames.filter((name) => name.includes(toolFilter.trim().toLowerCase())));
@@ -518,12 +520,11 @@
 
   async function remove(item: any): Promise<void> {
     const timed = item.on === TIME;
-    const facts = remembered(item).facts;
     const message =
       (timed
         ? `Delete “${item.name}”?`
         : `Delete “${item.name}”? Its runs are forgotten; the conversations they made stay, no longer grouped under the hook.`) +
-      (facts ? ` The ${facts} ${facts === 1 ? 'fact' : 'facts'} it remembers ${facts === 1 ? 'is' : 'are'} deleted too.` : '');
+      keptNote(remembered(item));
     if (!(await confirmDialog({ title: timed ? 'Delete schedule' : 'Delete hook', message, confirm: 'Delete', danger: true }))) return;
     await api.del(pathOf(item));
     if (inspect && keyOf(inspect.item) === keyOf(item)) inspect = null;
