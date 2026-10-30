@@ -69,6 +69,16 @@ KNOBS: dict[str, Knob] = {
     "fallbacks": Knob([], _refs, "Models asked in turn when the one answering is busy or unreachable."),
     "providers_enabled": Knob(None, _names, "Providers that may be used (local Ollama hosts are enabled at first)."),
     "tainted_rule": Knob(True, _bool, "After untrusted content, raise outside-world writes and networked runs to ask."),
+    "auto_level_default": Knob(
+        3,
+        _whole(0, 9),
+        "The auto level of a chat that has none of its own and none from its project (0 refuses every tool).",
+    ),
+    "auto_level_unattended": Knob(
+        3,
+        _whole(0, 9),
+        "The auto level of a schedule, reminder or hook run that has none of its own and none from its project.",
+    ),
     "approve_all_minutes": Knob(
         30, _whole(1, 1440), "Minutes an Approve all next button stays on after it is pressed (at most 1,440)."
     ),

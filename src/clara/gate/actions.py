@@ -14,7 +14,8 @@ Targets name what is touched, with a prefix:
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server
 
-The default of each class, when no rule matches, for a chat (interactive) and for an unattended run:
+What happens to a class of action when no rule matches is the level of the conversation (gate/levels.py): each tool is
+refused, asked or run according to it, and CLASSES says where the tools of a class start (the owner may change any tool).
 """
 
 from __future__ import annotations
@@ -29,52 +30,59 @@ STRICTNESS = {"allow": 0, "ask": 1, "refuse": 2}
 MODES = ("interactive", "unattended")
 SITUATIONS = ("interactive", "unattended", "tainted")
 
-# class -> (default in a chat, default unattended, what it is)
+# The five built-in levels of the ladder between « no tool » and « everything » (gate/levels.py keeps the ladder itself, which the
+# owner may extend); a class is tied to them by key so that its default follows a level that was renamed or moved
+LEVEL_KEYS = ("none", "trusted_read", "any_read", "files_vault", "mail", "all")
+
+# class -> (the level key a tool of the class starts to ask at, the level key it starts to run at, what it is). Below the first it is
+# refused; the owner changes the thresholds of any tool on the Auto mode page.
 CLASSES: dict[str, tuple[str, str, str]] = {
-    "read": ("allow", "allow", "Read the workspace, projects, the vault, memory, files sent"),
-    "memory": ("allow", "allow", "Clara's own records: facts, reminders, tasks, notifications, forms"),
-    "ws_write": ("allow", "allow", "Create or edit workspace files (git history)"),
-    "ws_destroy": ("ask", "ask", "Delete or overwrite workspace files"),
-    "run": ("allow", "ask", "Run a script, no network"),
-    "run_network": ("ask", "ask", "Run a script with network"),
-    "github_read": ("allow", "allow", "GitHub read"),
-    "github_write": ("ask", "ask", "GitHub issue, branch, pull request, commit"),
-    "drive_read": ("allow", "allow", "Drive read (files Clara created or you opened to her)"),
-    "drive_write": ("ask", "ask", "Drive create, update, delete"),
-    "mail_read": ("allow", "allow", "Mail read: search, read a message or an attachment (Gmail)"),
-    "mail_draft": ("allow", "allow", "Mail draft: save a draft in your mailbox (nothing is sent)"),
-    "mail_send": ("ask", "refuse", "Mail send: an email leaves your mailbox"),
+    "read": ("trusted_read", "trusted_read", "Read the workspace, projects, the vault, memory, files sent"),
+    "memory": ("any_read", "files_vault", "Clara's own records: facts, reminders, tasks, notifications, forms"),
+    "ws_write": ("any_read", "files_vault", "Create or edit workspace files (git history)"),
+    "ws_destroy": ("any_read", "files_vault", "Delete or overwrite workspace files"),
+    "run": ("any_read", "files_vault", "Run a script, no network"),
+    "run_network": ("mail", "all", "Run a script with network"),
+    "github_read": ("any_read", "any_read", "GitHub read"),
+    "github_write": ("mail", "all", "GitHub issue, branch, pull request, commit"),
+    "drive_read": ("any_read", "any_read", "Drive read (files Clara created or you opened to her)"),
+    "drive_write": ("mail", "all", "Drive create, update, delete"),
+    "mail_read": ("any_read", "any_read", "Mail read: search, read a message or an attachment (Gmail)"),
+    "mail_draft": ("files_vault", "mail", "Mail draft: save a draft in your mailbox (nothing is sent)"),
+    "mail_send": ("mail", "all", "Mail send: an email leaves your mailbox"),
     "mail_label": (
-        "allow",
-        "ask",
+        "files_vault",
+        "mail",
         "Mail label: add or remove your labels on a message, or make one (nothing is archived)",
     ),
-    "mail_trash": ("ask", "ask", "Mail trash: move a message to the Trash (never emptied)"),
-    "mail_mark": ("allow", "ask", "Mail mark: take the unread mark off a message (nothing else changes)"),
-    "mail_label_delete": ("ask", "ask", "Mail label delete: delete one of your labels (its messages stay)"),
-    "vault_write": ("allow", "allow", "Create or edit vault notes (git history)"),
-    "vault_destroy": ("ask", "ask", "Delete or move vault notes"),
-    "web_search": ("allow", "allow", "Web search"),
-    "fetch_trusted": ("allow", "allow", "Fetch a URL you wrote or a search returned"),
-    "fetch_other": ("ask", "refuse", "Fetch any other URL"),
-    "discord": ("allow", "allow", "Open, write in or remove a Discord thread"),
-    "automation": ("ask", "refuse", "Create, change or delete an automation: a schedule or a hook"),
+    "mail_trash": ("files_vault", "mail", "Mail trash: move a message to the Trash (never emptied)"),
+    "mail_mark": ("files_vault", "mail", "Mail mark: take the unread mark off a message (nothing else changes)"),
+    "mail_label_delete": ("mail", "all", "Mail label delete: delete one of your labels (its messages stay)"),
+    "vault_write": ("any_read", "files_vault", "Create or edit vault notes (git history)"),
+    "vault_destroy": ("any_read", "files_vault", "Delete or move vault notes"),
+    "web_search": ("any_read", "any_read", "Web search"),
+    "fetch_trusted": ("trusted_read", "trusted_read", "Fetch a URL you wrote or a search returned"),
+    "fetch_other": ("any_read", "any_read", "Fetch any other URL"),
+    "discord": ("mail", "all", "Open, write in or remove a Discord thread"),
+    "automation": ("mail", "all", "Create, change or delete an automation: a schedule or a hook"),
     "discord_forget": (
-        "ask",
-        "ask",
+        "mail",
+        "all",
         "Delete a conversation, a project or an automation because its Discord thread or forum was deleted",
     ),
     "folder_read": (
-        "allow",
-        "refuse",
+        "any_read",
+        "any_read",
         "Read a folder on your computer (a web chat): list, find, search, or read a file that is not hidden or ignored",
     ),
     "folder_sensitive": (
-        "ask",
-        "refuse",
+        "any_read",
+        "all",
         "Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat",
     ),
 }
+# Classes of a web chat only: a run nobody watches has no browser to answer them, so no level and no rule opens them
+CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
 # Classes an approval card may allow for the rest of its conversation ("Allow for this conversation")
 FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
 # Classes whose requests are not published as events: their summary names a file of the person's computer, which must
@@ -164,6 +172,7 @@ class Situation:
     mode: str  # interactive (a chat) or unattended (a schedule, a reminder, a follow-up)
     tainted: bool = False  # the turn read untrusted content (a web page, a fetched file, an issue…)
     local_only: bool = False  # a local-only conversation: nothing may leave the person's machines
+    level: int | None = None  # the auto level of the conversation (gate/levels.py); None: the default level of the mode
 
     def describe(self) -> str:
         return f"{self.mode}{', tainted' if self.tainted else ''}{', local only' if self.local_only else ''}"
@@ -223,3 +232,4 @@ class Decision:
     rule_id: int | None = None
     floor: bool = False
     raised: tuple[str, ...] = field(default=())  # why it was raised to ask (tainted turn, secret-looking content)
+    by_level: bool = False  # the level of the conversation refused it: no rule can change that

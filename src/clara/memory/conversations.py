@@ -49,6 +49,9 @@ class Conversation:
     packs: tuple[str, ...] = ("web",)
     archived_at: str | None = None  # archived: it can be read, and takes no new message
     archived_by: str = ""  # who archived it: 'you', 'discord' (its idle week there), 'group' (its history switched off)
+    auto_level: int | None = (
+        None  # its own auto level (gate/levels.py); None: it follows its automation, project or the default
+    )
 
     def active_packs(self) -> list[str]:
         """The packs switched on, the vault's switch included (it is stored as `vault_open`)."""
@@ -72,6 +75,7 @@ class Conversation:
             "packs": self.active_packs(),
             "archived": self.archived_at is not None,
             "archived_by": self.archived_by,
+            "auto_level": self.auto_level,
         }
 
 
@@ -130,6 +134,7 @@ def _conversation(row) -> Conversation:
         _packs(row["packs"]),
         row["archived_at"],
         row["archived_by"],
+        row["auto_level"],
     )
 
 
@@ -176,6 +181,7 @@ class Conversations:
         local_only: bool = False,
         conversation_id: str | None = None,
         packs: list[str] | None = None,
+        auto_level: int | None = None,
     ) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
@@ -201,6 +207,8 @@ class Conversations:
             packs = list(_packs(row["packs"])) if row is not None else None
         if packs is not None:
             self.update(conversation_id, packs=packs)
+        if auto_level is not None:
+            self.update(conversation_id, auto_level=auto_level)
         created = self.get(conversation_id)
         assert created is not None
         return created
@@ -300,7 +308,17 @@ class Conversations:
         return None
 
     def update(self, conversation_id: str, **fields) -> Conversation:
-        allowed = {"title", "pinned", "project_id", "model", "local_only", "incognito", "vault_open", "packs"}
+        allowed = {
+            "title",
+            "pinned",
+            "project_id",
+            "model",
+            "local_only",
+            "incognito",
+            "vault_open",
+            "packs",
+            "auto_level",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise ConversationError(f"Unknown fields: {', '.join(sorted(unknown))}")

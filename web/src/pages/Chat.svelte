@@ -6,6 +6,7 @@
   import FileCard from '../components/FileCard.svelte';
   import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
+  import LevelSelect from '../components/LevelSelect.svelte';
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import SidePanel from '../components/SidePanel.svelte';
@@ -13,10 +14,11 @@
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
   import { grants, stop as stopGrants } from '../lib/grants.svelte';
+  import { ladder } from '../lib/levels.svelte';
   import { markdown } from '../lib/markdown';
   import { type PanelFile, type PanelNote, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
-  import { conversations, go, narrow, route, toast, ui } from '../lib/state.svelte';
+  import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, note, summary } from '../lib/tools';
 
   type Shown = Call & { open?: boolean };
@@ -87,7 +89,10 @@
   let dragging = $state(false);
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
-  let fresh = $state({ incognito: false, local_only: false, model: '', packs: ['web'] as string[] });
+  let fresh = $state({ incognito: false, local_only: false, model: '', packs: ['web'] as string[], level: null as number | null });
+  /** The auto level of the conversation on screen: its own (null: it follows), the one it runs at, and what it follows. */
+  let level = $state<{ own: number | null; level: number; source: string }>({ own: null, level: 3, source: 'default' });
+  let projectLevel = $state<number | null>(null);
   /** The special tools you can switch on in a chat (the "+" menu), and the projects to choose from. */
   let packList = $state<any[]>([]);
   let projectList = $state<any[]>([]);
@@ -126,6 +131,7 @@
   $effect(() => {
     const id = projectId;
     projectName = '';
+    projectLevel = null;
     const fresher = untrack(() => !conversationId);
     if (!id) {
       if (fresher) fresh.packs = ['web'];
@@ -134,9 +140,37 @@
     api.get(`/v1/projects/${id}`).then((project) => {
       if (projectId !== id) return;
       projectName = project.name;
+      projectLevel = project.auto_level;
       if (!conversationId) fresh.packs = project.packs;
     }).catch(() => {});
   });
+
+  // The auto level of the conversation on screen. A conversation not started yet has the one you pick for it, else its project's, else the default.
+  $effect(() => {
+    const id = conversationId;
+    void live.refresh;
+    if (!id) {
+      level = fresh.level !== null ? { own: fresh.level, level: fresh.level, source: 'own' }
+        : projectLevel !== null ? { own: null, level: projectLevel, source: 'project' } : { own: null, level: ladder.defaults.chat, source: 'default' };
+      return;
+    }
+    api.get(`/v1/conversations/${id}/level`).then((found) => {
+      if (conversationId === id) level = found;
+    }).catch(() => {});
+  });
+  const followed = $derived(level.source === 'project' ? 'the project' : level.source === 'automation' ? 'its schedule or hook' : 'the default');
+
+  async function setLevel(value: number | null): Promise<void> {
+    if (!conversationId) {
+      fresh.level = value;
+      return;
+    }
+    try {
+      level = await api.put(`/v1/conversations/${conversationId}/level`, { level: value });
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
 
   let loads = 0; // the latest load: an older one that ends late draws nothing
 
@@ -452,7 +486,7 @@
     const granted = folder;
     try {
       if (!id) {
-        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs });
+        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, auto_level: fresh.level ?? undefined });
         id = made.id as string;
         skipReload = id;
         go('/chat/' + id);
@@ -919,6 +953,7 @@
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
           <input type="file" multiple hidden bind:this={picker} onchange={pick} />
+          <LevelSelect value={level.own} effective={level.level} follows={followed} onchange={setLevel} small />
           <select class="model-select" aria-label="Model" value={conversationId ? conversation?.model ?? '' : fresh.model}
             onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>
             <option value="">Default model ({models.default || 'none'})</option>

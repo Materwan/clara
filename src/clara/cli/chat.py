@@ -49,6 +49,7 @@ HELP = """\
 /notify [@clients] <text>  send yourself a notification
 /model [provider:model | default]   this conversation's model
 /tools [<pack> [on|off]]   the special tools of this conversation (listed; or switch one)
+/level [<n>|follow]        the auto level of this conversation: how much Clara may do without asking
 /approvals                 requests waiting      /allow|/always|/refuse|/never <id>  answer one
 /undo                      revert Clara's last workspace change
 /quit                      leave"""
@@ -477,6 +478,8 @@ def command(chat: Chat, line: str) -> bool:
             print(f"Default: {models['default']}\n" + "\n".join(f"  {m['ref']}" for m in models["models"]))
     elif name == "/tools":
         print(tools_text(chat, argument))
+    elif name == "/level":
+        print(level_text(chat, argument))
     elif name == "/approvals":
         found = api.get("/v1/approvals", status="pending")["approvals"]
         print("\n".join(f"#{a['id']} [{a['level']}] {a['summary']}" for a in found) or "Nothing waits.")
@@ -493,6 +496,32 @@ def command(chat: Chat, line: str) -> bool:
     else:
         print(HELP)
     return True
+
+
+def level_text(chat: Chat, argument: str) -> str:
+    """The auto level of this conversation, after setting it if asked (`follow`: it has none of its own again). A conversation
+    not started yet is started at that level."""
+    api = chat.api
+    ladder = api.get("/v1/levels")
+    wanted: int | None = None
+    if argument:
+        if argument.lower() != "follow" and not (argument.isdigit() and int(argument) <= ladder["top"]):
+            names = ", ".join(f"{level['position']} {level['name']}" for level in ladder["levels"])
+            return f"A level is {names}, or follow."
+        wanted = None if argument.lower() == "follow" else int(argument)
+        if chat.conversation:
+            api.put(f"/v1/conversations/{chat.conversation}/level", {"level": wanted})
+        else:
+            chat.conversation = api.post(
+                "/v1/conversations",
+                {"incognito": chat.incognito, "local_only": chat.local_only, "auto_level": wanted},
+            )["id"]
+    if not chat.conversation:
+        names = {level["position"]: level["name"] for level in ladder["levels"]}
+        default = ladder["defaults"]["chat"]
+        return f"Not started: it will run at the default, level {default} ({names[default]}). /level <n> starts it at another."
+    found = api.get(f"/v1/conversations/{chat.conversation}/level")
+    return f"Level {found['level']} ({found['name']}), from {found['source']}. /level <n> or /level follow changes it."
 
 
 def tools_text(chat: Chat, argument: str) -> str:

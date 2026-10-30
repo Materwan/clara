@@ -45,8 +45,8 @@ The design is the first Clara site's ("Cyanotype"): a Prussian-blue navigation r
 portrait, the page in cool chalk (or deep blue in the dark theme), one violet signal for what is live or waits for you,
 Hanken Grotesk and Epilogue served by Clara herself (SIL Open Font Licence, the licences at `/fonts/`), line icons.
 The rail holds **New chat** (the logo leads to the same place: the chat has no link of its own), the pages you work in (Projects, Tasks & reminders, Automation, Library),
-the list of conversations (on every page) and **Settings**, whose six pages share a tab bar (Memory, Connections, Rules
-& approvals, Models, Usage, Admin). The logo and **New chat** stay at the top, the account tab at the foot; the pages and
+the list of conversations (on every page) and **Settings**, whose seven pages share a tab bar (Memory, Connections, Rules
+& approvals, Auto mode, Models, Usage, Admin). The logo and **New chat** stay at the top, the account tab at the foot; the pages and
 conversations scroll between them. The connection is a lamp on Clara's portrait: green when connected, amber while
 it reconnects, red when Clara is not reachable. Pinned at the foot: **Waiting for you** with a count when approval
 requests wait (it opens Rules & approvals), and the account tab, which shows the name of the token you are signed in
@@ -59,20 +59,21 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 
 | Page | What you do there |
 | --- | --- |
-| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation) and drag and drop for files (PDF, Word, text, pictures, animations); approval requests inline; the **side panel** on the right of a conversation (a button in its header, with a count; closed until something arrives, it opens by itself on the first card unless you closed it, and on a QCM when Clara makes one; your choice is kept in the browser; a drawer on a phone): one **card** for each workspace file Clara wrote in the conversation (name, folder, when it was first written, **Download**), for each vault note she created or edited in it (name, Created or Edited, folder, when, size) and for each QCM (title, questions, how far you are). A click on a file or a note leads to the **Library** and opens it there (`#/library?path=…` for a file, `#/library?view=vault&note=…` for a note): the Library is the whole workspace and the whole vault. A QCM card replaces the list with the quiz, one question at a time as in NotebookLM: a progress bar and arrows, lettered options, **Hint**, **Check** (right and wrong are coloured at once from Clara's key and her correction follows in the chat), **Skip** (Clara is not woken), the explanation, and at the end a score with each question's result and **Retry**; answers wait in a queue while Clara is still correcting the one before. The chat keeps a chip where the QCM was made. `ask_questions` replaces the box you write in with its questions, one after the other (keys 1 to 4, a last "Other" line where you write anything, **Back**, a review step before **Submit**, Escape dismisses); edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
+| Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation), the **auto level** selector beside it (the level of the conversation, or « Follows the project / the default » when it has none of its own; a new conversation can be started at a level; choosing the last level asks first, because it suspends the tainted-turn rule and the secret check) and drag and drop for files (PDF, Word, text, pictures, animations); approval requests inline; the **side panel** on the right of a conversation (a button in its header, with a count; closed until something arrives, it opens by itself on the first card unless you closed it, and on a QCM when Clara makes one; your choice is kept in the browser; a drawer on a phone): one **card** for each workspace file Clara wrote in the conversation (name, folder, when it was first written, **Download**), for each vault note she created or edited in it (name, Created or Edited, folder, when, size) and for each QCM (title, questions, how far you are). A click on a file or a note leads to the **Library** and opens it there (`#/library?path=…` for a file, `#/library?view=vault&note=…` for a note): the Library is the whole workspace and the whole vault. A QCM card replaces the list with the quiz, one question at a time as in NotebookLM: a progress bar and arrows, lettered options, **Hint**, **Check** (right and wrong are coloured at once from Clara's key and her correction follows in the chat), **Skip** (Clara is not woken), the explanation, and at the end a score with each question's result and **Retry**; answers wait in a queue while Clara is still correcting the one before. The chat keeps a chip where the QCM was made. `ask_questions` replaces the box you write in with its questions, one after the other (keys 1 to 4, a last "Other" line where you write anything, **Back**, a review step before **Submit**, Escape dismisses); edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
 | Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A switch in the account menu, **Discord conversations** (on at first, kept in the browser), leaves out of the list what Discord started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first |
+| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Each item has an **Auto level** selector, the level its runs have (empty: its project's, else the default of runs nobody watches). Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, and the tool has no level field, so she cannot give an automation a level |
 | Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
 | Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
-| Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with |
+| Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Auto level** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
 | Connections (Settings) | GitHub token and the repositories Clara may use, with since when hooks look at each; Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google) |
-| Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table, the test box (which rule decides a given call), the audit log |
+| Rules & approvals (Settings) | Requests waiting (answer them), recent ones, the rule list (add, edit, switch off, delete), the tainted-turn switch, the defaults table (the level each class asks and runs from), the test box (which rule decides a given call), the audit log |
+| Auto mode (Settings) | The ladder of auto levels (add, rename, remove), the level of a chat and of a run nobody watches that have none of their own, and every tool's thresholds: the level it asks from and the level it runs from, with a bar showing refuse, ask and run across the levels, changed one tool at a time or for a whole action class |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
 | Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (one panel per group, each with a link to the provider's page where its value is made: Ollama's keys page for `ollama_api_key`, and so on; set, replace or remove, values never shown; the refresh tokens are made by connecting, with a link to Connections); runtime settings; **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
@@ -106,6 +107,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/notify [@clients] <text>` | Send yourself a notification |
 | `/model [provider:model \| default]` | This conversation's model |
 | `/tools [<pack> [on\|off]]` | The special tools of this conversation: list them, or switch one |
+| `/level [<n>\|follow]` | The auto level of this conversation: show it, or set it (a conversation not started yet is started at that level) |
 | `/approvals`, `/allow`, `/always`, `/refuse`, `/never <id>` | Approval requests |
 | `/undo` | Revert Clara's last workspace change |
 | `/quit` | Leave |
@@ -125,6 +127,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
 | `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
+| `/level [list] \| default [chat\|unattended] <n> \| conversation\|project\|schedule\|hook <id> [<n>\|follow] \| tool <name> [<ask> <run> \| reset] \| add <name> [<before>] \| rename <n> <name> \| remove <n>` | The auto levels: how much each tool runs without asking |
 | `/approvals [list] \| allow\|always\|refuse\|never <id>` | Pending approval requests |
 | `/debug [on\|off]` | Full prompts and answers to the debug log for one hour |
 | `/usage [24h\|7d\|30d\|90d\|365d\|all] [day\|model\|kind\|provider\|client]` | Token statistics |
@@ -241,7 +244,7 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   Discord (split into messages of 2,000 characters, up to 6,000 characters in all); otherwise in `#general`, where the
   conversation becomes the current one until you write `/new` or another such message arrives. It is never sent in a
   local-only or an incognito conversation. `#notification` stays for pings.
-- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation, the one of the thread you are in: list them, or switch one on or off), `/new` (a new conversation: a thread in the main forum), `/status`, `/tasks`, `/reminders`,
+- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation, the one of the thread you are in: list them, or switch one on or off), `/level` (its auto level: show it, set a number, or `follow`), `/new` (a new conversation: a thread in the main forum), `/status`, `/tasks`, `/reminders`,
   `/approvals`.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
   raises the `discord` alert after 5 minutes of silence. A bot that stopped by itself (exit code 0) is not started
@@ -592,37 +595,75 @@ Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `de
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
-### Defaults (when no rule matches)
+### Auto levels (when no rule matches)
 
-| Action class | In a chat | Unattended |
+What happens to a call when no rule matches is decided by the **auto level** of its conversation: a ladder from level 0, where
+every tool is refused, to the last level, where every tool runs. Each tool has two thresholds: the level it **asks** from, and the
+level it **runs** from; below the first it is refused. A tool follows the default of its action class (the table below) until you
+change it on the **Auto mode** page (Settings), `PUT /v1/levels/tools/{tool}` or `/level tool`.
+
+| Level | Name | What it adds |
 | --- | --- | --- |
-| `read`: read the workspace, projects, the vault, memory, files sent | allow | allow |
-| `memory`: Clara's own records (facts, reminders, tasks, notifications, forms) | allow | allow |
-| `ws_write`: create or edit workspace files (git history) | allow | allow |
-| `ws_destroy`: delete or overwrite workspace files | ask | ask |
-| `run`: run a script, no network | allow | ask |
-| `run_network`: run a script with network | ask | ask |
-| `github_read`: GitHub read | allow | allow |
-| `github_write`: GitHub issue, branch, pull request, commit | ask | ask |
-| `drive_read`: Drive read (files Clara created or you opened to her) | allow | allow |
-| `drive_write`: Drive create, update, delete | ask | ask |
-| `mail_read`: mail read: search, read a message or an attachment (Gmail) | allow | allow |
-| `mail_draft`: mail draft: save a draft in your mailbox (nothing is sent) | allow | allow |
-| `mail_send`: mail send: an email leaves your mailbox | ask | refuse |
-| `mail_label`: mail label: add or remove your labels on a message, or make one (nothing is archived) | allow | ask |
-| `mail_trash`: mail trash: move a message to the Trash (never emptied) | ask | ask |
-| `mail_mark`: mail mark: take the unread mark off a message (nothing else changes) | allow | ask |
-| `mail_label_delete`: mail label delete: delete one of your labels (its messages stay) | ask | ask |
-| `vault_write`: create or edit vault notes (git history) | allow | allow |
-| `vault_destroy`: delete or move vault notes | ask | ask |
-| `web_search`: web search | allow | allow |
-| `fetch_trusted`: fetch a URL you wrote or a search returned | allow | allow |
-| `fetch_other`: fetch any other URL | ask | refuse |
-| `discord`: open, write in or remove a Discord thread, or say something in `#general` | allow | allow |
-| `automation`: create, change or delete an automation, a schedule or a hook (the Automations pack) | ask | refuse |
-| `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | ask | ask |
-| `folder_read`: read a folder on your computer in a web chat: list, find, search, or read a file that is not hidden or ignored | allow | refuse |
-| `folder_sensitive`: read a hidden or ignored file of that folder, or search them (a card can allow it for the conversation) | ask | refuse |
+| 0 | No tool | nothing: every tool is refused (fixed) |
+| 1 | Trusted read | reads that bring nothing untrusted in: the workspace, projects, the vault, memory, history, the URLs you wrote or a search returned |
+| 2 | Any read | the reads that bring untrusted content in: mail, Drive, GitHub, web search, any URL, a folder on your computer |
+| 3 | Files and vault | creating, editing, overwriting, deleting and moving workspace files and vault notes (every change is a git commit), scripts without network, Clara's own records (memory, reminders, tasks, notifications, questions) |
+| 4 | Mail | drafting, labelling, marking read and trashing mail (the Trash is never emptied) |
+| 5 | Everything | every tool runs, and the raises below are suspended in a chat (fixed) |
+
+You may add, rename and remove the levels between the first and the last (at most 10 levels in all). A new level acts like the one
+below it until you edit it; removing one moves what was set to it down to the level below (a conversation, a default) or up (a tool's
+threshold), so nothing becomes more permissive. A built-in level is found again by its key whatever its name or number.
+
+- **Where a conversation's level comes from:** its own level if you set one, else the schedule or hook it belongs to, else its project,
+  else the server default (`auto_level_default` for a chat, `auto_level_unattended` for a schedule, reminder or hook run, 3 for both
+  at first). A conversation that has none of its own *follows*: changing a project's level changes all its conversations that
+  follow it. You set it in the chat (the level selector, or `auto_level` on the first message), on the project page, on a schedule or a hook
+  (`PUT /v1/…/level`), or with `/level`. It is read again at every tool call, so lowering it stops the next tool of a running turn.
+- **A refusal of the level is final:** a rule cannot open a tool the level refuses (level 0 really means no tool). Where the level asks
+  or runs, your rules still decide first: an `ask` rule asks, a `refuse` rule refuses, an `allow` rule runs.
+- **Raises:** a tainted turn and content that looks like a secret still raise a call to `ask` at levels 1 to 4 (see below).
+  The last level of a chat suspends both (the owner's choice); a run nobody watches (a schedule, a reminder, a hook, whose
+  runs start tainted) never does, and its last level only runs what is not raised.
+- **Who may change a level:** a level lets calls run without a card, so it is an answer given in advance. A token with the approval
+  scope `all` (web, terminal, console) may change anything here; a script token (`none`) may change nothing; the Discord bot (`safe`) may
+  lower a conversation's level or keep it, never raise it (setting « follow » counts as the level it would follow), and cannot
+  change the ladder, the defaults, the thresholds of a tool or the level of a project, a schedule or a hook (403).
+- **Answered calls:** a request you answered runs as it was shown, whatever the level became meanwhile (the floor, the local-only rule and
+  a refusing rule still apply).
+- **The computer folder** (`folder_read`, `folder_sensitive`) is for a web chat with the tab open: a run nobody watches is refused at every level.
+- **Audit:** each call a level lets through is a `ran` line whose detail names the level (« level 3 (Files and vault) »); each change
+  of a level, a default or a tool's thresholds is a line with the outcome `level`.
+
+| Action class | Asks from level | Runs from level |
+| --- | --- | --- |
+| `read`: read the workspace, projects, the vault, memory, files sent | 1 | 1 |
+| `memory`: Clara's own records (facts, reminders, tasks, notifications, forms) | 2 | 3 |
+| `ws_write`: create or edit workspace files (git history) | 2 | 3 |
+| `ws_destroy`: delete or overwrite workspace files | 2 | 3 |
+| `run`: run a script, no network | 2 | 3 |
+| `run_network`: run a script with network | 4 | 5 |
+| `github_read`: GitHub read | 2 | 2 |
+| `github_write`: GitHub issue, branch, pull request, commit | 4 | 5 |
+| `drive_read`: Drive read (files Clara created or you opened to her) | 2 | 2 |
+| `drive_write`: Drive create, update, delete | 4 | 5 |
+| `mail_read`: mail read: search, read a message or an attachment (Gmail) | 2 | 2 |
+| `mail_draft`: mail draft: save a draft in your mailbox (nothing is sent) | 3 | 4 |
+| `mail_send`: mail send: an email leaves your mailbox | 4 | 5 |
+| `mail_label`: mail label: add or remove your labels on a message, or make one (nothing is archived) | 3 | 4 |
+| `mail_trash`: mail trash: move a message to the Trash (never emptied) | 3 | 4 |
+| `mail_mark`: mail mark: take the unread mark off a message (nothing else changes) | 3 | 4 |
+| `mail_label_delete`: mail label delete: delete one of your labels (its messages stay) | 4 | 5 |
+| `vault_write`: create or edit vault notes (git history) | 2 | 3 |
+| `vault_destroy`: delete or move vault notes | 2 | 3 |
+| `web_search`: web search | 2 | 2 |
+| `fetch_trusted`: fetch a URL you wrote or a search returned | 1 | 1 |
+| `fetch_other`: fetch any other URL | 2 | 2 |
+| `discord`: open, write in or remove a Discord thread, or say something in `#general` | 4 | 5 |
+| `automation`: create, change or delete an automation, a schedule or a hook (the Automations pack) | 4 | 5 |
+| `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | 4 | 5 |
+| `folder_read`: read a folder on your computer in a web chat: list, find, search, or read a file that is not hidden or ignored | 2 | 2 |
+| `folder_sensitive`: read a hidden or ignored file of that folder, or search them (a card can allow it for the conversation) | 2 | 5 |
 
 ### Rules
 
@@ -639,21 +680,21 @@ counted.
   refused. Beyond the gate, by construction: no tool reaches the database, the secrets, the data folder or the
   settings (tools work in the workspace, the vault, projects and memory only), and scripts never get the server's
   environment.
-- **Mail rules:** sending is the one action that always asks in a chat and is refused unattended, at the `destructive`
+- **Mail rules:** sending asks from level 4 and runs from level 5 (below level 4 it is refused), at the `destructive`
   level (so the Discord token, scope `safe`, cannot approve it: answer from the web site or the console, or give that
   token scope `all`). Its targets are the recipients, one `mail:to:<address>` each, so `allow mail_send mail:to:*@example.com`
   opens one domain and a message with any other address stays closed (an allow rule must match every target). An
   "always" answer to a message with several recipients writes a rule that matches nothing: write one rule per address
   on the Rules page (an "always" answer whose rule cannot be written, a target over 400 characters, is refused with
   HTTP 400 and the request stays pending: answer it once). In a local-only conversation the mail tools are not offered and the gate refuses them.
-- **Labels, the read mark and the Trash:** a label (`mail_label_create`, `mail_label`) and a mark read (`mail_mark_read`) are allowed in a chat and wait for you unattended. A trash (`mail_trash`) asks in a chat at the `destructive` level, like Drive's trash, so the Discord token cannot approve it; a turn that has read mail does not raise it (the owner chose that, so that a sort of many mails does not ask for each one), and « Approve all next » covers it. Deleting a label (`mail_label_delete`) asks every time at the `destructive` level, is raised after untrusted content, and « Approve all next » does not cover it, because a deleted label cannot be taken back. Unattended, all of them but a label or mark read wait for you. Every one is refused in a local-only conversation. Nothing here archives or empties the Trash.
+- **Labels, the read mark and the Trash:** a label (`mail_label_create`, `mail_label`), a mark read (`mail_mark_read`) and a trash (`mail_trash`) ask at level 3 and run from level 4. A trash is at the `destructive` level, like Drive's trash, so the Discord token cannot approve it; a turn that has read mail does not raise it (the owner chose that, so that a sort of many mails does not ask for each one), and « Approve all next » covers it. Deleting a label (`mail_label_delete`) asks from level 4 and runs at level 5, at the `destructive` level, is raised after untrusted content, and « Approve all next » does not cover it, because a deleted label cannot be taken back. Every one is refused in a local-only conversation. Nothing here archives or empties the Trash.
 - **Tainted turns:** once a turn has read untrusted content (a web page or search result, a GitHub file or thread, a
   Drive file, an email or an attachment; and every run a hook starts, from its first word), outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
   scripts (`run_network`) and changes to your automations (`automation`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
-  Rules page switches it off.
+  Rules page switches it off. The last auto level of a chat suspends this rule and the next one (see Auto levels above); no other level does.
 - **Secrets going out:** see section 8.
-- **The test box** (Rules page, `POST /v1/rules/test`, `/rules test`): give a tool, its arguments and the situation
-  (chat or unattended, tainted, local only), see the action, the deciding rule or default, what raised it, and every
+- **The test box** (Rules page, `POST /v1/rules/test`, `/rules test`): give a tool, its arguments, the situation
+  (chat or unattended, tainted, local only) and an auto level, see the action, the deciding rule or level, what raised it, and every
   matching rule.
 
 ### Approval requests
@@ -1022,6 +1063,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `fallbacks` | Models asked in turn when the one answering fails |
 | `providers_enabled` | Providers that may be used (local Ollama hosts are enabled at first) |
 | `tainted_rule` | The tainted-turn rule (on) |
+| `auto_level_default` | The auto level of a chat that has none of its own and none from its project (3; 0 to the last level) |
+| `auto_level_unattended` | The auto level of a schedule, reminder or hook run that has none of its own and none from its project (3) |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
 | `approve_all_calls` | Calls an **Approve all next** button lets through without asking (50; 1 to 1,000) |
 | `folder_budget` | Bytes of file content Clara may read from a folder opened in a web chat, per grant (1,000,000; 0 to 100,000,000) |
@@ -1127,6 +1170,18 @@ keep-alive every 15 s.
 | `PATCH /v1/rules/{rule_id}` | Change a rule (or switch it off) |
 | `DELETE /v1/rules/{rule_id}` | Delete a rule |
 | `PUT /v1/rules/tainted` | The tainted-turn rule on or off |
+| `GET /v1/levels` | The auto levels: the ladder, the defaults, the default of each action class and every tool's thresholds |
+| `POST /v1/levels` | Add a level just below another (default: just below the last), acting like the level under it |
+| `PATCH /v1/levels/{position}` | Rename a level between the first and the last |
+| `DELETE /v1/levels/{position}` | Remove one; what was set to it moves down, a tool's threshold up |
+| `PUT /v1/levels/defaults` | The level of a chat (`chat`) and of a run nobody watches (`unattended`) that have none of their own |
+| `PUT /v1/levels/tools/{tool}` | One tool's thresholds: `ask_from` and `approve_from` (the default of its class is not remembered) |
+| `DELETE /v1/levels/tools/{tool}` | Back to the default of the tool's action class |
+| `GET /v1/conversations/{conversation_id}/level` | The level a conversation runs at, its own level and where it comes from (`own`, `automation`, `project`, `default`) |
+| `PUT /v1/conversations/{conversation_id}/level` | Its own level (`null`: follow) |
+| `PUT /v1/projects/{project_id}/level` | The level the project's conversations follow (`null`: the default) |
+| `PUT /v1/schedules/{schedule_id}/level` | The level of a schedule's runs (`null`: its project's, else the unattended default) |
+| `PUT /v1/triggers/{trigger_id}/level` | The same for a hook |
 | `POST /v1/rules/test` | Which rule decides this call |
 | `GET /v1/approvals` | Approval requests (by status); the requests of a web chat's folder that name a hidden or ignored file are listed for web tokens only |
 | `POST /v1/approvals/{approval_id}/decide` | Answer one |

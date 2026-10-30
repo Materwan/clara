@@ -33,6 +33,13 @@ CHAT = Situation("interactive")
 ALONE = Situation("unattended")
 
 
+@pytest.fixture(autouse=True)
+def mail_level(services):
+    """Mail is written from level 4 and sent (after asking) from level 4: a chat here is at level 4, a run at level 3."""
+    services.runtime.set("auto_level_default", 4)
+    services.runtime.set("auto_level_unattended", 3)
+
+
 @pytest.fixture
 def environ(environ):
     return {**environ, "CLARA_GOOGLE_CLIENT_ID": "gid", "CLARA_PUBLIC_URL": "https://clara.test"}
@@ -266,11 +273,13 @@ async def test_the_discord_token_cannot_approve_an_email(services, world):
 async def test_sending_is_refused_unattended_and_a_rule_opens_it_for_one_domain_only(services, world):
     connect_mailbox(services)
     body = {"to": ["bob@example.com"], "subject": "Hi", "body": "x"}
-    assert (await run_tool(services, "mail_send", body, mode="unattended")).text.startswith("Refused")
+    assert (await run_tool(services, "mail_send", body, mode="unattended")).text.startswith("Refused")  # level 3
+    services.runtime.set("auto_level_unattended", 4)  # a send asks from level 4: below it nothing, not even a rule, opens it
+    assert (await run_tool(services, "mail_send", body, mode="unattended")).approval is not None
     services.rules.add("allow", tool="mail_send", target="mail:to:*@example.com", situation="unattended")
     assert (await run_tool(services, "mail_send", body, mode="unattended")).ran
     outside = {"to": ["bob@example.com", "eve@other.org"], "subject": "Hi", "body": "x"}
-    assert (await run_tool(services, "mail_send", outside, mode="unattended")).text.startswith("Refused")  # every address must match
+    assert (await run_tool(services, "mail_send", outside, mode="unattended")).approval is not None  # every address must match
     assert len(world.gmail_sent) == 1
     # a rule never opens it after untrusted content: the tainted-turn rule asks whatever the rules say
     tainted = await run_tool(services, "mail_send", body, mode="unattended", tainted=True)
@@ -297,7 +306,7 @@ def test_the_three_mail_classes_have_the_agreed_defaults(services):
         return services.gate.decide(Action("t", level, klass, ("mail:gmail",), "x"), situation).effect
 
     assert (decide("mail_read", CHAT), decide("mail_read", ALONE)) == ("allow", "allow")
-    assert (decide("mail_draft", CHAT, "write"), decide("mail_draft", ALONE, "write")) == ("allow", "allow")
+    assert (decide("mail_draft", CHAT, "write"), decide("mail_draft", ALONE, "write")) == ("allow", "ask")
     assert (decide("mail_send", CHAT, "destructive"), decide("mail_send", ALONE, "destructive")) == ("ask", "refuse")
     local = Situation("interactive", local_only=True)
     assert all(decide(klass, local) == "refuse" for klass in ("mail_read", "mail_draft", "mail_send"))
@@ -309,10 +318,10 @@ def test_labels_and_the_trash_have_their_own_defaults(services):
 
     assert (decide("mail_label", CHAT, "write").effect, decide("mail_label", ALONE, "write").effect) == ("allow", "ask")
     assert (decide("mail_trash", CHAT, "destructive").effect, decide("mail_trash", ALONE, "destructive").effect) == (
-        "ask",
+        "allow",
         "ask",
     )
-    tainted = decide("mail_trash", Situation("interactive", tainted=True), "destructive")
+    tainted = decide("mail_trash", Situation("interactive", tainted=True, level=3), "destructive")
     assert tainted.effect == "ask" and tainted.raised == ()  # a trash after mail was read asks, but is not raised
     local = Situation("interactive", local_only=True)
     assert decide("mail_label", local, "write").effect == decide("mail_trash", local, "destructive").effect == "refuse"
@@ -345,6 +354,7 @@ async def test_a_label_is_made_and_put_on_a_message_and_only_your_own_labels_are
 
 
 async def test_a_trash_asks_moves_the_message_and_never_deletes_it(services, world):
+    services.runtime.set("auto_level_default", 3)  # a trash runs from level 4 and asks at 3
     connect_mailbox(services)
     tester = services.tokens.create("someone", "web")[0]
     world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
@@ -372,7 +382,7 @@ def test_marking_read_and_deleting_a_label_have_their_own_defaults(services):
     assert (decide("mail_mark", CHAT, "write"), decide("mail_mark", ALONE, "write")) == ("allow", "ask")
     assert (decide("mail_label_delete", CHAT, "destructive"), decide("mail_label_delete", ALONE, "destructive")) == (
         "ask",
-        "ask",
+        "refuse",
     )
     local = Situation("interactive", local_only=True)
     assert decide("mail_mark", local, "write") == decide("mail_label_delete", local, "destructive") == "refuse"

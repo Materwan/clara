@@ -32,7 +32,7 @@ from ..gate.actions import Action
 from ..knowledge.ingest import IngestError, extract
 from ..knowledge.projects import read_lines
 from ..secretscan import secret_kinds
-from ..tools.base import Tool, ToolContext, ToolError, flag, optional_number, texts
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, flag, optional_number, texts
 from ..workspace.paths import PathError, clean, resolve
 from ..workspace.store import WorkspaceError, human_size
 from .gmail import Gmail
@@ -159,6 +159,7 @@ def _search_of(arguments: dict) -> Search:
     )
 
 
+@acts_as("mail_read")
 def _describe_search(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     find = _search_of(arguments)
@@ -235,6 +236,7 @@ def _describe_message(what: str):
             raise ToolError(str(error)) from None
         return Action("", "read", "mail_read", (_target(provider),), f"{what} {LABELS[provider]} message {found[:40]}")
 
+    describe.classes = ("mail_read",)  # type: ignore[attr-defined]
     return describe
 
 
@@ -307,6 +309,7 @@ def _workspace(context: ToolContext):
     return context.services.workspace
 
 
+@acts_as("mail_read")
 def _describe_save(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     try:
@@ -449,6 +452,7 @@ def _compose_summary(context: ToolContext, provider: str, mail: Outgoing, specs:
     return "\n".join(lines) + "\n\n" + mail.body
 
 
+@acts_as("mail_draft")
 def _describe_draft(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     mail, specs = _outgoing(context, provider, arguments, need_to=False)
@@ -462,6 +466,7 @@ def _describe_draft(context: ToolContext, arguments: dict) -> Action:
     )
 
 
+@acts_as("mail_send")
 def _describe_send(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     mail, specs = _outgoing(context, provider, arguments)
@@ -584,6 +589,7 @@ def _message_arg(value: Any) -> str:
         raise ToolError(str(error)) from None
 
 
+@acts_as("mail_read")
 def _describe_labels(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     return Action("", "read", "mail_read", (_target(provider),), f"List the labels of {LABELS[provider]}")
@@ -601,6 +607,7 @@ async def _mail_labels(context: ToolContext, account: str = "") -> str:
     return f"Your labels in {LABELS[provider]} ({_address(context, provider)}): " + ", ".join(names)
 
 
+@acts_as("mail_label")
 def _describe_label_create(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     name = _one_label(arguments.get("name"))
@@ -620,6 +627,7 @@ async def _mail_label_create(context: ToolContext, name: str, account: str = "")
     return f"Made the label {made.name} in {LABELS[provider]}."
 
 
+@acts_as("mail_label")
 def _describe_label(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     found = _message_arg(arguments.get("message"))
@@ -657,6 +665,7 @@ async def _mail_label(
     )
 
 
+@acts_as("mail_trash")
 def _describe_trash(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     found = _message_arg(arguments.get("message"))
@@ -682,6 +691,7 @@ async def _mail_trash(context: ToolContext, message: str, account: str = "") -> 
 # ----------------------------------------------------------------------
 # The read mark, and deleting a label of yours (its messages stay)
 # ----------------------------------------------------------------------
+@acts_as("mail_mark")
 def _describe_mark_read(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     found = _message_arg(arguments.get("message"))
@@ -701,6 +711,7 @@ async def _mail_mark_read(context: ToolContext, message: str, account: str = "")
     return f"Marked the message {wanted[:40]} as read in {LABELS[provider]}."
 
 
+@acts_as("mail_label_delete")
 def _describe_label_delete(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     name = _one_label(arguments.get("name"))

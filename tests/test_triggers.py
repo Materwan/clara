@@ -474,6 +474,7 @@ async def test_a_run_has_only_the_tools_of_the_hook_whatever_the_model_asks(serv
 
 
 async def test_a_run_is_tainted_from_its_first_word_so_a_send_asks_even_with_a_rule(services, llm, world):
+    services.runtime.set("auto_level_unattended", 4)  # a send asks from level 4: below it no rule can open it
     services.rules.add("allow", tool="mail_send", situation="unattended")  # the owner opened sending to unattended runs
     send = calls(("mail_send", {"to": ["boss@acme.example"], "subject": "Re: Invoice 42", "body": "Paid."}))
     await new_mail_run(services, llm, world, tools=["mail_read", "mail_send"], replies=[send, "Asked to send."])

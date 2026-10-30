@@ -61,6 +61,7 @@ class Project:
     pinned: bool = False
     in_history: bool = False  # its conversations are listed in the web site's history
     packs: tuple[str, ...] = ("web",)  # the special tools a new conversation of the project starts with
+    auto_level: int | None = None  # the auto level its conversations follow (gate/levels.py); None: the default level
 
 
 @dataclass(frozen=True)
@@ -230,6 +231,7 @@ class Projects:
             bool(row["pinned"]),
             bool(row["in_history"]),
             _packs(row["packs"]),
+            row["auto_level"],
         )
 
     @staticmethod

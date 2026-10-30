@@ -162,6 +162,7 @@ class ChatRequest:
     fork_of: int | None = None  # the question asked again or edited (its id)
     incognito: bool = False  # for a new conversation
     local_only: bool = False  # for a new conversation
+    auto_level: int | None = None  # for a new conversation: its own auto level (None: it follows its project)
     title: str = ""  # for a new conversation
     conversation_kind: str = "chat"
     mode: str = "interactive"
@@ -360,6 +361,7 @@ class Agent:
                 project_id=request.project,
                 incognito=request.incognito,
                 local_only=request.local_only,
+                auto_level=request.auto_level,
             )
         state = TurnState(
             turn_id=uuid.uuid4().hex,

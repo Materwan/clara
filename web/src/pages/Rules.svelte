@@ -16,12 +16,12 @@
   ]);
 
   let tab = $state<Tab>('pending');
-  let data = $state<any>({ rules: [], defaults: [], tools: [], tainted_rule: true });
+  let data = $state<any>({ rules: [], defaults: [], levels: [], tools: [], tainted_rule: true });
   let history = $state<any[]>([]);
   let audit = $state<any[]>([]);
   const empty = () => ({ id: 0, effect: 'ask', tool: '', target: '', situation: '', level: '', note: '' });
   let form = $state(empty());
-  let test = $state({ tool: 'ws_delete', arguments: '{"path": "notes/old.md"}', situation: 'interactive', tainted: false, local_only: false });
+  let test = $state({ tool: 'ws_delete', arguments: '{"path": "notes/old.md"}', situation: 'interactive', level: '', tainted: false, local_only: false });
   let result = $state<any>(null);
 
   async function load(): Promise<void> {
@@ -75,7 +75,7 @@
   async function runTest(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     try {
-      result = await api.post('/v1/rules/test', { tool: test.tool, arguments: JSON.parse(test.arguments || '{}'), situation: test.situation, tainted: test.tainted, local_only: test.local_only });
+      result = await api.post('/v1/rules/test', { tool: test.tool, arguments: JSON.parse(test.arguments || '{}'), situation: test.situation, level: test.level === '' ? undefined : Number(test.level), tainted: test.tainted, local_only: test.local_only });
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -134,15 +134,18 @@
       </tbody>
     </table>
     <h2>Defaults</h2>
+    <p class="muted small">With no rule, the auto level of the conversation decides: a tool is refused below the level it asks from, asks from it, and runs
+      from the level it runs from. Change a tool on the <a href="#/auto-mode">Auto mode</a> page; these are the defaults of each action class.</p>
     <table>
-      <thead><tr><th>Action class</th><th>In a chat</th><th>Unattended</th></tr></thead>
-      <tbody>{#each data.defaults as row}<tr><td>{row.description} <span class="muted small">({row.class})</span></td><td><span class="tag {kind(row.interactive)}">{row.interactive}</span></td><td><span class="tag {kind(row.unattended)}">{row.unattended}</span></td></tr>{/each}</tbody>
+      <thead><tr><th>Action class</th><th>Asks from level</th><th>Runs from level</th></tr></thead>
+      <tbody>{#each data.defaults as row}<tr><td>{row.description} <span class="muted small">({row.class})</span></td><td><span class="tag warn">{row.ask_from}</span></td><td><span class="tag ok">{row.approve_from}</span></td></tr>{/each}</tbody>
     </table>
   {:else if tab === 'test'}
     <form class="panel stack" onsubmit={runTest}>
       <div class="row">
         <select aria-label="Tool" bind:value={test.tool}>{#each data.tools as tool}<option>{tool}</option>{/each}</select>
         <select aria-label="Situation" bind:value={test.situation}><option>interactive</option><option>unattended</option></select>
+        <select aria-label="Auto level" bind:value={test.level}><option value="">the default level of the situation</option>{#each data.levels ?? [] as level}<option value={String(level.position)}>level {level.position} · {level.name}</option>{/each}</select>
         <label class="row small"><Checkbox bind:checked={test.tainted} /> tainted turn</label>
         <label class="row small"><Checkbox bind:checked={test.local_only} /> local-only conversation</label>
       </div>
@@ -151,10 +154,10 @@
     </form>
     {#if result}
       <div class="panel stack">
-        <div><span class="tag big {kind(result.effect)}">{result.effect}</span> {result.reason}{result.floor ? ' (the floor: no rule can change it)' : ''}</div>
+        <div><span class="tag big {kind(result.effect)}">{result.effect}</span> {result.reason}{result.floor ? ' (the floor: no rule can change it)' : result.by_level ? ' (the level refuses it: no rule can change that)' : ''}</div>
         <div class="small">{result.action.summary} · {result.action.class} · {result.action.level} · {result.action.targets.join(' ')}</div>
         {#if result.raised.length}<div class="warn small">Raised: {result.raised.join('; ')}</div>{/if}
-        <div class="small muted">Default for this class: chat {result.default.interactive}, unattended {result.default.unattended}. Matching rules: {result.matching.map((rule: any) => '#' + rule.id).join(', ') || 'none'}</div>
+        <div class="small muted">At level {result.level.position} ({result.level.name}); this tool asks from level {result.level.ask_from} and runs from level {result.level.approve_from}. Matching rules: {result.matching.map((rule: any) => '#' + rule.id).join(', ') || 'none'}</div>
       </div>
     {/if}
   {:else}

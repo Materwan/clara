@@ -63,6 +63,7 @@ def describe(project: Project, projects: Projects, window: int) -> dict:
         "pinned": project.pinned,
         "in_history": project.in_history,
         "packs": list(project.packs),
+        "auto_level": project.auto_level,
         "files": project.files,
         "size": project.size,
         "conversations": project.conversations,

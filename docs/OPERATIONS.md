@@ -49,8 +49,12 @@ From a source tree (development machines): `sudo deploy/install.sh --from-source
 - **Models:** on the Models page (or `/provider`, `/models`, `/model`), check the local hosts, choose the default
   model, the side-jobs model and the fallbacks. For a hosted provider: `clara secrets set gemini_api_key` (the value
   is read hidden), then enable it, after reading [PROVIDERS.md](PROVIDERS.md).
+- **Auto levels:** each conversation runs at a level (0 refuses every tool, the last runs every tool) that decides, tool by
+  tool, what is refused, asked or run. Set the level of a chat in the chat, of a project on its page, of a schedule or a hook on
+  its card, or with `/level`; read and change what each level opens on the **Auto mode** page, and the defaults
+  (`auto_level_default`, `auto_level_unattended`, 3 at first).
 - **Rules:** read the defaults on Rules & approvals; add rules for what you want allowed without asking (for example
-  `allow ws_delete scratch/**`).
+  `allow ws_delete scratch/**`). A rule cannot open a tool the level refuses.
 - **More tokens:** one per script, `clara token create backup-script script` (scripts cannot answer approvals).
 
 ## 3. Optional parts

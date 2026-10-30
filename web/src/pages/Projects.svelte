@@ -2,11 +2,13 @@
   import { tick } from 'svelte';
   import Choice from '../components/Choice.svelte';
   import Icon from '../components/Icon.svelte';
+  import LevelSelect from '../components/LevelSelect.svelte';
   import PackCards from '../components/PackCards.svelte';
   import Wizard from '../components/Wizard.svelte';
   import { api, fileToBase64, size, when } from '../lib/api';
   import { excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
+  import { ladder } from '../lib/levels.svelte';
   import { conversations as history, go, route, toast } from '../lib/state.svelte';
 
   // A project is made in steps, as an automation is: what it is, where its files come from, and the special tools its new conversations
@@ -160,6 +162,17 @@
   async function save(): Promise<void> {
     await api.patch(`/v1/projects/${id}`, { name: project.name, description: project.description, instructions: project.instructions });
     toast('Saved.', 'ok');
+  }
+
+  /** The auto level its conversations follow (null: the default). */
+  async function setLevel(value: number | null): Promise<void> {
+    try {
+      await api.put(`/v1/projects/${id}/level`, { level: value });
+      project.auto_level = value;
+      toast('Saved: the conversations of this project that follow it now run at this level.', 'ok');
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
   }
 
   async function savePacks(): Promise<void> {
@@ -360,6 +373,12 @@
             <button class="small" onclick={() => sync(source)} disabled={busy}>Sync</button>
             <button class="small danger" onclick={async () => { await api.del(`/v1/projects/${id}/sources/${source.id}`); load(); }}>Remove</button></div>
         {/each}
+      </div>
+    </div>
+    <div class="panel stack">
+      <div class="row">
+        <span class="grow"><strong>Auto level</strong><br /><span class="muted small">How much Clara may do without asking in the conversations of this project that have no level of their own (the Auto mode page sets what each level allows).</span></span>
+        <LevelSelect value={project.auto_level} effective={ladder.defaults.chat} follows="the default" label="Auto level of this project" onchange={setLevel} />
       </div>
     </div>
     <div class="panel stack">

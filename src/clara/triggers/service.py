@@ -80,6 +80,7 @@ class Trigger:
     created_at: str
     updated_at: str
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
+    auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
 
     @property
     def effective_tools(self) -> tuple[str, ...]:
@@ -113,6 +114,7 @@ def _trigger(row) -> Trigger:
         row["created_at"],
         row["updated_at"],
         row["deliver"],
+        row["auto_level"],
     )
 
 
@@ -414,6 +416,7 @@ class Triggers(DueLoop):
             "announce": trigger.announce,
             "in_history": trigger.in_history,
             "deliver": trigger.deliver,
+            "auto_level": trigger.auto_level,
             "created_at": trigger.created_at,
             "updated_at": trigger.updated_at,
             "queued": int(

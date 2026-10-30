@@ -37,6 +37,7 @@ from .api import discord as discord_api
 from .api import events as events_api
 from .api import forms as forms_api
 from .api import gate as gate_api
+from .api import levels as levels_api
 from .api import memory as memory_api
 from .api import models as models_api
 from .api import packs as packs_api
@@ -54,7 +55,7 @@ from .connectors.asks import Questions
 from .connectors.quizzes import Quizzes
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
 from .events import Events, delivery
-from .gate import Approvals, Audit, Gate, Grants, Rules
+from .gate import Approvals, Audit, Gate, Grants, Levels, Rules
 from .gate.allowances import Allowances
 from .knowledge import vault as vault_setup
 from .knowledge.conversation_files import ConversationFiles
@@ -137,6 +138,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     providers = Providers(settings, secrets, runtime, provider_factory)
     catalog = Catalog(db, providers)
     rules = Rules(db)
+    levels = Levels(db, runtime)
     audit = Audit(db)
     home = settings.timezone
     s = Services(
@@ -167,7 +169,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
         schedules=Schedules(db, events, home),
         rules=rules,
-        gate=Gate(db, rules, runtime, vault_push=settings.vault_push),
+        gate=Gate(db, rules, runtime, levels, vault_push=settings.vault_push),
+        levels=levels,
         audit=audit,
         approvals=Approvals(db, events, rules, audit, alerts, expire_after=settings.approval_expire),
         grants=Grants(runtime, audit),
@@ -181,6 +184,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     )
     s.github_snapshots = GitHubSnapshots()
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
+    s.levels.audit = audit
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
     s.toolbox.grants = s.grants
@@ -424,6 +428,7 @@ def create_app(s: Services) -> FastAPI:
         events_api.router,
         projects_api.router,
         gate_api.router,
+        levels_api.router,
         models_api.router,
         admin_api.router,
     ):

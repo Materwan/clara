@@ -175,6 +175,7 @@ async def test_writing_a_note_shows_a_card_and_overwriting_asks(client, services
         next(e for e in events if e["type"] == "file").items()
     assert events[-1]["files"][0]["path"] == "notes/list.md"
     llm.replies = [calls(("ws_write", {"path": "notes/list.md", "content": "gone", "overwrite": True})), "Hm."]
+    services.runtime.set("auto_level_default", 2)  # an overwrite asks at level 2 and runs from level 3
     await services.agent.answer(ChatRequest(message="replace it", client="cli", wait_for_approvals=False))
     assert services.workspace.read_text("notes/list.md") == "- eggs\n"
     assert services.approvals.list("pending")[0].level == "destructive"

@@ -53,6 +53,7 @@ class TurnState:
     incognito: bool = False
     local_only: bool = False
     tainted: bool = False
+    level: int | None = None  # the auto level of the conversation, read again at each call (Toolbox.call)
     read_chars: int = 20_000
     trusted_urls: set[str] = field(default_factory=set)
     counts: dict[str, int] = field(default_factory=dict)
@@ -63,7 +64,7 @@ class TurnState:
 
     @property
     def situation(self) -> Situation:
-        return Situation(self.mode, self.tainted, self.local_only)
+        return Situation(self.mode, self.tainted, self.local_only, self.level)
 
 
 @dataclass
@@ -100,6 +101,11 @@ class Tool:
     remote: Remote | None = None  # run by the person's browser, not here (`function` is then never called)
 
     @property
+    def classes(self) -> tuple[str, ...]:
+        """The action classes the tool's calls can have (what its describe function declared; () if it declared none)."""
+        return tuple(getattr(self.describe, "classes", ()))
+
+    @property
     def schema(self) -> dict:
         return {
             "type": "function",
@@ -109,6 +115,17 @@ class Tool:
                 "parameters": {"type": "object", "properties": self.parameters, "required": list(self.required)},
             },
         }
+
+
+def acts_as(*classes: str) -> Callable[[Callable], Callable]:
+    """Name the action classes a describe function can answer with, for the Auto mode page (a tool's default thresholds
+    are those of its class). The gate itself only ever looks at the class of the call."""
+
+    def mark(function: Callable) -> Callable:
+        function.classes = classes  # type: ignore[attr-defined]
+        return function
+
+    return mark
 
 
 def fixed(
@@ -121,6 +138,7 @@ def fixed(
         said = summary(arguments) if callable(summary) else summary
         return Action("", level, klass, (where,) if where else (), said)
 
+    describe.classes = (klass,)  # type: ignore[attr-defined]
     return describe
 
 
@@ -150,6 +168,10 @@ class CallResult:
 REFUSED = (
     "Refused: {reason}. Do not try to do this another way; if you need it, tell the person what and why, and they "
     "can change their rules."
+)
+REFUSED_BY_LEVEL = (
+    "Refused: {reason}. Do not try to do this another way; if you need it, tell the person what and why, and they "
+    "can raise the auto level of this conversation."
 )
 
 
@@ -202,12 +224,16 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")
+        # the level is read at each call: lowering it in the middle of a turn takes effect at the next tool
+        context.turn.level = self.gate.levels.resolve(context.turn.conversation_id, context.turn.mode)
         situation = context.turn.situation
         decision = self.gate.decide(action, situation)
         digest = args_digest(arguments)
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
         if decision.effect == "refuse":
             self.audit.record(action, situation, digest, decision, "floor" if decision.floor else "refused", **common)
+            if decision.by_level:
+                return CallResult(REFUSED_BY_LEVEL.format(reason=decision.reason))
             return CallResult(
                 REFUSED.format(
                     reason=decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
@@ -226,7 +252,7 @@ class Toolbox:
             decision.effect == "ask"
             and self.grants is not None
             and not self.gate.tainted_raise(action, situation)
-            and not self.gate.secret_raise(action)
+            and not self.gate.secret_raise(action, situation)
         ):
             granted = self.grants.cover(action, situation, context.turn.conversation_id, context.turn.client)
             if granted is not None:
@@ -256,7 +282,7 @@ class Toolbox:
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")
         situation = context.turn.situation
-        decision = self.gate.decide(action, situation, count_hit=False)
+        decision = self.gate.decide(action, situation, count_hit=False, approved=True)
         if decision.floor or decision.effect == "refuse":
             return CallResult(REFUSED.format(reason=decision.reason))
         detail = f"allowed on request #{approval_id}"
@@ -321,7 +347,7 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return f"Error: {error}", False
-        decision = self.gate.decide(action, context.turn.situation, count_hit=False)
+        decision = self.gate.decide(action, context.turn.situation, count_hit=False, approved=True)
         if decision.floor:
             return REFUSED.format(reason=decision.reason), False
         text, ok = await self.run(tool, context, arguments)

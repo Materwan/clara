@@ -22,7 +22,7 @@ from ..agent.turn import normal_url
 from ..gate.actions import Action
 from ..secretscan import secret_kinds
 from ..timeutil import now_iso
-from ..tools.base import Tool, ToolContext, ToolError, fixed, flag, optional_number
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
 from .drive import DriveError
 from .github import GitHubError
 from .web import WebError
@@ -54,6 +54,7 @@ async def _web_search(context: ToolContext, query: str, max_results: Any = 5) ->
     )
 
 
+@acts_as("fetch_trusted", "fetch_other")
 def _describe_fetch(context: ToolContext, arguments: dict) -> Action:
     url = str(arguments.get("url") or "").strip()
     parts = urlsplit(url)
@@ -121,6 +122,7 @@ def _github_action(klass_level: dict[str, tuple[str, str]], verb: str):
             tuple(secret_kinds(text)),
         )
 
+    describe.classes = tuple(dict.fromkeys(klass for klass, _ in klass_level.values()))  # type: ignore[attr-defined]
     return describe
 
 
@@ -282,6 +284,7 @@ async def _drive_search(context: ToolContext, query: str) -> str:
     return "\n".join(f"[{f['id']}] {f['name']} ({f['mimeType'].rsplit('.', 1)[-1]})" for f in found) or "No match."
 
 
+@acts_as("drive_write")
 def _describe_create(context: ToolContext, arguments: dict) -> Action:
     folder = str(arguments.get("folder") or "") or _connectors(context).clara_folder() or "clara"
     name = str(arguments.get("name") or "").strip()
@@ -529,13 +532,15 @@ def drive_tools() -> list[Tool]:
             "drive_update",
             "Replace the whole content of a Drive file.",
             _drive_update,
-            lambda c, a: Action(
-                "",
-                "destructive",
-                "drive_write",
-                (f"drive:{_file(a)}",),
-                f"Replace Drive file {a.get('file')}",
-                tuple(secret_kinds(str(a.get("content") or ""))),
+            acts_as("drive_write")(
+                lambda c, a: Action(
+                    "",
+                    "destructive",
+                    "drive_write",
+                    (f"drive:{_file(a)}",),
+                    f"Replace Drive file {a.get('file')}",
+                    tuple(secret_kinds(str(a.get("content") or ""))),
+                )
             ),
             {"file": file, "content": {"type": "string"}},
             ("file", "content"),

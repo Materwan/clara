@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..gate.actions import Action
 from ..timeutil import now_iso
-from .base import Remote, Tool, ToolContext, ToolError, flag
+from .base import Remote, Tool, ToolContext, ToolError, acts_as, flag
 
 if TYPE_CHECKING:
     from ..db import Database
@@ -163,6 +163,7 @@ def _action(klass: str, path: str, summary: str) -> Action:
     return Action("", "read", klass, (f"folder:{path}",), summary)
 
 
+@acts_as("folder_read")
 def _describe_list(context: ToolContext, arguments: dict) -> Action:
     path = clean(arguments.get("path"))
     return _action("folder_read", path, f"List {_shown(path)}")
@@ -183,9 +184,11 @@ def _search(verb: str) -> Callable[[ToolContext, dict], Action]:
             return _action("folder_sensitive", path, f"{verb} {pattern!r} in {path}, a hidden folder")
         return _action("folder_read", path, f"{verb} {pattern!r} in {_shown(path)}")
 
+    describe.classes = ("folder_read", "folder_sensitive")  # type: ignore[attr-defined]
     return describe
 
 
+@acts_as("folder_read", "folder_sensitive")
 def _describe_read(context: ToolContext, arguments: dict) -> Action:
     path = clean(arguments.get("path"))
     if not path:

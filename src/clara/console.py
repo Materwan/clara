@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .auth import APPROVALS, CLIENTS, TokenError, TokenInfo
-from .gate import ANSWERS, AlreadyAnswered, ApprovalError, RuleError
+from .gate import ANSWERS, AlreadyAnswered, ApprovalError, LevelError, RuleError
 from .llm import NoModel, ProviderError, split_ref
 from .secrets import KNOWN_SECRETS, SecretError
 
@@ -329,6 +329,83 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
     return usage
 
 
+LEVEL_USAGE = (
+    "Usage: /level [list] | default [chat|unattended] <n> | conversation|project|schedule|hook <id> [<n>|follow]"
+    " | tool <name> [<ask> <run> | reset] | add <name> [<before>] | rename <n> <name> | remove <n>"
+)
+LEVEL_TABLES = {"conversation": "conversations", "project": "projects", "schedule": "schedules", "hook": "triggers"}
+
+
+def _level(s: Services, args: list[str], token: TokenInfo) -> str:
+    levels = s.levels
+    try:
+        if not args or args[0] == "list":
+            lines = [f"{level.position}  {level.name}" for level in levels.ladder()]
+            lines.append(
+                f"Default: chats {levels.label(levels.default_level('interactive'))}, "
+                f"runs nobody watches {levels.label(levels.default_level('unattended'))}"
+            )
+            changed = levels.overrides()
+            lines += [f"  {tool}: asks from {ask}, runs from {run}" for tool, (ask, run) in sorted(changed.items())]
+            return "\n".join(lines)
+        action, *rest = args
+        if action == "default" and rest:
+            which = "chat" if rest[0].isdigit() else rest.pop(0)
+            if which not in ("chat", "unattended") or not rest:
+                return LEVEL_USAGE
+            knob = "auto_level_unattended" if which == "unattended" else "auto_level_default"
+            s.runtime.set(knob, levels.check_level(int(rest[0])))
+            levels.log("default", f"{token.name} set {knob} to {levels.label(int(rest[0]))}")
+            return f"{which}: level {levels.label(int(rest[0]))}"
+        if action in LEVEL_TABLES and rest:
+            if len(rest) == 1:
+                if action == "conversation":
+                    level, source = levels.where(rest[0], "interactive")
+                    return f"Level {levels.label(level)} (from {source})"
+                return LEVEL_USAGE
+            level = None if rest[1] == "follow" else int(rest[1])
+            if action == "conversation":
+                s.conversations.update(rest[0], auto_level=levels.check_level(level))
+            else:
+                levels.set_stored(LEVEL_TABLES[action], int(rest[0]), level)
+            levels.log(
+                action,
+                f"{token.name} set the level of {action} {rest[0]} to {level if level is not None else 'follow'}",
+            )
+            return f"{action} {rest[0]}: " + ("follows" if level is None else f"level {levels.label(level)}")
+        if action == "tool" and rest:
+            tool = s.toolbox.get(rest[0])
+            if tool is None:
+                return f"No tool {rest[0]}."
+            if len(rest) == 1:
+                ask, run = levels.overrides().get(rest[0]) or max(
+                    (levels.default_thresholds(klass) for klass in tool.classes), default=(levels.top, levels.top)
+                )
+                return f"{rest[0]}: refused below level {ask}, asks from {ask}, runs from {run}"
+            if rest[1] == "reset":
+                levels.reset_tool(rest[0])
+                return f"{rest[0]}: back to the default of its class."
+            levels.set_tool(rest[0], int(rest[1]), int(rest[2]))
+            levels.log("tool", f"{token.name} set {rest[0]} to ask from {rest[1]}, run from {rest[2]}")
+            return f"{rest[0]}: asks from level {rest[1]}, runs from level {rest[2]}"
+        if action == "add" and rest:
+            added = levels.add(rest[0], int(rest[1]) if len(rest) > 1 else None)
+            levels.log("ladder", f"{token.name} added level {added.position} ({added.name})")
+            return f"Added level {added.position} ({added.name})."
+        if action == "rename" and len(rest) >= 2:
+            levels.rename(int(rest[0]), " ".join(rest[1:]))
+            levels.log("ladder", f"{token.name} renamed level {rest[0]} to {' '.join(rest[1:])}")
+            return f"Level {rest[0]} is now {levels.name(int(rest[0]))}."
+        if action == "remove" and rest:
+            name = levels.name(int(rest[0]))
+            levels.remove(int(rest[0]))
+            levels.log("ladder", f"{token.name} removed level {rest[0]} ({name})")
+            return f"Removed level {rest[0]} ({name})."
+    except (LevelError, ValueError, KeyError) as error:
+        return f"Error: {error}"
+    return LEVEL_USAGE
+
+
 def _tainted(s: Services, args: list[str], token: TokenInfo) -> str:
     if args and args[0] in ("on", "off"):
         s.runtime.set("tainted_rule", args[0] == "on")
@@ -474,6 +551,9 @@ COMMANDS: list[Command] = [
     Command("secrets", "/secrets [list] | set <name> <value> | unset <name>", "The encrypted secrets store.", _secrets),
     Command("rules", "/rules [list] | add | del | on | off | test", "The rule gate.", _rules),
     Command("tainted", "/tainted [on|off]", "The tainted-turn rule.", _tainted),
+    Command(
+        "level", LEVEL_USAGE.removeprefix("Usage: "), "The auto levels: how much each tool runs without asking.", _level
+    ),
     Command(
         "triggers",
         "/triggers [list] | show | add | edit | on | off | del | test | runs | events",

@@ -768,6 +768,11 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
   padding: var(--sp-6) var(--sp-32) var(--sp-6) var(--sp-8); text-overflow: ellipsis; background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
 }
 .composer-bar .model-select:hover { background-color: var(--hover); color: var(--text); }
+.composer-bar .level-select {
+  min-width: 0; flex: 0 1 15rem; border: none; background-color: transparent; color: var(--muted); font-size: var(--fs-xs); font-weight: 550;
+  padding: var(--sp-6) var(--sp-32) var(--sp-6) var(--sp-8); text-overflow: ellipsis; background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+}
+.composer-bar .level-select:hover { background-color: var(--hover); color: var(--text); }
 .send { width: 40px; height: 40px; padding: 0; margin-left: auto; border-radius: var(--r-md); background: var(--accent); color: var(--accent-ink); border: none; }
 .send:hover:not(:disabled) { background: var(--accent-hover); }
 .send:disabled { opacity: .35; }
@@ -975,7 +980,7 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
   .step:not([aria-current='step']) .step-label { display: none; } /* five steps do not fit with their names: the open one keeps its own */
   .steps li + li::before { width: var(--sp-8); }
   /* a table is as wide as its words need and scrolls sideways: it is not squeezed until the words break in the middle */
-  table { display: block; overflow-x: auto; }
+  table { display: block; overflow-x: auto; position: relative; } /* relative: the visually hidden headers (.sr-only) are clipped with it, not left past the page's edge */
   td { overflow-wrap: break-word; }
   dl.facts { grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); }
   dl.facts dd { margin-bottom: var(--sp-10); }

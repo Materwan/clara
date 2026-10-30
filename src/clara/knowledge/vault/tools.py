@@ -17,7 +17,7 @@ from typing import Any
 
 from ...gate.actions import Action
 from ...secretscan import secret_kinds
-from ...tools.base import Tool, ToolContext, ToolError, fixed, flag, optional_number
+from ...tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
 from ...tools.days import resolve_day
 from .vault import VaultError
 
@@ -73,6 +73,7 @@ def _list(context: ToolContext, folder: str = "", depth: Any = 2) -> str:
         raise ToolError(str(error)) from None
 
 
+@acts_as("vault_write", "vault_destroy")
 def _describe_write(context: ToolContext, arguments: dict) -> Action:
     mode = str(arguments.get("mode") or "create")
     if mode not in ("create", "replace", "delete"):
@@ -124,6 +125,7 @@ async def _edit(
         raise ToolError(str(error)) from None
 
 
+@acts_as("read", "vault_write")
 def _describe_daily(context: ToolContext, arguments: dict) -> Action:
     if str(arguments.get("action") or "read") == "read":
         return Action("", "read", "read", ("vault:daily",), "Read today's daily note")
@@ -144,6 +146,7 @@ async def _daily(context: ToolContext, action: str = "read", text: str = "") -> 
         raise ToolError(str(error)) from None
 
 
+@acts_as("vault_write")
 def _describe_block(context: ToolContext, arguments: dict) -> Action:
     return Action(
         "",

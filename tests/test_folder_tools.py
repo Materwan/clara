@@ -96,11 +96,11 @@ def test_a_search_that_starts_inside_a_hidden_folder_asks_like_one_that_includes
 
 
 def test_the_folder_classes_and_their_defaults(services):
-    assert CLASSES["folder_read"][:2] == ("allow", "refuse")
-    assert CLASSES["folder_sensitive"][:2] == ("ask", "refuse")
+    assert CLASSES["folder_read"][:2] == ("any_read", "any_read")
+    assert CLASSES["folder_sensitive"][:2] == ("any_read", "all")
     assert "folder_sensitive" in FOR_A_CONVERSATION and "folder_sensitive" in NOT_PUBLISHED
-    chat = Situation("interactive")
-    unattended = Situation("unattended")
+    chat = Situation("interactive", level=3)
+    unattended = Situation("unattended", level=5)  # not even the last level opens it: there is no browser to answer
     listing = Action("folder_list", "read", "folder_read", ("folder:docs",), "List docs")
     secret = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
     assert services.gate.decide(listing, chat).effect == "allow"

@@ -4,11 +4,13 @@
   import Choice from '../components/Choice.svelte';
   import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
+  import LevelSelect from '../components/LevelSelect.svelte';
   import ModelField from '../components/ModelField.svelte';
   import Wizard from '../components/Wizard.svelte';
   import { api, fileToBase64, when, zone } from '../lib/api';
   import { ATTEMPTS, RETRY_HELP, excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
+  import { ladder } from '../lib/levels.svelte';
   import { conversations, live, toast } from '../lib/state.svelte';
 
   // What Clara does without being asked, in one list and one form. An item is a schedule (`on` is TIME: she runs at a time) or a hook
@@ -482,6 +484,16 @@
     }
   }
 
+  /** The auto level of a schedule's or a hook's runs (null: its project's, else the default of the runs nobody watches). */
+  async function setLevel(item: any, value: number | null): Promise<void> {
+    try {
+      await api.put(`${pathOf(item)}/level`, { level: value });
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+    load();
+  }
+
   async function toggle(item: any): Promise<void> {
     try {
       await api.patch(pathOf(item), { enabled: !item.enabled });
@@ -845,6 +857,10 @@
             {:else}
               <br /><span class="muted small">When {describeFilter(item.filter, item.on)}</span>
               {#if item.action === 'run'}<br /><span class="muted small">Tools: {item.effective_tools.join(', ')}</span>{/if}
+            {/if}
+            {#if timed || item.action === 'run'}
+              <br /><LevelSelect small label={`Auto level of ${item.name}`} value={item.auto_level} effective={item.auto_level ?? ladder.defaults.unattended}
+                follows={item.project ? 'its project or the default' : 'the default'} onchange={(value) => setLevel(item, value)} />
             {/if}
           </td>
           <td class="small">{#if item.last}<span class:danger={timed ? item.last.status !== 'ok' : item.last.status === 'failed'}>{item.last.status}</span> {when(item.last.finished_at)}<br /><span class="muted">{item.last.summary || item.last.note}</span>{:else}—{/if}</td>

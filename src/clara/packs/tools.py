@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from ..connectors.drive import DriveError
 from ..events import delivery
 from ..gate.actions import Action
-from ..tools.base import Tool, ToolContext, ToolError, fixed, optional_number
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, optional_number
 from ..tools.days import resolve_day
 from .automations import automation_tools
 from .files import MODES, SOURCES, FilesReader
@@ -130,6 +130,7 @@ async def _files_created(context: ToolContext, date: str = "", source: str = "al
         raise ToolError(str(error)) from None
 
 
+@acts_as("read", "drive_read")
 def _describe_read_file(context: ToolContext, arguments: dict) -> Action:
     ref = str(arguments.get("ref") or "").strip()
     kind = ref.partition(":")[0]
@@ -263,6 +264,7 @@ def _finish_run(context: ToolContext, summary: str) -> str:
     return "The run is finished."
 
 
+@acts_as("discord")
 def _describe_discord(context: ToolContext, arguments: dict) -> Action:
     action = str(arguments.get("action") or "")
     if action not in DISCORD_ACTIONS:

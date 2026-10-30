@@ -19,6 +19,12 @@ HOOK = {"kind": "hook", "name": "Invoices", "on": "mail.received", "prompt": "Ad
         "filter": {"subject": {"contains": "invoice"}}}
 
 
+@pytest.fixture(autouse=True)
+def level_four(services):
+    """The automation tools ask from level 4 (and run from 5): a chat here is at level 4."""
+    services.runtime.set("auto_level_default", 4)
+
+
 def context(services, **turn) -> ToolContext:
     return ToolContext(services, TurnState("t1", "", "web", timezone="Europe/Paris", **turn))
 

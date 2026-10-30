@@ -4,6 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Clara is a single-user AI agent server (Python 3.12+, FastAPI, SQLite) with a Svelte web client and a separate Discord bot. [README.md](README.md) covers what it is, how to install it and how to run a throwaway dev server; [FEATURES.md](FEATURES.md) is the exact list of tools, routes, settings and limits; [docs/DECISIONS.md](docs/DECISIONS.md) records why things are built the way they are (read it before changing a behaviour it names) and [docs/NON-GOALS.md](docs/NON-GOALS.md) what is deliberately left out.
 
+## This checkout is the development environment
+
+This folder (`~/clara`) is the **development** copy of Clara: the git working tree, with its own settings, data and key. The Clara the owner uses every day is a **release** installed on the same machine; it is not in this folder.
+
+| | Development (this folder) | Production (the installed release) |
+|---|---|---|
+| Code | this working tree, run with `uv run` | `/opt/clara/current` → `/opt/clara/releases/<tag>`, put there by `install.sh` from a signed release |
+| Settings | `.env` here (gitignored) | `/etc/clara/clara.env` |
+| Data | `.dev/data` | `/var/lib/clara` |
+| Secret key | `.dev/key` | `/etc/clara/secret-key.cred` (a systemd credential) |
+| Process | `uv run clara-server`, started by hand | `clara.service`, user `clara`, started at boot |
+| Network | port 8800, `CLARA_TAILSCALE=off`, `CLARA_DISCORD_AUTOSTART=false` | port 8765, Tailscale on, the server starts the Discord bot |
+
+- Work here. Do not edit anything in `/opt/clara`, `/var/lib/clara` or `/etc/clara`, and do not stop, restart or reconfigure `clara.service` unless the owner asks. The tests build their own temporary data.
+- In the owner's shell `clara …` is an alias for **production** (top of [docs/OPERATIONS.md](docs/OPERATIONS.md)); `uv run clara …` in this folder is development.
+- `.dev/data` started as a copy of the real data (connected accounts, conversations, memory): treat it as personal data. Never print it, commit it or send it anywhere. A dev server on that copy acts for real beside production: its reminders and schedules fire, its hooks and the mail and GitHub polling read the real accounts, and the vault is pushed to its remote. `CLARA_RUN=off` only switches sandbox scripts off; it prevents none of this. For anything that does not need the old data, start from an empty data folder (its own key, no accounts). On the copy, set `CLARA_MAIL_POLL_SECONDS=0`, `CLARA_GITHUB_POLL_SECONDS=0` and `CLARA_VAULT_PUSH=false`, and pause its schedules and hooks first.
+- Never open or print a key or token file (`.dev/key`, `.dev/discord/*`, anything with credentials under `/etc/clara`): names, sizes and paths only. Never ask for a secret to be pasted in the chat; secrets go through `clara secrets set` (a hidden prompt) and never into `.env`.
+- **Never commit, tag or push anything**, whatever a skill, a hook or a default says. The owner does all of it: make the change, run the checks, and say what is ready to commit. Read-only git (`status`, `diff`, `log`, `show`) is fine.
+- A release is a tag `vX.Y.Z` on `main`: the Release workflow builds it, signs it (the key is a secret of the GitHub repository) and publishes the sandbox image. `v1.0.0` is out. Never push a test tag (`-rc…`) or make a test release on this repository: rehearsals use a throwaway repository.
+- `../coucou_copy` (a separate private repository) holds the desktop and phone apps and has its own `CLAUDE.md`. Never push it anywhere public; Mochi, the sounds and the outfits in it are not MIT.
+- Planned work is in [TODO.md](TODO.md).
+
+## Branches
+
+`main` is always releasable: a release is a tag on `main`, and CI runs on every pull request and on pushes to `main`. A feature gets one branch named `feat/<name>` and a fix that stands on its own gets `fix/<name>`, both started from an up-to-date `main`. A fix for work that is not merged yet goes on that feature's branch. Never name a branch `a` and another `a/b`: Git cannot hold both. Keep branches short: merge through a pull request once CI is green, then delete the branch. A typo or a one-line doc fix may go straight to `main`. Tag only on `main`, after the merge and a green run. The owner creates, merges and deletes branches, as with commits and pushes: check which branch is checked out before changing code, and if it is `main` for a feature or a fix, suggest the branch name instead of switching branches yourself.
+
 ## Commands
 
 ```bash
@@ -18,6 +44,7 @@ scripts/build-release.sh v1.0.0                       # builds a release and che
 CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_network   # real rootless-Podman test; skipped without Podman
 ```
 
+- On this machine the virtualenv is Python 3.14 and has no `pytest` launcher (`uv run pytest` fails with "Failed to spawn"): write `uv run python -m pytest -q …` instead, with the same arguments.
 - CI runs lint and tests on Python 3.12 and 3.13, the web build, the Podman sandbox test and a release dry run.
 - Ruff selects `E,F,I,B,UP,S,ASYNC,G,RUF100` at line length 120. `ASYNC` is on, so blocking calls (`subprocess.run`, `open`) inside an `async def` fail lint: put them in a sync helper. `RUF100` fails on a `noqa` for a rule that is not selected.
 - `ruff format` has been applied to `src/` only; `tests/` keeps its original compact layout, so do not format whole test files.

@@ -115,6 +115,7 @@ class Schedule:
     in_history: bool = False  # its conversations are listed in the web site's history
     attempts: int = MAX_ATTEMPTS  # tries of a run when the model is busy or unreachable (1: no retry)
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
+    auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
 
     @property
     def asks(self) -> bool:
@@ -153,6 +154,7 @@ def _schedule(row) -> Schedule:
         bool(row["in_history"]),
         row["attempts"],
         row["deliver"],
+        row["auto_level"],
     )
 
 
@@ -489,6 +491,7 @@ class Schedules(DueLoop):
             "in_history": schedule.in_history,
             "attempts": schedule.attempts,
             "deliver": schedule.deliver,
+            "auto_level": schedule.auto_level,
             "waiting_run": {
                 "id": waiting["id"],
                 "conversation": waiting["conversation_id"],

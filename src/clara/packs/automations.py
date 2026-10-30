@@ -20,7 +20,7 @@ from ..gate.actions import Action
 from ..llm import ProviderError, split_ref
 from ..timekeeping import ScheduleError
 from ..timekeeping.clock import MomentError, local_text, zone_of
-from ..tools.base import Tool, ToolContext, ToolError, flag, texts, whole_number
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, flag, texts, whole_number
 from ..triggers import KINDS, TriggerError
 from ..triggers.service import CATCH_UPS, MAX_ATTEMPTS
 from .registry import PACKS
@@ -278,10 +278,12 @@ def _change(kind: str, d: dict, values: dict) -> str:
 # ----------------------------------------------------------------------
 # The gate
 # ----------------------------------------------------------------------
+@acts_as("read")
 def _describe_list(context: ToolContext, arguments: dict) -> Action:
     return Action("", "read", "read", (TARGET,), "Read the automations")
 
 
+@acts_as("automation")
 def _describe_create(context: ToolContext, arguments: dict) -> Action:
     fields = dict(arguments)
     kind = _kind(fields.pop("kind", ""))
@@ -301,11 +303,13 @@ def _changes(context: ToolContext, arguments: dict) -> tuple[str, int, dict, dic
     return kind, number, values, current
 
 
+@acts_as("automation")
 def _describe_update(context: ToolContext, arguments: dict) -> Action:
     kind, _, values, current = _changes(context, arguments)
     return Action("", "write", "automation", (TARGET,), _change(kind, current, values))
 
 
+@acts_as("automation")
 def _describe_delete(context: ToolContext, arguments: dict) -> Action:
     kind = _kind(arguments.get("kind"))
     current = _current(context, kind, _number(arguments.get("id")))

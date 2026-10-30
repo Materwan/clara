@@ -17,19 +17,30 @@ CHAT = Situation("interactive")
 ALONE = Situation("unattended")
 
 
+@pytest.fixture(autouse=True)
+def level_two(services):
+    """Most tests here are about a request that asks (a deletion): at level 2 the workspace tools ask."""
+    services.runtime.set("auto_level_default", 2)
+    services.runtime.set("auto_level_unattended", 2)
+
+
 def action(tool="ws_delete", level="destructive", klass="ws_destroy", *targets, secrets=()):
     return Action(tool, level, klass, targets or ("ws:scratch/a.txt",), "test", tuple(secrets))
 
 
 def test_defaults_follow_the_class(services):
     gate = services.gate
-    assert gate.decide(action("ws_read", "read", "read"), CHAT).effect == "allow"
-    assert gate.decide(action("ws_write", "write", "ws_write"), CHAT).effect == "allow"
-    assert gate.decide(action(), CHAT).effect == "ask"
-    assert gate.decide(action("ws_run", "write", "run"), CHAT).effect == "allow"
-    assert gate.decide(action("ws_run", "write", "run"), ALONE).effect == "ask"
-    assert gate.decide(action("web_fetch", "read", "fetch_other", "domain:x.org"), CHAT).effect == "ask"
-    assert gate.decide(action("web_fetch", "read", "fetch_other", "domain:x.org"), ALONE).effect == "refuse"
+    for level, expected in {
+        2: {"read": "allow", "ws_write": "ask", "ws_destroy": "ask", "run": "ask", "fetch_other": "allow",
+            "mail_draft": "refuse", "github_write": "refuse", "mail_send": "refuse"},
+        3: {"read": "allow", "ws_write": "allow", "ws_destroy": "allow", "run": "allow", "fetch_other": "allow",
+            "mail_draft": "ask", "github_write": "refuse", "mail_send": "refuse"},
+        4: {"mail_draft": "allow", "mail_trash": "allow", "github_write": "ask", "mail_send": "ask"},
+        5: {"mail_send": "allow", "github_write": "allow", "automation": "allow"},
+    }.items():
+        for klass, effect in expected.items():
+            for situation in (Situation("interactive", level=level), Situation("unattended", level=level)):
+                assert gate.decide(action("some_tool", "write", klass), situation).effect == effect, (level, klass)
 
 
 def test_the_most_specific_rule_wins_and_ties_go_to_the_stricter(services):
@@ -75,12 +86,13 @@ def test_tainted_turns_and_secrets_raise_outside_writes(services):
     gate = services.gate
     services.rules.add("allow", tool="github_write")
     write = action("github_write", "write", "github_write", "github:me/repo")
-    assert gate.decide(write, CHAT).effect == "allow"
-    assert gate.decide(write, Situation("interactive", tainted=True)).effect == "ask"
+    chat = Situation("interactive", level=4)  # github_write asks from level 4: a rule that allows it opens it
+    assert gate.decide(write, chat).effect == "allow"
+    assert gate.decide(write, Situation("interactive", tainted=True, level=4)).effect == "ask"
     services.runtime.set("tainted_rule", False)
-    assert gate.decide(write, Situation("interactive", tainted=True)).effect == "allow"
+    assert gate.decide(write, Situation("interactive", tainted=True, level=4)).effect == "allow"
     leaky = action("github_write", "write", "github_write", "github:me/repo", secrets=["GitHub token"])
-    assert gate.decide(leaky, CHAT).effect == "ask"
+    assert gate.decide(leaky, chat).effect == "ask"
 
 
 def test_the_model_has_no_tool_to_approve_or_edit_rules(services):
@@ -294,6 +306,7 @@ async def test_a_tool_that_reads_the_web_taints_the_turn(services, llm):
     services.toolbox.add(Tool("fake_push", "p", push, fixed("github_write", "write", "github:me/r", "push"),
                               {"text": {"type": "string"}}, ("text",)))
     services.rules.add("allow", tool="fake_push")
+    services.runtime.set("auto_level_default", 4)  # github_write asks from level 4, so that the rule can open it
     llm.replies = [calls(("fake_push", {"text": "a"})), calls(("fake_fetch", {"url": "u"})),
                    calls(("fake_push", {"text": "b"})), "done"]
     await services.agent.answer(ChatRequest(message="go", client="cli", wait_for_approvals=False))
@@ -309,14 +322,15 @@ def test_a_local_only_turn_sends_nothing_out(services):
     for klass in leaving:
         decision = services.gate.decide(action("web_fetch", "read", klass, "domain:x.org"), local)
         assert decision.effect == "refuse" and decision.floor, klass
-    assert services.gate.decide(action("ws_write", "write", "ws_write"), local).effect == "allow"
-    assert services.gate.decide(action("ws_run", "write", "run"), local).effect == "allow"
+    at_three = Situation("interactive", local_only=True, level=3)
+    assert services.gate.decide(action("ws_write", "write", "ws_write"), at_three).effect == "allow"
+    assert services.gate.decide(action("ws_run", "write", "run"), at_three).effect == "allow"
     assert services.gate.decide(action("web_fetch", "read", "fetch_trusted", "domain:x.org"), CHAT).effect == "allow"
 
 
 def test_vault_changes_stay_local_when_the_vault_does_not_push(services):
     services.gate.local_refused = services.gate.local_refused - {"vault_write", "vault_destroy"}
-    local = Situation("interactive", local_only=True)
+    local = Situation("interactive", local_only=True, level=3)
     assert services.gate.decide(action("vault_edit", "write", "vault_write", "vault:a"), local).effect == "allow"
 
 

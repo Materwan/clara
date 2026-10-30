@@ -17,7 +17,7 @@ from typing import Any
 from ..gate.actions import Action
 from ..knowledge.projects import read_lines
 from ..secretscan import secret_kinds
-from ..tools.base import Tool, ToolContext, ToolError, fixed, flag, optional_number
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
 from .paths import PathError, clean
 from .store import WorkspaceError, human_size
 
@@ -102,6 +102,7 @@ async def _ws_log(context: ToolContext, path: str = "", limit: Any = 20) -> str:
 # ----------------------------------------------------------------------
 # Writing
 # ----------------------------------------------------------------------
+@acts_as("ws_write", "ws_destroy")
 def _describe_write(context: ToolContext, arguments: dict) -> Action:
     path = _path(arguments.get("path"))
     exists = _workspace(context).exists(path)
@@ -143,6 +144,7 @@ async def _ws_edit(context: ToolContext, path: str, old_text: str, new_text: str
     return f"Changed {count} place{'s' if count != 1 else ''} in {name}, commit {change.commit}."
 
 
+@acts_as("ws_write", "ws_destroy")
 def _describe_move(context: ToolContext, arguments: dict) -> Action:
     source, destination = _path(arguments.get("path")), _path(arguments.get("destination"))
     targets = ("ws:" + source, "ws:" + destination)
@@ -178,6 +180,7 @@ async def _ws_delete(context: ToolContext, path: str) -> str:
 # ----------------------------------------------------------------------
 # Running
 # ----------------------------------------------------------------------
+@acts_as("run", "run_network")
 def _describe_run(context: ToolContext, arguments: dict) -> Action:
     command = str(arguments.get("command") or "")
     workdir = _path(arguments.get("workdir"))

@@ -16,6 +16,7 @@
   import Projects from './pages/Projects.svelte';
   import Library from './pages/Library.svelte';
   import Connections from './pages/Connections.svelte';
+  import AutoMode from './pages/AutoMode.svelte';
   import Rules from './pages/Rules.svelte';
   import Models from './pages/Models.svelte';
   import Usage from './pages/Usage.svelte';
@@ -35,6 +36,7 @@
     { path: '/memory', label: 'Memory', icon: 'memory', page: Memory },
     { path: '/connections', label: 'Connections', icon: 'plug', page: Connections },
     { path: '/rules', label: 'Rules & approvals', icon: 'shield', page: Rules },
+    { path: '/auto-mode', label: 'Auto mode', icon: 'sparkle', page: AutoMode },
     { path: '/models', label: 'Models', icon: 'chip', page: Models },
     { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
     { path: '/admin', label: 'Admin', icon: 'server', page: Admin },

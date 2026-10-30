@@ -233,6 +233,12 @@ def test_what_is_said_in_general_may_be_longer_than_a_notification(s):
 # ----------------------------------------------------------------------
 # discord_say
 # ----------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def everything_runs(s):
+    """discord_say runs without asking at the last level."""
+    s.runtime.set("auto_level_default", 5)
+
+
 def connect_bot(s) -> None:
     s.clients["discord"] = time.monotonic()
 

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .connectors.quizzes import Quizzes
     from .db import Database
     from .events import Events
-    from .gate import Approvals, Audit, Gate, Grants, Rules
+    from .gate import Approvals, Audit, Gate, Grants, Levels, Rules
     from .gate.allowances import Allowances
     from .knowledge.conversation_files import ConversationFiles
     from .knowledge.projects import Projects
@@ -61,6 +61,7 @@ class Services:
     schedules: Schedules
     rules: Rules
     gate: Gate
+    levels: Levels
     audit: Audit
     approvals: Approvals
     grants: Grants

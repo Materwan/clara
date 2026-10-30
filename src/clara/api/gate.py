@@ -26,9 +26,12 @@ def rules(request: Request) -> dict:
     return {
         "rules": [rule.describe() for rule in s.rules.list()],
         "defaults": [
-            {"class": name, "interactive": chat, "unattended": alone, "description": what}
-            for name, (chat, alone, what) in CLASSES.items()
+            {"class": name, "ask_from": ask, "approve_from": approve, "description": what}
+            for name, (what, (ask, approve)) in (
+                (name, (what, s.levels.default_thresholds(name))) for name, (_, _, what) in CLASSES.items()
+            )
         ],
+        "levels": [level.describe() for level in s.levels.ladder()],
         "tainted_rule": s.runtime.get("tainted_rule"),
         "tools": sorted(s.toolbox.names),
     }
@@ -102,6 +105,7 @@ class RuleTest(BaseModel):
     situation: Literal["interactive", "unattended"] = "interactive"
     tainted: bool = False
     local_only: bool = False
+    level: int | None = Field(default=None, ge=0, le=9, description="An auto level (default: the one of the mode)")
 
 
 @router.post("/rules/test")
@@ -123,7 +127,7 @@ def test_rule(body: RuleTest, request: Request) -> dict:
         action = s.toolbox.action(body.tool, ToolContext(s, state), body.arguments)
     except (ToolError, ValueError, TypeError) as error:
         raise ApiError(422, f"These arguments do not describe a call: {error}") from None
-    explained = s.gate.explain(action, Situation(body.situation, body.tainted, body.local_only))
+    explained = s.gate.explain(action, Situation(body.situation, body.tainted, body.local_only, body.level))
     return {
         "action": {
             "tool": action.tool,

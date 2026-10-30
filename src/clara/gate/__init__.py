@@ -4,6 +4,7 @@ from .actions import CLASSES, EFFECTS, LEVELS, SITUATIONS, Action, Decision, Sit
 from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals, NoRuleError
 from .engine import Audit, Gate, args_digest
 from .grants import GRANTABLE, Grant, GrantError, Grants
+from .levels import Level, LevelError, Levels
 from .rules import Rule, RuleError, Rules
 
 __all__ = [
@@ -24,6 +25,9 @@ __all__ = [
     "Grant",
     "GrantError",
     "Grants",
+    "Level",
+    "LevelError",
+    "Levels",
     "NoRuleError",
     "Rule",
     "RuleError",

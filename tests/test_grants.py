@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from clara.app import create_app
-from clara.gate import Action, Grants, Situation, engine
+from clara.gate import Action, Decision, Grants, Situation, engine
 from clara.gate.grants import SILENCE
 from clara.tools.base import Tool, ToolContext, TurnState
 from conftest import parse_sse
@@ -24,6 +24,13 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
+
+
+@pytest.fixture(autouse=True)
+def level_two(services):
+    """At level 2 the workspace changes ask: that is what the button is for."""
+    services.runtime.set("auto_level_default", 2)
+    services.runtime.set("auto_level_unattended", 2)
 
 
 @pytest.fixture
@@ -93,6 +100,7 @@ async def test_nothing_else_is_covered(services, conversation, web, probe, clock
     assert (await call(services, conversation, mode="unattended")).approval is not None
     mail = Action("mail_send", "destructive", "mail_send", ("mail:to:a@b.c",), "send")
     services.toolbox.add(Tool("mail_probe", "test tool", lambda context, **a: "sent", lambda c, a: mail))
+    services.levels.set_tool("mail_probe", 1, 5)  # it asks at the level of this conversation
     asked = await services.toolbox.call("mail_probe", context(services, conversation), {}, services.toolbox.names)
     assert asked.approval is not None  # another tool, another class
     assert len(probe) == 1
@@ -177,6 +185,7 @@ async def test_approve_all_next_covers_a_mail_trash_even_in_a_tainted_turn(servi
     ran: list[dict] = []
     action = Action("", "destructive", "mail_trash", ("mail:gmail",), "trash")
     services.toolbox.add(Tool("trash_probe", "test tool", lambda context, **arguments: ran.append(arguments) or "done", lambda c, a: action))
+    services.levels.set_tool("trash_probe", 1, 4)  # it asks at the level of this conversation
     tainted = context(services, conversation, tainted=True)  # the turn read mail: a trash is still covered
     asked = await services.toolbox.call("trash_probe", tainted, {}, services.toolbox.names)
     assert asked.approval is not None and asked.approval.grantable
@@ -194,7 +203,7 @@ async def test_only_the_web_can_press_and_only_some_changes_can_be_granted(servi
     with pytest.raises(Exception, match="Only the web site"):
         services.grants.arm(asked.approval, TAB, cli)
     mail = Action("mail_send", "destructive", "mail_send", ("mail:to:a@b.c",), "send")
-    sent = services.approvals.create(mail, Situation("interactive"), context(services, conversation), {}, services.gate.decide(mail, Situation("interactive")))
+    sent = services.approvals.create(mail, Situation("interactive"), context(services, conversation), {}, Decision("ask", "test"))
     assert not sent.grantable and asked.approval.grantable
     with pytest.raises(Exception, match="workspace and vault changes and mail trashing only"):
         services.grants.arm(sent, TAB, services.tokens.create("other", "web")[0])

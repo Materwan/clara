@@ -531,6 +531,27 @@ class ClaraBot(discord.Client):
         ]
         return "\n".join(lines) + note + "\n`/tools pack:<id> state:on|off` switches one."
 
+    async def level_text(self, value: str | None, current: str | None = None) -> str:
+        """The auto level of the current conversation, after setting it if asked (`follow`: none of its own)."""
+        current = current or self.conversation()
+        ladder = await self.clara.call("GET", "/v1/levels")
+        names = ", ".join(f"`{level['position']}` {level['name']}" for level in ladder["levels"])
+        if value:
+            wanted = value.strip().lower()
+            if wanted != "follow" and not (wanted.isdigit() and int(wanted) <= ladder["top"]):
+                return f"A level is {names}, or `follow`."
+            if not current:
+                return "Use it inside a conversation: the level belongs to one conversation."
+            await self.clara.call(
+                "PUT", f"/v1/conversations/{current}/level", json={"level": None if wanted == "follow" else int(wanted)}
+            )
+        if not current:
+            return (
+                f"No conversation here. The default for a chat is level {ladder['defaults']['chat']}. Levels: {names}."
+            )
+        found = await self.clara.call("GET", f"/v1/conversations/{current}/level")
+        return f"Level `{found['level']}` ({found['name']}), from {found['source']}.\nLevels: {names}. `/level level:<n|follow>` changes it."
+
     async def show_approval(self, approval: dict) -> bool:
         """Post a request in #approval, once. True when it was posted now."""
         if approval["id"] in self.asked or approval.get("status", "pending") != "pending":
@@ -841,6 +862,20 @@ class ClaraBot(discord.Client):
             try:
                 current = self.mirror.conversation_of(interaction.channel_id)  # a thread: its conversation
                 await interaction.response.send_message(await self.tools_text(pack, state, current), ephemeral=True)
+            except ClaraError as error:
+                await interaction.response.send_message(f"⚠️ {error}")
+
+        @tree.command(name="level", description="How much Clara may do without asking in this conversation")
+        @app_commands.describe(
+            level="A level number, or follow (the project's level, else the default); empty: show it"
+        )
+        @here
+        async def level(interaction: discord.Interaction, level: str | None = None) -> None:
+            if not await only_you(interaction):
+                return
+            try:
+                current = self.mirror.conversation_of(interaction.channel_id)  # a thread: its conversation
+                await interaction.response.send_message(await self.level_text(level, current), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 
