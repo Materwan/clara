@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import Choice from '../components/Choice.svelte';
+  import Facts from '../components/Facts.svelte';
   import Icon from '../components/Icon.svelte';
   import LevelSelect from '../components/LevelSelect.svelte';
   import PackCards from '../components/PackCards.svelte';
@@ -32,6 +33,7 @@
   let project = $state<any>(null);
   let conversations = $state<any[]>([]);
   let packs = $state<any[]>([]);
+  let memory = $state<Record<string, { facts: number; waiting: number }>>({}); // the facts each project remembers, by scope
   let repo = $state('');
   let viewing = $state<any>(null);
   let busy = $state(false);
@@ -47,6 +49,7 @@
 
   const packLabel = (packId: string): string => packs.find((pack) => pack.id === packId)?.label ?? packId;
   const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const remembered = (projectId: number): { facts: number; waiting: number } => memory[`project:${projectId}`] ?? { facts: 0, waiting: 0 };
   // The tools a project starts with, other than the web search every conversation has: for its card in the list
   const extras = (item: any): string => item.packs.filter((packId: string) => packId !== 'web').map(packLabel).join(' · ');
 
@@ -146,12 +149,17 @@
   async function load(): Promise<void> {
     projects = (await api.get('/v1/projects')).projects;
     packs = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
+    await loadMemory();
     if (id) {
       project = await api.get(`/v1/projects/${id}`);
       conversations = (await api.get('/v1/conversations', { project: String(id) })).conversations;
     } else {
       project = null;
     }
+  }
+
+  async function loadMemory(): Promise<void> {
+    memory = (await api.get('/v1/memory/scopes').catch(() => ({ scopes: {} }))).scopes;
   }
 
   $effect(() => {
@@ -244,7 +252,9 @@
   }
 
   async function removeProject(): Promise<void> {
-    if (!(await confirmDialog({ title: 'Delete a project', message: 'Delete this project and its files? Its conversations stay.', confirm: 'Delete', danger: true }))) return;
+    const facts = remembered(id as number).facts;
+    const message = `Delete this project and its files? Its conversations stay.${facts ? ` The ${plural(facts, 'fact')} it remembers are deleted too.` : ''}`;
+    if (!(await confirmDialog({ title: 'Delete a project', message, confirm: 'Delete', danger: true }))) return;
     await api.del(`/v1/projects/${id}`);
     go('/projects');
   }
@@ -338,6 +348,10 @@
           <div class="muted small">{item.description}</div>
           <div class="small">{item.files} files · {size(item.size)} · {item.conversations} conversations · {item.context.inline ? 'in the prompt' : 'searched'}</div>
           {#if extras(item)}<div class="small muted">Starts with {extras(item)}</div>{/if}
+          {#if remembered(item.id).facts}
+            <div class="row small muted">Remembers {plural(remembered(item.id).facts, 'fact')}
+              {#if remembered(item.id).waiting}<span class="tag warn">{remembered(item.id).waiting} waiting for you</span>{/if}</div>
+          {/if}
           <button class="small toggle" aria-pressed={item.in_history} title="List this project's conversations in the history of the rail"
             onclick={() => inHistory(item)}><Icon name="eye" size={14} />Show in history</button>
         </div>
@@ -385,6 +399,10 @@
       <PackCards legend="Special tools of its new conversations" {packs} bind:value={project.packs}
         help="A conversation started in this project begins with these tools; its “+” menu can still change them, and the ones already begun keep theirs." />
       <div class="row"><button class="primary" onclick={savePacks}>Save the tools</button></div>
+    </div>
+    <div class="panel stack">
+      <h2>Memory</h2>
+      <Facts scope={`project:${id}`} onchange={loadMemory} />
     </div>
     <div class="panel">
       <h2>Files</h2>

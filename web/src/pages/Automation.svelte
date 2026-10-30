@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Choice from '../components/Choice.svelte';
+  import Facts from '../components/Facts.svelte';
   import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
   import LevelSelect from '../components/LevelSelect.svelte';
@@ -148,6 +149,8 @@
   let saving = $state(false);
   let toolFilter = $state('');
   let inspect = $state<{ item: any; rows: any[] } | null>(null); // the runs of one item, when that panel is open
+  let remembering = $state<any>(null); // the item whose memory is open
+  let memory = $state<Record<string, { facts: number; waiting: number }>>({}); // the facts each item remembers, by scope
   let probe = $state<any>(null); // { hook, events, pick, result }
   let seen = $state<any[] | null>(null); // the events stored, when that panel is open
   let newButton = $state<HTMLButtonElement>();
@@ -158,6 +161,11 @@
   const rows = $derived([...schedules, ...hooks]);
   const keyOf = (item: any): string => `${item.on}-${item.id}`;
   const pathOf = (item: any): string => (item.on === TIME ? `/v1/schedules/${item.id}` : `/v1/triggers/${item.id}`);
+  const scopeOf = (item: any): string => `${item.on === TIME ? 'schedule' : 'hook'}:${item.id}`;
+  // Does a hook's list of tools (names or globs such as mail_*) offer this tool?
+  const offers = (item: any, name: string): boolean =>
+    item.effective_tools.some((pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(name));
+  const remembered = (item: any): { facts: number; waiting: number } => memory[scopeOf(item)] ?? { facts: 0, waiting: 0 };
   const fields = $derived<Record<string, string>>(kinds.find((kind) => kind.kind === form.on)?.fields ?? {});
   const readTools = $derived<string[]>([...(kinds.find((kind) => kind.kind === form.on)?.read_tools ?? []), 'notify']);
   const shownTools = $derived(toolNames.filter((name) => name.includes(toolFilter.trim().toLowerCase())));
@@ -293,8 +301,13 @@
         github: { ready: connections.github.connected && connections.github.repos.length > 0, poll: connections.github.poll_seconds },
       };
     }
+    await loadMemory();
     if (inspect) await showRuns(inspect.item);
     if (seen) seen = (await api.get('/v1/trigger-events', { limit: 30 })).events;
+  }
+
+  async function loadMemory(): Promise<void> {
+    memory = (await api.get('/v1/memory/scopes').catch(() => ({ scopes: {} }))).scopes;
   }
 
   $effect(() => {
@@ -505,12 +518,16 @@
 
   async function remove(item: any): Promise<void> {
     const timed = item.on === TIME;
-    const message = timed
-      ? `Delete “${item.name}”?`
-      : `Delete “${item.name}”? Its runs are forgotten; the conversations they made stay, no longer grouped under the hook.`;
+    const facts = remembered(item).facts;
+    const message =
+      (timed
+        ? `Delete “${item.name}”?`
+        : `Delete “${item.name}”? Its runs are forgotten; the conversations they made stay, no longer grouped under the hook.`) +
+      (facts ? ` The ${facts} ${facts === 1 ? 'fact' : 'facts'} it remembers ${facts === 1 ? 'is' : 'are'} deleted too.` : '');
     if (!(await confirmDialog({ title: timed ? 'Delete schedule' : 'Delete hook', message, confirm: 'Delete', danger: true }))) return;
     await api.del(pathOf(item));
     if (inspect && keyOf(inspect.item) === keyOf(item)) inspect = null;
+    if (remembering && keyOf(remembering) === keyOf(item)) remembering = null;
     if (probe && keyOf(probe.hook) === keyOf(item)) probe = null;
     load();
   }
@@ -842,6 +859,7 @@
             {#if !item.enabled}<span class="tag">paused</span>{/if}{#if item.running}<span class="tag ok">running</span>{/if}
             {#if item.queued}<span class="tag" class:warn={!timed}>{item.queued} {timed ? 'queued' : 'waiting'}</span>{/if}
             {#if item.local_only}<span class="tag"><Icon name="home" size={14} />local only</span>{/if}
+            {#if remembered(item).waiting}<span class="tag warn">{remembered(item).waiting} {remembered(item).waiting === 1 ? 'fact waits' : 'facts wait'} for you</span>{/if}
             {#if TALKS.includes(item.deliver)}<span class="tag"><Icon name="chat" size={14} />on Discord</span>{/if}
             {#if timed}
               {#if item.waiting_run}<span class="tag warn">waiting for you</span>{/if}
@@ -873,6 +891,8 @@
             <button class="small" onclick={() => edit(item)}>Edit</button>
             <button class="small" onclick={() => toggle(item)}>{item.enabled ? 'Pause' : 'Resume'}</button>
             <button class="small" onclick={() => showRuns(item)}>Runs</button>
+            <button class="small" aria-expanded={!!remembering && keyOf(remembering) === keyOf(item)}
+              onclick={() => (remembering && keyOf(remembering) === keyOf(item) ? (remembering = null) : (remembering = item))}>Memory{remembered(item).facts ? ` (${remembered(item).facts})` : ''}</button>
             <button class="small toggle" aria-pressed={item.in_history} title="List this automation's conversations in the history of the rail"
               onclick={() => inHistory(item)}><Icon name="eye" size={14} />Show in history</button>
             {#if timed && item.waiting_run}
@@ -910,6 +930,15 @@
         </div>
         {#if probe.result.tools.length}<p class="small">Tools: {probe.result.tools.join(', ')}</p>{/if}
         <pre class="message" aria-label="What Clara would receive">{probe.result.message}</pre>
+      {/if}
+    </div>
+  {/if}
+  {#if remembering}
+    <div class="panel stack">
+      <div class="row"><h2 class="grow">Memory of {remembering.name}</h2><button class="small" onclick={() => (remembering = null)}>Close</button></div>
+      <Facts scope={scopeOf(remembering)} onchange={loadMemory} />
+      {#if remembering.on !== TIME && remembering.action === 'run' && !offers(remembering, 'remember')}
+        <p class="muted small">This hook's runs read this memory but cannot add to it: put the tool <code>remember</code> in its list of tools.</p>
       {/if}
     </div>
   {/if}

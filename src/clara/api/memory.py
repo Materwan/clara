@@ -1,4 +1,5 @@
-"""Memory: the facts Clara keeps about you. You can list, add, edit, confirm, pin and delete them."""
+"""Memory: the facts Clara keeps, in the global memory and in the memory of each project, schedule and hook. You can list,
+add, edit, confirm, pin and delete them."""
 
 from __future__ import annotations
 
@@ -25,15 +26,38 @@ def _expiry(request: Request, text: str | None) -> str | None:
         raise ApiError(422, f"expires_at: {error}") from None
 
 
+def _scope(request: Request, scope: str) -> str:
+    """The scope, which must be the global memory (empty) or a project, schedule or hook that exists."""
+    try:
+        services(request).facts.check_scope(scope)
+    except FactError as error:
+        raise ApiError(404 if str(error).startswith("No ") else 422, str(error)) from None
+    return scope
+
+
 @router.get("/facts")
 def listing(
     request: Request,
     state: Literal["live", "unconfirmed", "expired", "superseded", "all"] = "live",
     q: str = Query("", max_length=200),
+    scope: str = Query("", max_length=40, description="'' (global), project:<id>, schedule:<id> or hook:<id>"),
 ) -> dict:
     facts = services(request).facts
-    found = facts.search(q, 200, include_old=state != "live") if q.strip() else facts.listing(state)
-    return {"facts": [fact.describe() for fact in found], "live": facts.count_live()}
+    scope = _scope(request, scope)
+    found = (
+        facts.search(q, 200, include_old=state != "live", scopes=(scope,)) if q.strip() else facts.listing(state, scope)
+    )
+    return {
+        "facts": [fact.describe() for fact in found],
+        "live": facts.count_live(scope),
+        "waiting": len(facts.listing("unconfirmed", scope)),
+    }
+
+
+@router.get("/scopes")
+def scopes(request: Request) -> dict:
+    """The projects, schedules and hooks that have a memory: its live facts and how many wait for your confirmation."""
+    return {"scopes": services(request).facts.scopes()}
 
 
 class NewFact(BaseModel):
@@ -42,10 +66,12 @@ class NewFact(BaseModel):
     pinned: bool = False
     expires_at: str | None = Field(default=None, max_length=40)
     replaces: int | None = None
+    scope: str = Field(default="", max_length=40, description="'' (global), project:<id>, schedule:<id> or hook:<id>")
 
 
 @router.post("/facts", status_code=201)
 def add(body: NewFact, request: Request) -> dict:
+    scope = _scope(request, body.scope)
     try:
         fact, new = services(request).facts.add(
             body.text,
@@ -54,6 +80,7 @@ def add(body: NewFact, request: Request) -> dict:
             pinned=body.pinned,
             expires_at=_expiry(request, body.expires_at),
             replaces=body.replaces,
+            scope=scope,
         )
     except FactError as error:
         raise ApiError(422, str(error)) from None

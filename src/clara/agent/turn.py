@@ -53,7 +53,7 @@ from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PROJECT_TOOLS,
 from .compaction import build_transcript, chunk_messages, summary_request, transcript_budget
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
 from .model import Budget, ModelRunner, RoundResult
-from .prompt import Persona, PromptParts, render
+from .prompt import Persona, PromptParts, ScopedFacts, render
 from .runs import Runs
 
 if TYPE_CHECKING:
@@ -452,6 +452,23 @@ class Agent:
             used += cost
         return lines, max(0, self.s.facts.count_live() - len(lines))
 
+    def _scoped_facts(self, conversation_id: str) -> list[ScopedFacts]:
+        """The memory of the conversation's project and of its automation (a schedule or a hook), each within its own budget.
+        A fact waiting for the person's confirmation is not in it."""
+        blocks: list[ScopedFacts] = []
+        for home in self.s.conversations.memory_scopes(conversation_id).values():
+            lines: list[str] = []
+            used = 0
+            for fact in self.s.facts.shown(home.scope, 500):  # pinned first, then newest first
+                line = fact.line()
+                cost = estimate_tokens(line) + 1
+                if used + cost > self.settings.scope_facts_token_budget and not fact.pinned:
+                    break
+                lines.append(line)
+                used += cost
+            blocks.append(ScopedFacts(home.kind, home.name, lines, self.s.facts.count_shown(home.scope) - len(lines)))
+        return blocks
+
     def _recent_tool_rows(self, stored: list[StoredMessage], window: int) -> set[int]:
         budget = min(TOOL_HISTORY_SHARE * window, TOOL_HISTORY_MAX_TOKENS)
         kept: set[int] = set()
@@ -521,6 +538,7 @@ class Agent:
                 messages.append({"role": "system", "content": request.instructions.strip()})
         else:
             facts, omitted = ([], 0) if state.incognito else self._facts()
+            scoped = self._scoped_facts(conversation.id) if conversation and not state.incognito else []
             project = ""
             if state.project_id is not None:
                 context = self.s.projects.context(state.project_id, plan.choice.window)
@@ -545,6 +563,7 @@ class Agent:
                 files=files,
                 facts=facts,
                 omitted_facts=omitted,
+                scoped_facts=scoped,
                 incognito=state.incognito,
                 local_only=state.local_only,
                 unattended=state.mode == "unattended",

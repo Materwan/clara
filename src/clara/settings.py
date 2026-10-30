@@ -93,6 +93,7 @@ class Settings:
     keep_recent_turns: int = 2
     purge_summarised: bool = False
     facts_token_budget: int = 2_000
+    scope_facts_token_budget: int = 1_000  # for the memory of a project, and again for that of an automation
     approval_wait: float = 600.0
     approval_expire: int = 86_400
     notify_long_turn: int = 120
@@ -428,6 +429,7 @@ def load_settings(
         keep_recent_turns=r.integer("CLARA_KEEP_RECENT_TURNS", 2, 0, 50),
         purge_summarised=r.flag("CLARA_PURGE_SUMMARISED", False),
         facts_token_budget=r.integer("CLARA_FACTS_TOKEN_BUDGET", 2_000, 0),
+        scope_facts_token_budget=r.integer("CLARA_SCOPE_FACTS_TOKEN_BUDGET", 1_000, 0),
         approval_wait=r.number("CLARA_APPROVAL_WAIT", 600.0, 0),
         approval_expire=r.integer("CLARA_APPROVAL_EXPIRE", 86_400, 60),
         notify_long_turn=r.integer("CLARA_NOTIFY_LONG_TURN", 120, 0),

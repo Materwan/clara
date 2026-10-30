@@ -1,5 +1,11 @@
-"""One global memory of facts about you, each with where it came from.
+"""The facts Clara keeps, each with where it came from, in one global memory and one for each project, schedule and hook.
 
+* **scope** `""` is the global memory (about you, true everywhere). `project:<id>`, `schedule:<id>` and `hook:<id>` are
+  the memory common to every conversation and run of that project, schedule or hook: what Clara learns in one, the next
+  knows. The same sentence may stand in several scopes. A scope's facts go when it is deleted (a trigger of the database).
+  A **scoped fact saved in a tainted turn** is stored `tool`, unconfirmed and *hidden*: no conversation sees it, in the
+  prompt or in `recall_facts`, until you confirm it (the global memory shows such a fact, tagged). A planted note would
+  otherwise steer every later run, not just one.
 * **source** `you` (you wrote it: Memory page, `/remember`, the API), `model` (Clara saved it with `remember` in a
   turn that read nothing untrusted) or `tool` (she saved it in a *tainted* turn, after reading a web page, a fetched
   file, an issue…). `tool` facts start **unconfirmed**: they are shown to Clara tagged `[unconfirmed]` until you
@@ -18,6 +24,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..db import Database
@@ -27,10 +34,28 @@ from ..timeutil import now_iso
 MAX_FACT_LENGTH = 300
 MAX_CATEGORY = 32
 SOURCES = ("you", "model", "tool")
+GLOBAL = ""
+PROJECT, SCHEDULE, HOOK = "project", "schedule", "hook"
+SCOPE_TABLES = {PROJECT: "projects", SCHEDULE: "schedules", HOOK: "triggers"}
+MAX_SCOPED_FACTS = 100  # live facts of one project, schedule or hook (the ones waiting for you included)
+# ...of which at most this many may wait for your confirmation: a hostile mail cannot fill the memory with them
+MAX_WAITING_FACTS = 20
 
 
 class FactError(ValueError):
     pass
+
+
+def scope_name(kind: str, number: int) -> str:
+    return f"{kind}:{number}"
+
+
+def split_scope(scope: str) -> tuple[str, int] | None:
+    """('hook', 5) for 'hook:5'; None for the global memory or for text that is no scope."""
+    kind, _, number = scope.partition(":")
+    if kind in SCOPE_TABLES and number.isdecimal():
+        return kind, int(number)
+    return None
 
 
 @dataclass(frozen=True)
@@ -46,6 +71,7 @@ class Fact:
     confirmed_at: str | None
     expires_at: str | None
     superseded_by: int | None
+    scope: str = GLOBAL
 
     def line(self) -> str:
         """As the prompt shows it."""
@@ -70,6 +96,7 @@ class Fact:
             "confirmed_at": self.confirmed_at,
             "expires_at": self.expires_at,
             "superseded_by": self.superseded_by,
+            "scope": self.scope,
         }
 
 
@@ -99,6 +126,7 @@ def _fact(row) -> Fact:
         row["confirmed_at"],
         row["expires_at"],
         row["superseded_by"],
+        row["scope"],
     )
 
 
@@ -119,8 +147,10 @@ class Facts:
         conversation_id: str | None = None,
         expires_at: str | None = None,
         replaces: int | None = None,
+        scope: str = GLOBAL,
     ) -> tuple[Fact, bool]:
-        """Store a fact. (the fact, True) when new; (the live fact with the same text, False) when known already."""
+        """Store a fact in a scope. (the fact, True) when new; (the live fact with the same text, False) when known already."""
+        self.check_scope(scope)
         text = " ".join(str(text).split())
         if not text:
             raise FactError("The fact is empty.")
@@ -132,23 +162,31 @@ class Facts:
             raise FactError("This looks like a secret (a key, a token, a password): secrets are never stored as facts.")
         category = " ".join(str(category or "").split())[:MAX_CATEGORY]
         key = fold(text)
-        if source != "you" and self.db.one("SELECT 1 FROM forgotten WHERE text_key = ?", (key,)):
+        if source != "you" and self.db.one("SELECT 1 FROM forgotten WHERE scope = ? AND text_key = ?", (scope, key)):
             raise FactError("You asked me to forget this before: I do not save it again unless you add it yourself.")
-        existing = self.db.one("SELECT * FROM facts WHERE text_key = ? AND superseded_by IS NULL", (key,))
+        existing = self.db.one(
+            "SELECT * FROM facts WHERE scope = ? AND text_key = ? AND superseded_by IS NULL", (scope, key)
+        )
         if existing is not None:
             return _fact(existing), False
         confirmed = source != "tool"
+        if scope and replaces is not None and not confirmed:
+            raise FactError("A fact that waits for your confirmation cannot replace another one.")
         now = now_iso()
         with self.db.transaction() as tx:
+            if scope:
+                self._check_room(tx, scope, waiting=not confirmed)
             if replaces is not None:
-                old = tx.execute("SELECT id FROM facts WHERE id = ? AND superseded_by IS NULL", (replaces,)).fetchone()
+                old = tx.execute(
+                    "SELECT id FROM facts WHERE id = ? AND scope = ? AND superseded_by IS NULL", (replaces, scope)
+                ).fetchone()
                 if old is None:
                     raise FactError(f"No live fact {replaces} to replace.")
             if source == "you":
-                tx.execute("DELETE FROM forgotten WHERE text_key = ?", (key,))
+                tx.execute("DELETE FROM forgotten WHERE scope = ? AND text_key = ?", (scope, key))
             fact_id = tx.execute(
                 "INSERT INTO facts (text, text_key, category, pinned, source, confirmed, conversation_id, created_at,"
-                " confirmed_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " confirmed_at, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     text,
                     key,
@@ -160,6 +198,7 @@ class Facts:
                     now,
                     now if confirmed else None,
                     expires_at,
+                    scope,
                 ),
             ).lastrowid
             if replaces is not None:
@@ -170,22 +209,64 @@ class Facts:
         assert fact is not None
         return fact, True
 
+    def check_scope(self, scope: str) -> None:
+        """The scope is the global memory or a project, schedule or hook that exists."""
+        if scope == GLOBAL:
+            return
+        found = split_scope(scope)
+        if found is None:
+            raise FactError("A scope is empty (everything), project:<id>, schedule:<id> or hook:<id>.")
+        kind, number = found
+        if self.db.one(f"SELECT 1 FROM {SCOPE_TABLES[kind]} WHERE id = ?", (number,)) is None:
+            raise FactError(f"No {kind} {number}.")
+
+    @staticmethod
+    def _check_room(tx, scope: str, *, waiting: bool) -> None:
+        now = now_iso()
+        total, waits = tx.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(confirmed = 0), 0) FROM facts WHERE scope = ? AND {LIVE}", (scope, now)
+        ).fetchone()
+        if total >= MAX_SCOPED_FACTS:
+            raise FactError(f"This memory holds {MAX_SCOPED_FACTS} facts already: delete some before adding more.")
+        if waiting and waits >= MAX_WAITING_FACTS:
+            raise FactError(f"{MAX_WAITING_FACTS} facts already wait for the person's confirmation: no more for now.")
+
     def get(self, fact_id: int) -> Fact | None:
         row = self.db.one("SELECT * FROM facts WHERE id = ?", (fact_id,))
         return _fact(row) if row else None
 
-    def live(self, limit: int = 500) -> list[Fact]:
-        """The facts that hold now: pinned first, then newest first."""
+    def live(self, limit: int = 500, scope: str = GLOBAL) -> list[Fact]:
+        """The facts of a scope that hold now: pinned first, then newest first."""
         rows = self.db.all(
-            f"SELECT * FROM facts WHERE {LIVE} ORDER BY pinned DESC, id DESC LIMIT ?", (now_iso(), limit)
+            f"SELECT * FROM facts WHERE scope = ? AND {LIVE} ORDER BY pinned DESC, id DESC LIMIT ?",
+            (scope, now_iso(), limit),
         )
         return [_fact(row) for row in rows]
 
-    def count_live(self) -> int:
-        return int(self.db.value(f"SELECT COUNT(*) FROM facts WHERE {LIVE}", (now_iso(),), 0))
+    def shown(self, scope: str, limit: int = 500) -> list[Fact]:
+        """What a conversation is shown of a scope: like `live`, but a scoped fact that waits for your confirmation is hidden."""
+        return [fact for fact in self.live(limit, scope) if fact.confirmed or scope == GLOBAL]
 
-    def listing(self, state: str = "live") -> list[Fact]:
-        """For the Memory page: live, unconfirmed, expired, superseded or all."""
+    def count_live(self, scope: str = GLOBAL) -> int:
+        return int(self.db.value(f"SELECT COUNT(*) FROM facts WHERE scope = ? AND {LIVE}", (scope, now_iso()), 0))
+
+    def count_shown(self, scope: str) -> int:
+        confirmed = "" if scope == GLOBAL else " AND confirmed = 1"
+        return int(
+            self.db.value(f"SELECT COUNT(*) FROM facts WHERE scope = ? AND {LIVE}{confirmed}", (scope, now_iso()), 0)
+        )
+
+    def scopes(self) -> dict[str, dict[str, int]]:
+        """For each project, schedule or hook that has a memory: its live facts and how many of them wait for you."""
+        rows = self.db.all(
+            "SELECT scope, COUNT(*) AS facts, COALESCE(SUM(confirmed = 0), 0) AS waiting FROM facts"
+            f" WHERE scope != '' AND {LIVE} GROUP BY scope",
+            (now_iso(),),
+        )
+        return {row["scope"]: {"facts": row["facts"], "waiting": row["waiting"]} for row in rows}
+
+    def listing(self, state: str = "live", scope: str = GLOBAL) -> list[Fact]:
+        """For the Memory page and the pages of a project or an automation: live, unconfirmed, expired, superseded or all."""
         now = now_iso()
         where = {
             "live": (LIVE, (now,)),
@@ -196,15 +277,31 @@ class Facts:
         }.get(state)
         if where is None:
             raise FactError("state must be live, unconfirmed, expired, superseded or all")
-        rows = self.db.all(f"SELECT * FROM facts WHERE {where[0]} ORDER BY pinned DESC, id DESC", where[1])
+        rows = self.db.all(
+            f"SELECT * FROM facts WHERE scope = ? AND {where[0]} ORDER BY pinned DESC, id DESC", (scope, *where[1])
+        )
         return [_fact(row) for row in rows]
 
-    def search(self, query: str, limit: int = 10, include_old: bool = False) -> list[Fact]:
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        include_old: bool = False,
+        scopes: Sequence[str] = (GLOBAL,),
+        *,
+        for_model: bool = False,
+    ) -> list[Fact]:
+        """Full-text search in some scopes. `for_model` leaves out the scoped facts that wait for your confirmation."""
         match = fts_query(query)
-        if not match:
+        if not match or not scopes:
             return []
-        where = "1" if include_old else "f.superseded_by IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?)"
-        params: tuple = (match,) if include_old else (match, now_iso())
+        where = f"f.scope IN ({','.join('?' * len(scopes))})"
+        params: list = [match, *scopes]
+        if not include_old:
+            where += " AND f.superseded_by IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?)"
+            params.append(now_iso())
+        if for_model:
+            where += " AND (f.scope = '' OR f.confirmed = 1)"
         rows = self.db.all(
             f"SELECT f.* FROM facts_fts JOIN facts f ON f.id = facts_fts.rowid WHERE facts_fts MATCH ? AND {where}"
             " ORDER BY bm25(facts_fts) LIMIT ?",
@@ -267,7 +364,7 @@ class Facts:
         return fact
 
     def forget(self, fact_id: int) -> bool:
-        """Delete a fact and the older ones it replaced; remember its text so Clara does not save it again."""
+        """Delete a fact and the older ones it replaced; remember its text (in its scope) so Clara does not save it again."""
         fact = self.get(fact_id)
         if fact is None:
             return False
@@ -285,7 +382,8 @@ class Facts:
                     break
                 chain.extend(older)
             tx.execute(
-                "INSERT OR REPLACE INTO forgotten (text_key, forgotten_at) VALUES (?, ?)", (fold(fact.text), now_iso())
+                "INSERT OR REPLACE INTO forgotten (scope, text_key, forgotten_at) VALUES (?, ?, ?)",
+                (fact.scope, fold(fact.text), now_iso()),
             )
             tx.execute(f"DELETE FROM facts WHERE id IN ({','.join('?' * len(chain))})", chain)
         return True

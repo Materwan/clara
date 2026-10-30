@@ -113,7 +113,9 @@ def _forum_deleted(s, place: str):
         return None
     where, params = scope_of(kind, target)
     count = s.db.value(f"SELECT COUNT(*) FROM conversations WHERE {where}", params, 0)
-    summary = f"Delete {name} and its {count} conversations: their forum was deleted on Discord."
+    remembered = s.facts.count_live(f"{kind}:{target}") if kind in ("project", "schedule", "hook") else 0
+    what = f"{count} conversations" + (f" and its {remembered} remembered facts" if remembered else "")
+    summary = f"Delete {name} and its {what}: their forum was deleted on Discord."
     return s.approvals.ask_outside(
         "discord_forget",
         {"kind": kind, "target": target, "summary": summary},

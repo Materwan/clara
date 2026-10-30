@@ -20,12 +20,21 @@ from datetime import timedelta
 from ..db import Database
 from ..mirror.clock import bump
 from ..timeutil import iso, now_iso, utcnow
-from .facts import fts_query
+from .facts import HOOK, PROJECT, SCHEDULE, fts_query, scope_name
 
 MAX_TITLE = 100
 PREVIEW = 300
 ANY = "any"
 NONE = "none"
+
+
+@dataclass(frozen=True)
+class MemoryScope:
+    """A memory a conversation shares with others besides the global one (memory/facts.py)."""
+
+    kind: str  # "project", or "automation" (the schedule or hook whose run the conversation is)
+    scope: str  # as facts store it: project:3, schedule:2, hook:5
+    name: str
 
 
 @dataclass(frozen=True)
@@ -216,6 +225,28 @@ class Conversations:
     def get(self, conversation_id: str) -> Conversation | None:
         row = self.db.one("SELECT * FROM conversations WHERE id = ?", (conversation_id,))
         return _conversation(row) if row else None
+
+    def memory_scopes(self, conversation_id: str) -> dict[str, MemoryScope]:
+        """The project and the automation whose memory this conversation shares, by kind (none of them: an empty dict)."""
+        row = self.db.one(
+            "SELECT c.project_id, (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name,"
+            f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
+            f" {self._HOOK} AS hook_id, (SELECT t.name FROM triggers t WHERE t.id = {self._HOOK}) AS hook_name"
+            " FROM conversations c WHERE c.id = ?",
+            (conversation_id,),
+        )
+        found: dict[str, MemoryScope] = {}
+        if row is None:
+            return found
+        if row["project_id"] is not None:
+            found["project"] = MemoryScope("project", scope_name(PROJECT, row["project_id"]), row["project_name"])
+        if row["schedule_id"] is not None:
+            found["automation"] = MemoryScope(
+                "automation", scope_name(SCHEDULE, row["schedule_id"]), row["schedule_name"]
+            )
+        elif row["hook_id"] is not None:
+            found["automation"] = MemoryScope("automation", scope_name(HOOK, row["hook_id"]), row["hook_name"])
+        return found
 
     def require(self, conversation_id: str) -> Conversation:
         conversation = self.get(conversation_id)

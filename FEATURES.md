@@ -62,12 +62,12 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Chat | Streamed answers with thinking, Clara's portrait beside each answer, tool calls in the order she made them (a run of calls is one line that opens on each call's arguments and result), Markdown with LaTeX (KaTeX) and code; the **"+" menu** of the box you write in (add files, switch special tools and web search on or off, the second brain, choose the project; the choices are saved with the conversation), the **auto level** selector beside it (the level of the conversation, or « Follows the project / the default » when it has none of its own; a new conversation can be started at a level; choosing the last level asks first, because it suspends the tainted-turn rule and the secret check) and drag and drop for files (PDF, Word, text, pictures, animations); approval requests inline; the **side panel** on the right of a conversation (a button in its header, with a count; closed until something arrives, it opens by itself on the first card unless you closed it, and on a QCM when Clara makes one; your choice is kept in the browser; a drawer on a phone): one **card** for each workspace file Clara wrote in the conversation (name, folder, when it was first written, **Download**), for each vault note she created or edited in it (name, Created or Edited, folder, when, size) and for each QCM (title, questions, how far you are). A click on a file or a note leads to the **Library** and opens it there (`#/library?path=…` for a file, `#/library?view=vault&note=…` for a note): the Library is the whole workspace and the whole vault. A QCM card replaces the list with the quiz, one question at a time as in NotebookLM: a progress bar and arrows, lettered options, **Hint**, **Check** (right and wrong are coloured at once from Clara's key and her correction follows in the chat), **Skip** (Clara is not woken), the explanation, and at the end a score with each question's result and **Retry**; answers wait in a queue while Clara is still correcting the one before. The chat keeps a chip where the QCM was made. `ask_questions` replaces the box you write in with its questions, one after the other (keys 1 to 4, a last "Other" line where you write anything, **Back**, a review step before **Submit**, Escape dismisses); edit a message or ask again (versions, with arrows between them); a reply that failed or was cut off has **Try again** (its question is asked again, as a new version when it is stored); stop an answer (it goes on if you leave the conversation or close the page: open it again and you see what it did and the rest as it comes); pick the model per conversation; start an **incognito** or a **local-only** conversation; compact it; notes Clara writes in `notes/` appear as cards you open or download (files sent in a conversation are downloaded through the API) |
 | Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A switch in the account menu, **Discord conversations** (on at first, kept in the browser), leaves out of the list what Discord started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
-| Memory (Settings) | Facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown |
+| Memory (Settings) | The global memory's facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown. The memory of a project, a schedule or a hook is on its own page |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
-| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Each item has an **Auto level** selector, the level its runs have (empty: its project's, else the default of runs nobody watches). Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, and the tool has no level field, so she cannot give an automation a level |
+| Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Each item has an **Auto level** selector, the level its runs have (empty: its project's, else the default of runs nobody watches), and a **Memory** button that opens the facts it keeps (the count on the button, and a tag when some wait for you); deleting an item says how many facts go with it. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, and the tool has no level field, so she cannot give an automation a level |
 | Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
 | Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
-| Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Auto level** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with |
+| Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Auto level** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with and how many facts it remembers (and how many wait for you). Its **Memory** panel is the same list of facts as the Memory page, for this project only: add, edit, pin, confirm (a fact Clara saved after reading outside content waits there, hidden from every conversation, until you confirm it) and forget; deleting the project says how many facts go with it |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
@@ -322,22 +322,53 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 
 ## 4. Memory
 
-One memory, shared by every client and conversation (except incognito ones).
+One **global memory**, shared by every client and conversation (except incognito ones), and a **memory of its own for each
+project, schedule and hook**, shared by every conversation and run of it: what Clara learns in one, the next one knows.
+The same sentence may stand in several memories.
 
 - **Facts** are short sentences (300 characters) with a category, a pin, a **source** (`you`, `model` or `tool`), the
   conversation they came from, and dates (created, confirmed, expires).
 - A fact you add has source `you`; one Clara saves has source `model`, or `tool` when she saves it during a turn that
-  read untrusted content (a web page, a fetched file, an issue). A `tool` fact is **unconfirmed**: it is shown to the
-  model tagged `[unconfirmed]` until you confirm it.
-- **Supersede:** a new fact can replace an old one (`replaces`); the old one is kept, marked superseded.
+  read untrusted content (a web page, a fetched file, an issue). A `tool` fact is **unconfirmed**: in the global memory it
+  is shown to the model tagged `[unconfirmed]` until you confirm it.
+- **Supersede:** a new fact can replace an old one (`replaces`) of the same memory; the old one is kept, marked superseded.
 - **Expiry:** a fact true for a while (`expires`) stops being shown after that instant.
-- **Forget** deletes the fact and leaves a tombstone, so the same sentence is not saved again by the model; you can
-  still add it yourself.
+- **Forget** deletes the fact and leaves a tombstone (in its memory), so the same sentence is not saved again by the
+  model; you can still add it yourself.
 - **Never secrets:** text that looks like a key, token, password or private key is refused as a fact.
 - **Recall:** full-text search (SQLite FTS5: any case, accents ignored, word starts). The prompt carries pinned facts
   first, then the newest, within `CLARA_FACTS_TOKEN_BUDGET` (2,000 tokens); the model is told how many were left out
   and finds them with `recall_facts`.
 - **History search:** `search_history` searches every earlier conversation (FTS5 over messages), with dates and excerpts.
+
+**The memory of a project, a schedule or a hook**
+
+- **Which memories a conversation has:** the global one, its project's, and its automation's when it is a run of a
+  schedule (its shared conversation, or the one a run made) or of a hook (and the conversation you continue from a run). A hook that
+  names a project reads both. A conversation of no project and no automation has the global memory only.
+- **Clara chooses where a fact goes.** `remember` takes a `scope` (`global`, `project`, `automation`); when the
+  conversation has a project or an automation she must say it, and nothing is chosen for her (a conversation without
+  either needs no `scope`). `recall_facts` searches the global memory and the memories of the conversation; `forget` reaches only
+  those. A hook's runs have `remember` only when its list of tools names it.
+- **What the prompt says:** below the global facts, one block for the project and one for the automation, each within
+  `CLARA_SCOPE_FACTS_TOKEN_BUDGET` (1,000 tokens; pinned facts always), shown even when empty so Clara sees the memory
+  exists. They are told as your standing wishes for that project or automation, which never give a tool or a permission.
+- **After outside content, a scoped fact waits.** In a turn that read untrusted content (a hook's run is one from its first
+  word, a chat that read mail or the web too), a fact saved for a project or an automation is stored as `tool`, unconfirmed
+  and **hidden**: no conversation sees it, in the prompt or in `recall_facts`, until you confirm it on the project's or the
+  automation's page. Such a turn can neither `replace` nor `forget` a fact of those memories, so it cannot remove a rule you
+  made. Clara is told the fact does not apply yet, and says so. A run nobody watches that leaves one waiting sends
+  **one notification** per run (source `memory`, with no word of the fact, which may come from outside).
+- **Private conversations:** an incognito conversation reads and writes none of it. A local-only conversation reads the
+  memories of its project and automation but never writes to them (it may still write the global one, as before).
+- **You** add, edit, pin, confirm and forget these facts on the project's or the automation's page, like the global
+  ones (`scope` on `GET` and `POST /v1/memory/facts`); a fact you write is a standing instruction of your own, and needs no confirmation.
+- **Limits:** 100 live facts per project, schedule or hook, of which at most 20 may wait for your confirmation (a hostile
+  mail cannot fill the memory with them).
+- **Deletion:** the facts go with their project, schedule or hook (a trigger of the database, so a delete from the web
+  site, the API, the console or an approved Discord deletion all take them); the dialogs and the Discord request say how many.
+  A project's conversations stay, as before.
+- It is in the database: backups carry it.
 
 ## 5. Time
 
@@ -442,7 +473,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   also name a **project**, whose files and instructions are then context for every run. It is **tainted from its first word**: every outside write (a send, a GitHub change, a
   Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
   lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`; GitHub: `github_read`),
-  so a hook never has more than you gave it. A run whose tools name a mail tool gets the Mail pack for that run. The same limits hold for the turn that follows one of its approvals. The event
+  so a hook never has more than you gave it (a hook learns from its runs only with `remember` in its list: see section 4). A run whose tools name a mail tool gets the Mail pack for that run. The same limits hold for the turn that follows one of its approvals. The event
   reaches the model after your prompt, inside an `<event>` tag as JSON with `<` and `>` escaped, with a line saying it is
   data. To let a hook send, list `mail_send` in its tools **and** write the rule; the run is tainted, so each send still asks.
 - **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the poll (mail or GitHub) had reached are
@@ -739,9 +770,9 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 
 | Tool | What it does | Class / level |
 | --- | --- | --- |
-| `remember` | Save one durable fact (with `replaces`, `expires`, category) | memory / write |
-| `recall_facts` | Search remembered facts (10 best) | read |
-| `forget` | Delete a fact, by id (tombstone) | memory / write |
+| `remember` | Save one durable fact (with `scope`: `global`, `project` or `automation`, which Clara chooses when the conversation has a project or an automation; `replaces`, `expires`, category) | memory / write |
+| `recall_facts` | Search remembered facts, the global ones and those of the conversation's project and automation (10 best) | read |
+| `forget` | Delete a fact, by id (tombstone), from the global memory or the conversation's project or automation | memory / write |
 | `search_history` | Search earlier conversations (8 best, with dates and excerpts) | read |
 | `remind` | Set a reminder (once, daily, weekly, monthly; for some clients) | memory / write |
 | `list_reminders` | Reminders to come | read |
@@ -997,6 +1028,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_KEEP_RECENT_TURNS` | 2 | Turns kept whole when compacting |
 | `CLARA_PURGE_SUMMARISED` | false | Delete messages once summarised |
 | `CLARA_FACTS_TOKEN_BUDGET` | 2000 | Tokens of facts in a prompt |
+| `CLARA_SCOPE_FACTS_TOKEN_BUDGET` | 1000 | Tokens of the facts of a project, and again of an automation, in a prompt |
 | `CLARA_APPROVAL_WAIT` | 600 | Seconds a streamed chat waits for an approval |
 | `CLARA_APPROVAL_EXPIRE` | 86400 | Seconds before a request expires |
 | `CLARA_NOTIFY_LONG_TURN` | 120 | Notify when an answer took longer (0: never) |
@@ -1131,8 +1163,9 @@ keep-alive every 15 s.
 | `POST /v1/conversations/{conversation_id}/qcm/{ref}/retry` | Start the QCM again as a new attempt (nothing happens while the current attempt has no answer) |
 | `POST /v1/conversations/{conversation_id}/questions/{ask_id}` | Answer (`answers`: one `{options, other}` per question) or dismiss (`declined`) the questions `ask_questions` is waiting on; web tokens and `script` tokens that may answer approvals, 409 when nobody waits for them any more |
 | `GET /v1/questions` | The questions `ask_questions` is waiting on, in every conversation (each with `id`, `conversation`, `questions` and their `options`); web tokens and `script` tokens that may answer approvals |
-| `GET /v1/memory/facts` | Facts (by state, search) |
-| `POST /v1/memory/facts` | Add a fact (source `you`) |
+| `GET /v1/memory/facts` | Facts of one memory (by state, search; `scope`: empty for the global memory, else `project:<id>`, `schedule:<id>` or `hook:<id>`), with how many are live and how many wait for you |
+| `GET /v1/memory/scopes` | The projects, schedules and hooks that have a memory: for each, its live facts and how many wait for your confirmation |
+| `POST /v1/memory/facts` | Add a fact (source `you`; `scope` as above) |
 | `PATCH /v1/memory/facts/{fact_id}` | Change, pin, set expiry |
 | `POST /v1/memory/facts/{fact_id}/confirm` | Confirm an unconfirmed fact |
 | `DELETE /v1/memory/facts/{fact_id}` | Forget it |
@@ -1281,7 +1314,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Message | 2,000,000 characters |
 | Attachments per message | 4 files and 34 MB in all; pictures 8 MB, animations 30 MB (6 frames shown), documents 30 MB; 150,000 characters of document text per message; 12 pictures shown per message |
 | Files kept per conversation | 20 |
-| Fact | 300 characters; category 32 |
+| Fact | 300 characters; category 32; 100 live facts per project, schedule or hook, 20 of them waiting for your confirmation |
 | Reminders | 200; 500 characters each |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Schedules | 100; prompt 20,000 characters; documents 150,000 characters |
