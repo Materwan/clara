@@ -2,9 +2,10 @@
 
 A **ladder** of levels runs from 0 (no tool: everything is refused) to the last one (every tool runs). Five are there at first
 (0 no tool, 1 trusted read, 2 any read, 3 files and vault, 4 mail, 5 everything); the owner may add, rename and remove the ones
-between the first and the last. Each tool has two thresholds, the level it starts to **ask** at and the level it starts to **run** at:
-below the first it is refused, from the second it runs. A tool that was not given thresholds follows the default of its action
-class (actions.CLASSES), which is tied to the built-in levels by key so that it still finds them after the ladder was edited.
+between the first and the last. A tool has two thresholds for each of its action classes, the level it starts to **ask** at and
+the level it starts to **run** at: below the first it is refused, from the second it runs. A class that was not given thresholds
+follows the default of its action class (actions.CLASSES), which is tied to the built-in levels by key so that it still finds them
+after the ladder was edited. A setting may also be for the whole tool (every class that has none of its own): the console writes that.
 
 A conversation's level is stored on the conversation, else on the schedule or hook it belongs to, else on its project, else it is
 the server default (`auto_level_default` for a chat, `auto_level_unattended` for a run nobody watches): a conversation *follows*
@@ -32,10 +33,15 @@ MAX_TOP = 9  # the last level is at most this
 MAX_NAME = 30
 KNOBS = ("auto_level_default", "auto_level_unattended")
 STORED = ("conversations", "projects", "schedules", "triggers")  # the tables with an `auto_level` column
+WHOLE = ""  # the class of a setting that is for every class of the tool
 
 
 class LevelError(ValueError):
     """A change to the ladder or to a tool that cannot be made: the message says why."""
+
+
+class MissingRow(LevelError):
+    """The project, schedule, hook or conversation a level was to be stored on does not exist."""
 
 
 @dataclass(frozen=True)
@@ -54,7 +60,7 @@ class Levels:
         self.runtime = runtime
         self.audit: Audit | None = None  # set once built: the changes made to levels are written to the audit log
         self._ladder: list[Level] | None = None
-        self._tools: dict[str, tuple[int, int]] | None = None
+        self._tools: dict[tuple[str, str], tuple[int, int]] | None = None
 
     # ------------------------------------------------------------------
     # The ladder
@@ -108,7 +114,9 @@ class Levels:
             for knob in KNOBS:
                 value = self.runtime.get(knob)
                 if value >= before:
-                    self.runtime.set(knob, value + 1)
+                    self.runtime.set(
+                        knob, min(value + 1, MAX_TOP)
+                    )  # a knob past the last level is read as the last one
         self._changed()
         return Level(before, name, "")
 
@@ -129,7 +137,7 @@ class Levels:
             tx.execute("DELETE FROM auto_levels WHERE position = ?", (position,))
             tx.execute("UPDATE auto_levels SET position = -(position - 1) WHERE position > ?", (position,))
             tx.execute("UPDATE auto_levels SET position = -position WHERE position < 0")
-            for table in ("conversations", "projects", "schedules", "triggers"):
+            for table in STORED:
                 tx.execute(
                     f"UPDATE {table} SET auto_level = CASE WHEN auto_level > ? THEN auto_level - 1 ELSE ? END"
                     " WHERE auto_level >= ?",
@@ -147,7 +155,7 @@ class Levels:
 
     @staticmethod
     def _shift_stored(tx, where: str, bound: int, by: int) -> None:
-        for table in ("conversations", "projects", "schedules", "triggers"):
+        for table in STORED:
             tx.execute(f"UPDATE {table} SET auto_level = auto_level + ? WHERE {where}", (by, bound))
 
     def _check_name(self, name: str, keep: int | None = None) -> str:
@@ -162,11 +170,12 @@ class Levels:
     # ------------------------------------------------------------------
     # The thresholds of the tools
     # ------------------------------------------------------------------
-    def overrides(self) -> dict[str, tuple[int, int]]:
-        """The tools whose thresholds were changed: {tool: (ask_from, approve_from)}."""
+    def overrides(self) -> dict[tuple[str, str], tuple[int, int]]:
+        """The thresholds that were changed: {(tool, class): (ask_from, approve_from)}, the class being WHOLE for a setting
+        that is for every class of the tool."""
         if self._tools is None:
-            rows = self.db.all("SELECT tool, ask_from, approve_from FROM tool_levels")
-            self._tools = {row["tool"]: (row["ask_from"], row["approve_from"]) for row in rows}
+            rows = self.db.all("SELECT tool, klass, ask_from, approve_from FROM tool_levels")
+            self._tools = {(row["tool"], row["klass"]): (row["ask_from"], row["approve_from"]) for row in rows}
         return self._tools
 
     def default_thresholds(self, klass: str) -> tuple[int, int]:
@@ -174,29 +183,58 @@ class Levels:
         approve = max(1, self.position_of(approve_key))
         return min(max(1, self.position_of(ask_key)), approve), approve
 
-    def thresholds(self, tool: str, klass: str) -> tuple[int, int]:
-        """(ask_from, approve_from) for a tool, as its owner set them or as the default of its class."""
-        found = self.overrides().get(tool)
-        ask, approve = found if found is not None else self.default_thresholds(klass)
-        top = self.top
-        return min(ask, top), min(approve, top)
+    def class_defaults(self) -> list[dict]:
+        """The default thresholds of every action class, as the Rules and Auto mode pages list them."""
+        rows = []
+        for name, (_, _, what) in CLASSES.items():
+            ask, approve = self.default_thresholds(name)
+            rows.append({"class": name, "description": what, "ask_from": ask, "approve_from": approve})
+        return rows
 
-    def set_tool(self, tool: str, ask_from: int, approve_from: int) -> None:
+    def thresholds(self, tool: str, klass: str) -> tuple[int, int]:
+        """(ask_from, approve_from) for a call of a tool: what its owner set for that class, else for the whole tool, else the
+        default of the class."""
+        overrides = self.overrides()
+        found = overrides.get((tool, klass)) or overrides.get((tool, WHOLE)) or self.default_thresholds(klass)
+        top = self.top
+        return min(found[0], top), min(found[1], top)
+
+    def set_tool(self, tool: str, ask_from: int, approve_from: int, klass: str = WHOLE) -> None:
+        """Set the thresholds of one class of a tool, or (no class) of all its classes: the setting for the whole tool replaces
+        the ones made class by class."""
         top = self.top
         if not (1 <= ask_from <= approve_from <= top):
             raise LevelError(
                 f"The tool must ask from a level between 1 and {top}, and run from that level or a higher one "
                 f"(at most {top}); level 0 only refuses and level {top} only runs."
             )
-        self.db.execute(
-            "INSERT INTO tool_levels (tool, ask_from, approve_from) VALUES (?, ?, ?)"
-            " ON CONFLICT (tool) DO UPDATE SET ask_from = excluded.ask_from, approve_from = excluded.approve_from",
-            (tool, ask_from, approve_from),
-        )
+        if klass != WHOLE and klass not in CLASSES:
+            raise LevelError(f"No action class {klass}.")
+        with self.db.transaction() as tx:
+            if klass == WHOLE:
+                tx.execute("DELETE FROM tool_levels WHERE tool = ?", (tool,))
+            tx.execute(
+                "INSERT INTO tool_levels (tool, klass, ask_from, approve_from) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (tool, klass) DO UPDATE SET ask_from = excluded.ask_from, approve_from = excluded.approve_from",
+                (tool, klass, ask_from, approve_from),
+            )
         self._changed()
 
-    def reset_tool(self, tool: str) -> None:
-        self.db.execute("DELETE FROM tool_levels WHERE tool = ?", (tool,))
+    def reset_tool(self, tool: str, klass: str | None = None) -> None:
+        """Back to the default of the action class: of every class of the tool, or of one. If the tool has a setting for
+        all its classes, the class that is reset gets its own default written beside it, so that the others keep theirs."""
+        with self.db.transaction() as tx:
+            if klass is None:
+                tx.execute("DELETE FROM tool_levels WHERE tool = ?", (tool,))
+            else:
+                tx.execute("DELETE FROM tool_levels WHERE tool = ? AND klass = ?", (tool, klass))
+                whole = tx.execute("SELECT 1 FROM tool_levels WHERE tool = ? AND klass = ?", (tool, WHOLE)).fetchone()
+                if whole is not None and klass in CLASSES:
+                    ask, approve = self.default_thresholds(klass)
+                    tx.execute(
+                        "INSERT INTO tool_levels (tool, klass, ask_from, approve_from) VALUES (?, ?, ?, ?)",
+                        (tool, klass, ask, approve),
+                    )
         self._changed()
 
     def effect(self, tool: str, klass: str, level: int) -> str:
@@ -245,6 +283,17 @@ class Levels:
                         return max(0, min(int(row[source]), self.top)), source
         return self.default_level(mode), "default"
 
+    def mode_of(self, conversation_id: str) -> str:
+        """How a conversation is run: `unattended` for the conversation of a schedule or of a hook run, else `interactive`."""
+        row = self.db.one(
+            f"SELECT c.kind AS kind, {Conversations._SCHEDULE} AS schedule, {Conversations._HOOK} AS hook"
+            " FROM conversations c WHERE c.id = ?",
+            (conversation_id,),
+        )
+        if row is not None and (row["kind"] == "schedule" or row["schedule"] is not None or row["hook"] is not None):
+            return "unattended"
+        return "interactive"
+
     def set_stored(self, table: str, row_id: int | str, level: int | None) -> None:
         """Set (or, with None, clear) the level stored on a project, schedule, hook or conversation."""
         if table not in STORED:
@@ -253,7 +302,7 @@ class Levels:
         with self.db.transaction() as tx:
             found = tx.execute(f"UPDATE {table} SET auto_level = ? WHERE id = ?", (level, row_id)).rowcount
         if not found:
-            raise LevelError(f"No such {table[:-1]}.")
+            raise MissingRow(f"No such {table[:-1]}.")
 
     def log(self, what: str, detail: str, conversation_id: str | None = None) -> None:
         """Write a change of levels in the audit log (`level`), so that who lowered or raised what stays traceable."""

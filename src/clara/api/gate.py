@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from ..gate import ANSWERS, CLASSES, AlreadyAnswered, ApprovalError, GrantError, NoRuleError, RuleError, Situation
+from ..gate import ANSWERS, AlreadyAnswered, ApprovalError, GrantError, NoRuleError, RuleError, Situation
 from ..gate.actions import NOT_PUBLISHED
 from ..gate.grants import BEAT
 from ..tools.base import ToolContext, ToolError, TurnState
@@ -25,12 +25,7 @@ def rules(request: Request) -> dict:
     s = services(request)
     return {
         "rules": [rule.describe() for rule in s.rules.list()],
-        "defaults": [
-            {"class": name, "ask_from": ask, "approve_from": approve, "description": what}
-            for name, (what, (ask, approve)) in (
-                (name, (what, s.levels.default_thresholds(name))) for name, (_, _, what) in CLASSES.items()
-            )
-        ],
+        "defaults": s.levels.class_defaults(),
         "levels": [level.describe() for level in s.levels.ladder()],
         "tainted_rule": s.runtime.get("tainted_rule"),
         "tools": sorted(s.toolbox.names),

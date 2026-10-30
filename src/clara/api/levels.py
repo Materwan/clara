@@ -6,8 +6,9 @@ POST   /v1/levels                          {name, before?}: add a level just bel
 PATCH  /v1/levels/{position}               {name}: rename a level between the first and the last
 DELETE /v1/levels/{position}               remove one; what was set to it moves to the level below
 PUT    /v1/levels/defaults                 {chat?, unattended?}: the level a conversation has when nothing else says
-PUT    /v1/levels/tools/{tool}             {ask_from, approve_from}: one tool's thresholds
-DELETE /v1/levels/tools/{tool}             back to the default of the tool's action class
+PUT    /v1/levels/tools/{tool}             {ask_from, approve_from, class?}: a tool's thresholds, for one of its action classes
+                                           or (no class) for all of them
+DELETE /v1/levels/tools/{tool}             back to the default of the tool's action class (?class=: for that class only)
 GET    /v1/conversations/{id}/level        the level it runs at, and where that comes from
 PUT    /v1/conversations/{id}/level        {level}: its own level (null: follow)
 PUT    /v1/projects/{id}/level             {level}: the level of the conversations that follow the project (null: the default)
@@ -17,17 +18,15 @@ PUT    /v1/triggers/{id}/level             the same for a hook
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from ..gate import CLASSES, LevelError
-from ..gate.levels import MAX_NAME
+from ..gate import LevelError
+from ..gate.levels import MAX_NAME, MissingRow
 from ..memory.conversations import ConversationError
 from .common import ApiError, caller, services
 
 router = APIRouter(prefix="/v1", tags=["levels"])
-
-ConversationId = Field(pattern=r"^c[0-9a-f]{16}$")
 
 
 def settled_by_you(request: Request) -> None:
@@ -62,33 +61,31 @@ def may_set(request: Request, conversation_id: str | None, level: int | None, mo
 def _state(request: Request) -> dict:
     s = services(request)
     levels = s.levels
-    classes = []
-    for name, (_, _, what) in CLASSES.items():
-        ask, approve = levels.default_thresholds(name)
-        classes.append({"class": name, "description": what, "ask_from": ask, "approve_from": approve})
     tools = []
     for name in sorted(s.toolbox.names):
         tool = s.toolbox.get(name)
-        known = [levels.default_thresholds(klass) for klass in tool.classes]
-        default = (max(a for a, _ in known), max(p for _, p in known)) if known else (levels.top, levels.top)
-        ask, approve = levels.overrides().get(name, default)
-        tools.append(
-            {
-                "name": name,
-                "description": " ".join(tool.description.split())[:200],
-                "classes": list(tool.classes),
-                "ask_from": min(ask, levels.top),
-                "approve_from": min(approve, levels.top),
-                "default_ask_from": default[0],
-                "default_approve_from": default[1],
-                "changed": name in levels.overrides(),
-            }
-        )
+        description = " ".join(tool.description.split())[:200]
+        for klass in tool.classes:  # one row for each class: a script with network and one without are set apart
+            default = levels.default_thresholds(klass)
+            ask, approve = levels.thresholds(name, klass)
+            tools.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "class": klass,
+                    "classes": list(tool.classes),
+                    "ask_from": ask,
+                    "approve_from": approve,
+                    "default_ask_from": default[0],
+                    "default_approve_from": default[1],
+                    "changed": (ask, approve) != default,
+                }
+            )
     return {
         "levels": [level.describe() for level in levels.ladder()],
         "top": levels.top,
         "defaults": {"chat": levels.default_level("interactive"), "unattended": levels.default_level("unattended")},
-        "classes": classes,
+        "classes": levels.class_defaults(),
         "tools": tools,
     }
 
@@ -157,46 +154,74 @@ class Defaults(BaseModel):
 def set_defaults(body: Defaults, request: Request) -> dict:
     settled_by_you(request)
     s = services(request)
-    for knob, value in (("auto_level_default", body.chat), ("auto_level_unattended", body.unattended)):
-        if value is not None:
-            try:
-                s.levels.check_level(value)
-            except LevelError as error:
-                raise _failed(error) from None
-            s.runtime.set(knob, value)
-            s.levels.log("default", f"{caller(request).name} set {knob} to {s.levels.label(value)}")
+    wanted = [
+        (knob, value)
+        for knob, value in (("auto_level_default", body.chat), ("auto_level_unattended", body.unattended))
+        if value is not None
+    ]
+    try:
+        for _, value in wanted:  # both are checked before either is stored
+            s.levels.check_level(value)
+    except LevelError as error:
+        raise _failed(error) from None
+    for knob, value in wanted:
+        s.runtime.set(knob, value)
+        s.levels.log("default", f"{caller(request).name} set {knob} to {s.levels.label(value)}")
     return _state(request)
 
 
 class Thresholds(BaseModel):
     ask_from: int = Field(ge=1, le=9)
     approve_from: int = Field(ge=1, le=9)
+    klass: str | None = Field(
+        default=None, alias="class", description="One of the tool's action classes; none: all of them"
+    )
+
+
+def _classes_of(request: Request, tool: str, klass: str | None) -> tuple[str, ...]:
+    """The action classes of a tool, checking that it exists and has the class asked for."""
+    found = services(request).toolbox.get(tool)
+    if found is None:
+        raise ApiError(404, f"No tool {tool}.")
+    if klass is not None and klass not in found.classes:
+        raise ApiError(422, f"{tool} has no action class {klass} (it has {', '.join(found.classes)}).")
+    return found.classes
 
 
 @router.put("/levels/tools/{tool}")
 def set_tool(tool: str, body: Thresholds, request: Request) -> dict:
     settled_by_you(request)
     s = services(request)
-    found = s.toolbox.get(tool)
-    if found is None:
-        raise ApiError(404, f"No tool {tool}.")
+    classes = _classes_of(request, tool, body.klass)
+    pair = (body.ask_from, body.approve_from)
     try:
-        s.levels.set_tool(tool, body.ask_from, body.approve_from)
+        if body.klass is not None:
+            if pair == s.levels.default_thresholds(body.klass):
+                s.levels.reset_tool(tool, body.klass)  # the same as its class: nothing to remember
+            else:
+                s.levels.set_tool(tool, *pair, body.klass)
+        else:
+            s.levels.set_tool(tool, *pair)
+            if classes and all(s.levels.default_thresholds(klass) == pair for klass in classes):
+                s.levels.reset_tool(tool)
     except LevelError as error:
         raise _failed(error) from None
-    defaults = [s.levels.default_thresholds(klass) for klass in found.classes]
-    if defaults and (body.ask_from, body.approve_from) == (max(a for a, _ in defaults), max(p for _, p in defaults)):
-        s.levels.reset_tool(tool)  # the same as its class: nothing to remember
-    s.levels.log("tool", f"{caller(request).name} set {tool} to ask from {body.ask_from}, run from {body.approve_from}")
+    where = f"{tool} ({body.klass})" if body.klass else tool
+    s.levels.log(
+        "tool", f"{caller(request).name} set {where} to ask from {body.ask_from}, run from {body.approve_from}"
+    )
     return _state(request)
 
 
 @router.delete("/levels/tools/{tool}")
-def reset_tool(tool: str, request: Request) -> dict:
+def reset_tool(tool: str, request: Request, klass: str | None = Query(default=None, alias="class")) -> dict:
     settled_by_you(request)
     s = services(request)
-    s.levels.reset_tool(tool)
-    s.levels.log("tool", f"{caller(request).name} reset {tool} to the default of its class")
+    if s.toolbox.get(tool) is not None:  # a setting left by a tool that is not there (a pack switched off) can still go
+        _classes_of(request, tool, klass)
+    s.levels.reset_tool(tool, klass)
+    where = f"{tool} ({klass})" if klass else tool
+    s.levels.log("tool", f"{caller(request).name} reset {where} to the default of its class")
     return _state(request)
 
 
@@ -209,7 +234,7 @@ def _described(request: Request, conversation_id: str) -> dict:
     conversation = s.conversations.get(conversation_id)
     if conversation is None:
         raise ApiError(404, f"No conversation {conversation_id}.")
-    mode = "unattended" if conversation.kind == "schedule" else "interactive"
+    mode = s.levels.mode_of(conversation_id)
     level, source = s.levels.where(conversation_id, mode)
     return {
         "own": conversation.auto_level,
@@ -233,7 +258,7 @@ def set_conversation_level(conversation_id: str, body: StoredLevel, request: Req
         level = s.levels.check_level(body.level)
     except LevelError as error:
         raise _failed(error) from None
-    may_set(request, conversation_id, level)
+    may_set(request, conversation_id, level, s.levels.mode_of(conversation_id))
     try:
         s.conversations.update(conversation_id, auto_level=level)
     except (LevelError, ConversationError) as error:
@@ -251,7 +276,7 @@ def _set(request: Request, table: str, row_id: int, level: int | None, what: str
     try:
         s.levels.set_stored(table, row_id, level)
     except LevelError as error:
-        raise ApiError(404 if str(error).startswith("No such") else 422, str(error)) from None
+        raise ApiError(404 if isinstance(error, MissingRow) else 422, str(error)) from None
     shown = "follow" if level is None else s.levels.label(level)
     s.levels.log(what, f"{caller(request).name} set the level of {what} {row_id} to {shown}")
     return {"level": level, "name": s.levels.name(level) if level is not None else None}

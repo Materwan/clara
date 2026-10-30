@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from .auth import APPROVALS, CLIENTS, TokenError, TokenInfo
 from .gate import ANSWERS, AlreadyAnswered, ApprovalError, LevelError, RuleError
+from .gate.levels import WHOLE
 from .llm import NoModel, ProviderError, split_ref
 from .secrets import KNOWN_SECRETS, SecretError
 
@@ -331,7 +332,7 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
 
 LEVEL_USAGE = (
     "Usage: /level [list] | default [chat|unattended] <n> | conversation|project|schedule|hook <id> [<n>|follow]"
-    " | tool <name> [<ask> <run> | reset] | add <name> [<before>] | rename <n> <name> | remove <n>"
+    " | tool <name> [<class>] [<ask> <run> | reset] | add <name> [<before>] | rename <n> <name> | remove <n>"
 )
 LEVEL_TABLES = {"conversation": "conversations", "project": "projects", "schedule": "schedules", "hook": "triggers"}
 
@@ -346,9 +347,22 @@ def _level(s: Services, args: list[str], token: TokenInfo) -> str:
                 f"runs nobody watches {levels.label(levels.default_level('unattended'))}"
             )
             changed = levels.overrides()
-            lines += [f"  {tool}: asks from {ask}, runs from {run}" for tool, (ask, run) in sorted(changed.items())]
+            lines += [
+                f"  {tool}{f' ({klass})' if klass else ''}: asks from {ask}, runs from {run}"
+                for (tool, klass), (ask, run) in sorted(changed.items())
+            ]
             return "\n".join(lines)
         action, *rest = args
+        changes = (
+            (action == "default" and rest)
+            or (action in LEVEL_TABLES and len(rest) > 1)
+            or (action == "tool" and len(rest) > 1)
+            or (action in ("add", "rename", "remove") and rest)
+        )
+        if (
+            changes and token.approvals != "all"
+        ):  # a level is an answer given in advance: as for the API, only scope `all`
+            return "Error: this token may not change the auto levels: they decide what runs without your answer."
         if action == "default" and rest:
             which = "chat" if rest[0].isdigit() else rest.pop(0)
             if which not in ("chat", "unattended") or not rest:
@@ -360,7 +374,7 @@ def _level(s: Services, args: list[str], token: TokenInfo) -> str:
         if action in LEVEL_TABLES and rest:
             if len(rest) == 1:
                 if action == "conversation":
-                    level, source = levels.where(rest[0], "interactive")
+                    level, source = levels.where(rest[0], levels.mode_of(rest[0]))
                     return f"Level {levels.label(level)} (from {source})"
                 return LEVEL_USAGE
             level = None if rest[1] == "follow" else int(rest[1])
@@ -377,17 +391,25 @@ def _level(s: Services, args: list[str], token: TokenInfo) -> str:
             tool = s.toolbox.get(rest[0])
             if tool is None:
                 return f"No tool {rest[0]}."
-            if len(rest) == 1:
-                ask, run = levels.overrides().get(rest[0]) or max(
-                    (levels.default_thresholds(klass) for klass in tool.classes), default=(levels.top, levels.top)
+            name, words = rest[0], rest[1:]
+            klass = words.pop(0) if words and words[0] in tool.classes else None  # one of its classes, else all of them
+            where = f"{name} ({klass})" if klass else name
+            if not words:
+                return "\n".join(
+                    f"{name}{f' ({each})' if len(tool.classes) > 1 else ''}: refused below level {ask}, asks from {ask}, "
+                    f"runs from {run}"
+                    for each in ([klass] if klass else tool.classes)
+                    for ask, run in [levels.thresholds(name, each)]
                 )
-                return f"{rest[0]}: refused below level {ask}, asks from {ask}, runs from {run}"
-            if rest[1] == "reset":
-                levels.reset_tool(rest[0])
-                return f"{rest[0]}: back to the default of its class."
-            levels.set_tool(rest[0], int(rest[1]), int(rest[2]))
-            levels.log("tool", f"{token.name} set {rest[0]} to ask from {rest[1]}, run from {rest[2]}")
-            return f"{rest[0]}: asks from level {rest[1]}, runs from level {rest[2]}"
+            if words[0] == "reset":
+                levels.reset_tool(name, klass)
+                return f"{where}: back to the default of its class."
+            if len(words) < 2 or not (words[0].isdecimal() and words[1].isdecimal()):
+                return LEVEL_USAGE
+            ask, run = int(words[0]), int(words[1])
+            levels.set_tool(name, ask, run, klass or WHOLE)
+            levels.log("tool", f"{token.name} set {where} to ask from {ask}, run from {run}")
+            return f"{where}: asks from level {ask}, runs from level {run}"
         if action == "add" and rest:
             added = levels.add(rest[0], int(rest[1]) if len(rest) > 1 else None)
             levels.log("ladder", f"{token.name} added level {added.position} ({added.name})")

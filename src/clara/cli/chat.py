@@ -505,13 +505,13 @@ def level_text(chat: Chat, argument: str) -> str:
     ladder = api.get("/v1/levels")
     wanted: int | None = None
     if argument:
-        if argument.lower() != "follow" and not (argument.isdigit() and int(argument) <= ladder["top"]):
+        if argument.lower() != "follow" and not (argument.isdecimal() and int(argument) <= ladder["top"]):
             names = ", ".join(f"{level['position']} {level['name']}" for level in ladder["levels"])
             return f"A level is {names}, or follow."
         wanted = None if argument.lower() == "follow" else int(argument)
         if chat.conversation:
             api.put(f"/v1/conversations/{chat.conversation}/level", {"level": wanted})
-        else:
+        elif wanted is not None:  # « follow » on a conversation not started yet: nothing to change, nothing to start
             chat.conversation = api.post(
                 "/v1/conversations",
                 {"incognito": chat.incognito, "local_only": chat.local_only, "auto_level": wanted},

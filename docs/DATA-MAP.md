@@ -39,6 +39,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `events`, `event_cursors` | Reminders fired, notifications, approval news, alerts, server and update news; each token's read position | Until every active client read them (a day at least), 90 days at most |
 | `approvals` | Requests with their frozen action and arguments, answer, result | 30 days after they finish |
 | `rules` | Your rules | Until you delete them |
+| `auto_levels`, `tool_levels` | The ladder of auto levels (position, name) and the tools whose thresholds you changed (for each action class, or for all of a tool's classes); a conversation, a project, a schedule and a hook also keep their own `auto_level` (none: it follows) | Until you change them |
 | `audit_log` | Every gate decision: tool, target, level, situation, a **digest** of the arguments, rule, effect, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `usage_log` | One row per model call: kind, client, conversation, provider, model, token counts, duration, outcome | `CLARA_RETENTION_DAYS` (400) |
 | `ws_runs` | Script runs: command digest, exit code, duration, network flag, commit | Not pruned (a few hundred bytes a run) |

@@ -74,7 +74,10 @@ class Gate:
         self, action: Action, situation: Situation, *, count_hit: bool = True, approved: bool = False
     ) -> Decision:
         """`approved`: you already answered a request for this very call, so the level has nothing more to say (only the floor,
-        the local-only rule and a rule that refuses can still stop it)."""
+        the local-only rule and a rule that refuses can still stop it).
+
+        A call of the model must come with `situation.level` set to its conversation's level (Toolbox.call does it at every
+        call); without one the default level of the mode is used, which only suits a question asked on no conversation's behalf."""
         why = floor(action)
         if why:
             return Decision("refuse", why, floor=True)

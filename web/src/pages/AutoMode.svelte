@@ -74,10 +74,10 @@
       if (ask !== tool.ask_from) approve = ask;
       else ask = approve;
     }
-    await change(() => api.put(`/v1/levels/tools/${tool.name}`, { ask_from: ask, approve_from: approve }));
+    await change(() => api.put(`/v1/levels/tools/${tool.name}`, { ask_from: ask, approve_from: approve, class: tool.class }));
   }
 
-  const reset = (tool: ToolRow): Promise<boolean> => change(() => api.del(`/v1/levels/tools/${tool.name}`));
+  const reset = (tool: ToolRow): Promise<boolean> => change(() => api.del(`/v1/levels/tools/${tool.name}?class=${encodeURIComponent(tool.class)}`));
 
   async function setGroup(klass: string, tools: ToolRow[]): Promise<void> {
     const ask = Number(groupAsk[klass]);
@@ -88,7 +88,7 @@
       return;
     }
     for (const tool of tools) {
-      if (!(await change(() => api.put(`/v1/levels/tools/${tool.name}`, { ask_from: ask, approve_from: approve })))) return;
+      if (!(await change(() => api.put(`/v1/levels/tools/${tool.name}`, { ask_from: ask, approve_from: approve, class: tool.class })))) return;
     }
     toast(`${tools.length} tools set.`);
   }
@@ -98,7 +98,7 @@
   );
   const groups = $derived(
     data.classes
-      .map((row) => ({ ...row, tools: shown.filter((tool) => (tool.classes[0] ?? '') === row.class) }))
+      .map((row) => ({ ...row, tools: shown.filter((tool) => tool.class === row.class) }))
       .filter((group) => group.tools.length),
   );
 </script>
@@ -184,7 +184,11 @@
           <tbody>
             {#each group.tools as tool (tool.name)}
               <tr class:changed={tool.changed}>
-                <td><code>{tool.name}</code><div class="muted small">{tool.description}</div></td>
+                <td>
+                  <code>{tool.name}</code>
+                  <div class="muted small">{tool.description}</div>
+                  {#if tool.classes.length > 1}<div class="muted small">Also in {tool.classes.filter((klass) => klass !== tool.class).join(', ')}: each class has its own row.</div>{/if}
+                </td>
                 <td>
                   <select aria-label={`${tool.name} asks from`} value={String(tool.ask_from)} onchange={(event) => setTool(tool, Number((event.target as HTMLSelectElement).value), tool.approve_from)}>
                     {#each positions.slice(1) as position (position)}<option value={String(position)}>{position}</option>{/each}

@@ -538,7 +538,7 @@ class ClaraBot(discord.Client):
         names = ", ".join(f"`{level['position']}` {level['name']}" for level in ladder["levels"])
         if value:
             wanted = value.strip().lower()
-            if wanted != "follow" and not (wanted.isdigit() and int(wanted) <= ladder["top"]):
+            if wanted != "follow" and not (wanted.isdecimal() and int(wanted) <= ladder["top"]):
                 return f"A level is {names}, or `follow`."
             if not current:
                 return "Use it inside a conversation: the level belongs to one conversation."

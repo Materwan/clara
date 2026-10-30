@@ -46,6 +46,7 @@ class TurnState:
     conversation_id: str
     client: str
     mode: str = "interactive"  # or unattended
+    level_mode: str | None = None  # the mode of the default auto level (None: `mode`), see ChatRequest
     waits_for_approvals: bool = False  # the turn holds the requests it asks for until they are answered
     can_ask: bool = False  # the turn can stop to ask the person questions (ask_questions) and wait for the answers
     timezone: str = "UTC"
@@ -225,7 +226,9 @@ class Toolbox:
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")
         # the level is read at each call: lowering it in the middle of a turn takes effect at the next tool
-        context.turn.level = self.gate.levels.resolve(context.turn.conversation_id, context.turn.mode)
+        context.turn.level = self.gate.levels.resolve(
+            context.turn.conversation_id, context.turn.level_mode or context.turn.mode
+        )
         situation = context.turn.situation
         decision = self.gate.decide(action, situation)
         digest = args_digest(arguments)

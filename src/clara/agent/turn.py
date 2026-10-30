@@ -166,6 +166,9 @@ class ChatRequest:
     title: str = ""  # for a new conversation
     conversation_kind: str = "chat"
     mode: str = "interactive"
+    # The mode whose default auto level a conversation with none of its own gets (None: `mode`). A follow-up after an
+    # approval runs unattended (it never waits for an answer), but in a chat it keeps the level of a chat.
+    level_mode: str | None = None
     kind: str = "chat"  # what the usage log calls it
     no_tools: bool = False
     ephemeral: bool = False  # no persona, no memory, nothing stored (Clara's planning jobs)
@@ -368,6 +371,7 @@ class Agent:
             conversation_id=conversation.id if conversation else "",
             client=request.client,
             mode=request.mode,
+            level_mode=request.level_mode,
             waits_for_approvals=(
                 request.mode == "interactive" and request.wait_for_approvals and self.settings.approval_wait > 0
             ),
@@ -1313,6 +1317,7 @@ class Agent:
                 client="server",
                 conversation=conversation_id,
                 mode="unattended",
+                level_mode=self.s.levels.mode_of(conversation_id),
                 kind="followup",
                 quiet=True,
                 **limits,

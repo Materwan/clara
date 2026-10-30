@@ -127,7 +127,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
 | `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
-| `/level [list] \| default [chat\|unattended] <n> \| conversation\|project\|schedule\|hook <id> [<n>\|follow] \| tool <name> [<ask> <run> \| reset] \| add <name> [<before>] \| rename <n> <name> \| remove <n>` | The auto levels: how much each tool runs without asking |
+| `/level [list] \| default [chat\|unattended] <n> \| conversation\|project\|schedule\|hook <id> [<n>\|follow] \| tool <name> [<class>] [<ask> <run> \| reset] \| add <name> [<before>] \| rename <n> <name> \| remove <n>` | The auto levels: how much each tool runs without asking |
 | `/approvals [list] \| allow\|always\|refuse\|never <id>` | Pending approval requests |
 | `/debug [on\|off]` | Full prompts and answers to the debug log for one hour |
 | `/usage [24h\|7d\|30d\|90d\|365d\|all] [day\|model\|kind\|provider\|client]` | Token statistics |
@@ -600,7 +600,9 @@ neither read nor change rules, and no tool answers a request.
 What happens to a call when no rule matches is decided by the **auto level** of its conversation: a ladder from level 0, where
 every tool is refused, to the last level, where every tool runs. Each tool has two thresholds: the level it **asks** from, and the
 level it **runs** from; below the first it is refused. A tool follows the default of its action class (the table below) until you
-change it on the **Auto mode** page (Settings), `PUT /v1/levels/tools/{tool}` or `/level tool`.
+change it on the **Auto mode** page (Settings), `PUT /v1/levels/tools/{tool}` or `/level tool`. A tool with several classes (`ws_run`: a script
+with or without network; `web_fetch`: an address you wrote or any other) has thresholds for each class, with the default of that class:
+the page lists it once under each class, and a setting made for one class leaves the others as they were.
 
 | Level | Name | What it adds |
 | --- | --- | --- |
@@ -1175,8 +1177,8 @@ keep-alive every 15 s.
 | `PATCH /v1/levels/{position}` | Rename a level between the first and the last |
 | `DELETE /v1/levels/{position}` | Remove one; what was set to it moves down, a tool's threshold up |
 | `PUT /v1/levels/defaults` | The level of a chat (`chat`) and of a run nobody watches (`unattended`) that have none of their own |
-| `PUT /v1/levels/tools/{tool}` | One tool's thresholds: `ask_from` and `approve_from` (the default of its class is not remembered) |
-| `DELETE /v1/levels/tools/{tool}` | Back to the default of the tool's action class |
+| `PUT /v1/levels/tools/{tool}` | A tool's thresholds: `ask_from` and `approve_from`, for one of its action classes (`class`) or, without it, for all of them (a pair equal to the default of the class is not remembered) |
+| `DELETE /v1/levels/tools/{tool}` | Back to the default of the tool's action class (`?class=`: for that class only) |
 | `GET /v1/conversations/{conversation_id}/level` | The level a conversation runs at, its own level and where it comes from (`own`, `automation`, `project`, `default`) |
 | `PUT /v1/conversations/{conversation_id}/level` | Its own level (`null`: follow) |
 | `PUT /v1/projects/{project_id}/level` | The level the project's conversations follow (`null`: the default) |

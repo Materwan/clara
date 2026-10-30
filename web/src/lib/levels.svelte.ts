@@ -4,9 +4,11 @@
 import { api } from './api';
 
 export type Level = { position: number; name: string; key: string };
+/** One class of one tool: a tool with several classes (a script with or without network) has a row for each, with its own default. */
 export type ToolRow = {
   name: string;
   description: string;
+  class: string;
   classes: string[];
   ask_from: number;
   approve_from: number;

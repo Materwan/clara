@@ -489,6 +489,7 @@
         const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, auto_level: fresh.level ?? undefined });
         id = made.id as string;
         skipReload = id;
+        fresh.level = null; // the next new chat starts at its own level again: the last level is not carried over
         go('/chat/' + id);
         conversation = made;
       }

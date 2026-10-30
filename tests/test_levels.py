@@ -135,7 +135,7 @@ def test_adding_a_level_moves_what_was_set_to_the_levels_above_it(services):
     assert services.conversations.get(mine.id).auto_level == 5  # still « Mail »
     assert services.conversations.get(below.id).auto_level == 2
     assert services.runtime.get("auto_level_default") == 6  # still the last level
-    assert levels.overrides()["some_tool"] == (2, 5)
+    assert levels.overrides()[("some_tool", "")] == (2, 5)
 
 
 def test_a_level_cannot_be_added_before_the_first_or_past_the_limit(services):
@@ -171,7 +171,7 @@ def test_removing_a_level_never_makes_anything_more_permissive(services):
     assert services.conversations.get(chat.id).auto_level == 3  # below, not above
     assert services.conversations.get(other.id).auto_level == 4  # still the last level
     assert services.runtime.get("auto_level_unattended") == 3
-    assert levels.overrides()["some_tool"] == (3, 4)  # it needed « Mail »: now it needs the next level, « Everything »
+    assert levels.overrides()[("some_tool", "")] == (3, 4)  # it needed « Mail »: now it needs the next level, « Everything »
     assert levels.effect("some_tool", "ws_write", 3) == "ask" and levels.effect("some_tool", "ws_write", 4) == "allow"
     # the classes that were tied to « Mail » follow the next built-in level up
     assert levels.default_thresholds("mail_trash") == (3, 4)
@@ -537,3 +537,179 @@ def test_the_terminal_shows_sets_and_starts_a_conversation_at_a_level():
     level_text(chat, "follow")
     assert api.sent[-1] == ("PUT", "/v1/conversations/c-new/level", {"level": None})
     assert level_text(chat, "9").startswith("A level is 0 No tool") and level_text(chat, "x").startswith("A level is")
+
+
+# ----------------------------------------------------------------------
+# Found in review
+# ----------------------------------------------------------------------
+def test_a_level_can_be_added_while_a_knob_sits_past_the_last_level(services):
+    services.runtime.set("auto_level_default", 9)  # the knob accepts 0 to 9 whatever the ladder: past the last level it is the last
+    services.levels.add("Careful")
+    assert services.levels.top == 6 and services.levels.default_level("interactive") == 6
+
+
+def test_the_console_asks_for_every_number_a_tool_needs_and_a_token_that_cannot_answer_everything_only_reads(services):
+    run = next(command.run for command in COMMANDS if command.name == "level")
+    admin = services.tokens.create("admin", "console")[0]
+    assert run(services, ["tool", "ws_delete", "1"], admin).startswith("Usage:")
+    bot = services.tokens.create("bot", "discord")[0]
+    for args in (["default", "5"], ["tool", "ws_delete", "1", "1"], ["add", "X"], ["remove", "3"], ["conversation", "c1", "5"]):
+        assert run(services, args, bot).startswith("Error: this token may not change"), args
+    assert "Files and vault" in run(services, ["list"], bot) and services.levels.default_level("interactive") == 3
+
+
+async def test_the_default_levels_are_not_a_setting_any_token_may_change(services):
+    import httpx
+
+    from clara.app import create_app
+
+    async def as_(name, kind):
+        token = services.tokens.create(name, kind)[1]
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(services)), base_url="http://clara.test",
+                                 headers={"Authorization": f"Bearer {token}"})
+
+    async with await as_("bot", "discord") as bot:
+        assert (await bot.put("/v1/admin/settings/auto_level_default", json={"value": 5})).status_code == 403
+        assert (await bot.put("/v1/admin/settings/auto_level_unattended", json={"value": 5})).status_code == 403
+    async with await as_("web", "web") as web:
+        assert (await web.put("/v1/admin/settings/auto_level_default", json={"value": 4})).status_code == 200
+    assert services.levels.default_level("interactive") == 4
+
+
+async def test_defaults_are_stored_together_or_not_at_all(client, services):
+    assert (await client.put("/v1/levels/defaults", json={"chat": 1, "unattended": 7})).status_code == 422
+    assert services.levels.default_level("interactive") == 3
+
+
+async def test_the_conversation_of_a_schedule_or_a_hook_is_judged_as_a_run_nobody_watches(client, services):
+    services.runtime.set("auto_level_unattended", 1)
+    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
+    made = services.conversations.create("server", kind="schedule")
+    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (made.id, schedule.id))
+    chat = services.conversations.create("web")
+    assert (services.levels.mode_of(made.id), services.levels.mode_of(chat.id)) == ("unattended", "interactive")
+    assert (await client.get(f"/v1/conversations/{made.id}/level")).json()["level"] == 1
+    import httpx
+
+    from clara.app import create_app
+
+    token = services.tokens.create("bot", "discord")[1]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(services)), base_url="http://clara.test",
+                                 headers={"Authorization": f"Bearer {token}"}) as bot:
+        assert (await bot.put(f"/v1/conversations/{made.id}/level", json={"level": 3})).status_code == 403  # a raise from 1
+        assert (await bot.put(f"/v1/conversations/{made.id}/level", json={"level": 0})).status_code == 200
+
+
+def test_the_terminal_does_not_start_a_conversation_to_follow():
+    from types import SimpleNamespace
+
+    from clara.cli.chat import level_text
+
+    api = TerminalApi()
+    chat = SimpleNamespace(api=api, conversation=None, incognito=False, local_only=False)
+    assert level_text(chat, "follow").startswith("Not started") and api.sent == []
+
+
+# ----------------------------------------------------------------------
+# The thresholds of a tool, class by class
+# ----------------------------------------------------------------------
+def _rows(state, tool):
+    return {row["class"]: row for row in state["tools"] if row["name"] == tool}
+
+
+async def test_the_page_shows_one_row_for_each_class_of_a_tool_with_its_own_default(client):
+    rows = _rows((await client.get("/v1/levels")).json(), "ws_run")
+    assert set(rows) == {"run", "run_network"}
+    assert (rows["run"]["ask_from"], rows["run"]["approve_from"], rows["run"]["changed"]) == (2, 3, False)
+    assert (rows["run_network"]["ask_from"], rows["run_network"]["approve_from"]) == (4, 5)  # not the strictest of both
+    assert rows["run"]["classes"] == ["run", "run_network"]
+
+
+async def test_a_class_of_a_tool_is_set_and_reset_without_touching_the_others(client, services):
+    levels = services.levels
+    body = {"ask_from": 3, "approve_from": 3, "class": "run_network"}
+    rows = _rows((await client.put("/v1/levels/tools/ws_run", json=body)).json(), "ws_run")
+    assert (rows["run_network"]["ask_from"], rows["run_network"]["approve_from"], rows["run_network"]["changed"]) == (3, 3, True)
+    assert rows["run"]["changed"] is False and levels.thresholds("ws_run", "run") == (2, 3)
+    assert levels.overrides() == {("ws_run", "run_network"): (3, 3)}
+    # the same as the default of the class: nothing is remembered
+    await client.put("/v1/levels/tools/ws_run", json={"ask_from": 4, "approve_from": 5, "class": "run_network"})
+    assert levels.overrides() == {}
+    await client.put("/v1/levels/tools/ws_run", json=body)
+    assert (await client.delete("/v1/levels/tools/ws_run?class=run_network")).status_code == 200
+    assert levels.overrides() == {}
+    assert (await client.put("/v1/levels/tools/ws_run", json={**body, "class": "mail_send"})).status_code == 422
+    assert (await client.delete("/v1/levels/tools/ws_run?class=mail_send")).status_code == 422
+
+
+async def test_a_setting_for_the_whole_tool_covers_its_classes_and_one_class_can_leave_it(client, services):
+    levels = services.levels
+    await client.put("/v1/levels/tools/ws_run", json={"ask_from": 1, "approve_from": 4})
+    assert [levels.thresholds("ws_run", klass) for klass in ("run", "run_network")] == [(1, 4), (1, 4)]
+    await client.put("/v1/levels/tools/ws_run", json={"ask_from": 2, "approve_from": 2, "class": "run"})
+    assert (levels.thresholds("ws_run", "run"), levels.thresholds("ws_run", "run_network")) == ((2, 2), (1, 4))
+    # going back to the default of one class keeps the whole-tool setting for the other
+    await client.delete("/v1/levels/tools/ws_run?class=run")
+    assert (levels.thresholds("ws_run", "run"), levels.thresholds("ws_run", "run_network")) == ((2, 3), (1, 4))
+    rows = _rows((await client.get("/v1/levels")).json(), "ws_run")
+    assert (rows["run"]["changed"], rows["run_network"]["changed"]) == (False, True)
+    await client.put("/v1/levels/tools/ws_run", json={"ask_from": 2, "approve_from": 3})  # a whole-tool setting replaces
+    assert levels.overrides() == {("ws_run", ""): (2, 3)}
+    assert levels.thresholds("ws_run", "run_network") == (2, 3)
+    await client.delete("/v1/levels/tools/ws_run")
+    assert levels.overrides() == {}
+
+
+def test_the_console_sets_and_shows_a_tool_class_by_class(services):
+    run = next(command.run for command in COMMANDS if command.name == "level")
+    admin = services.tokens.create("admin", "console")[0]
+    assert run(services, ["tool", "ws_run"], admin) == (
+        "ws_run (run): refused below level 2, asks from 2, runs from 3\n"
+        "ws_run (run_network): refused below level 4, asks from 4, runs from 5"
+    )
+    assert run(services, ["tool", "ws_run", "run_network", "3", "5"], admin) == "ws_run (run_network): asks from level 3, runs from level 5"
+    assert services.levels.thresholds("ws_run", "run_network") == (3, 5) and services.levels.thresholds("ws_run", "run") == (2, 3)
+    assert "ws_run (run_network): asks from 3, runs from 5" in run(services, ["list"], admin)
+    assert run(services, ["tool", "ws_run", "run_network"], admin) == "ws_run (run_network): refused below level 3, asks from 3, runs from 5"
+    assert run(services, ["tool", "ws_run", "run_network", "reset"], admin) == "ws_run (run_network): back to the default of its class."
+    assert services.levels.overrides() == {}
+    assert run(services, ["tool", "ws_run", "run_network", "x", "y"], admin).startswith("Usage:")
+    assert run(services, ["tool", "ws_run", "1", "4"], admin) == "ws_run: asks from level 1, runs from level 4"
+    assert services.levels.overrides() == {("ws_run", ""): (1, 4)}
+
+
+def test_migration_22_keeps_the_thresholds_of_a_tool_for_all_its_classes(tmp_path):
+    import importlib
+
+    from clara.db.connection import connect
+
+    migrate_module = importlib.import_module("clara.db.migrate")
+    path = tmp_path / "old.db"
+    old = connect(path)
+    for migration in migrate_module.migrations()[:21]:
+        old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
+    old.execute("INSERT INTO tool_levels (tool, ask_from, approve_from) VALUES ('ws_run', 2, 4)")
+    old.close()
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (21, migrate_module.LATEST_VERSION)
+    new = connect(path)
+    assert [tuple(r) for r in new.execute("SELECT tool, klass, ask_from, approve_from FROM tool_levels")] == [("ws_run", "", 2, 4)]
+    with pytest.raises(Exception, match="CHECK"):
+        new.execute("INSERT INTO tool_levels (tool, klass, ask_from, approve_from) VALUES ('t', 'run', 3, 2)")
+
+
+# ----------------------------------------------------------------------
+# The turn that follows an approval
+# ----------------------------------------------------------------------
+async def test_a_followup_in_a_chat_keeps_the_level_of_a_chat_and_one_in_a_run_the_level_of_a_run(services, llm):
+    services.runtime.set("auto_level_default", 1)
+    services.runtime.set("auto_level_unattended", 5)
+    chat = services.conversations.create("web")
+    run = services.conversations.create("server", kind="schedule")
+    for conversation in (chat, run):
+        llm.replies = [calls(("ws_write", {"path": f"{conversation.id}.txt", "content": "x"})), "Done."]
+        await services.agent.followup(conversation.id, "[Approval update] The person answered.")
+    written = [row for row in services.audit.recent() if row["tool"] == "ws_write"]
+    in_chat = [row for row in written if row["conversation_id"] == chat.id]
+    in_run = [row for row in written if row["conversation_id"] == run.id]
+    assert [row["outcome"] for row in in_chat] == ["refused"]  # level 1 of the chat: no file written
+    assert [row["outcome"] for row in in_run] == ["ran"] and "level 5 (Everything)" in in_run[0]["detail"]

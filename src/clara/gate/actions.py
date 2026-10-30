@@ -172,7 +172,10 @@ class Situation:
     mode: str  # interactive (a chat) or unattended (a schedule, a reminder, a follow-up)
     tainted: bool = False  # the turn read untrusted content (a web page, a fetched file, an issue…)
     local_only: bool = False  # a local-only conversation: nothing may leave the person's machines
-    level: int | None = None  # the auto level of the conversation (gate/levels.py); None: the default level of the mode
+    # The auto level of the conversation (gate/levels.py). Toolbox.call fills it from the conversation at every call; a Situation
+    # built by hand (the rule tester without a level, a record in the audit log) leaves None, which Gate.level_of reads as the
+    # default level of the mode, not as the level of any conversation.
+    level: int | None = None
 
     def describe(self) -> str:
         return f"{self.mode}{', tainted' if self.tainted else ''}{', local only' if self.local_only else ''}"

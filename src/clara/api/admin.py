@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from .. import console
 from ..auth import TokenError
 from ..events.routing import CATEGORIES, CHANNELS, CHOICES, TEST_SOURCE, carried, channel_of
+from ..gate.levels import KNOBS as LEVEL_KNOBS
 from ..ops.discord_report import TESTS_PER_MINUTE
 from ..ops.lifecycle import EXIT_RESTART
 from ..ops.logstream import LEVELS, RING, SOURCES
@@ -22,6 +23,7 @@ from ..ops.upkeep import DISCORD_SILENCE
 from ..runtime import KNOBS
 from ..secrets import CONNECTION_TOKENS, KNOWN_SECRETS, SecretError
 from .common import ApiError, caller, event_stream, services, sse, with_keepalive
+from .levels import settled_by_you
 
 router = APIRouter(prefix="/v1", tags=["admin"])
 
@@ -125,6 +127,8 @@ class SettingValue(BaseModel):
 def set_setting(key: str, body: SettingValue, request: Request) -> dict:
     if key not in KNOBS or key in ("debug_until", "sandbox_image"):
         raise ApiError(404, f"Unknown or read-only setting {key}.")
+    if key in LEVEL_KNOBS:
+        settled_by_you(request)  # the default level is an answer given in advance: the same limit as on /v1/levels
     try:
         return {"key": key, "value": services(request).runtime.set(key, body.value)}
     except (KeyError, ValueError) as error:
