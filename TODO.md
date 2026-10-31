@@ -71,3 +71,25 @@ Constraints the current design already sets:
   runs the saved call later with no conversation behind it, so the approval must be enough by itself.
 - Due times survive a restart and fire once: the time services share one loop (`timekeeping/dueloop.py`), and the
   firing transaction is a pattern the hooks use (`triggers/`).
+
+## Web site speed and failed loads
+
+The owner asked to make the web site faster and to fix two failures:
+
+1. Some conversations take a long time to load, or fail to fetch.
+2. Deleting a conversation, or moving it into a project, can take up to 30 seconds. While it runs, the site does not
+   respond: reload does not work, and opening another conversation does not work either.
+
+Open questions, not decided:
+
+- Where does the time go: the server, the database, the network, or the page waiting on a request? Nothing is measured
+  yet.
+- Which conversations are slow: the long ones (many messages, large tool results), or all of them?
+- Should a delete or a move answer at once and finish in the background, or stay synchronous and become fast?
+
+Constraints the current design already sets, and candidate causes to check first (not findings):
+
+- There is one SQLite connection, shared by the event loop and the worker threads behind a lock. A long write holds
+  the lock, so every other call on the connection waits (`db/connection.py`).
+- Calls made directly from async code run on the event loop. A blocking call there would stall every request, which
+  would also explain a reload that hangs (`CLAUDE.md`, « Persistence »).
