@@ -99,9 +99,12 @@ RAISED_WHEN_TAINTED = frozenset(
         "vault_destroy",
         "run_network",
         "automation",
+        # an address neither the person wrote nor a search returned: its host and path can carry text out (2026-10-31)
+        "fetch_other",
     }
 )
-# Classes whose content leaves the machine: content that looks like a secret raises them to `ask`
+# Classes whose content leaves the machine: content that looks like a secret, or repeats private text the conversation read
+# (egress.py), raises them to `ask`
 OUTSIDE = frozenset(
     {
         "github_write",
@@ -112,6 +115,7 @@ OUTSIDE = frozenset(
         "run_network",
         "fetch_other",
         "fetch_trusted",
+        "web_search",
     }
 )
 # Classes whose call sends something off the machine (a query, an address, content): refused in a local-only turn.
@@ -154,7 +158,8 @@ class Action:
     klass: str
     targets: tuple[str, ...]
     summary: str
-    secret_kinds: tuple[str, ...] = ()  # the content seems to carry secrets (secretscan.py)
+    # the content seems to carry secrets (secretscan.py), or repeats private text the conversation read (egress.py)
+    secret_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.level not in LEVELS:

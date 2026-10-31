@@ -526,6 +526,36 @@ async def _update(s: Services, args: list[str], token: TokenInfo) -> str:
     return await s.updater.start(args[0])
 
 
+def _trust(s: Services, args: list[str], token: TokenInfo) -> str:
+    """Files that came from outside or were written after untrusted content, and your word that one is fine."""
+    marks = s.provenance
+    if marks is None:
+        return "The workspace is not available."
+    if not args or args[0] == "list":
+        found = marks.listing()
+        if not found:
+            return "(no marked file: nothing came from outside)"
+        return "\n".join(
+            f"{'trusted  ' if item['trusted'] else 'untrusted'} {item['kind']:<10} {item['path']}  ({item['source']})"
+            for item in found
+        )
+    action, *rest = args
+    path = rest[0] if action == "untrust" and rest else action
+    if token.approvals != "all":  # trusting a file is an answer given in advance: as for the API, only scope `all`
+        return "Error: this token may not trust a file: it decides what Clara reads without care."
+    try:
+        if action == "untrust":
+            return (
+                f"Not trusted any more: {marks.untrust(path)} file(s)."
+                if rest
+                else "Usage: /trust [list] | <path> | untrust <path>"
+            )
+        count = marks.trust(path)
+    except ValueError as error:
+        return f"Error: {error}"
+    return f"Trusted {count} file(s)." if count else f"Error: {path} is not a marked file (or it cannot be read)."
+
+
 async def _undo(s: Services, args: list[str], token: TokenInfo) -> str:
     if s.workspace is None:
         return "The workspace is not available."
@@ -589,6 +619,12 @@ COMMANDS: list[Command] = [
     Command("usage", "/usage [24h|7d|30d|90d|365d|all] [day|model|kind|provider|client]", "Token statistics.", _usage),
     Command("alerts", "/alerts [clear <key>]", "Active and recent alerts.", _alerts),
     Command("audit", "/audit [n]", "The last gate decisions.", _audit),
+    Command(
+        "trust",
+        "/trust [list] | <path> | untrust <path>",
+        "Workspace files that came from outside: trust one (Clara reads it as your own) or take it back.",
+        _trust,
+    ),
     Command("undo", "/undo [commit]", "Revert the last workspace change (or a given commit).", _undo),
     Command("vault", "/vault [status|sync|reindex]", "The Obsidian vault.", _vault),
     Command("backup", "/backup [now]", "Local backups (and the remote copy).", _backup),

@@ -127,6 +127,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
 | `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
+| `/trust [list] \| <path> \| untrust <path>` | Workspace files that came from outside or were written after untrusted content: list them, trust one (Clara reads it as your own) or take it back; scope `all` only |
 | `/level [list] \| default [chat\|unattended] <n> \| conversation\|project\|schedule\|hook <id> [<n>\|follow] \| tool <name> [<class>] [<ask> <run> \| reset] \| add <name> [<before>] \| rename <n> <name> \| remove <n>` | The auto levels: how much each tool runs without asking |
 | `/approvals [list] \| allow\|always\|refuse\|never <id>` | Pending approval requests |
 | `/debug [on\|off]` | Full prompts and answers to the debug log for one hour |
@@ -496,6 +497,12 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   waiting per hook (more are recorded as skipped, with a `trigger:<id>` alert). Turning a hook off drops what waited.
 - **The mail poll** looks only while a listener exists (notifications on, or a hook enabled); with none it forgets its place, so the
   first look after one appears starts from now and never replays old mail. A hook made today sees mail from now on.
+- **The reader and mail events.** While the quarantined reader is on (`reader`), a run that a mail started is not told what the
+  sender wrote: the event carries the sender's address (if it looks like one), the account, the message and thread ids, the flags
+  and a gist of 160 characters the reader wrote from the name, the subject and the preview, with `addressed_to_ai` when the mail
+  speaks to an AI. If the reader cannot read the mails, the gist is left out and the run is told it was withheld. GitHub events
+  are shown as they were (the run is tainted). Notifications are not changed: they are for you, not for a model. The *Test*
+  dry run still shows the event as it is.
 - **Looking.** `POST /v1/triggers/{id}/test` and `/triggers test` show, for a stored event, a sample or the latest event, whether
   the filter matches, the exact message Clara would get and her tools, without running anything. Each run is recorded
   (`ok`, `failed`, `interrupted`, `skipped`, `expired`) with its summary and conversation, and tells you how it ended with a
@@ -575,6 +582,16 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   gets the exit code and the first `CLARA_RUN_OUTPUT` (64 KB) of output; the full log (10 MB at most) is kept.
 - **Image:** `CLARA_SANDBOX_IMAGE`, or the image a release pins by digest (Python 3.12 with numpy, pandas, matplotlib,
   requests, and common command-line tools).
+- **Where a file comes from:** a file that arrived from outside (an email attachment saved by `mail_attachment_save`; what a script changed
+  when it ran with the network, and that run's log) is marked `quarantine`; a file written by Clara (`ws_write`, `ws_edit`, `ws_move`, a script)
+  after the conversation read untrusted content is marked `tainted`. The marks are in the database (never in the workspace),
+  move with the file (`ws_move`) and go with it (`ws_delete`). Reading a marked file (`ws_read`, a match of `ws_search`) taints the
+  conversation, even a new one, and its later turns; a `quarantine` file is read by the quarantined reader (section 8), a
+  `tainted` one as it is, and the matching lines of a `quarantine` file are not shown by `ws_search`. You trust a file on the
+  Library page (**Trust this file**), with `/trust <path>` or `POST /v1/workspace/trust` (a folder trusts every marked file in it), and take it
+  back the same way; the digest of what you trusted is kept, so a file whose content changes is untrusted again. A file you write
+  or replace yourself (`PUT /v1/workspace/file`, `POST /v1/workspace/upload`) is trusted. Only a token that may answer every request trusts a file;
+  the model has no tool for it. A script's reading of a marked file is not followed: a script that prints one gives its text to the conversation.
 - **No fallback:** if rootless Podman is not usable (`clara doctor` says why: rootless, cgroup v2 controllers,
   subuid/subgid ranges, the image, isolation), `ws_run` is not offered. `CLARA_RUN=off` switches scripts off.
 
@@ -588,11 +605,29 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   result. ») is skipped, and when none can, `web_search` fails with each one's reason and says that trying again at
   once will not help. A key Brave refuses raises the `brave` alert (over once the key is replaced or removed);
   searches go on through SearXNG. The web tools are offered while a Brave key or `CLARA_SEARXNG_URL` is set. The search
-  words go to Brave (and, as before, to the engines SearXNG asks).
-- **Web fetch:** `web_fetch` reads http and https pages (title, text, links; `CLARA_FETCH_MAX_SIZE`, 2 MB). The address
+  words go to Brave (and, as before, to the engines SearXNG asks). With the reader on, a result is its address (the search
+  engine's), its title cut to 100 characters and a one-line gist the quarantined reader wrote; the snippet is not shown. If
+  the reader fails, the addresses and titles are shown and the gists are left out.
+- **Web fetch:** `web_fetch` reads http and https pages (title, a report of the text, up to 20 links; `CLARA_FETCH_MAX_SIZE`, 2 MB).
+  `focus` says what the model wants to know from the page. The address
   is resolved once and the connection pinned to that address (with the right TLS name), so a DNS change cannot point it
   inside; private, loopback, link-local and tailnet addresses are refused, at every redirect (5 at most). An address
-  you wrote or a search returned is read at once; any other asks (refused when unattended).
+  you wrote or a search returned is read at once; any other asks (refused when unattended), and, once the conversation read untrusted
+  content, asks whatever the level and the rules say (`fetch_other` is raised: its host and path can carry text out).
+- **The quarantined reader:** the text of a web page, of an email or of an attachment, of a marked workspace file and the
+  results of a web search or a mail search is read by a separate model call that has **no tools and no memory** (a side job,
+  `kind` `reader` in the usage log: a fresh prompt with the text between two lines carrying a random mark). It must answer with
+  one JSON object of a fixed shape, which is checked field by field (unknown keys dropped, texts cut, choices checked), and only
+  the checked report reaches the conversation: a summary and an answer to the model's `focus` (1,200 and 800 characters, in
+  reported speech), up to 10 facts, and for a mail a kind of message, what the sender asks for and the dates it names. A text
+  addressed to an AI sets `addressed_to_ai` and the report carries a warning. The mail's headers are cut (sender 120, subject 150
+  characters) and shown; its preview, in a list, is replaced by a gist of 160 characters. If the reader cannot answer
+  (no model, an error, two answers that are not usable), a document is **not** given to the conversation (the tool says so) and a list is shown
+  without its gists. The reader is a model call: it costs tokens (one call for a page, a mail or an attachment, one for a list) at the price of
+  the model that runs it, `reader_model`, else the model of titles and summaries; it must be local when the conversation is local
+  only or answered by a local model. `reader` turns it off (the text then reaches the conversation as before); `reader_max_chars`
+  (40,000) bounds what it reads. The conversation stays tainted: a summary is free text and a hostile page can still write a misleading one. GitHub, Drive and folder
+  files keep the taint flag only.
 - **GitHub:** a fine-grained personal access token you paste on the Connections page, and the list of repositories
   Clara may use (others are refused before any request). Reading (tree, files, code search, branches, issues, pull
   requests, threads, and the changes of a pull request or a commit) is allowed; every change (commit, branch, issue, pull request, merge) asks by default.
@@ -732,10 +767,14 @@ counted.
 - **Labels, the read mark and the Trash:** a label (`mail_label_create`, `mail_label`), a mark read (`mail_mark_read`) and a trash (`mail_trash`) ask at level 3 and run from level 4. A trash is at the `destructive` level, like Drive's trash, so the Discord token cannot approve it; a turn that has read mail does not raise it (the owner chose that, so that a sort of many mails does not ask for each one), and « Approve all next » covers it. Deleting a label (`mail_label_delete`) asks from level 4 and runs at level 5, at the `destructive` level, is raised after untrusted content, and « Approve all next » does not cover it, because a deleted label cannot be taken back. Every one is refused in a local-only conversation. Nothing here archives or empties the Trash.
 - **Tainted turns:** once a conversation has read untrusted content (a web page or search result, a GitHub file or thread, a
   Drive file, an email or an attachment; and every run a hook starts, from its first word), each of its later turns is
-  tainted too, and outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
-  scripts (`run_network`) and changes to your automations (`automation`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
+  tainted too (also after a marked file of the workspace, or a script that ran with the network, was read), and outside-world writes (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked
+  scripts (`run_network`), changes to your automations (`automation`) and the fetch of an address nobody gave (`fetch_other`) are raised to at least `ask`, whatever the rules say. On by default; `/tainted off` or the
   Rules page switches it off. The last auto level of a chat suspends this rule and the next one (see Auto levels above); no other level does.
-- **Secrets going out:** see section 8.
+- **Secrets going out:** content that looks like a secret (a key, a token, a password, a private key) in a GitHub or Drive write, a
+  vault note, a draft or a mail, a networked script, an address or a search query is raised to `ask`. So is a **search query in a
+  tainted turn that repeats private text** the turn knows (a mail, a file, a note or a fact it read, four words in a row or an
+  identifier such as an email address or a reference with a digit) and that you did not write yourself. It is a screen, not a guarantee: a
+  paraphrase, one word, an encoding or a text spread over many queries passes. The last auto level of a chat suspends this check too.
 - **The test box** (Rules page, `POST /v1/rules/test`, `/rules test`): give a tool, its arguments, the situation
   (chat or unattended, tainted, local only) and an auto level, see the action, the deciding rule or level, what raised it, and every
   matching rule.
@@ -805,16 +844,16 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `folder_grep` | Search the text of the files, plain or a regular expression (stopped after 2 s), with line numbers, 100 lines at most, which count against the budget; binary files are skipped; hidden and ignored files as `folder_find` (untrusted) | folder_read / read; folder_sensitive / read with `include_hidden` |
 | `folder_read` | Read a text file of that folder, numbered, 40,000 characters from a line; it counts against the folder's budget; a hidden or ignored file, or one no listing named yet, asks (untrusted) | folder_read / read; folder_sensitive / read |
 | `ws_list` | The workspace tree with sizes | read |
-| `ws_read` | Read a workspace file, with line numbers (in parts) | read |
-| `ws_search` | Search the workspace | read |
+| `ws_read` | Read a workspace file, with line numbers (in parts); a file that came from outside is read by the quarantined reader (`focus` says what to look for) and taints the conversation | read |
+| `ws_search` | Search the workspace (the lines of a file that came from outside are not shown) | read |
 | `ws_log` | The git history of the workspace or of a path | read |
 | `ws_write` | Create a file, or replace one (`overwrite`) | ws_write / write; ws_destroy / destructive when it overwrites |
 | `ws_edit` | Replace an exact passage of a file | ws_write / write |
 | `ws_move` | Rename or move inside the workspace | ws_write / write; ws_destroy / destructive when the target exists |
 | `ws_delete` | Delete a file or folder (undoable) | ws_destroy / destructive |
 | `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
-| `web_search` | Search the web (Brave, else SearXNG) — untrusted | web_search / read |
-| `web_fetch` | Read a web page — untrusted | fetch_trusted or fetch_other / read |
+| `web_search` | Search the web (Brave, else SearXNG); the results are gists by the quarantined reader — untrusted | web_search / read |
+| `web_fetch` | Read a web page: a quarantined reader's report of it (`focus`: what to look for) — untrusted | fetch_trusted or fetch_other / read |
 | `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted | github_read / read |
 | `github_write` | Commit a file change (create, overwrite, append, delete) | github_write / write or destructive |
 | `github_branch` | Create or delete a branch | github_write / write or destructive |
@@ -827,9 +866,9 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `drive_update` | Replace a file's content | drive_write / destructive |
 | `drive_delete` | Move a file to Drive's trash | drive_write / destructive |
 | `mail_search` | Search a mailbox, newest first — untrusted | mail_read / read |
-| `mail_read` | Read one email: headers, text in parts, attachments — untrusted | mail_read / read |
-| `mail_attachment_read` | The text of an attachment (text, code, PDF, Word) — untrusted | mail_read / read |
-| `mail_attachment_save` | Keep an attachment as a workspace file, never over an existing one — untrusted | mail_read / write |
+| `mail_read` | Read one email: headers, a quarantined reader's report of the text (`focus`: what to look for), attachments — untrusted | mail_read / read |
+| `mail_attachment_read` | A quarantined reader's report of an attachment (text, code, PDF, Word) — untrusted | mail_read / read |
+| `mail_attachment_save` | Keep an attachment as a workspace file, never over an existing one; the file is marked as coming from outside — untrusted | mail_read / write |
 | `mail_draft` | Save a draft in the mailbox; nothing is sent | mail_draft / write |
 | `mail_send` | Send an email (asks; refused unattended) | mail_send / destructive |
 | `mail_labels` | Your own labels of the mailbox, not the system ones (pack Mail) | mail_read / read |
@@ -1123,6 +1162,9 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `fallbacks` | Models asked in turn when the one answering fails |
 | `providers_enabled` | Providers that may be used (local Ollama hosts are enabled at first) |
 | `tainted_rule` | The tainted-turn rule (on) |
+| `reader` | The quarantined reader (on): web pages, search results, mail, attachments and files that came from outside are read by a model with no tools and no memory, and the conversation gets only its checked report |
+| `reader_model` | The model of the quarantined reader (empty: the model of titles and summaries) |
+| `reader_max_chars` | Characters of a text the quarantined reader reads, the rest is cut and the report says so (40,000; 1,000 to 400,000) |
 | `auto_level_default` | The auto level of a chat that has none of its own and none from its project (3; 0 to the last level) |
 | `auto_level_unattended` | The auto level of a schedule, reminder or hook run that has none of its own and none from its project (3) |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
@@ -1303,6 +1345,9 @@ keep-alive every 15 s.
 | `GET /v1/workspace/commits/{commit}` | One commit's diff |
 | `POST /v1/workspace/undo` | Revert the last change, or a commit |
 | `GET /v1/workspace/runs` | Script runs |
+| `GET /v1/workspace/provenance` | The files that came from outside or were written after untrusted content, and whether you trusted each |
+| `POST /v1/workspace/trust` | Trust a marked file (or every marked file of a folder) as it is now (a token that may answer every request) |
+| `DELETE /v1/workspace/trust` | Take your trust back |
 | `GET /v1/triggers` | The hooks and the kinds of event (their fields, their default tools) |
 | `POST /v1/triggers` | Make a hook |
 | `GET /v1/triggers/{trigger_id}` | One hook, with its latest runs |

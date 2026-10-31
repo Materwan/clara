@@ -347,6 +347,23 @@ class Workspace:
         files.sort(key=lambda item: item["created"], reverse=True)
         return files[: max(1, limit)]
 
+    async def changed(self, commit: str) -> list[str]:
+        """The files a commit added or changed (not those it deleted)."""
+        if not commit or not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+            return []
+        out = await self.git(
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            "--no-renames",
+            "--diff-filter=AMT",
+            commit,
+        )
+        return [path for path in out.split("\0") if path]
+
     async def show(self, commit: str) -> str:
         if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
             raise WorkspaceError("A commit is given by its id (hex).")

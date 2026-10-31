@@ -97,3 +97,16 @@ class Router:
                 conversation_choice.window,
             )
         return self.choose(local_only=local_only)
+
+    def reader(self, conversation_choice: Choice | None, local_only: bool = False) -> Choice:
+        """The model of the quarantined reader: `reader_model`, else the model of side jobs. Like them it must be local when
+        the conversation is local only or answered by a local model: what it reads (a mail, a file) never leaves the machine."""
+        ref = self.runtime.get("reader_model")
+        if ref:
+            try:
+                option = self._single(ref)
+                if option.local or not (local_only or (conversation_choice and conversation_choice.local)):
+                    return option
+            except NoModel:
+                pass
+        return self.upkeep(conversation_choice, local_only)

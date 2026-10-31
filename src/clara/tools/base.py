@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from ..egress import PrivateText
 from ..gate.actions import FOR_A_CONVERSATION, Action, Decision, Situation
 from ..gate.engine import Audit, Gate, args_digest
 
@@ -57,6 +58,8 @@ class TurnState:
     level: int | None = None  # the auto level of the conversation, read again at each call (Toolbox.call)
     read_chars: int = 20_000
     trusted_urls: set[str] = field(default_factory=set)
+    # what the turn read from private sources and what the person wrote: a search query that repeats the first asks (egress.py)
+    private: PrivateText = field(default_factory=PrivateText)
     counts: dict[str, int] = field(default_factory=dict)
     pictures: list[Image] = field(default_factory=list)
     files_written: list[dict] = field(default_factory=list)  # workspace notes changed this turn (chat cards)
@@ -74,6 +77,13 @@ class ToolContext:
     turn: TurnState
     events: list[dict] = field(default_factory=list)  # for the client, sent after the call's result (a form, a card)
     asks: list = field(default_factory=list)  # questions the call put to the person: the turn waits for their answers
+
+    def taint(self, source: str) -> None:
+        """This call brought in untrusted content that the name of its tool does not say (a marked file of the workspace, a
+        script that used the network): the turn is tainted, and so are all the later turns of the conversation."""
+        self.turn.tainted = True
+        if self.turn.conversation_id:
+            self.services.conversations.taint(self.turn.conversation_id, source)
 
 
 Describe = Callable[[ToolContext, dict], Action]
@@ -99,6 +109,7 @@ class Tool:
     required: tuple[str, ...] = ()
     parallel: bool = False  # only reads: several calls of such tools in one round run at the same time
     taints: bool = False  # it brings untrusted content into the turn (a web page, an issue, a fetched file)
+    public: bool = False  # what it returns is public (the web): a search query may repeat it; the rest is private text
     remote: Remote | None = None  # run by the person's browser, not here (`function` is then never called)
 
     @property
@@ -320,6 +331,7 @@ class Toolbox:
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
         try:
             text, ok = tool.remote.after(context, dispatch.arguments, answer), True
+            context.turn.private.add(text)
         except (ToolError, ValueError, TypeError) as error:
             text, ok = f"Error: {error}", False
         except Exception as error:  # the page's answer is untrusted: a crash is text for the model, and a log line
@@ -362,11 +374,14 @@ class Toolbox:
     async def run(tool: Tool, context: ToolContext, arguments: dict) -> tuple[str, bool]:
         try:
             if inspect.iscoroutinefunction(tool.function):
-                return await tool.function(context, **arguments), True
-            result = tool.function(context, **arguments)
-            if inspect.isawaitable(result):
-                result = await result
-            return str(result), True
+                text = await tool.function(context, **arguments)
+            else:
+                result = tool.function(context, **arguments)
+                text = await result if inspect.isawaitable(result) else result
+            text = str(text)
+            if not tool.public:
+                context.turn.private.add(text)
+            return text, True
         except (ToolError, ValueError, TypeError) as error:
             return f"Error: {error}", False
         except Exception as error:  # a crash is text for the model, and a line in the server log

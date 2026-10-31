@@ -12,6 +12,7 @@ from .mirror.service import Mirror
 from .ops.discord_report import DiscordReport
 
 if TYPE_CHECKING:
+    from .agent.reader import Reader
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
     from .connectors.asks import Questions
@@ -76,8 +77,10 @@ class Services:
     retention: AutomationRetention = None  # type: ignore[assignment]
     toolbox: Toolbox = None  # type: ignore[assignment]
     agent: Agent = None  # type: ignore[assignment]
+    reader: Reader = None  # type: ignore[assignment]
     lifecycle: Lifecycle = None  # type: ignore[assignment]
     workspace: Any = None
+    provenance: Any = None
     sandbox: Any = None
     vault: Any = None
     packs: Any = None

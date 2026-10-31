@@ -5,18 +5,44 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ..agent.reader import ReaderError
 from ..agent.turn import ChatRequest, ServerStopping
 from ..events import delivery
 from ..llm.retry import retryable
 from ..timekeeping.schedules import Stopping
 from .events import StoredEvent
-from .message import instructions_of, message_of
+from .message import DIGEST_SHOWN, instructions_of, message_of
 from .service import Trigger, Triggers
 
 if TYPE_CHECKING:
     from ..services import Services
 
 log = logging.getLogger(__name__)
+
+
+async def gists_of(s: Services, trigger: Trigger, events: list[StoredEvent], conversation_id: str) -> dict | None:
+    """The reader's gist of each mail event a run is told of (event id -> Gist). None: the reader is off, the events are
+    shown as they are. If it fails, an empty answer: the run is told the mails' text was withheld."""
+    if not s.reader.on:
+        return None
+    mails = {str(event.id): event for event in events[:DIGEST_SHOWN] if event.kind == "mail.received"}
+    if not mails:
+        return {}
+    try:
+        found = await s.reader.gists(
+            "emails",
+            {
+                key: f"From: {event.data.get('from', '')}. Subject: {event.data.get('subject', '')}. "
+                f"Preview: {event.data.get('snippet', '')}"
+                for key, event in mails.items()
+            },
+            conversation_id=conversation_id,
+            local_only=trigger.local_only,
+        )
+    except ReaderError as error:
+        log.warning("hook %s: the reader could not read the mails (%s): their text is withheld", trigger.id, error)
+        return {}
+    return {int(key): gist for key, gist in found.items()}
 
 
 async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[StoredEvent]) -> str:
@@ -40,7 +66,7 @@ async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[S
             s, f"Hook: {trigger.name}", conversation=conversation.id, payload={"trigger": trigger.id, "run": run_id}
         )
     request = ChatRequest(
-        message=message_of(trigger.name, trigger.prompt, events),
+        message=message_of(trigger.name, trigger.prompt, events, await gists_of(s, trigger, events, conversation.id)),
         client="server",
         conversation=conversation.id,
         instructions=instructions_of(trigger.deliver),
