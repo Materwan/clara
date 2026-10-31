@@ -7,15 +7,19 @@
   import { confirmDialog } from '../lib/dialog.svelte';
   import { live, toast } from '../lib/state.svelte';
 
-  type Tab = 'tasks' | 'calendar' | 'reminders';
+  type Tab = 'tasks' | 'calendar' | 'reminders' | 'booked';
   type Status = 'open' | 'done' | 'all';
-  const TABS: { value: Tab; label: string }[] = [{ value: 'tasks', label: 'Tasks' }, { value: 'calendar', label: 'Calendar' }, { value: 'reminders', label: 'Reminders' }];
+  const TABS: { value: Tab; label: string }[] = [{ value: 'tasks', label: 'Tasks' }, { value: 'calendar', label: 'Calendar' }, { value: 'reminders', label: 'Reminders' }, { value: 'booked', label: 'Booked calls' }];
   const STATUSES: { value: Status; label: string }[] = [{ value: 'open', label: 'Open' }, { value: 'done', label: 'Done' }, { value: 'all', label: 'All' }];
 
   let tab = $state<Tab>('tasks');
   let status = $state<Status>('open');
   let tasks = $state<any[]>([]);
   let reminders = $state<any[]>([]);
+  let booked = $state<any[]>([]); // the tool calls Clara booked in a chat to run later
+  let bookedMax = $state(50);
+  // the tone of a booked call's state: done is good, a call that did not run or ended badly is not, one that waits for you is to look at
+  const TONE: Record<string, string> = { done: 'ok', failed: 'danger', refused: 'danger', expired: 'danger', held: 'warn', running: 'warn' };
   const blank = () => ({ title: '', description: '', due: '', reminders: '', parent_id: '' });
   let form = $state(blank());
   let adding = $state(false); // the form of a new task is open (it opens from "New task" and from a task's "+ Sub")
@@ -28,6 +32,9 @@
   async function load(): Promise<void> {
     tasks = (await api.get('/v1/tasks', { status })).tasks;
     reminders = (await api.get('/v1/reminders')).reminders.filter((item: any) => !item.system);
+    const calls = await api.get('/v1/deferred');
+    booked = calls.calls;
+    bookedMax = calls.max_pending;
   }
 
   $effect(() => {
@@ -99,6 +106,17 @@
     await api.del(`/v1/reminders/${reminder.id}`);
     load();
   }
+
+  async function cancelCall(call: any): Promise<void> {
+    try {
+      await api.del(`/v1/deferred/${call.id}`);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+    load();
+  }
+
+  const firstLine = (text: string) => text.split('\n').find((line) => line.trim()) ?? '';
 
   const days = $derived.by(() => {
     const first = new Date(month);
@@ -206,6 +224,40 @@
         {/each}
       </div>
     </div>
+  {:else if tab === 'booked'}
+    <p class="muted small">
+      Tool calls Clara booked in a chat to run later (at most {bookedMax} waiting). You allowed each one, with its date, when she booked it. The server runs it by
+      itself then, without a conversation, and asks the rules again: a rule that refuses stops it, and one that asks makes it a request you answer.
+    </p>
+    <table>
+      <thead><tr><th>When</th><th>Call</th><th>State</th></tr></thead>
+      <tbody>
+        {#each booked as call (call.id)}
+          <tr>
+            <td class="small">{call.local}<br /><span class="muted">{call.timezone}</span></td>
+            <td>
+              <strong>{call.tool}</strong>
+              {#if call.local_only}<span class="tag">local only</span>{/if}
+              {#if call.summary}
+                <details class="setup">
+                  <summary>{firstLine(call.summary)}</summary>
+                  <p class="pre small">{call.summary}</p>
+                  {#if Object.keys(call.arguments).length}<p class="pre small muted">{JSON.stringify(call.arguments, null, 2)}</p>{/if}
+                </details>
+              {/if}
+            </td>
+            <td class="small">
+              <span class="tag {TONE[call.status] ?? ''}">{call.status}</span>
+              {#if call.status === 'held' && call.request}<span class="muted"> request #{call.request} waits for your answer</span>{/if}
+              {#if call.result && call.status !== 'held'}<p class="muted pre">{call.result}</p>{/if}
+              {#if call.status === 'pending'}<p><button class="small danger" aria-label="Cancel the call {call.id} ({call.tool})" onclick={() => cancelCall(call)}>Cancel</button></p>{/if}
+            </td>
+          </tr>
+        {:else}
+          <tr><td colspan="3" class="empty">No booked call. Switch on the Booked calls tool in a chat (the + menu) and ask Clara to do something later.</td></tr>
+        {/each}
+      </tbody>
+    </table>
   {:else}
     <form class="panel row end" onsubmit={addReminder}>
       <label class="field grow">Reminder <input placeholder="Remind me to…" bind:value={reminderForm.text} maxlength="500" required /></label>

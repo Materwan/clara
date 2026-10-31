@@ -36,6 +36,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `projects`, `project_sources`, `project_files` | Project settings, GitHub sources, file contents | Until you delete the project |
 | `created_files` | The Drive files Clara created (id, name, conversation, time), which have no history of ours to read back | Until deleted |
 | `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features; a schedule's packs, model and policies and how long the conversations of its runs are kept; each run's status (including `waiting`), summary and conversation | Until deleted; a once-only reminder goes when it fires |
+| `deferred_calls` | The tool calls Clara booked to run later: the tool, its exact arguments, what it said it would do, the date, its state and result, and the conditions it runs in (zone, local only, incognito, project); no link to the conversation for an incognito one | Until it ends, then 30 days |
 | `events`, `event_cursors` | Reminders fired, notifications, approval news, alerts, server and update news; each token's read position | Until every active client read them (a day at least), 90 days at most |
 | `approvals` | Requests with their frozen action and arguments, answer, result | 30 days after they finish |
 | `rules` | Your rules | Until you delete them |

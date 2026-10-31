@@ -6,6 +6,7 @@ daily_notes                                            read, target vault:daily
 ask_person, finish_run                                 memory (they write Clara's own records and event stream)
 discord_thread                                         discord (it leaves the machine: refused when local only)
 automation_*                                           in automations.py
+deferred_*                                             in deferred.py
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ..gate.actions import Action
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, optional_number
 from ..tools.days import resolve_day
 from .automations import automation_tools
+from .deferred import deferred_tools
 from .files import MODES, SOURCES, FilesReader
 from .history import HistoryReader, french_date
 
@@ -426,5 +428,5 @@ def install(s: Services) -> None:
     from .registry import Packs
 
     s.packs = Packs(s)
-    for tool in [*pack_tools(s.vault is not None), *automation_tools()]:
+    for tool in [*pack_tools(s.vault is not None), *automation_tools(), *deferred_tools()]:
         s.toolbox.add(tool)

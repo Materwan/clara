@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..llm import ProviderError, split_ref
 from ..memory.retention import KEEP_FIELDS
 from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, ScheduleError, TaskError
+from ..timekeeping.deferred import MAX_PENDING as MAX_PENDING_CALLS
 from ..timekeeping.tasks import MAX_DESCRIPTION, MAX_TITLE
 from .common import ApiError, caller, services
 from .retention import KeepLimits
@@ -58,6 +59,29 @@ def cancel_reminder(reminder_id: int, request: Request) -> dict:
     if not services(request).reminders.cancel(reminder_id):
         raise ApiError(404, f"No reminder {reminder_id}.")
     return {"deleted": True}
+
+
+# ----------------------------------------------------------------------
+# Booked calls (a tool call Clara booked in a chat to run later; only a chat books one, so there is no POST)
+# ----------------------------------------------------------------------
+@router.get("/deferred")
+def deferred(request: Request) -> dict:
+    service = services(request).deferred
+    return {"calls": [call.describe() for call in service.listing()], "max_pending": MAX_PENDING_CALLS}
+
+
+@router.delete("/deferred/{deferred_id}")
+def cancel_deferred(deferred_id: int, request: Request) -> dict:
+    service = services(request).deferred
+    call = service.get(deferred_id)
+    if call is None:
+        raise ApiError(404, f"No booked call {deferred_id}.")
+    if not service.cancel(deferred_id):
+        held = f" Answer request #{call.request_id} instead." if call.status == "held" and call.request_id else ""
+        raise ApiError(
+            409, f"The call {deferred_id} is {call.status}: only one that waits for its date can be cancelled.{held}"
+        )
+    return {"cancelled": True}
 
 
 # ----------------------------------------------------------------------

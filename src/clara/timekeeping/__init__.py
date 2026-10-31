@@ -1,5 +1,6 @@
 """Time: reminders, tasks, scheduled prompts, and the loops that fire them."""
 
+from .deferred import DeferredCall, DeferredCalls, DeferredError
 from .reminders import AnnounceFailed, Reminder, ReminderError, Reminders
 from .schedules import Run, Schedule, ScheduleError, Schedules, Stopping
 from .tasks import DONE, NO_DUE, NO_PARENT, OPEN, STATUSES, Followup, Task, TaskError, Tasks
@@ -11,6 +12,9 @@ __all__ = [
     "OPEN",
     "STATUSES",
     "AnnounceFailed",
+    "DeferredCall",
+    "DeferredCalls",
+    "DeferredError",
     "Followup",
     "Reminder",
     "ReminderError",

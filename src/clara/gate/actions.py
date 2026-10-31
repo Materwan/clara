@@ -13,6 +13,7 @@ Targets name what is touched, with a prefix:
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server
+    deferred           the calls Clara booked to run later
 
 What happens to a class of action when no rule matches is the level of the conversation (gate/levels.py): each tool is
 refused, asked or run according to it, and CLASSES says where the tools of a class start (the owner may change any tool).
@@ -65,6 +66,11 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "fetch_other": ("any_read", "any_read", "Fetch any other URL"),
     "discord": ("mail", "all", "Open, write in or remove a Discord thread"),
     "automation": ("mail", "all", "Create, change or delete an automation: a schedule or a hook"),
+    "deferred": (
+        "any_read",
+        "all",
+        "Book a tool call to run later: the request shows the whole call and its date, and the call is run then, not asked again",
+    ),
     "discord_forget": (
         "mail",
         "all",
@@ -99,6 +105,7 @@ RAISED_WHEN_TAINTED = frozenset(
         "vault_destroy",
         "run_network",
         "automation",
+        "deferred",
     }
 )
 # Classes whose content leaves the machine: content that looks like a secret raises them to `ask`
@@ -143,6 +150,7 @@ SPECIAL_TARGETS = (
     "history",
     "discord",
     "automations",
+    "deferred",
 )
 _GLOB_CHARS = re.compile(r"[*?\[]")
 

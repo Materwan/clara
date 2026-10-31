@@ -42,6 +42,7 @@ async def stream_as(client, services, headers) -> list[dict]:
     ("notification", "triggers", {}, "hook_notices"),
     ("notification", "mail", {}, "mail"),
     ("notification", "clara", {}, "clara_notices"),
+    ("notification", "deferred", {}, "booked_calls"),
     ("notification", "server", {}, "answers"),
     ("notification", "client:script", {}, "notifications"),
     ("notification", "anything else", {}, "notifications"),

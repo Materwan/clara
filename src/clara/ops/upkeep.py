@@ -153,6 +153,7 @@ class Upkeep:
         limit = iso(utcnow() - timedelta(days=s.settings.retention_days))
         s.db.execute("DELETE FROM audit_log WHERE at < ?", (limit,))
         s.web_sessions.prune()
+        s.deferred.sweep()
         if s.triggers is not None:
             s.triggers.prune(s.settings.retention_days)
 

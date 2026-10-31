@@ -47,6 +47,7 @@ CATEGORIES = (
     Category("hook_notices", "Hook notices", "A hook that only notifies: a mail matched its conditions."),
     Category("mail", "New mail", "The inbox of a connected mailbox received a mail (the sender and the subject)."),
     Category("clara_notices", "Clara's own notices", "Clara notified you herself, with her notify tool."),
+    Category("booked_calls", "Booked calls", "A tool call Clara booked for later has run, or could not."),
     Category("answers", "Answer ready", "A long answer is finished."),
     Category("notifications", "Other notifications", "Scripts and other clients that notify you."),
     Category("updates", "Updates", "Clara is updating, or has updated."),
@@ -80,6 +81,7 @@ def category_of(kind: str, source: str, payload: Mapping) -> str | None:
             "triggers": "hook_notices",
             "mail": "mail",
             "clara": "clara_notices",
+            "deferred": "booked_calls",
             "server": "answers",
             STARTED_SOURCE: "automation_started",
         }.get(source, "notifications")

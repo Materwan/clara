@@ -84,7 +84,7 @@ from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
 from .settings import Settings, SettingsError, load_settings
-from .timekeeping import Reminders, Schedules, Stopping, Tasks
+from .timekeeping import DeferredCall, DeferredCalls, Reminders, Schedules, Stopping, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
 from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
 from .timekeeping.schedules import Run, Schedule, instructions_of, message_of
@@ -170,6 +170,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         reminders=Reminders(db, events, home),
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
         schedules=Schedules(db, events, home),
+        deferred=DeferredCalls(db, events, home),
         rules=rules,
         gate=Gate(db, rules, runtime, levels, vault_push=settings.vault_push),
         levels=levels,
@@ -220,7 +221,7 @@ def wire(s: Services) -> None:
     s.tasks.planner = jobs.plan
     s.tasks.follower = jobs.follow
     late = late_alert(s)
-    for loop in (s.reminders, s.tasks, s.schedules):
+    for loop in (s.reminders, s.tasks, s.schedules, s.deferred):
         loop.late = late
         loop.late_after = float(s.settings.late_alert_seconds)
     s.schedules.runner = lambda schedule, number, run: run_schedule(s, schedule, number, run)
@@ -231,6 +232,8 @@ def wire(s: Services) -> None:
     s.schedules.waiting = s.approvals.pending_count
     s.approvals.toolbox = s.toolbox
     s.approvals.followup = s.agent.followup
+    s.deferred.runner = lambda call: run_deferred(s, call)
+    s.deferred.approvals = s.approvals
 
     def approved_context(approval) -> ToolContext:
         conversation = s.conversations.get(approval.conversation_id) if approval.conversation_id else None
@@ -239,14 +242,32 @@ def wire(s: Services) -> None:
             conversation_id=approval.conversation_id or "",
             client="server",
             mode="unattended",
-            timezone=s.settings.timezone,
+            timezone=approval.timezone or s.settings.timezone,
             project_id=conversation.project_id if conversation else None,
             incognito=bool(conversation and conversation.incognito),
-            local_only=bool(conversation and conversation.local_only),
+            # the request itself says it came from a local-only run: a conversation that is gone does not lift that
+            local_only=bool(conversation and conversation.local_only) or "local only" in approval.situation,
         )
         return ToolContext(s, state)
 
     s.approvals.context_factory = approved_context
+
+
+async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int | None]:
+    """One booked call that is due: the toolbox runs it as the gate decides when nobody is there, in the conditions it was
+    booked in (the conversation's time zone, local only, incognito, project). (how it ended, what it says, its request)"""
+    state = TurnState(
+        turn_id=f"deferred-{call.id}",
+        conversation_id=call.conversation_id or "",
+        client="server",
+        mode="unattended",
+        timezone=call.timezone,
+        project_id=call.project_id,
+        incognito=call.incognito,
+        local_only=call.local_only,
+    )
+    status, text, request = await s.toolbox.call_booked(call.tool, ToolContext(s, state), call.arguments, call.summary)
+    return status, text, request.id if request is not None else None
 
 
 async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -> str:
@@ -347,14 +368,16 @@ def recover(s: Services) -> None:
     failed = s.approvals.recover()
     interrupted = s.schedules.recover()
     cut = s.triggers.recover() if s.triggers is not None else 0
-    if healed or failed or interrupted or cut:
+    booked = s.deferred.recover()
+    if healed or failed or interrupted or cut or booked:
         log.warning(
             "after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
-            "%d scheduled run(s) to run again, %d hook run(s) put right",
+            "%d scheduled run(s) to run again, %d hook run(s) put right, %d booked call(s) marked to check",
             healed,
             failed,
             interrupted,
             cut,
+            booked,
         )
     if s.workspace is not None:
         s.workspace.recover()
@@ -407,6 +430,7 @@ def create_app(s: Services) -> FastAPI:
                         if asyncio.iscoroutine(result):
                             await result
             await s.agent.runs.cancel_all("the server stopped")  # saved as interrupted, before the database closes
+            await s.deferred.close()
             await s.approvals.close()
             await s.agent.drain_background()
             await s.providers.aclose()

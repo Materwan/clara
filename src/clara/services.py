@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from .runtime import RuntimeSettings
     from .secrets import SecretsStore
     from .settings import Settings
-    from .timekeeping import Reminders, Schedules, Tasks
+    from .timekeeping import DeferredCalls, Reminders, Schedules, Tasks
     from .tools.base import Toolbox
     from .tools.folder_tools import FolderGrants
 
@@ -60,6 +60,7 @@ class Services:
     reminders: Reminders
     tasks: Tasks
     schedules: Schedules
+    deferred: DeferredCalls
     rules: Rules
     gate: Gate
     levels: Levels
@@ -98,7 +99,13 @@ class Services:
     started: float = field(default_factory=time.monotonic)
 
     def due_loops(self) -> list:
-        return [self.reminders, self.tasks, self.schedules, *([self.triggers] if self.triggers is not None else [])]
+        return [
+            self.reminders,
+            self.tasks,
+            self.schedules,
+            self.deferred,
+            *([self.triggers] if self.triggers is not None else []),
+        ]
 
     def reminders_firing(self) -> bool:
         return self.reminders.busy_firing or self.tasks.busy_firing

@@ -28,7 +28,7 @@ def _remind(context: ToolContext, text: str, when: str, repeat: str = "", target
             repeat=str(repeat or ""),
             timezone=context.turn.timezone,
             targets=_targets(targets),
-            conversation_id=None if context.turn.incognito else context.turn.conversation_id,
+            conversation_id=None if context.turn.incognito else (context.turn.conversation_id or None),
             client=context.turn.client,
         )
     except ReminderError as error:
@@ -96,7 +96,7 @@ async def _add_task(
             timezone=context.turn.timezone,
             targets=_targets(targets),
             parent_id=None if parent_id in (None, "", 0) else _task_number(parent_id),
-            conversation_id=None if context.turn.incognito else context.turn.conversation_id,
+            conversation_id=None if context.turn.incognito else (context.turn.conversation_id or None),
         )
     except TaskError as error:
         raise ToolError(str(error)) from None

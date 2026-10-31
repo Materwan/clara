@@ -63,7 +63,7 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Archive | Each conversation has an **Archive** button next to its Delete button (and in its row menu): an archived one is kept whole, can be read (Clara reads it with her tools as any other), and takes no new message, from the web, Discord or a scheduled or hook run (which then fails). The rail lists the archived ones under **Archived**; **Unarchive** brings one back. Archived in Discord, it is archived here, and the other way round |
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects**, the **schedules** and the **hooks** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project, a schedule or a hook shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A switch in the account menu, **Discord conversations** (on at first, kept in the browser), leaves out of the list what Discord started; a search and the pinned ones still show them. A conversation made by a schedule's or a hook's run belongs to that schedule or hook even when it has a project |
 | Memory (Settings) | The global memory's facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown. The memory of a project, a schedule or a hook is on its own page |
-| Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
+| Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel; the **Booked calls** tab: the tool calls Clara booked to run later (what each does, when, and how it ended), with **Cancel** for one that still waits |
 | Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Each item has an **Auto level** selector, the level its runs have (empty: its project's, else the default of runs nobody watches), and a **Memory** button that opens the facts it keeps (the count on the button, and a tag when some wait for you); deleting an item says how many facts go with it. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, and the tool has no level field, so she cannot give an automation a level |
 | Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail; for a per-run schedule, **Cleaning up** (the age, the count: the Admin settings or its own), with how many conversations the next pass would delete |
 | Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run, and **Cleaning up** for a hook that runs Clara (the age, the count: the Admin settings or its own, with how many conversations the next pass would delete); **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
@@ -203,10 +203,10 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
 
 - **Which channel carries what (Admin page, Discord tab; runtime setting `discord_routes`):** approval requests always go
   to `#approval` and the questions of scheduled runs that do not deliver to Discord to `#general` (the ones that do ask
-  in their forum thread). Every other message belongs to one of thirteen
+  in their forum thread). Every other message belongs to one of fourteen
   categories, each sent by default where the table above says: reminders, tasks, scheduled tasks, automation started
   (`automation_started`), hook results, hook
-  failures, hook notices, new mail, Clara's own notices (her `notify` tool), answer ready, other notifications
+  failures, hook notices, new mail, Clara's own notices (her `notify` tool), booked calls (`booked_calls`), answer ready, other notifications
   (scripts and other clients), updates (all to `#notification`) and alerts (to `#alerts`). You send a category to
   `#notification`, `#general` or `#alerts`, or switch it off (Discord stays silent; the web site and the other clients
   still get it). `#approval` is not a choice, so whatever is there waits for your answer, and alerts cannot be switched
@@ -286,7 +286,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
   schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
-  and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
+  **Booked calls** (chats only, off until you switch it on: Clara books a tool call to run later, see *Booked calls* in
+  section 5), and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
   it, so it follows the conversation to every client, and a new conversation starts with web search only. A **project** can
   start its conversations with other tools: its `packs` (chosen when the project is made or later, on its page) are copied to each
@@ -422,6 +423,26 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
     wait for your answer, write the day into a block of that day's daily note (`vault_daily_block`), mark the tasks you
     confirmed done and finish; unanswered, she writes it from what she read, the uncertain points under « À confirmer ».
     Delete or pause it as any schedule; it is not made again.
+- **Booked calls (deferred tool calls):** with the **Booked calls** pack of a chat, Clara decides now that one of her tools
+  runs later: « trash this mail in two days » is `deferred_book` with the tool `mail_trash`, its arguments and a date
+  (`at`, in the chat's time zone, between a minute and 366 days ahead; 50 booked calls waiting at most). The request
+  (class `deferred`, at the level of the booked call, so Discord cannot allow a destructive one) shows the whole call
+  (what its tool says it would do, its arguments) and its date, and you allow that exact call once; it asks at every auto
+  level but the last, it asks again in a tainted turn whatever a rule says, and a booked call cannot book another. At the due
+  time the server runs it by itself with the saved arguments: no model turn, nobody in the conversation. The floor, the
+  local-only rule and a rule that **refuses** still stop it (and `deferred_book` refuses at once a call that a rule would
+  refuse then); what you allowed is not asked again, except by a rule that **asks** about that tool: the call then becomes an
+  ordinary approval request, pushed to your clients, which runs it only if you allow it within 24 hours. A call that now says
+  something else than what you read (its summary changed: a mail already changed, an automation edited since) is not run.
+  It runs in the conditions it was booked in (time zone, local only, incognito, project). A call due while the server was
+  off runs once when it comes back (the `late:` alert says so). You get a `notification` of source `deferred` (category
+  `booked_calls`) when it ended: done, failed (the error, e.g. the mail is gone) or not run; a local-only call's stays off Discord
+  and scripts. A crash while it ran marks it `failed` (« check before booking it again »): it is never run twice. The
+  **Tasks & reminders** page lists them (waiting, running, held, ended) with a **Cancel** for one that waits for its date;
+  `deferred_cancel` and `DELETE /v1/deferred/{deferred_id}` do the same, and Clara can list them (`deferred_list`). Only a chat
+  books one: there is no way to book from the API. Finished calls are kept 30 days. Not bookable: the tools that need a
+  person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`),
+  those run by your browser (the computer folder) and a tool that the chat is not offered.
 - **Notifications:** Clara may notify you (3 per turn, only when asked or when long work is done); you can notify
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
@@ -632,7 +653,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
 (`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
-`reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`) and a one-line summary. The gate answers allow, ask or refuse. The model can
+`reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`, `deferred`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
 ### Auto levels (when no rule matches)
@@ -703,6 +724,7 @@ threshold), so nothing becomes more permissive. A built-in level is found again 
 | `fetch_other`: fetch any other URL | 2 | 2 |
 | `discord`: open, write in or remove a Discord thread, or say something in `#general` | 4 | 5 |
 | `automation`: create, change or delete an automation, a schedule or a hook (the Automations pack) | 4 | 5 |
+| `deferred`: book a tool call to run later (the request shows the whole call and its date; the Booked calls pack) | 2 | 5 |
 | `discord_forget`: delete a conversation, a project, a schedule or a hook because its Discord thread or forum was deleted | 4 | 5 |
 | `folder_read`: read a folder on your computer in a web chat: list, find, search, or read a file that is not hidden or ignored | 2 | 2 |
 | `folder_sensitive`: read a hidden or ignored file of that folder, or search them (a card can allow it for the conversation) | 2 | 5 |
@@ -746,7 +768,8 @@ counted.
   **refuse always**; the two "always" answers write a rule. A request expires after `CLARA_APPROVAL_EXPIRE` (24 h)
   and Clara is told it was not done. Finished requests are kept 30 days (the audit log keeps the decisions longer).
   A request to send an email shows the sender, every address, the subject, the attachments and the whole text
-  (up to 8,000 characters; other requests show 500); Clara is told only the first 500 characters of it afterwards.
+  (up to 8,000 characters; a request to book a call shows the whole call, up to 24,000, as a request to make an automation does;
+  other requests show 500); Clara is told only the first 500 characters of it afterwards.
 - **In a streamed chat** the turn waits up to `CLARA_APPROVAL_WAIT` (600 s) for your answer, then goes on without the
   action; a later answer runs it and starts a short follow-up turn with the result. A request not answered within 60 s
   is pushed to your other clients too.
@@ -775,7 +798,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-80 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+83 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -850,6 +873,9 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `automation_create` | Make a schedule (at a time, once or repeating) or a hook (when a mail arrives or a GitHub pull request or push happens): every setting of the Automation page. It asks you first, with the whole automation (and, for a schedule, when it first runs) in the request; refused unattended; asks again in a tainted turn whatever a rule says. Made in a local-only conversation, it is local only | automation / write |
 | `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change. The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass; if more would be deleted by the time you allow it, nothing is changed and Clara asks again | automation / write |
 | `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
+| `deferred_book` | Book a tool call to run later, by itself: a tool, its arguments and a date. You read the whole call and allow it once; a refusing rule, the floor and the local-only rule still apply when it is due (pack Booked calls; chats only) | deferred / the level of the booked call |
+| `deferred_list` | The booked calls that wait and the latest ones that ended, with their numbers; the summary of a local-only call is shown only to a local-only conversation (pack Booked calls) | read |
+| `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only, and not offered to a run that delivers to Discord: its thread is the forum's) | discord / write |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
 | `vault_search` | Search notes | read |
@@ -1201,6 +1227,8 @@ keep-alive every 15 s.
 | `GET /v1/reminders` | Reminders to come |
 | `POST /v1/reminders` | Add one |
 | `DELETE /v1/reminders/{reminder_id}` | Cancel one |
+| `GET /v1/deferred` | The calls Clara booked to run later: those that wait, then the latest that ended |
+| `DELETE /v1/deferred/{deferred_id}` | Cancel one that still waits for its date (409 once it runs, or while a request waits for you) |
 | `GET /v1/tasks` | Tasks |
 | `POST /v1/tasks` | Add one |
 | `GET /v1/tasks/{task_id}` | One task with its sub-tasks |
@@ -1346,6 +1374,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Files kept per conversation | 20 |
 | Fact | 300 characters; category 32; 100 live facts per project, schedule or hook, 20 of them waiting for your confirmation |
 | Reminders | 200; 500 characters each |
+| Booked calls | 50 waiting; a date from one minute to 366 days ahead; arguments 64,000 characters; the request shows up to 24,000; kept 30 days once ended |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Schedules | 100; prompt 20,000 characters; documents 150,000 characters |
 | Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on a schedule or a hook |

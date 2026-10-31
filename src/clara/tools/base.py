@@ -74,6 +74,9 @@ class ToolContext:
     turn: TurnState
     events: list[dict] = field(default_factory=list)  # for the client, sent after the call's result (a form, a card)
     asks: list = field(default_factory=list)  # questions the call put to the person: the turn waits for their answers
+    offered: frozenset[str] | None = (
+        None  # the tools this turn offers (Toolbox.call sets it; None: no turn is behind this)
+    )
 
 
 Describe = Callable[[ToolContext, dict], Action]
@@ -221,6 +224,7 @@ class Toolbox:
             return CallResult(f"Unknown tool: {name}.")
         if not isinstance(arguments, dict):
             return CallResult("Error: the arguments must be an object.")
+        context.offered = frozenset(offered)
         try:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
@@ -357,6 +361,64 @@ class Toolbox:
         if ok and tool.taints:
             context.turn.tainted = True
         return text, ok
+
+    async def call_booked(
+        self, name: str, context: ToolContext, arguments: dict, summary: str
+    ) -> tuple[str, str, Approval | None]:
+        """A call booked for later, now due, with nobody in the conversation: (how it ended, what it says, the request made).
+
+        You allowed this exact call and its date when it was booked, so the level and the raises (a tainted turn, a secret)
+        have nothing more to say. What still can stop it: the floor, the local-only rule, a rule that refuses, and a call
+        that now says something else than what you read (`summary`). A rule that asks makes it an ordinary request,
+        pushed to your clients like any unattended one: `held`. The other endings are done, failed and refused."""
+        tool = self._tools.get(name)
+        if tool is None:
+            return "failed", f"Error: the tool {name} no longer exists.", None
+        if tool.remote is not None:
+            return (
+                "failed",
+                "Error: this runs on your computer while a conversation is open: it cannot run alone.",
+                None,
+            )
+        try:
+            action = self.action(name, context, arguments)
+        except (ToolError, ValueError, TypeError) as error:
+            return "failed", f"Error: {error}", None
+        situation = context.turn.situation
+        digest = args_digest(arguments)
+        common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
+        if action.summary != summary:
+            decision = Decision("refuse", "what the call would do changed since you read it")
+            self.audit.record(action, situation, digest, decision, "refused", **common)
+            return (
+                "refused",
+                "Not run: what this call would do is not what you allowed. "
+                f"You read: {summary[:400]} Now it would: {action.summary[:400]} Book it again if you still want it.",
+                None,
+            )
+        decision = self.gate.decide(action, situation, approved=True)
+        if decision.effect == "refuse":
+            self.audit.record(action, situation, digest, decision, "refused", **common)
+            why = decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
+            return "refused", f"Not run: {why}.", None
+        if decision.effect == "ask":
+            if self.approvals is None:
+                self.audit.record(
+                    action, situation, digest, decision, "refused", detail="no approval service", **common
+                )
+                return "refused", "Not run: a rule asks about it and approvals are not available.", None
+            approval = self.approvals.create(action, situation, context, arguments, decision)
+            self.audit.record(action, situation, digest, decision, "asked", approval_id=approval.id, **common)
+            return (
+                "held",
+                f"A rule of yours asks about this call: request #{approval.id} waits for your answer.",
+                approval,
+            )
+        text, ok = await self.run(tool, context, arguments)
+        self.audit.record(
+            action, situation, digest, decision, "ran" if ok else "failed", detail="booked call", **common
+        )
+        return ("done" if ok else "failed"), text, None
 
     @staticmethod
     async def run(tool: Tool, context: ToolContext, arguments: dict) -> tuple[str, bool]:

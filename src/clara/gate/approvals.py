@@ -49,8 +49,9 @@ FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
 MAX_PENDING = 10  # requests one conversation may have waiting
 RESULT_SHOWN = 300
 SUMMARY_SHOWN = 500
-# classes whose request shows everything that would leave (the text of an email) or be made (the prompt of an automation)
-SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000}
+# classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation) or
+# be run later (a booked call)
+SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000}
 
 WAITING = (
     "Waiting for permission (request #{id}): this was NOT done, and the person was asked. Go on with anything that does "
@@ -92,6 +93,7 @@ class Approval:
     decided_by: str
     answer: str
     told: bool
+    timezone: str = ""  # the turn's: what a date in the request meant when you read it
 
     def describe(self) -> dict:
         return {
@@ -157,6 +159,7 @@ def _approval(row) -> Approval:
         row["decided_by"],
         row["answer"],
         bool(row["told"]),
+        row["timezone"],
     )
 
 
@@ -204,8 +207,8 @@ class Approvals:
         now = utcnow()
         approval_id = self.db.insert(
             "INSERT INTO approvals (conversation_id, turn_id, tool, arguments, args_digest, target, level, action_class,"
-            " situation, summary, reason, status, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-            " 'pending', ?, ?)",
+            " situation, summary, reason, status, created_at, expires_at, timezone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+            " ?, 'pending', ?, ?, ?)",
             (
                 conversation_id,
                 context.turn.turn_id,
@@ -220,6 +223,7 @@ class Approvals:
                 "; ".join(reason for reason in reasons if reason),
                 iso(now),
                 iso(now + timedelta(seconds=self.expire_after)),
+                context.turn.timezone,
             ),
         )
         approval = self.get(approval_id)

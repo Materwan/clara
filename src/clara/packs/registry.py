@@ -147,6 +147,15 @@ PACKS: tuple[Pack, ...] = (
         icon="play",
     ),
     Pack(
+        "deferred_calls",
+        "Booked calls",
+        "Book a tool call to run later (trash a mail in two days): you allow the exact call and its date once, and the "
+        "server runs it then. Every booking asks you first.",
+        frozenset({"deferred_book", "deferred_list", "deferred_cancel"}),
+        where="chat",
+        icon="calendar",
+    ),
+    Pack(
         "ask_person",
         "Ask you",
         "Ask you a question on the web site and Discord, wait for your answer in the "
