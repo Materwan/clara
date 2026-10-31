@@ -585,13 +585,13 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 - **Where a file comes from:** a file that arrived from outside (an email attachment saved by `mail_attachment_save`; what a script changed
   when it ran with the network, and that run's log) is marked `quarantine`; a file written by Clara (`ws_write`, `ws_edit`, `ws_move`, a script)
   after the conversation read untrusted content is marked `tainted`. The marks are in the database (never in the workspace),
-  move with the file (`ws_move`) and go with it (`ws_delete`). Reading a marked file (`ws_read`, a match of `ws_search`) taints the
+  follow the file when it is moved (`ws_move`: the new path gets them, the old path keeps them) and are kept when it is deleted (`ws_delete`, `DELETE /v1/workspace/file`): an undo of a move or a delete brings the file back marked as it was, and what you had trusted is still trusted if the bytes are the same. A move over a marked file keeps the stricter kind and drops the trust. The mark of a path with no file is not listed. Reading a marked file (`ws_read`, a match of `ws_search`) taints the
   conversation, even a new one, and its later turns; a `quarantine` file is read by the quarantined reader (section 8), a
   `tainted` one as it is, and the matching lines of a `quarantine` file are not shown by `ws_search`. You trust a file on the
   Library page (**Trust this file**), with `/trust <path>` or `POST /v1/workspace/trust` (a folder trusts every marked file in it), and take it
   back the same way; the digest of what you trusted is kept, so a file whose content changes is untrusted again. A file you write
   or replace yourself (`PUT /v1/workspace/file`, `POST /v1/workspace/upload`) is trusted. Only a token that may answer every request trusts a file;
-  the model has no tool for it. A script's reading of a marked file is not followed: a script that prints one gives its text to the conversation.
+  the model has no tool for it. `read_created_file` refuses a marked file, and `files_created` shows no preview of one (`ws_read` is the way in). A script's reading of a marked file is not followed: a script that prints one gives its text to the conversation.
 - **No fallback:** if rootless Podman is not usable (`clara doctor` says why: rootless, cgroup v2 controllers,
   subuid/subgid ranges, the image, isolation), `ws_run` is not offered. `CLARA_RUN=off` switches scripts off.
 
@@ -606,9 +606,9 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   once will not help. A key Brave refuses raises the `brave` alert (over once the key is replaced or removed);
   searches go on through SearXNG. The web tools are offered while a Brave key or `CLARA_SEARXNG_URL` is set. The search
   words go to Brave (and, as before, to the engines SearXNG asks). With the reader on, a result is its address (the search
-  engine's), its title cut to 100 characters and a one-line gist the quarantined reader wrote; the snippet is not shown. If
-  the reader fails, the addresses and titles are shown and the gists are left out.
-- **Web fetch:** `web_fetch` reads http and https pages (title, a report of the text, up to 20 links; `CLARA_FETCH_MAX_SIZE`, 2 MB).
+  engine's) and a one-line gist the quarantined reader wrote; the title and the snippet are not shown. If
+  the reader fails, only the addresses are shown and the gists are left out.
+- **Web fetch:** `web_fetch` reads http and https pages (a report of the text, up to 20 links, only those that are plain addresses; `CLARA_FETCH_MAX_SIZE`, 2 MB).
   `focus` says what the model wants to know from the page. The address
   is resolved once and the connection pinned to that address (with the right TLS name), so a DNS change cannot point it
   inside; private, loopback, link-local and tailnet addresses are refused, at every redirect (5 at most). An address
@@ -620,8 +620,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   one JSON object of a fixed shape, which is checked field by field (unknown keys dropped, texts cut, choices checked), and only
   the checked report reaches the conversation: a summary and an answer to the model's `focus` (1,200 and 800 characters, in
   reported speech), up to 10 facts, and for a mail a kind of message, what the sender asks for and the dates it names. A text
-  addressed to an AI sets `addressed_to_ai` and the report carries a warning. The mail's headers are cut (sender 120, subject 150
-  characters) and shown; its preview, in a list, is replaced by a gist of 160 characters. If the reader cannot answer
+  addressed to an AI sets `addressed_to_ai` and the report carries a warning. A mail's headers are shown as addresses only (the one in angle brackets for the sender; To, Cc and Reply-To), with the date and the ids: the sender's name and the subject are not, and an attachment is a kind of file and a media type; the reader's report carries the subject in its own words. In a list the preview is replaced by a gist of 160 characters. A long text is read in parts: `start_line` goes on from a line, and a report of a cut text says which. If the reader cannot answer
   (no model, an error, two answers that are not usable), a document is **not** given to the conversation (the tool says so) and a list is shown
   without its gists. The reader is a model call: it costs tokens (one call for a page, a mail or an attachment, one for a list) at the price of
   the model that runs it, `reader_model`, else the model of titles and summaries; it must be local when the conversation is local
@@ -929,7 +928,7 @@ and run on the client.
   model of the fallback list that fails for any other reason is skipped too. Once a model has started answering, or
   when the answer's time budget is spent, nothing is asked again. A local model never falls back to a hosted one.
 - **Per conversation:** each conversation may have its own model.
-- **Usage:** one row per model call (kind `chat`, `title`, `summary`, `reminder`, `task`, `schedule`, `hook`, `followup`;
+- **Usage:** one row per model call (kind `chat`, `title`, `summary`, `reminder`, `task`, `schedule`, `hook`, `followup`, `reader`;
   provider, model, client, tokens in, out and cached, duration, outcome), kept `CLARA_RETENTION_DAYS`. No text. No
   limits, no credits.
 

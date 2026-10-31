@@ -1,4 +1,4 @@
--- Schema version 25: where the files of the workspace come from (DECISIONS.md, « Workspace provenance »). A file that arrived from
+-- Schema version 27: where the files of the workspace come from (DECISIONS.md, « Workspace provenance »). A file that arrived from
 -- outside (an email attachment, what a script fetched from the network) or that a conversation wrote after reading untrusted
 -- content is marked. `kind` is `quarantine` for text that came in as it was (a quarantined reader reads it) and `tainted`
 -- for what Clara wrote after untrusted content (reading it taints the reader). The person marks a file trusted: the

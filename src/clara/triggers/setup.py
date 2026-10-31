@@ -21,13 +21,14 @@ log = logging.getLogger(__name__)
 
 
 async def gists_of(s: Services, trigger: Trigger, events: list[StoredEvent], conversation_id: str) -> dict | None:
-    """The reader's gist of each mail event a run is told of (event id -> Gist). None: the reader is off, the events are
-    shown as they are. If it fails, an empty answer: the run is told the mails' text was withheld."""
+    """The reader's gist of each mail event a run is told of (event id -> Gist). None: the reader is off, or no mail is
+    told of, and the events are shown as they are. If it fails, an empty answer: the run is told the mails' text was
+    withheld."""
     if not s.reader.on:
         return None
     mails = {str(event.id): event for event in events[:DIGEST_SHOWN] if event.kind == "mail.received"}
     if not mails:
-        return {}
+        return None
     try:
         found = await s.reader.gists(
             "emails",

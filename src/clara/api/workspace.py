@@ -153,8 +153,6 @@ async def delete(request: Request, path: str = Query(min_length=1, max_length=40
         change = await _workspace(request).delete(path, message=f"delete by {caller(request).name}: {clean(path)}")
     except (WorkspaceError, PathError) as error:
         raise _problem(error) from None
-    if services(request).provenance is not None:
-        services(request).provenance.removed(change.path)
     return {"path": change.path, "commit": change.commit}
 
 

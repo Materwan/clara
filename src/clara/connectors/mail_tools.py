@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -298,24 +299,24 @@ async def _mail_read(
     lines.append(f"Date: {head.when}")
     if found.attachments:
         lines.append("Attachments (mail_attachment_read for the text, mail_attachment_save for the file):")
-        lines += [f"  [{a.id}] {_kind_of(a.name)} ({a.mime}, {human(a.size)})" for a in found.attachments]
+        lines += [f"  [{a.id}] {_kind_of(a.name)} ({_plain_mime(a.mime)}, {human(a.size)})" for a in found.attachments]
     lines.append("")
     named = "; ".join(f"[{a.id}] {clean_line(a.name, 100)}" for a in found.attachments)
-    document = "\n".join(
+    headers = "\n".join(
         [
             f"From: {head.sender}",
             f"To: {found.to}",
             f"Subject: {head.subject}",
             f"Date: {head.when}",
             *([f"Attachments: {named}"] if named else []),
-            "",
-            found.body or "(empty)",
         ]
     )
     try:
         report = await reader.read(
             "mail",
-            document,
+            found.body or "(empty)",
+            head=headers,
+            start_line=optional_number(start_line, "start_line") or 1,
             focus=str(focus),
             conversation_id=context.turn.conversation_id,
             local_only=context.turn.local_only,
@@ -332,6 +333,15 @@ def _kind_of(name: str) -> str:
     """The kind of a file by its extension: its name is whatever the sender wrote, the extension is a few letters."""
     suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     return f"a .{suffix} file" if suffix.isalnum() and len(suffix) <= 8 else "a file"
+
+
+_MEDIA_TYPE = re.compile(r"[a-z0-9][a-z0-9.+-]{0,40}/[a-z0-9][a-z0-9.+-]{0,60}")
+
+
+def _plain_mime(mime: str) -> str:
+    """A media type if it is one: the sender chose it, and a header can hold any text."""
+    text = str(mime or "").strip().lower()
+    return text if _MEDIA_TYPE.fullmatch(text) else "unknown type"
 
 
 def _mail_text(context: ToolContext, provider: str, found, start_line: Any) -> str:
@@ -392,6 +402,7 @@ async def _mail_attachment_read(
         report = await reader.read(
             "document",
             text,
+            start_line=optional_number(start_line, "start_line") or 1,
             focus=str(focus),
             conversation_id=context.turn.conversation_id,
             local_only=context.turn.local_only,

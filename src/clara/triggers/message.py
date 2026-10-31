@@ -16,6 +16,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from ..connectors.mail import HEADER_ADDRESS
 from .events import StoredEvent
 
 if TYPE_CHECKING:
@@ -23,7 +24,6 @@ if TYPE_CHECKING:
 
 DIGEST_SHOWN = 25
 TEMPLATE = re.compile(r"\{([a-z_]{1,30})\}")
-ADDRESS = re.compile(r"[^\s@<>\"']{1,64}@[^\s@<>\"']{1,200}")
 # what a mail event keeps when the reader is on: identifiers and flags, nothing the sender wrote
 MAIL_KEPT = ("account", "mailbox", "message", "thread", "has_attachment", "unread", "received")
 
@@ -66,7 +66,7 @@ def event_block(event: StoredEvent) -> str:
 
 def plain_address(value: str) -> str:
     """A sender's address, if it looks like one (the part inside the angle brackets is whatever the sender wrote)."""
-    return value if ADDRESS.fullmatch(value) else "(unreadable address)"
+    return value if HEADER_ADDRESS.fullmatch(value) else "(unreadable address)"
 
 
 def quiet_block(event: StoredEvent, gist: Gist | None) -> str:

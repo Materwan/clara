@@ -18,6 +18,7 @@ reads it and the conversation gets its report.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -46,6 +47,9 @@ def _connectors(context: ToolContext):
 # Web
 # ----------------------------------------------------------------------
 SHOWN_LINKS = 20  # the links of a page that the conversation is told of (the reader is on)
+LINK = re.compile(
+    r"https?://[^\s<>\"'`]{1,200}"
+)  # a link the conversation is told of: an href is whatever the page wrote
 
 
 @acts_as("web_search")
@@ -130,9 +134,8 @@ async def _web_fetch(context: ToolContext, url: str, focus: str = "") -> str:
             raise ToolError(
                 f"The quarantined reader could not read {page.url} ({error}). The page was not given to this conversation."
             ) from None
-        found = list(dict.fromkeys(href[:200] for _, href in page.links))[
-            :SHOWN_LINKS
-        ]  # the page's own words are not shown
+        # the page's own words are not shown: only what is an address, with no space or quote to hide a sentence in
+        found = list(dict.fromkeys(href for _, href in page.links if LINK.fullmatch(href)))[:SHOWN_LINKS]
         links = "\n".join(f"- {href}" for href in found)  # not trusted: fetching one asks
         return f"URL: {page.url[:300]}\n{report.text()}" + (
             f"\n\nLinks (addresses only, not trusted; fetching one asks):\n{links}" if links else ""

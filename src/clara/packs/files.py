@@ -129,6 +129,7 @@ class FilesReader:
         workspace = self.s.workspace
         if workspace is None:
             return []
+        marks = self.s.provenance
         start, end = day_bounds(day, tz_name)
         try:
             files, counts = self._git_day(lambda *a: workspace.git_sync(*a, check=False), iso(start), iso(end))
@@ -146,7 +147,12 @@ class FilesReader:
                 try:
                     data = workspace.read_bytes(path)
                     entry.size = len(data)
-                    if not looks_binary(data) and len(data) <= PREVIEW_MAX_BYTES:
+                    # no preview of a file that came from outside: its text must not reach the conversation unread
+                    if (
+                        not looks_binary(data)
+                        and len(data) <= PREVIEW_MAX_BYTES
+                        and (marks is None or marks.untrusted(path) is None)
+                    ):
                         entry.preview = preview_of(data.decode("utf-8", "replace"))
                 except (WorkspaceError, PathError, OSError):
                     pass

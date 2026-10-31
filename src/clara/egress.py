@@ -19,7 +19,7 @@ import unicodedata
 PRIVATE = "text read earlier in this conversation"  # what the gate names when a query repeats it
 WINDOW = 4  # words in a row
 MIN_WINDOW_CHARS = 14  # four short words ("a b c d") say nothing
-MAX_ENTRIES = 300_000  # a bound on what one turn remembers (a few MB)
+MAX_CHARS = 2_000_000  # a bound on what one turn remembers (a few MB once cut into words)
 _WORD = re.compile(r"\w+")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
@@ -39,30 +39,42 @@ def _identifiers(text: str, words: list[str]) -> set[str]:
 
 
 class PrivateText:
-    """What a turn knows from private sources, and what the person wrote. Not stored: it lives as long as the turn."""
+    """What a turn knows from private sources, and what the person wrote. Not stored: it lives as long as the turn. The
+    texts are only kept when they come in; they are cut into words when a query is checked (most turns never search)."""
 
     def __init__(self) -> None:
         self._private: set[str] = set()
         self._written: set[str] = set()
+        self._waiting_private: list[str] = []
+        self._waiting_written: list[str] = []
+        self._chars = 0
 
-    def _keep(self, into: set[str], text: str) -> None:
-        if not text or len(into) >= MAX_ENTRIES:
-            return
-        words = _words(text)
-        into |= _grams(words) | _identifiers(text, words)
+    def _keep(self, waiting: list[str], text: str) -> None:
+        if text and self._chars < MAX_CHARS:
+            waiting.append(text)
+            self._chars += len(text)
+
+    @staticmethod
+    def _index(into: set[str], waiting: list[str]) -> None:
+        for text in waiting:
+            words = _words(text)
+            into |= _grams(words) | _identifiers(text, words)
+        waiting.clear()
 
     def add(self, text: str) -> None:
         """Text the conversation read from a private source (a mail, a file, a note, a fact)."""
-        self._keep(self._private, text)
+        self._keep(self._waiting_private, text)
 
     def allow(self, text: str) -> None:
         """Text the person wrote: they may search for it."""
-        self._keep(self._written, text)
+        self._keep(self._waiting_written, text)
 
     def leaks(self, text: str) -> bool:
         """Does `text` repeat private text that the person did not write?"""
-        if not self._private or not text:
+        if not text or not (self._private or self._waiting_private):
             return False
+        self._index(self._private, self._waiting_private)
+        self._index(self._written, self._waiting_written)
         words = _words(text)
         found = _grams(words) | _identifiers(text, words)
         return bool((found & self._private) - self._written)

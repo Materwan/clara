@@ -12,6 +12,11 @@ treats as untrusted):
 
 The person marks a file **trusted** (the web site, the console, the API: never a tool of the model). The digest of the content
 they trusted is kept, so a file that changes is untrusted again until they say so.
+
+A mark is kept when its file is deleted or moved away: both are commits, `undo` brings the file back, and a file that came
+back without its mark would be a way round the quarantine. A move copies the marks to the new path and leaves them at the
+old one. The mark of a path with no file is not listed, and a file written later at that path is marked as the old one was
+(the safe side: trust it if it is yours).
 """
 
 from __future__ import annotations
@@ -92,24 +97,38 @@ class Provenance:
                 )
 
     def moved(self, old: str, new: str) -> None:
-        """A file or folder was moved: its marks go with it, over those of what it replaced."""
+        """A file or folder was moved: its marks are copied to the new path, and the old path keeps them (an undo of the move
+        brings the file back there). Where the new path was marked already (a file replaced), the stricter kind stays and
+        the trust is dropped: the mark of the replaced file is needed again if the move is undone."""
         old, new = clean(old), clean(new)
+        if old == new:
+            return
         with self.db.transaction() as tx:
-            rows = tx.execute(
-                "SELECT path FROM workspace_marks WHERE path = ? OR path LIKE ? ESCAPE '\\'", (old, _under(old))
-            ).fetchall()
-            if not rows:
-                tx.execute("DELETE FROM workspace_marks WHERE path = ? OR path LIKE ? ESCAPE '\\'", (new, _under(new)))
-                return
-            tx.execute("DELETE FROM workspace_marks WHERE path = ? OR path LIKE ? ESCAPE '\\'", (new, _under(new)))
+            rows = tx.execute(f"SELECT * FROM workspace_marks WHERE {_IN}", (old, *_inside(old))).fetchall()
             for row in rows:
-                path = row["path"]
-                tx.execute("UPDATE workspace_marks SET path = ? WHERE path = ?", (new + path[len(old) :], path))
-
-    def removed(self, path: str) -> None:
-        """A file or folder was deleted: nothing is left to mark."""
-        name = clean(path)
-        self.db.execute("DELETE FROM workspace_marks WHERE path = ? OR path LIKE ? ESCAPE '\\'", (name, _under(name)))
+                target = new + row["path"][len(old) :]
+                there = tx.execute("SELECT kind FROM workspace_marks WHERE path = ?", (target,)).fetchone()
+                if there is None:
+                    tx.execute(
+                        "INSERT INTO workspace_marks (path, kind, source, conversation_id, marked_at, trusted_digest, trusted_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            target,
+                            row["kind"],
+                            row["source"],
+                            row["conversation_id"],
+                            row["marked_at"],
+                            row["trusted_digest"],
+                            row["trusted_at"],
+                        ),
+                    )
+                else:
+                    kind = "quarantine" if "quarantine" in (row["kind"], there["kind"]) else "tainted"
+                    tx.execute(
+                        "UPDATE workspace_marks SET kind = ?, source = ?, conversation_id = ?, marked_at = ?,"
+                        " trusted_digest = NULL, trusted_at = NULL WHERE path = ?",
+                        (kind, row["source"], row["conversation_id"], row["marked_at"], target),
+                    )
 
     # ------------------------------------------------------------------
     # Asking (what the tools read)
@@ -162,9 +181,7 @@ class Provenance:
     def trust(self, path: str) -> int:
         """The person trusts a marked file as it is now, or every marked file of a folder. How many files."""
         name = clean(path)
-        rows = self.db.all(
-            "SELECT path FROM workspace_marks WHERE path = ? OR path LIKE ? ESCAPE '\\'", (name, _under(name))
-        )
+        rows = self.db.all(f"SELECT path FROM workspace_marks WHERE {_IN}", (name, *_inside(name)))
         count = 0
         for row in rows:
             digest = self._digest(row["path"])
@@ -180,18 +197,23 @@ class Provenance:
         """The person takes their trust back."""
         name = clean(path)
         cursor = self.db.execute(
-            "UPDATE workspace_marks SET trusted_digest = NULL, trusted_at = NULL"
-            " WHERE (path = ? OR path LIKE ? ESCAPE '\\') AND trusted_digest IS NOT NULL",
-            (name, _under(name)),
+            f"UPDATE workspace_marks SET trusted_digest = NULL, trusted_at = NULL WHERE ({_IN}) AND trusted_digest IS NOT NULL",
+            (name, *_inside(name)),
         )
         return cursor.rowcount
 
     def listing(self) -> list[dict]:
+        """The marked files that are in the workspace. The mark of a deleted file is kept (see the module), but not shown."""
         rows = self.db.all("SELECT * FROM workspace_marks ORDER BY marked_at DESC, path")
-        return [mark.describe(self.trusted(mark)) for mark in map(_mark, rows)]
+        return [mark.describe(self.trusted(mark)) for mark in map(_mark, rows) if self.workspace.exists(mark.path)]
 
 
-def _under(folder: str) -> str:
-    """A LIKE pattern for what is inside a folder (the characters LIKE reads are escaped)."""
-    escaped = folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return escaped + "/%"
+# A path, or what is inside it when it is a folder. Not LIKE: SQLite's LIKE ignores the case of ASCII letters, so a folder
+# `Mail` would reach the marks of `mail/` (a different folder on this file system).
+_IN = "(path = ? OR substr(path, 1, ?) = ?)"
+
+
+def _inside(folder: str) -> tuple[int, str]:
+    """The two values `_IN` takes after the path: the length of the folder's prefix (`folder/`) and the prefix."""
+    prefix = folder + "/"
+    return len(prefix), prefix

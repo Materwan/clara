@@ -183,19 +183,28 @@ def clean_line(text: str, limit: int = SHOWN_FIELD) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-_HEADER_ADDRESS = re.compile(r"[^\s@<>\"',;()\[\]]{1,64}@[A-Za-z0-9.-]{1,200}")
+HEADER_ADDRESS = re.compile(r"[^\s@<>\"',;()\[\]]{1,64}@[A-Za-z0-9.-]{1,200}")
+_QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
+_COMMENT = re.compile(r"\([^()]*\)")
+_ANGLE = re.compile(r"<([^<>]*)>")
 
 
 def addresses_in(text: str, limit: int = 10) -> list[str]:
     """The email addresses written in a header, lower-cased. The names and comments around them are left out: they are
-    whatever the sender chose to write."""
+    whatever the sender chose to write, an address in a name included (`"boss@company.com" <me@evil.example>` is
+    me@evil.example). In each entry the address is the one in angle brackets; with none, a bare address; with several
+    groups of brackets, no address (it cannot be told which one a mail client would use)."""
     found: list[str] = []
-    for match in _HEADER_ADDRESS.finditer(text or ""):
-        address = match.group(0).strip(".").lower()
-        if address not in found:
-            found.append(address)
-        if len(found) >= limit:
-            break
+    for entry in _COMMENT.sub(" ", _QUOTED.sub(" ", text or "")).split(","):
+        inside = _ANGLE.findall(entry)
+        if len(inside) > 1:
+            continue
+        for match in HEADER_ADDRESS.finditer(inside[0] if inside else entry):
+            address = match.group(0).strip(".").lower()
+            if address not in found:
+                found.append(address)
+            if len(found) >= limit:
+                return found
     return found
 
 
