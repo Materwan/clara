@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import threading
 import time
 import zipfile
 from datetime import timedelta
@@ -375,6 +376,32 @@ async def test_backups_are_private_verified_and_kept(services):
     assert oct(path.stat().st_mode & 0o777) == "0o600"
     result = verify(path)
     assert result["integrity"] == "ok" and result["schema"] >= 1 and "facts" in result["rows"]
+
+
+async def test_the_status_reads_the_disk_and_the_vault_off_the_event_loop(services, client, monkeypatch):
+    from clara.ops.backups import Backups
+
+    # The apps ask for the status every 3 s: the walk over the workspace, the backup files and `git` in the vault (which
+    # waits for a pull in progress) must not run on the thread of the event loop, or every request waits for them.
+    loop_thread = threading.get_ident()
+    seen: dict[str, int] = {}
+
+    def spy(name, result=None, original=None):
+        def call(*args, **kwargs):
+            seen[name] = threading.get_ident()
+            return original(*args, **kwargs) if original else result
+        return call
+
+    monkeypatch.setattr(services, "backups", Backups(services))
+    monkeypatch.setattr(services.workspace, "size_bytes", spy("workspace", original=services.workspace.size_bytes))
+    monkeypatch.setattr(services.backups, "describe", spy("backups", original=services.backups.describe))
+    monkeypatch.setattr(services, "vault", SimpleNamespace(status=spy("vault", {"notes": 0})))
+    answer = await client.get("/v1/admin/status")
+    assert answer.status_code == 200
+    body = answer.json()
+    assert body["vault"] == {"notes": 0} and body["storage"]["workspace_mb"] == 0.0 and "last" in body["backups"]
+    assert set(seen) == {"workspace", "backups", "vault"}
+    assert all(thread != loop_thread for thread in seen.values())
 
 
 def _restic_that(tmp_path, services, body: str):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import time
@@ -43,9 +44,25 @@ def set_debug(s: Services, on: bool) -> str:
     return ""
 
 
-async def status(s: Services) -> dict:
+def _from_disk_and_git(s: Services) -> dict:
+    """What `status` reads from the disk or from git: a walk over the workspace, the backup files, `git` run in the
+    vault. They take from a few milliseconds to a second, and the vault's git lock is held by a pull or a push for as long
+    as the network takes, so they run in a thread and never on the event loop (the apps ask for the status every 3 s)."""
     workspace = s.workspace
+    return {
+        "storage": {
+            "database_mb": _size_mb(s.settings.database),
+            "workspace_mb": round(workspace.size_bytes() / 1_000_000, 1) if workspace else 0.0,
+            "disk_percent": disk_percent(s.settings.data_dir),
+        },
+        "vault": s.vault.status() if s.vault else None,
+        "backups": s.backups.describe() if s.backups else {"last": None, "remote": ""},
+    }
+
+
+async def status(s: Services) -> dict:
     sandbox = s.sandbox
+    slow = await asyncio.to_thread(_from_disk_and_git, s)
     return {
         "version": __version__,
         "release": os.environ.get("CLARA_RELEASE", ""),
@@ -65,19 +82,15 @@ async def status(s: Services) -> dict:
             "fallbacks": s.runtime.get("fallbacks"),
         },
         "providers": s.providers.status(),
-        "storage": {
-            "database_mb": _size_mb(s.settings.database),
-            "workspace_mb": round(workspace.size_bytes() / 1_000_000, 1) if workspace else 0.0,
-            "disk_percent": disk_percent(s.settings.data_dir),
-        },
+        "storage": slow["storage"],
         "workspace": {
-            "available": workspace is not None,
+            "available": s.workspace is not None,
             "run_ready": bool(sandbox and sandbox.ready),
             "run_problem": (sandbox.problem if sandbox else "no sandbox") or "",
         },
-        "vault": s.vault.status() if s.vault else None,
+        "vault": slow["vault"],
         "tailscale": s.tailscale.describe() if s.tailscale else "off",
-        "backups": s.backups.describe() if s.backups else {"last": None, "remote": ""},
+        "backups": slow["backups"],
         "events": {"listeners": s.events.listeners, "last_id": s.events.last_id()},
         "clients": {name: f"seen {int(time.monotonic() - seen)} s ago" for name, seen in s.clients.items()},
         "alerts": dict(s.alerts.active),

@@ -79,12 +79,21 @@
     return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year });
   }
 
+  let loads = 0; // the latest load: an older one that ends late (a search typed fast, a move just made) draws nothing
+
   async function load(): Promise<void> {
+    const mine = ++loads;
+    const asked = query;
     try {
-      items = (await api.get('/v1/conversations', { q: query, kind: 'any', history: !query, hide: query ? '' : hidden(), limit: 200 })).conversations;
-      archivedItems = query ? [] : (await api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 })).conversations;
+      const [found, archived] = await Promise.all([
+        api.get('/v1/conversations', { q: asked, kind: 'any', history: !asked, hide: asked ? '' : hidden(), limit: 200 }),
+        asked ? Promise.resolve({ conversations: [] }) : api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 }),
+      ]);
+      if (mine !== loads) return;
+      items = found.conversations;
+      archivedItems = archived.conversations;
     } catch (error) {
-      toast((error as Error).message, 'error');
+      if (mine === loads) toast((error as Error).message, 'error');
     }
   }
 

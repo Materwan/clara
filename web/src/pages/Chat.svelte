@@ -10,7 +10,7 @@
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import SidePanel from '../components/SidePanel.svelte';
-  import { ApiError, api, fileToBase64, stream, zone } from '../lib/api';
+  import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
   import { grants, stop as stopGrants } from '../lib/grants.svelte';
@@ -69,6 +69,7 @@
   let conversationId = $derived(route.params.id ?? null);
   let conversation = $state<any>(null);
   let messages = $state<Message[]>([]);
+  let loadError = $state<string | null>(null); // why the conversation on screen could not be read (null: it was, or is being)
   let draft = $state('');
   let attached = $state<File[]>([]);
   // A folder on this computer (DECISIONS.md, « Folders on your computer »): the browser reads it for Clara's folder tools.
@@ -181,28 +182,47 @@
     busy = false;
   }
 
+  // Opening a conversation: a slow link must not make a read fail for good, nor hold the whole page back.
+  const OPEN: ReadOptions = { timeout: 15_000, retries: 2 };
+
+  /** The lists the pickers offer (models, tool packs, projects). Small, and not needed to read a conversation: they load beside it. */
+  async function loadPickers(): Promise<void> {
+    const [found, packs, projects] = await Promise.all([
+      api.get('/v1/models').catch(() => null),
+      api.get('/v1/packs', { where: 'chat' }).catch(() => null),
+      api.get('/v1/projects').catch(() => null),
+    ]);
+    if (found) models = found;
+    if (packs) packList = packs.packs;
+    if (projects) projectList = projects.projects;
+  }
+
   async function load(id: string | null): Promise<void> {
     const mine = ++loads;
     leave();
     conversation = null;
     messages = [];
+    loadError = null;
     side = { files: [], notes: [], forms: [] };
     sideOpen = false;
     quiz = null;
     pendingAsk = null;
     outbox = [];
     clearTimeout(panelTimer);
-    models = await api.get('/v1/models').catch(() => ({ models: [], default: '' }));
-    packList = (await api.get('/v1/packs', { where: 'chat' }).catch(() => ({ packs: [] }))).packs;
-    projectList = (await api.get('/v1/projects').catch(() => ({ projects: [] }))).projects;
-    if (mine !== loads) return;
-    if (!id) chosenProject = undefined;
-    if (!id) return;
+    void loadPickers();
+    if (!id) {
+      chosenProject = undefined;
+      return;
+    }
+    // The conversation and its messages do not depend on each other: asked together, not one after the other
+    const asked = api.get(`/v1/conversations/${id}`, undefined, OPEN);
+    const told = api.get(`/v1/conversations/${id}/messages`, { calls: true }, OPEN);
+    told.catch(() => {}); // read below; if the first answer fails, this one's failure is not left unhandled
     try {
-      const found = await api.get(`/v1/conversations/${id}`);
+      const found = await asked;
       if (mine !== loads) return;
       conversation = found;
-      const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
+      const history = (await told).messages;
       if (mine !== loads) return;
       // An answer still being given is followed from its start: its approval cards come with it
       draw(found, history, found.answering ? [] : (found.approvals ?? []));
@@ -210,8 +230,15 @@
       if (found.answering) attach(id, found, history);
     } catch (error) {
       if (mine !== loads) return;
-      toast((error as Error).message, 'error');
-      go('/chat');
+      if (error instanceof ApiError && error.status === 404) {
+        // It is gone (deleted from another client): nothing to try again
+        toast(error.message, 'error');
+        go('/chat');
+      } else {
+        // The link failed, or the server did not answer: stay here, say so, and let you try again
+        conversation = null;
+        loadError = (error as Error).message;
+      }
     }
   }
 
@@ -223,9 +250,8 @@
 
   /** The stored messages of a conversation, drawn again (an answer that ended while we were not reading it). */
   async function refresh(id: string): Promise<void> {
-    const found = await api.get(`/v1/conversations/${id}`);
-    const history = (await api.get(`/v1/conversations/${id}/messages`, { calls: true })).messages;
-    if (conversationId === id) draw(found, history, found.approvals ?? []);
+    const [found, read] = await Promise.all([api.get(`/v1/conversations/${id}`), api.get(`/v1/conversations/${id}/messages`, { calls: true })]);
+    if (conversationId === id) draw(found, read.messages, found.approvals ?? []);
   }
 
   // ---- the side panel -------------------------------------------------------------------------------------
@@ -664,6 +690,7 @@
     }
     try {
       conversation = { ...conversation, ...(await api.patch(`/v1/conversations/${conversationId}`, { project: id ?? 0 })) };
+      conversations.changed++; // the rail lists it under its new project
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -776,7 +803,14 @@
 
   <div class="messages" bind:this={scroller} onscroll={onScroll}>
     <div class="messages-inner">
-      {#if !messages.length}
+      {#if loadError}
+        <div class="welcome" role="alert">
+          <Mark size={56} />
+          <h2 class="greeting">This conversation did not load</h2>
+          <p>{loadError}</p>
+          <button class="primary" onclick={() => load(conversationId)}>Try again</button>
+        </div>
+      {:else if !messages.length}
         <div class="welcome">
           <Mark size={56} />
           <h2 class="greeting">{greeting()}</h2>
@@ -949,7 +983,7 @@
           </div>
         {/if}
         <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
-          onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived}></textarea>
+          onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
         <div class="composer-bar">
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />

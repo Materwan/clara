@@ -2,6 +2,7 @@
 // cannot add, so the cookie alone is never enough), JSON bodies, `{error: {code, message}}` errors, and server-sent
 // events read from a fetch stream (EventSource cannot send the header).
 
+import { TimedOut, retrying, within } from './retry';
 import { session } from './state.svelte';
 
 export class ApiError extends Error {
@@ -12,37 +13,68 @@ export class ApiError extends Error {
 
 const HEADERS = { 'X-Clara-Web': '1', 'X-Clara-Client': 'web' };
 
-async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: body === undefined ? HEADERS : { ...HEADERS, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  });
-  if (response.status === 401 && !path.endsWith('/web-login')) session.signedIn = false;
-  if (!response.ok) {
-    let code = 'error';
-    let message = `HTTP ${response.status}`;
-    try {
-      const data = await response.json();
-      code = data?.error?.code ?? code;
-      message = data?.error?.message ?? message;
-    } catch {
-      /* not JSON */
-    }
-    throw new ApiError(response.status, code, message);
+/** How a read waits and asks again. The other methods are not repeated (a repeated write could be done twice) and wait as long as they need. */
+export type ReadOptions = {
+  /** ms to wait for one answer before giving up on it (default 30 s). */
+  timeout?: number;
+  /** How many more times to ask after a dropped connection, a timeout or a proxy answering while Clara restarts (default 2). */
+  retries?: number;
+};
+const READ_TIMEOUT = 30_000;
+const READ_RETRIES = 2;
+const RESTARTING = new Set([502, 503, 504]); // what the proxy in front of Clara answers while she restarts or cannot be reached
+
+async function attempt<T>(method: string, path: string, body: unknown, signal: AbortSignal | undefined, timeout: number): Promise<T> {
+  try {
+    return await within(timeout, signal, async (cancel) => {
+      const response = await fetch(path, {
+        method,
+        credentials: 'same-origin',
+        headers: body === undefined ? HEADERS : { ...HEADERS, 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: cancel,
+      });
+      if (response.status === 401 && !path.endsWith('/web-login')) session.signedIn = false;
+      if (!response.ok) {
+        let code = 'error';
+        let message = `HTTP ${response.status}`;
+        try {
+          const data = await response.json();
+          code = data?.error?.code ?? code;
+          message = data?.error?.message ?? message;
+        } catch {
+          /* not JSON */
+        }
+        throw new ApiError(response.status, code, message);
+      }
+      const text = await response.text();
+      return (text ? JSON.parse(text) : {}) as T;
+    });
+  } catch (error) {
+    // status 0: the request never got an answer (the browser's own words, "Failed to fetch", say nothing to you)
+    if (error instanceof TimedOut) throw new ApiError(0, 'timeout', 'Clara did not answer in time: try again.');
+    if (error instanceof TypeError) throw new ApiError(0, 'network', 'Clara cannot be reached: check the connection and try again.');
+    throw error;
   }
-  const text = await response.text();
-  return (text ? JSON.parse(text) : {}) as T;
+}
+
+const worthAskingAgain = (error: unknown): boolean => error instanceof ApiError && (error.status === 0 || RESTARTING.has(error.status));
+
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal, read: ReadOptions = {}): Promise<T> {
+  if (method !== 'GET') return attempt<T>(method, path, body, signal, 0);
+  return retrying(() => attempt<T>(method, path, body, signal, read.timeout ?? READ_TIMEOUT), {
+    retries: read.retries ?? READ_RETRIES,
+    retryable: worthAskingAgain,
+    cancelled: () => signal?.aborted ?? false,
+  });
 }
 
 export const api = {
-  get: <T = any>(path: string, params?: Record<string, string | number | boolean | undefined>) => {
+  get: <T = any>(path: string, params?: Record<string, string | number | boolean | undefined>, read?: ReadOptions) => {
     const query = params
       ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])).toString()
       : '';
-    return request<T>('GET', path + (query === '?' ? '' : query));
+    return request<T>('GET', path + (query === '?' ? '' : query), undefined, undefined, read);
   },
   post: <T = any>(path: string, body: unknown = {}) => request<T>('POST', path, body),
   put: <T = any>(path: string, body: unknown = {}) => request<T>('PUT', path, body),
