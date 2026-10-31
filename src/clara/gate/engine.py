@@ -9,8 +9,10 @@
 3. **The rules** you wrote: the most specific matching one decides.
 4. **The level again**, when no rule matches: its table says allow or ask.
 5. **Raises**, which only ever make it stricter: in a *tainted* turn (it read a web page, a fetched file, an issue…),
-   outside-world writes and networked scripts become at least `ask` (runtime setting `tainted_rule`); content that
-   looks like a secret leaving the machine becomes at least `ask`, always. The last level of a chat suspends both
+   outside-world writes, networked scripts and the fetch of an address nobody gave become at least `ask` (runtime setting
+   `tainted_rule`); content that
+   looks like a secret, or repeats private text the conversation read (a search query: egress.py), leaving the machine
+   becomes at least `ask`, always. The last level of a chat suspends both
    (DECISIONS.md, « Auto levels »); a run nobody watches never does.
 
 The model has no tool to read, edit or approve any of this.
@@ -106,7 +108,9 @@ class Gate:
                 effect = stricter(effect, "ask")
             if self.secret_raise(action, situation):
                 if effect == "allow":
-                    raised.append(f"the content looks like a secret ({', '.join(action.secret_kinds)})")
+                    raised.append(
+                        f"the content looks like a secret or repeats private text ({', '.join(action.secret_kinds)})"
+                    )
                 effect = stricter(effect, "ask")
         return Decision(effect, reason, rule.id if rule else None, raised=tuple(raised))
 
@@ -130,7 +134,7 @@ class Gate:
         )
 
     def secret_raise(self, action: Action, situation: Situation) -> bool:
-        """Does this action carry content that looks like a secret out of the machine?"""
+        """Does this action carry content that looks like a secret, or repeats private text, out of the machine?"""
         return bool(action.secret_kinds) and action.klass in OUTSIDE and not self.raises_suspended(situation)
 
     def explain(self, action: Action, situation: Situation) -> dict:

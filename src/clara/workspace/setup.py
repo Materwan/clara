@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .provenance import Provenance
 from .sandbox import Sandbox
 from .store import Workspace
 from .tools import workspace_tools
@@ -17,6 +18,7 @@ def install(s: Services) -> None:
     workspace = Workspace(settings.workspace_dir, settings.workspace_max_bytes, settings.workspace_max_file_bytes)
     workspace.ensure()
     s.workspace = workspace
+    s.provenance = Provenance(s.db, workspace)
     image = s.runtime.get("sandbox_image") or settings.sandbox_image
     s.sandbox = Sandbox(settings, workspace, s.db, image)
     s.sandbox.recover()

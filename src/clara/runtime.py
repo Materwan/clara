@@ -70,6 +70,20 @@ KNOBS: dict[str, Knob] = {
     "fallbacks": Knob([], _refs, "Models asked in turn when the one answering is busy or unreachable."),
     "providers_enabled": Knob(None, _names, "Providers that may be used (local Ollama hosts are enabled at first)."),
     "tainted_rule": Knob(True, _bool, "After untrusted content, raise outside-world writes and networked runs to ask."),
+    "reader": Knob(
+        True,
+        _bool,
+        "Read web pages, search results, mail and untrusted files with a quarantined model (no tools, no memory): "
+        "the conversation gets only its typed report, never the raw text.",
+    ),
+    "reader_model": Knob(
+        "", _ref_or_empty, "The model of the quarantined reader ('': the model of titles and summaries)."
+    ),
+    "reader_max_chars": Knob(
+        40_000,
+        _whole(1_000, 400_000),
+        "Characters of a page, mail or file the quarantined reader reads (the rest is cut and the report says so).",
+    ),
     "auto_level_default": Knob(
         3,
         _whole(0, 9),

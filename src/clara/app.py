@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from . import __version__
 from .agent.model import ModelRunner
 from .agent.prompt import Persona
+from .agent.reader import Reader
 from .agent.turn import Agent, ChatRequest
 from .api import admin as admin_api
 from .api import auth as auth_api
@@ -208,6 +209,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         idle_timeout=settings.idle_timeout,
     )
     s.agent = Agent(s, runner, Persona(settings.persona_file))
+    s.reader = Reader(s)
     s.agent.tool_conditions["discord_say"] = can_say
     s.agent.tool_conditions["discord_forget"] = lambda state: False  # only an approved request runs it
     wire(s)

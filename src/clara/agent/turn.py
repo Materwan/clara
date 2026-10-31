@@ -481,10 +481,14 @@ class Agent:
             used += cost
         return kept
 
+    def _public_tool(self, name: str | None) -> bool:
+        tool = self.s.toolbox.get(name) if name else None
+        return tool is not None and tool.public
+
     def _read_untrusted(self, conversation_id: str) -> bool:
         """Has any turn of the conversation read untrusted content? The prompt shows only its last turns and the results
         of a few of them, but the model's replies and its summary carry what it read on: the whole path counts."""
-        return any(
+        return self.s.conversations.is_tainted(conversation_id) or any(
             (tool := self.s.toolbox.get(name)) is not None and tool.taints
             for name in self.s.conversations.tool_names(conversation_id)
         )
@@ -542,6 +546,7 @@ class Agent:
         else:
             facts, omitted = ([], 0) if state.incognito else self._facts()
             scoped = self._scoped_facts(conversation.id) if conversation and not state.incognito else []
+            state.private.add("\n".join([*facts, *(line for block in scoped for line in block.lines)]))
             project = ""
             if state.project_id is not None:
                 context = self.s.projects.context(state.project_id, plan.choice.window)
@@ -687,10 +692,14 @@ class Agent:
         schemas, names = self._offered(request, plan)
         client_tools = {schema["function"]["name"] for schema in request.tools}
         state.trusted_urls |= urls_in(request.message)  # addresses you wrote: web_fetch reads them without asking
+        state.private.allow(request.message)  # what you wrote, you may search for (egress.py)
         if conversation is not None:
             for message in self.s.conversations.history(conversation.id, 30, conversation.summary_upto):
                 if message.role == "user":
                     state.trusted_urls |= urls_in(message.content)
+                    state.private.allow(message.content)
+                elif message.role == "tool" and not self._public_tool(message.tool_name):
+                    state.private.add(message.content)  # read earlier in this conversation: a query must not repeat it
         yield {
             "type": "turn",
             "id": state.turn_id,

@@ -30,6 +30,16 @@ This folder (`~/clara`) is the **development** copy of Clara: the git working tr
 
 `main` is always releasable: a release is a tag on `main`, and CI runs on every pull request and on pushes to `main`. A feature gets one branch named `feat/<name>` and a fix that stands on its own gets `fix/<name>`, both started from an up-to-date `main`. A fix for work that is not merged yet goes on that feature's branch. Never name a branch `a` and another `a/b`: Git cannot hold both. Keep branches short: merge through a pull request once CI is green, then delete the branch. A typo or a one-line doc fix may go straight to `main`. Tag only on `main`, after the merge and a green run. The owner creates, merges and deletes branches, as with commits and pushes: check which branch is checked out before changing code, and if it is `main` for a feature or a fix, suggest the branch name instead of switching branches yourself.
 
+## Several instances at once
+
+Run parallel instances as git worktrees, not copies: from this checkout, `git worktree add ../clara-1 -b feat/<name> main`. A worktree has every tracked file and nothing git ignores, so in each new one:
+
+- `uv sync --all-extras` (its own `.venv`).
+- A `.env` copied from here, with its own `CLARA_PORT`: two dev servers on one port collide. Do not copy `.dev/` (its key and the real data); start from an empty data folder, as above.
+- `scripts/build-web.sh --quick` only if the instance touches `web/`.
+
+Git refuses to check out one branch in two worktrees, so each instance has its own branch. Claim the item an instance works on in [TODO.md](TODO.md). Do not resume one session in two terminals: their messages interleave in one transcript. Use `/branch` or `--fork-session` instead. The owner merges, deletes the branch and removes the worktree with `git worktree remove`.
+
 ## Commands
 
 ```bash
@@ -72,6 +82,7 @@ CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_netw
 ## Conventions that bite
 
 - **FEATURES.md is tested against the code** (`tests/test_docs.py`). Adding a tool, route, `CLARA_*` setting, console command, secret, runtime knob, action class, event kind or alert without naming it in FEATURES.md (in backticks) fails the suite, and the tool count line (`N tools.`) must be updated.
+- **Migration numbers are taken at merge, not when written.** Two branches that each add a `0025_*.sql` merge without a git conflict, and Clara then refuses to start: `db/migrate.py` requires the numbers 1, 2, 3, … in order and checks them on import. Before writing one, list the highest number in every worktree (`ls src/clara/db/migrations/ ../clara-*/src/clara/db/migrations/ | grep '^0' | sort | tail -3`) and claim the next one in `TODO.md`. The branch that merges second renames its file after rebasing on `main`, checks that its SQL still fits the schema the other migration left, and runs the suite. Rename only a migration that never ran on a database you keep: a database records only its version, so a renamed migration runs again under its new number there, and the migration that now holds the old number is skipped. If it did run, restore that database from its `pre-migration-v<N>-…db` backup first. Never edit or rename a migration that is on `main`.
 - Tests use `FakeLLM` (`tests/fakes.py`: scripted replies, `calls(("tool", {...}))` for tool calls) and `tests/mailworld.py` (a stand-in Gmail). The fixtures set `CLARA_RUN=off` and `CLARA_APPROVAL_WAIT=2`. `asyncio_mode = auto`; an unraisable exception (a leaked or un-awaited task) is configured to fail the test.
 - Subprocesses are always argv lists, never a shell. A child that is awaited with a timeout must be stopped on timeout *and* on cancellation (see `ops/backups.py::_stop`).
 - For test you can use ollama cloud model, and send mail to `jeanmichdu6934@gmail.com`, dedicated to tests.

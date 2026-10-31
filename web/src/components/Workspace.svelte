@@ -87,6 +87,34 @@
     }
   }
 
+  // A file that came from outside (an attachment, a script's output) or was written after untrusted content is marked: Clara
+  // reads it with care until you trust it. Trusting lasts as long as the content does.
+  function origin(mark: any): string {
+    return mark.kind === 'quarantine'
+      ? `Came from outside (${mark.source}). Clara reads it through a quarantined reader, and a conversation that reads it is tainted.`
+      : `Written by Clara after she read untrusted content (${mark.source}). A conversation that reads it is tainted.`;
+  }
+
+  async function trust(path: string): Promise<void> {
+    if (!(await confirmDialog({ title: 'Trust this file', message: `Trust ${path} as it is now? Clara will read it as she reads your own files: no quarantined reader, no taint. Do it only if you wrote it or checked it. If its content changes, it is untrusted again.`, confirm: 'Trust' }))) return;
+    try {
+      await api.post('/v1/workspace/trust', { path });
+      toast('Trusted.', 'ok');
+      await view(path);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function untrust(path: string): Promise<void> {
+    try {
+      await api.del(`/v1/workspace/trust?path=${encodeURIComponent(path)}`);
+      await view(path);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
   async function showCommit(commit: string): Promise<void> {
     shown = (await api.get(`/v1/workspace/commits/${commit}`)).show;
   }
@@ -116,6 +144,17 @@
             {#if !open.binary && draft === null}<button class="small" onclick={() => (draft = open.content)}>Edit</button>{/if}
             <button class="small" onclick={() => save(open.path)}>Download</button>
             <button class="small danger" onclick={() => remove(open.path)}>Delete</button></div>
+          {#if open.mark}
+            <p class="row small">
+              {#if open.mark.trusted}
+                <span class="tag ok">Trusted</span><span class="muted grow">You trusted this content {when(open.mark.trusted_at)}; if it changes, it is untrusted again.</span>
+                <button class="small" onclick={() => untrust(open.path)}>Take back</button>
+              {:else}
+                <span class="tag warn">Untrusted</span><span class="muted grow">{origin(open.mark)}</span>
+                <button class="small" onclick={() => trust(open.path)}>Trust this file</button>
+              {/if}
+            </p>
+          {/if}
           {#if draft !== null}
             <textarea class="editor" rows="24" aria-label={`Content of ${open.path}`} bind:value={draft}></textarea>
             <div class="row"><button class="primary" onclick={write}>Save (a commit)</button><button onclick={() => (draft = null)}>Cancel</button></div>

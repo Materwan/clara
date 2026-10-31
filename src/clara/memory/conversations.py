@@ -456,6 +456,18 @@ class Conversations:
         )
         return [_message(row) for row in rows]
 
+    def taint(self, conversation_id: str, source: str) -> None:
+        """The conversation read untrusted content that the name of a tool does not tell (a marked file, a script that used
+        the network): it stays tainted in all its later turns."""
+        self.db.execute(
+            "INSERT OR IGNORE INTO conversation_taint (conversation_id, source, at)"
+            " SELECT id, ?, ? FROM conversations WHERE id = ?",
+            (source[:200], now_iso(), conversation_id),
+        )
+
+    def is_tainted(self, conversation_id: str) -> bool:
+        return self.db.one("SELECT 1 FROM conversation_taint WHERE conversation_id = ?", (conversation_id,)) is not None
+
     def tool_names(self, conversation_id: str) -> set[str]:
         """The tools whose results are on the path of a conversation, in any of its turns (summarised ones too)."""
         rows = self.db.all(

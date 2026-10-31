@@ -47,6 +47,7 @@ def services(settings, llm) -> Services:
     s = build_services(settings, db, provider_factory=llm.factory)
     extend(s)
     s.runtime.set("default_model", "local:fake")
+    s.runtime.set("reader", False)  # on by default: tests/test_firewall.py turns it on; elsewhere a script of replies is not its
     yield s
     s.traffic.close()
     db.close()
