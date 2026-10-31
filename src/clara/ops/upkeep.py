@@ -134,8 +134,15 @@ class Upkeep:
         if deleted:
             log.info("deleted %d incognito conversation(s)", deleted)
 
-    def retention(self) -> None:
-        deleted = self.s.retention.sweep()
+    async def retention(self) -> None:
+        """The plan is read in a thread (it can scan a long history); the deletes run on the loop one chunk at a time, so the
+        loop turns between two of them and a conversation is never deleted between the check that Clara is not answering
+        in it and its delete."""
+        retention = self.s.retention
+        deleted = 0
+        for count in retention.deletions(await asyncio.to_thread(retention.plan)):
+            deleted += count
+            await asyncio.sleep(0)
         if deleted:
             log.info("deleted %d conversation(s) of automations past their limits", deleted)
 

@@ -28,7 +28,7 @@ from typing import Any
 
 from ..db import Database
 from ..events import Events, delivery
-from ..memory.retention import KEEP_FIELDS, RetentionError, check_own
+from ..memory.retention import KEEP_FIELDS, Own, RetentionError, check_own, merged_own
 from ..timekeeping.dueloop import DueLoop
 from ..timekeeping.schedules import Stopping
 from ..timeutil import iso, now_iso, parse_iso, utcnow
@@ -376,9 +376,10 @@ class Triggers(DueLoop):
             "keep_hours": current.keep_hours,
             "keep_last": current.keep_last,
         }
-        merged.update(
-            {key: value for key, value in fields.items() if value is not None or key == "filter" or key in KEEP_FIELDS}
-        )
+        merged.update({key: value for key, value in fields.items() if value is not None or key == "filter"})
+        if any(key in fields for key in KEEP_FIELDS):  # null: follow the global limits again
+            kept = merged_own(Own(current.keep_days, current.keep_hours, current.keep_last), fields)
+            merged.update(keep_days=kept.days, keep_hours=kept.hours, keep_last=kept.last)
         values = self._normal(merged)
         other = self.by_name(values["name"])
         if other is not None and other.id != trigger_id:

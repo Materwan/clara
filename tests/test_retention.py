@@ -3,6 +3,7 @@ is kept, an automation's own limits, the preview, the routes, Clara's tool and t
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -154,6 +155,29 @@ def test_pinned_archived_by_you_running_waiting_and_pending_ones_are_kept(servic
     assert left(services, pinned, mine, running, waiting, hook_running, asked, plain) == [True] * 6 + [False]
 
 
+async def test_a_conversation_clara_is_answering_in_is_left_for_the_next_pass(services):
+    digest = schedule(services)
+    busy, idle = run_of(services, digest, 100), run_of(services, digest, 100)
+    limits(services, days=1)
+    lock = services.agent._lock(busy)
+    await lock.acquire()  # a turn is answering in it, as the deletion of a conversation checks
+    try:
+        assert services.retention.sweep() == 1 and left(services, busy, idle) == [True, False]
+    finally:
+        lock.release()
+    assert services.retention.sweep() == 1 and left(services, busy) == [False]
+
+
+def test_what_is_kept_is_checked_again_as_the_conversation_is_deleted(services):
+    digest = schedule(services)
+    cid = run_of(services, digest, 100)
+    limits(services, days=1)
+    planned = services.retention.plan()
+    services.conversations.update(cid, pinned=True)  # pinned between the plan and the deletion
+    services.retention.plan = lambda: planned
+    assert services.retention.sweep() == 0 and left(services, cid) == [True]
+
+
 def test_archives_made_by_discord_or_a_history_switch_do_not_save_a_conversation(services):
     digest = schedule(services)
     by_discord, by_group = run_of(services, digest, 100), run_of(services, digest, 100)
@@ -255,6 +279,15 @@ def test_the_services_store_describe_and_reset_them(services):
         services.triggers.update(h.id, keep_last=99999)
 
 
+def test_a_null_for_one_of_days_and_hours_makes_the_whole_age_follow_again(services):
+    s = schedule(services, keep_days=2, keep_hours=5)
+    assert services.schedules.update(s.id, keep_days=None).keep_hours is None
+    h = hook(services, keep_days=2, keep_hours=5)
+    kept = services.triggers.update(h.id, keep_hours=None)
+    assert (kept.keep_days, kept.keep_hours) == (None, None)
+    assert services.retention.preview_change("hook", h.id, keep_days=None)["would_delete"] == 0
+
+
 def test_the_knobs_refuse_nonsense(services):
     for key, value in (("automation_keep_days", -1), ("automation_keep_hours", "3"), ("automation_keep_last", 10_001)):
         with pytest.raises(ValueError):
@@ -330,8 +363,37 @@ async def test_the_upkeep_loop_runs_the_sweep(services):
     old = run_of(services, digest, 100)
     limits(services, days=1)
     upkeep = Upkeep(services)
-    upkeep.retention()
+    await upkeep.retention()
     assert left(services, old) == [False]
+
+
+async def test_the_upkeep_sweep_lets_the_loop_turn_between_two_chunks(services, monkeypatch):
+    monkeypatch.setattr("clara.memory.retention.CHUNK", 1)
+    digest = schedule(services)
+    ids = [run_of(services, digest, 100 + number) for number in range(3)]
+    limits(services, days=1)
+    ticks, at_delete = [], []
+    delete = services.conversations.delete_where
+
+    def noting(where, params=()):
+        at_delete.append(len(ticks))
+        return delete(where, params)
+
+    monkeypatch.setattr(services.conversations, "delete_where", noting)
+
+    async def other():  # whatever else the server does: it must get turns while the sweep deletes
+        while True:
+            ticks.append(1)
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(other())
+    try:
+        await Upkeep(services).retention()
+    finally:
+        task.cancel()
+    assert left(services, *ids) == [False] * 3
+    assert len(at_delete) == 3 and at_delete[0] < at_delete[1] < at_delete[2]  # the loop turned between two deletes
+    assert list(services.retention.deletions(services.retention.plan())) == []  # nothing left to delete
 
 
 async def call(services, name: str, arguments: dict):
@@ -373,6 +435,44 @@ async def test_the_tool_wants_the_age_whole_and_follows_with_minus_one(services,
     tester = services.tokens.create("tester", "cli")[0]
     await services.approvals.decide(follow.approval.id, "allow_once", tester)
     assert services.triggers.get(invoices.id).keep_days is None
+
+
+async def test_the_tool_refuses_a_fraction_that_would_become_no_limit(services, level_four):
+    invoices = hook(services, keep_days=2, keep_hours=0)
+    for arguments in ({"keep_last": 0.9}, {"keep_days": 0.5, "keep_hours": 0}, {"keep_last": True}):
+        refused = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, **arguments})
+        assert refused.approval is None and "must be a whole number" in refused.text, arguments
+    whole = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_last": 3.0})
+    assert whole.approval is not None and "keep_last: the global setting → 3" in whole.approval.summary
+
+
+async def test_a_change_allowed_later_does_not_delete_more_than_its_request_said(services, level_four):
+    digest = schedule(services)
+    first, second = run_of(services, digest, 30), run_of(services, digest, 10)
+    asked = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    assert "deletes 1 more conversation of its runs for good" in asked.approval.summary
+    services.db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (stamp(30), second))  # it aged while the request waited
+    tester = services.tokens.create("tester", "cli")[0]
+    await services.approvals.decide(asked.approval.id, "allow_once", tester)
+    settled = services.approvals.get(asked.approval.id)
+    assert settled.status == "failed"
+    assert "Nothing was changed" in settled.result and "1 more conversation, and they would now delete 2" in settled.result
+    assert services.schedules.get(digest.id).keep_days is None and left(services, first, second) == [True, True]
+    again = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    assert "deletes 2 more conversations of its runs for good" in again.approval.summary  # asked again: it shows the new number
+    await services.approvals.decide(again.approval.id, "allow_once", tester)
+    assert services.schedules.get(digest.id).keep_days == 1
+
+
+async def test_a_change_that_deletes_less_than_said_goes_through(services, level_four):
+    digest = schedule(services)
+    run_of(services, digest, 30), run_of(services, digest, 31)
+    asked = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    assert "deletes 2 more" in asked.approval.summary
+    services.db.execute("UPDATE conversations SET pinned = 1")  # pinned since: it deletes nothing, which is not more
+    tester = services.tokens.create("tester", "cli")[0]
+    await services.approvals.decide(asked.approval.id, "allow_once", tester)
+    assert services.approvals.get(asked.approval.id).status == "done" and services.schedules.get(digest.id).keep_days == 1
 
 
 async def test_a_created_automation_can_carry_limits(services, level_four):

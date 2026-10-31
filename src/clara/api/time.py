@@ -8,10 +8,11 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..llm import ProviderError, split_ref
-from ..memory.retention import KEEP_AGE, KEEP_FIELDS, KEEP_LAST, MAX_DAYS, MAX_HOURS, MAX_LAST
+from ..memory.retention import KEEP_FIELDS
 from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, ScheduleError, TaskError
 from ..timekeeping.tasks import MAX_DESCRIPTION, MAX_TITLE
 from .common import ApiError, caller, services
+from .retention import KeepLimits
 
 router = APIRouter(prefix="/v1", tags=["time"])
 
@@ -165,7 +166,7 @@ class ScheduleDocument(BaseModel):
     text: str | None = Field(default=None, max_length=150_000, description="Leave out to keep the stored text")
 
 
-class NewSchedule(BaseModel):
+class NewSchedule(KeepLimits):
     name: str = Field(min_length=1, max_length=100)
     prompt: str = Field(default="", max_length=20_000)
     documents: list[ScheduleDocument] = Field(default_factory=list, max_length=20)
@@ -185,9 +186,6 @@ class NewSchedule(BaseModel):
         default="notice",
         description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
     )
-    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
-    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
-    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
 
 
 def _model(model: str) -> str:
@@ -243,7 +241,7 @@ def get_schedule(schedule_id: int, request: Request) -> dict:
     return {**service.describe(schedule), "history": service.runs(schedule_id)}
 
 
-class ScheduleChange(BaseModel):
+class ScheduleChange(KeepLimits):
     model_config = {"extra": "forbid"}
     name: str | None = Field(default=None, max_length=100)
     prompt: str | None = Field(default=None, max_length=20_000)
@@ -263,9 +261,6 @@ class ScheduleChange(BaseModel):
     attempts: int | None = None
     in_history: bool | None = None
     deliver: Literal["notice", "web", "discord", "both"] | None = None
-    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
-    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
-    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
 
 
 @router.patch("/schedules/{schedule_id}")

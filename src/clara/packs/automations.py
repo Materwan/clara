@@ -14,9 +14,11 @@ so a run of an automation is never offered these tools.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from ..gate.actions import Action
+from ..gate.engine import args_digest
 from ..llm import ProviderError, split_ref
 from ..memory.retention import KEEP_FIELDS, MAX_DAYS, MAX_HOURS, MAX_LAST, RetentionError
 from ..timekeeping import ScheduleError
@@ -109,6 +111,9 @@ def _filter(value: Any) -> dict:
 
 
 def _keep(key: str, value: Any) -> int | None:
+    # not 0.9 or 0.5, which a plain int() would cut to 0, and 0 is « no limit »; not true either
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise ToolError(f"{key} must be a whole number.")
     number = whole_number(value, f"{key} must be a whole number.")
     if number == FOLLOW:
         return None
@@ -308,23 +313,48 @@ def _change(kind: str, d: dict, values: dict) -> str:
     return "\n".join(lines)
 
 
+def _more(context: ToolContext, kind: str, number: int, values: dict) -> int | None:
+    """How many conversations new retention limits would delete at the next pass beyond what the limits now saved delete
+    anyway; None when `values` holds no limit."""
+    given = {key: values[key] for key in KEEP_FIELDS if key in values}
+    if not given:
+        return None
+    try:
+        return context.services.retention.preview_change(kind, number, **given)["more"]
+    except RetentionError as error:
+        raise ToolError(str(error)) from None
+
+
+NO_MORE = "This deletes no conversation that the limits now saved would not delete."
+MORE = re.compile(r"The next pass \(within 10 minutes\) deletes (\d+) more conversation")
+
+
 def _deletion(context: ToolContext, kind: str, number: int, values: dict) -> str:
     """What new retention limits would delete at the next pass beyond what the limits now saved delete anyway, said in the
     request: this is the one change here that removes conversations."""
-    given = {key: values[key] for key in KEEP_FIELDS if key in values}
-    if not given:
+    more = _more(context, kind, number, values)
+    if more is None:
         return ""
-    try:
-        found = context.services.retention.preview_change(kind, number, **given)
-    except RetentionError as error:
-        raise ToolError(str(error)) from None
-    more = found["more"]
     if not more:
-        return "\nThis deletes no conversation that the limits now saved would not delete."
+        return f"\n{NO_MORE}"
     return (
         f"\nThe next pass (within 10 minutes) deletes {more} more conversation{'s' if more != 1 else ''} of its runs "
         "for good: a pinned one, one you archived and a run still waiting are kept."
     )
+
+
+def _told(context: ToolContext, arguments: dict) -> int | None:
+    """The number of conversations the request you allowed said it would delete; None when no request was made for this
+    call (it was allowed without asking, an instant after its description) or when it named no number."""
+    row = context.services.db.one(
+        "SELECT summary FROM approvals WHERE tool = 'automation_update' AND args_digest = ? AND status = 'approved'"
+        " ORDER BY id DESC LIMIT 1",
+        (args_digest(arguments),),
+    )
+    if row is None:
+        return None
+    found = MORE.search(row["summary"])
+    return int(found.group(1)) if found else (0 if NO_MORE in row["summary"] else None)
 
 
 # ----------------------------------------------------------------------
@@ -450,6 +480,14 @@ def _create_schedule(context: ToolContext, values: dict) -> str:
 
 def _update(context: ToolContext, **arguments: Any) -> str:
     kind, number, values, current = _changes(context, arguments)
+    told = _told(context, arguments)
+    if told is not None:  # the request is read some time before it is allowed: the runs have aged since
+        more = _more(context, kind, number, values)
+        if more is not None and more > told:
+            raise ToolError(
+                f"Nothing was changed: when you were asked, these limits were to delete {told} more conversation"
+                f"{'s' if told != 1 else ''}, and they would now delete {more}. Ask again, so the request shows the new number."
+            )
     s = context.services
     try:
         if kind == SCHEDULE:

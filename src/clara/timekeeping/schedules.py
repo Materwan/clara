@@ -36,7 +36,7 @@ from typing import Any
 
 from ..db import Database
 from ..events import Events, delivery
-from ..memory.retention import KEEP_FIELDS, Own, RetentionError, check_own
+from ..memory.retention import KEEP_FIELDS, Own, RetentionError, check_own, merged_own
 from ..timeutil import REPEATS, iso, next_local, now_iso, parse_iso, resolve_local, utcnow, zone
 from .clock import MomentError, local_text, read_moment, zone_of
 from .dueloop import DueLoop
@@ -437,11 +437,8 @@ class Schedules(DueLoop):
         if "in_history" in fields:
             columns["in_history"] = int(bool(fields["in_history"]))
         if any(key in fields for key in KEEP_FIELDS):
-            keep = self._keep(
-                fields.get("keep_days", old.keep_days),
-                fields.get("keep_hours", old.keep_hours),
-                fields.get("keep_last", old.keep_last),
-            )
+            given = merged_own(Own(old.keep_days, old.keep_hours, old.keep_last), fields)
+            keep = self._keep(given.days, given.hours, given.last)
             columns.update(keep_days=keep.days, keep_hours=keep.hours, keep_last=keep.last)
         if "deliver" in fields or "local_only" in fields:
             columns["deliver"] = self._deliver(

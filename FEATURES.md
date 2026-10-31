@@ -848,7 +848,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `finish_run` | End the scheduled run, with a summary | memory / write |
 | `automation_list` | Your schedules and hooks with their numbers, or one in full (pack Automations; chats only). The prompt and filter of a local-only automation are shown only to a local-only conversation | read |
 | `automation_create` | Make a schedule (at a time, once or repeating) or a hook (when a mail arrives or a GitHub pull request or push happens): every setting of the Automation page. It asks you first, with the whole automation (and, for a schedule, when it first runs) in the request; refused unattended; asks again in a tainted turn whatever a rule says. Made in a local-only conversation, it is local only | automation / write |
-| `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change. The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass | automation / write |
+| `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change. The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass; if more would be deleted by the time you allow it, nothing is changed and Clara asks again | automation / write |
 | `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only, and not offered to a run that delivers to Discord: its thread is the forum's) | discord / write |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
@@ -1009,7 +1009,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   `automation_keep_last`, runtime settings (the Admin page, Settings). A schedule or a hook may have its own (`keep_days`
   with `keep_hours`, `keep_last`); empty follows the setting, and `0` there means no limit for it. **Kept whatever the
   limits:** a pinned conversation, one **you** archived (an archive made by Discord's idle week or by switching a history
-  group off does not count), a run that is queued, running or waiting for an answer, and a conversation with an approval
+  group off does not count, and neither does closing a run's thread by hand on Discord: the bot reports both the same
+  way, so archive it from Clara to keep it), a run that is queued, running or waiting for an answer, and a conversation with an approval
   request pending. The last message is the conversation's last change, so a waiting run you answered counts from your
   answer. A conversation shown in the history is deleted like the others. Deleting is the usual deletion: messages and
   files go, its Discord thread is removed, the run keeps its row (without the link), and the facts the automation learned

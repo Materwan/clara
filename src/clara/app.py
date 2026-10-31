@@ -184,7 +184,9 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         allowances=Allowances(db),
         folders=FolderGrants(db, runtime),
     )
-    s.retention = AutomationRetention(db, s.conversations, runtime)
+    s.retention = AutomationRetention(
+        db, s.conversations, runtime, answering=lambda conversation_id: s.agent.answering(conversation_id)
+    )
     s.github_snapshots = GitHubSnapshots()
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
     s.levels.audit = audit

@@ -12,11 +12,21 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
+from pydantic import BaseModel, Field
 
-from ..memory.retention import MAX_DAYS, MAX_HOURS, MAX_LAST, Limits, RetentionError, check_own
+from ..memory.retention import KEEP_AGE, KEEP_LAST, MAX_DAYS, MAX_HOURS, MAX_LAST, Limits, RetentionError, check_own
 from .common import ApiError, services
 
 router = APIRouter(prefix="/v1", tags=["retention"])
+
+
+class KeepLimits(BaseModel):
+    """An automation's own limits on the conversations of its runs: the base of what creates or changes a schedule or a
+    hook, so that the bounds and the words are written once. Null follows the global setting."""
+
+    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
+    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
+    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
 
 
 @router.get("/retention/preview")

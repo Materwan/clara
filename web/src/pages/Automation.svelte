@@ -243,14 +243,19 @@
     const params: Record<string, number | string> = { kind: isTime ? 'schedule' : 'hook', id: form.id };
     const own = keepBody();
     for (const [key, value] of Object.entries(own)) if (value !== null) params[key] = value;
+    let stale = false; // the limits changed again: an answer that comes late is not the one to show
     const handle = setTimeout(async () => {
       try {
-        keepPreview = await api.get('/v1/retention/preview', params);
+        const found = await api.get('/v1/retention/preview', params);
+        if (!stale) keepPreview = found;
       } catch {
-        keepPreview = null;
+        if (!stale) keepPreview = null;
       }
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      stale = true;
+      clearTimeout(handle);
+    };
   });
 
   const problems = $derived.by<Problem[]>(() => {
