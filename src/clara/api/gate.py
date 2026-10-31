@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..gate import ANSWERS, AlreadyAnswered, ApprovalError, GrantError, NoRuleError, RuleError, Situation
 from ..gate.actions import NOT_PUBLISHED
+from ..gate.approvals import Approval
 from ..gate.grants import BEAT
 from ..tools.base import ToolContext, ToolError, TurnState
 from .common import ApiError, caller, services
@@ -136,6 +137,14 @@ def test_rule(body: RuleTest, request: Request) -> dict:
     }
 
 
+def _seen_by(item: Approval, client: str) -> bool:
+    """What a client may see of a request: a file of your computer is the web chat's alone, and a local-only request is
+    not Discord's (Discord is outside the machine, and its #approval would post the text of the call)."""
+    if item.action_class in NOT_PUBLISHED:
+        return client == "web"
+    return not (item.local_only and client == "discord")
+
+
 @router.get("/approvals")
 def approvals(
     request: Request,
@@ -148,7 +157,7 @@ def approvals(
         "approvals": [
             {**item.describe(), "may_answer": who.token.may_answer(item.level)}
             for item in found
-            if item.action_class not in NOT_PUBLISHED or who.token.client == "web"
+            if _seen_by(item, who.token.client)
         ]
     }
 
@@ -163,7 +172,7 @@ async def decide(approval_id: int, body: Decision, request: Request) -> dict:
     who = caller(request)
     found = s.approvals.get(approval_id)
     # a request of these classes names a file of your computer: only the web chat shows it and answers it
-    if found is not None and found.action_class in NOT_PUBLISHED and who.token.client != "web":
+    if found is not None and not _seen_by(found, who.token.client):
         raise ApiError(404, f"No request {approval_id}.")
     try:
         approval = await s.approvals.decide(approval_id, body.answer, who.token)

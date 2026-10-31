@@ -67,7 +67,12 @@ def cancel_reminder(reminder_id: int, request: Request) -> dict:
 @router.get("/deferred")
 def deferred(request: Request) -> dict:
     service = services(request).deferred
-    return {"calls": [call.describe() for call in service.listing()], "max_pending": MAX_PENDING_CALLS}
+    # what a local-only call holds stays off Discord and scripts, as its notices do
+    private = caller(request).token.client in ("discord", "script")
+    return {
+        "calls": [call.describe(private=private) for call in service.listing()],
+        "max_pending": MAX_PENDING_CALLS,
+    }
 
 
 @router.delete("/deferred/{deferred_id}")

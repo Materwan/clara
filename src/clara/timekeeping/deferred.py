@@ -79,6 +79,7 @@ class DeferredCall:
     booked_at: str
     started_at: str | None
     finished_at: str | None
+    tainted: bool = False  # the turn that booked it had read untrusted content: the rules are asked so when it is due
 
     def describe(self, *, private: bool = False) -> dict:
         """For the clients. `private`: hide what a local-only call holds (its summary, arguments and result)."""
@@ -138,6 +139,7 @@ def _call(row) -> DeferredCall:
         row["booked_at"],
         row["started_at"],
         row["finished_at"],
+        bool(row["tainted"]),
     )
 
 
@@ -205,6 +207,7 @@ class DeferredCalls(DueLoop):
         incognito: bool = False,
         project_id: int | None = None,
         approval_id: int | None = None,
+        tainted: bool = False,
     ) -> DeferredCall:
         due, zone_name = self.moment(at, timezone)
         self.room()
@@ -215,8 +218,8 @@ class DeferredCalls(DueLoop):
             raise DeferredError("This call is too long to be read in full in the request, so it cannot be booked.")
         call_id = self.db.insert(
             "INSERT INTO deferred_calls (tool, arguments, target, level, action_class, summary, due_at, timezone,"
-            " conversation_id, local_only, incognito, project_id, approval_id, booked_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " conversation_id, local_only, incognito, project_id, approval_id, booked_at, tainted)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 tool,
                 saved,
@@ -232,6 +235,7 @@ class DeferredCalls(DueLoop):
                 project_id,
                 approval_id,
                 self._now(),
+                int(tainted),
             ),
         )
         self.wake()
@@ -298,7 +302,10 @@ class DeferredCalls(DueLoop):
             assert call is not None
             late = (now - call.due_at).total_seconds()
             if late > self.late_after and self.late is not None:
-                self.late(f"booked call #{call.id} ({call.tool})", late)
+                try:  # a failing alert must not leave the call marked running with nothing to run it
+                    self.late(f"booked call #{call.id} ({call.tool})", late)
+                except Exception:
+                    log.exception("could not raise the late alert of booked call %s", call.id)
             task = asyncio.create_task(self._execute(call), name=f"deferred-{call.id}")
             self._running[call.id] = task
             task.add_done_callback(lambda _, number=call.id: (self._running.pop(number, None), self.wake()))

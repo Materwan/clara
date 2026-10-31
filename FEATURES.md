@@ -197,12 +197,12 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | Channel | What |
   | --- | --- |
   | `#general` | Notices and where to answer: a line saying where to answer when she waits for an approval; `/new` opens a conversation in the Conversations forum |
-  | `#approval` | Approval requests, with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
+  | `#approval` | Approval requests (not a local-only conversation's), with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
   | `#notification` | Reminders, notifications, task reminders, schedule and hook summaries and update news (by default: see below) |
   | `#alerts` | Alerts |
 
 - **Which channel carries what (Admin page, Discord tab; runtime setting `discord_routes`):** approval requests always go
-  to `#approval` and the questions of scheduled runs that do not deliver to Discord to `#general` (the ones that do ask
+  to `#approval` (not a local-only conversation's: Discord is outside the machine) and the questions of scheduled runs that do not deliver to Discord to `#general` (the ones that do ask
   in their forum thread). Every other message belongs to one of fourteen
   categories, each sent by default where the table above says: reminders, tasks, scheduled tasks, automation started
   (`automation_started`), hook results, hook
@@ -432,7 +432,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   time the server runs it by itself with the saved arguments: no model turn, nobody in the conversation. The floor, the
   local-only rule and a rule that **refuses** still stop it (and `deferred_book` refuses at once a call that a rule would
   refuse then); what you allowed is not asked again, except by a rule that **asks** about that tool: the call then becomes an
-  ordinary approval request, pushed to your clients, which runs it only if you allow it within 24 hours. A call that now says
+  ordinary approval request, pushed to your clients, which runs it only if you allow it within 24 hours. Answering that request starts no turn and Clara is not told of it: the call's row on the Tasks & reminders page says how it ended. A call that now says
   something else than what you read (its summary changed: a mail already changed, an automation edited since) is not run.
   It runs in the conditions it was booked in (time zone, local only, incognito, project). A call due while the server was
   off runs once when it comes back (the `late:` alert says so). You get a `notification` of source `deferred` (category
@@ -771,8 +771,8 @@ counted.
   (up to 8,000 characters; a request to book a call shows the whole call, up to 24,000, as a request to make an automation does;
   other requests show 500); Clara is told only the first 500 characters of it afterwards.
 - **In a streamed chat** the turn waits up to `CLARA_APPROVAL_WAIT` (600 s) for your answer, then goes on without the
-  action; a later answer runs it and starts a short follow-up turn with the result. A request not answered within 60 s
-  is pushed to your other clients too.
+  action; a later answer runs it and starts a short follow-up turn with the result (not for a booked call: see Booked calls). A request not answered within 60 s
+  is pushed to your other clients too (a local-only one to every client but Discord).
 - **Non-streaming calls and unattended runs** never wait: the request is stored and pushed, and the run goes on.
 - **Who may answer:** each token has an approval scope: `all`, `safe` (everything except destructive actions) or
   `none`. Defaults: web, terminal and console `all`; Discord `safe`; scripts `none`.
@@ -1275,7 +1275,7 @@ keep-alive every 15 s.
 | `PUT /v1/schedules/{schedule_id}/level` | The level of a schedule's runs (`null`: its project's, else the unattended default) |
 | `PUT /v1/triggers/{trigger_id}/level` | The same for a hook |
 | `POST /v1/rules/test` | Which rule decides this call |
-| `GET /v1/approvals` | Approval requests (by status); the requests of a web chat's folder that name a hidden or ignored file are listed for web tokens only |
+| `GET /v1/approvals` | Approval requests (by status); the requests of a web chat's folder that name a hidden or ignored file are listed for web tokens only; a local-only request is not listed for the Discord token |
 | `POST /v1/approvals/{approval_id}/decide` | Answer one |
 | `POST /v1/approvals/{approval_id}/grant` | **Approve all next** on a waiting request: allow it, and the next requests of its tool and class in its conversation, until the page stops beating or a limit is reached (web tokens only; 422 for any other class than a workspace or vault change) |
 | `PUT /v1/conversations/{conversation_id}/grants` | The page's beat (every 10 s): the grants on, with calls used and time left, and the ones that ended since the last beat |
@@ -1374,7 +1374,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Files kept per conversation | 20 |
 | Fact | 300 characters; category 32; 100 live facts per project, schedule or hook, 20 of them waiting for your confirmation |
 | Reminders | 200; 500 characters each |
-| Booked calls | 50 waiting; a date from one minute to 366 days ahead; arguments 64,000 characters; the request shows up to 24,000; kept 30 days once ended |
+| Booked calls | 50 waiting; a date from one minute to 366 days ahead; arguments 64,000 characters, and the whole request (the call and its arguments) at most 24,000, or the call is not booked; kept 30 days once ended |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Schedules | 100; prompt 20,000 characters; documents 150,000 characters |
 | Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on a schedule or a hook |

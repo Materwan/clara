@@ -58,6 +58,7 @@ from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
 from .events import Events, delivery
 from .gate import Approvals, Audit, Gate, Grants, Levels, Rules
 from .gate.allowances import Allowances
+from .gate.approvals import BOOKED_TURN
 from .knowledge import vault as vault_setup
 from .knowledge.conversation_files import ConversationFiles
 from .knowledge.github_snapshot import GitHub as GitHubSnapshots
@@ -246,7 +247,7 @@ def wire(s: Services) -> None:
             project_id=conversation.project_id if conversation else None,
             incognito=bool(conversation and conversation.incognito),
             # the request itself says it came from a local-only run: a conversation that is gone does not lift that
-            local_only=bool(conversation and conversation.local_only) or "local only" in approval.situation,
+            local_only=bool(conversation and conversation.local_only) or approval.local_only,
         )
         return ToolContext(s, state)
 
@@ -257,7 +258,7 @@ async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int |
     """One booked call that is due: the toolbox runs it as the gate decides when nobody is there, in the conditions it was
     booked in (the conversation's time zone, local only, incognito, project). (how it ended, what it says, its request)"""
     state = TurnState(
-        turn_id=f"deferred-{call.id}",
+        turn_id=f"{BOOKED_TURN}{call.id}",
         conversation_id=call.conversation_id or "",
         client="server",
         mode="unattended",
@@ -265,6 +266,7 @@ async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int |
         project_id=call.project_id,
         incognito=call.incognito,
         local_only=call.local_only,
+        tainted=call.tainted,
     )
     status, text, request = await s.toolbox.call_booked(call.tool, ToolContext(s, state), call.arguments, call.summary)
     return status, text, request.id if request is not None else None

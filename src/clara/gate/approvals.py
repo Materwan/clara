@@ -3,11 +3,13 @@
     asked        the action is frozen (tool and exact arguments) and stored as a pending request.
                  In a chat, the turn shows it and waits for your answer (CLARA_APPROVAL_WAIT, 10 minutes).
                  Unattended, the turn never waits: you are alerted and the run goes on without it.
-    pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…)
+    pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…);
+                 not a local-only one: Discord is outside the machine, so it goes to the other clients only
     answered     allow once / allow always / refuse once / refuse always, and allow for this conversation (a hidden or
                  ignored file of a folder on your computer). The two "always" answers write a rule, so the rule list only
                  grows through your decisions. An allowed action runs exactly as it was frozen.
-                 If no turn is waiting for it any more, a short follow-up turn tells Clara how it ended.
+                 If no turn is waiting for it any more, a short follow-up turn tells Clara how it ended (not for a booked
+                 call: its answer starts no turn and Clara is not told).
     expired      after 24 hours nobody answered: it is not done, and Clara is told at her next turn there.
 
 Only a client token can answer (the API, the web, the console, the Discord bot), and only one whose `approvals`
@@ -28,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from ..auth.tokens import TokenInfo
 from ..db import Database
-from ..events import Events
+from ..events import TARGETS, Events
 from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .actions import FOR_A_CONVERSATION, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
@@ -52,6 +54,10 @@ SUMMARY_SHOWN = 500
 # classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation) or
 # be run later (a booked call)
 SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000}
+# the turn of a booked call's run starts with this (app.run_deferred): nobody is in its conversation when it is answered
+BOOKED_TURN = "deferred-"
+# where a local-only request goes: every client but Discord, which is outside the machine
+NOT_DISCORD = tuple(target for target in TARGETS if target != "discord")
 
 WAITING = (
     "Waiting for permission (request #{id}): this was NOT done, and the person was asked. Go on with anything that does "
@@ -122,6 +128,17 @@ class Approval:
         return (
             bool(self.conversation_id) and self.action_class in GRANTABLE and self.situation.startswith("interactive")
         )
+
+    @property
+    def local_only(self) -> bool:
+        """Asked in a local-only conversation: its text stays off Discord, which is outside the machine."""
+        return "local only" in self.situation
+
+    @property
+    def booked(self) -> bool:
+        """The request of a booked call's run: its answer starts no turn and Clara is not told of it (DECISIONS: booked
+        calls)."""
+        return self.turn_id.startswith(BOOKED_TURN)
 
     def outcome_line(self) -> str:
         if self.status == "done":
@@ -274,11 +291,17 @@ class Approvals:
         self.db.execute("UPDATE approvals SET notified = 1 WHERE id = ?", (approval.id,))
         if approval.action_class in NOT_PUBLISHED:
             return
+        self._publish("approval", "Clara needs your permission", approval.summary, approval)
+
+    def _publish(self, kind: str, title: str, text: str, approval: Approval) -> None:
+        """An event about a request. A local-only request's goes to every client but Discord: its summary names the
+        private text of the call, and Discord's #approval would post it."""
         self.events.publish(
-            "approval",
-            "Clara needs your permission",
-            approval.summary,
+            kind,
+            title,
+            text,
             payload={"approval": approval.describe()},
+            targets=NOT_DISCORD if approval.local_only else None,
             conversation_id=approval.conversation_id,
         )
 
@@ -401,14 +424,9 @@ class Approvals:
         settled = self.get(approval_id)
         assert settled is not None
         if settled.action_class not in NOT_PUBLISHED:
-            self.events.publish(
-                "approval_resolved",
-                "Request settled",
-                f"{settled.summary}: {settled.status}",
-                payload={"approval": settled.describe()},
-                conversation_id=settled.conversation_id,
-            )
-        if not handed_over and settled.conversation_id:
+            self._publish("approval_resolved", "Request settled", f"{settled.summary}: {settled.status}", settled)
+        # a booked call's answer starts no turn: nobody is in its conversation, and the owner reads the row (DECISIONS)
+        if not handed_over and settled.conversation_id and not settled.booked:
             self.followup_soon(settled.conversation_id)
         return settled
 
@@ -432,6 +450,9 @@ class Approvals:
         self.finish(approval_id, "done" if ok else "failed", text, told=False)
 
     def finish(self, approval_id: int, status: str, result: str, *, told: bool) -> None:
+        current = self.get(approval_id)
+        # a booked call's request is never told to Clara: no turn is made for it, and it is not kept for her next one
+        told = told or (current is not None and current.booked)
         self.db.execute(
             "UPDATE approvals SET status = ?, result = ?, told = ? WHERE id = ?",
             (status, result[:20_000], int(told), approval_id),
@@ -534,13 +555,7 @@ class Approvals:
                     waiter.set_result(None)
                 self.finish(expired.id, "expired", "", told=False)
                 if expired.action_class not in NOT_PUBLISHED:
-                    self.events.publish(
-                        "approval_resolved",
-                        "Request expired",
-                        expired.summary,
-                        payload={"approval": expired.describe()},
-                        conversation_id=expired.conversation_id,
-                    )
+                    self._publish("approval_resolved", "Request expired", expired.summary, expired)
 
     def recover(self) -> int:
         """At start: requests approved but not finished when the server stopped are not run again (they may have been

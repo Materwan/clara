@@ -167,6 +167,25 @@ async def test_a_long_request_is_shown_whole(services, probe):
     assert probe.summary in result.approval.summary
 
 
+async def test_the_request_shows_every_argument(services):
+    text = "Anna " * 400
+    result = await call(services, "deferred_book", {"tool": "remind", "arguments": {"text": text, "when": "2099-01-05T09:00"}, "at": SOON})
+    assert text.strip() in result.approval.summary
+
+
+async def test_a_call_too_long_for_the_request_is_not_booked(services):
+    arguments = {"text": "y" * 23_800, "when": "2099-01-05T09:00"}
+    result = await call(services, "deferred_book", {"tool": "remind", "arguments": arguments, "at": SOON})
+    assert result.approval is None and "too long to be read in full" in result.text
+    assert services.deferred.listing() == []
+
+
+async def test_a_rule_for_tainted_turns_refuses_a_booking_made_in_one(services, probe):
+    services.rules.add("refuse", tool="probe", situation="tainted")
+    result = await call(services, "deferred_book", {"tool": "probe", "at": SOON}, tainted=True)
+    assert result.approval is None and "would be refused when it is due" in result.text
+
+
 @pytest.mark.parametrize(
     ("at", "problem"),
     [
@@ -413,6 +432,34 @@ async def test_an_unanswered_request_expires_the_call(services, clock, probe):
     services.approvals.sweep()
     await fire(services)
     assert services.deferred.get(booked.id).status == "expired"
+
+
+async def test_a_held_call_answered_later_starts_no_turn_and_is_not_told(services, clock, probe):
+    """Its request is answered after the turn that booked it has ended: nobody is in the conversation, so no follow-up
+    turn is made and Clara is not told how it ended (DECISIONS: booked calls)."""
+    conversation = services.conversations.create("web", title="Held")
+    chat = ToolContext(services, TurnState("t1", conversation.id, "web", timezone="Europe/Paris"))
+    booking = await services.toolbox.call("deferred_book", chat, {"tool": "probe", "at": SOON}, services.toolbox.names)
+    await services.approvals.decide(booking.approval.id, "allow_once", owner(services))
+    booked = max(services.deferred.listing(), key=lambda item: item.id)
+    services.rules.add("ask", tool="probe")
+    clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
+    await fire(services)
+    request_id = services.deferred.get(booked.id).request_id
+    turns: list[str] = []
+
+    async def follow(conversation: str, message: str) -> None:
+        turns.append(message)
+
+    services.approvals.followup = follow
+    services.approvals.followup_delay = 0
+    await services.approvals.decide(request_id, "allow_once", owner(services))
+    await asyncio.sleep(0.05)  # a follow-up turn, if one were made, runs after its delay
+    assert probe.ran and turns == []
+    assert services.approvals.get(request_id).told
+    assert request_id not in [item.id for item in services.approvals.news(conversation.id)]
+    await fire(services)  # the loop settles the call on its next pass, and the row says how it ended
+    assert services.deferred.get(booked.id).status == "done"
 
 
 async def test_a_call_missed_while_the_server_was_off_runs_once_and_raises_an_alert(services, clock, probe):

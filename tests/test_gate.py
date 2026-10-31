@@ -280,6 +280,31 @@ async def test_refuse_always_writes_a_refusal(services):
     assert again.text.startswith("Refused") and services.workspace.exists("x.txt")
 
 
+async def test_a_local_only_request_never_reaches_discord(services, client):
+    """Discord is outside the machine: a request made in a local-only turn goes to the other clients, and the Discord token
+    neither lists it nor answers it (DECISIONS: approvals of a local-only conversation)."""
+    from clara.tools.base import ToolContext, TurnState
+
+    await services.workspace.write("z.txt", "x", overwrite=False, message="t")
+    local = ToolContext(services, TurnState("t5", "", "web", mode="unattended", timezone="Europe/Paris", local_only=True))
+    private = await services.toolbox.call("ws_delete", local, {"path": "z.txt"}, services.toolbox.names)
+    chat = ToolContext(services, TurnState("t6", "", "web", mode="unattended", timezone="Europe/Paris"))
+    public = await services.toolbox.call("ws_delete", chat, {"path": "z.txt"}, services.toolbox.names)
+
+    def pushed(request_id: int):
+        return [event for event in services.events.recent(50, ["approval"]) if event.payload["approval"]["id"] == request_id]
+
+    assert pushed(private.approval.id) and all(event.targets and "discord" not in event.targets for event in pushed(private.approval.id))
+    assert pushed(public.approval.id) and all(event.targets == () for event in pushed(public.approval.id))
+    bot = {"Authorization": f"Bearer {services.tokens.create('bot', 'discord')[1]}", "X-Clara-Client": "discord"}
+    listed = [item["id"] for item in (await client.get("/v1/approvals", headers=bot)).json()["approvals"]]
+    assert private.approval.id not in listed and public.approval.id in listed
+    refused = await client.post(f"/v1/approvals/{private.approval.id}/decide", json={"answer": "allow_once"}, headers=bot)
+    assert refused.status_code == 404 and services.approvals.get(private.approval.id).status == "pending"
+    owners = [item["id"] for item in (await client.get("/v1/approvals")).json()["approvals"]]
+    assert private.approval.id in owners  # the web chat and the terminals still see it
+
+
 async def test_the_discord_token_cannot_answer_destructive_requests(services):
     bot = services.tokens.create("bot", "discord")[0]
     assert bot.approvals == "safe"

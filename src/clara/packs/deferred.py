@@ -30,7 +30,6 @@ from ..timeutil import zone
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, whole_number
 
 TARGET = "deferred"
-SHOWN_ARGUMENTS = 1_500  # arguments longer than this are not repeated in the request: the tool's own summary shows them
 LISTED_ENDED = 10
 # Tools that work only with a person or a conversation open: nothing is there when a booked call is run
 BOOKED_NEVER = {
@@ -72,8 +71,9 @@ def _arguments(value: Any) -> dict:
     return value
 
 
-def _booking(context: ToolContext, given: dict) -> Booking:
-    """The call as it would be booked, checked, or ToolError: the same checks before you are asked and when it is booked."""
+def _booking(context: ToolContext, given: dict, *, tainted: bool) -> Booking:
+    """The call as it would be booked, checked, or ToolError: the same checks before you are asked and when it is booked.
+    `tainted`: the turn that asks read untrusted content (a rule scoped to tainted turns sees the call as that turn did)."""
     s = context.services
     name = str(given.get("tool") or "").strip()
     if not name:
@@ -109,7 +109,10 @@ def _booking(context: ToolContext, given: dict) -> Booking:
         raise ToolError(f"{name}: {error}") from None
     # what the gate will say at the due time (nobody there, you have allowed it): said now, not after you allowed it
     later = s.gate.decide(
-        action, Situation("unattended", local_only=context.turn.local_only), count_hit=False, approved=True
+        action,
+        Situation("unattended", tainted=tainted, local_only=context.turn.local_only),
+        count_hit=False,
+        approved=True,
     )
     if later.effect == "refuse":
         raise ToolError(f"This call would be refused when it is due ({later.reason}), so it is not booked.")
@@ -119,45 +122,48 @@ def _booking(context: ToolContext, given: dict) -> Booking:
         + ("again." if later.effect == "allow" else "again, except the rule that asks about it (see below).")
     ]
     lines.append(f"What it would do: {action.summary}")
-    saved = json.dumps(arguments, ensure_ascii=False, sort_keys=True)
-    lines.append(
-        f"Arguments: {saved}"
-        if len(saved) <= SHOWN_ARGUMENTS
-        else f"Arguments: {len(saved):,} characters, which the text above shows."
-    )
+    lines.append(f"Arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}")
     if later.effect == "ask":
         lines.append(f"A rule of yours asks about this call ({later.reason}): you will be asked again when it is due.")
-    return Booking(name, arguments, action, at, due, zone_name, "\n".join(lines))
+    text = "\n".join(lines)
+    # the request shows the whole call or it is not booked: a request the approval would cut short is not made
+    if len(text) > SUMMARY_FULL["deferred"]:
+        raise ToolError(
+            "This call is too long to be read in full in the request, so it cannot be booked: book a shorter one."
+        )
+    return Booking(name, arguments, action, at, due, zone_name, text)
 
 
-def _told(context: ToolContext, fields: dict) -> tuple[int, str] | None:
-    """(the number of the request you allowed, the text it showed) for this call; None when no request was made for it
-    (it was allowed without asking, an instant after its description)."""
+def _told(context: ToolContext, fields: dict) -> tuple[int, str, str] | None:
+    """(the number of the request you allowed, the text it showed, its situation) for this call; None when no request was
+    made for it (it was allowed without asking, an instant after its description)."""
     row = context.services.db.one(
-        "SELECT id, summary FROM approvals WHERE tool = 'deferred_book' AND args_digest = ? AND status = 'approved'"
-        " ORDER BY id DESC LIMIT 1",
+        "SELECT id, summary, situation FROM approvals WHERE tool = 'deferred_book' AND args_digest = ?"
+        " AND status = 'approved' ORDER BY id DESC LIMIT 1",
         (args_digest(fields),),
     )
-    return None if row is None else (row["id"], row["summary"])
+    return None if row is None else (row["id"], row["summary"], row["situation"])
 
 
 @acts_as("deferred")
 def _describe_book(context: ToolContext, arguments: dict) -> Action:
-    booking = _booking(context, arguments)
+    booking = _booking(context, arguments, tainted=context.turn.tainted)
     return Action("", booking.action.level, "deferred", (TARGET,), booking.text)
 
 
 def _book(context: ToolContext, **fields: Any) -> str:
-    booking = _booking(context, fields)
     approval_id = None
+    tainted = context.turn.tainted  # a quiet booking: the turn that books it is the one that read
     told = _told(context, fields)
     if told is not None:  # the request is read some time before it is allowed: the call may have changed since
-        approval_id, read = told
-        if read != booking.text[: SUMMARY_FULL["deferred"]]:
-            raise ToolError(
-                "Nothing was booked: when you were asked, the call was not as it is now. Ask again, so that the "
-                "request shows the call as it is."
-            )
+        approval_id, read, situation = told
+        tainted = "tainted" in situation  # the turn that asked (the answer comes in a turn of its own)
+    booking = _booking(context, fields, tainted=tainted)
+    if told is not None and read != booking.text[: SUMMARY_FULL["deferred"]]:
+        raise ToolError(
+            "Nothing was booked: when you were asked, the call was not as it is now. Ask again, so that the "
+            "request shows the call as it is."
+        )
     turn = context.turn
     try:
         call = context.services.deferred.book(
@@ -174,6 +180,7 @@ def _book(context: ToolContext, **fields: Any) -> str:
             incognito=turn.incognito,
             project_id=turn.project_id,
             approval_id=approval_id,
+            tainted=tainted,
         )
     except DeferredError as error:
         raise ToolError(f"Nothing was booked: {error}") from None
@@ -184,9 +191,7 @@ def _book(context: ToolContext, **fields: Any) -> str:
     )
 
 
-@acts_as("read")
-def _describe_list(context: ToolContext, arguments: dict) -> Action:
-    return Action("", "read", "read", (TARGET,), "Read the booked calls")
+_describe_list = fixed("read", "read", TARGET, "Read the booked calls")
 
 
 def _list(context: ToolContext) -> str:

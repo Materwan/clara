@@ -223,8 +223,9 @@ What goes where: your chat and Clara's answers in `#general` (a scheduled run's 
 last heartbeat, its name, whether the server started it), and for each of the four channels the name Discord gives it,
 the rights the bot lacks there (a missing *Manage Threads* shows at once, not in a log) and what it receives now. *Send a
 test message* posts a short message in that channel and tells whether Discord accepted it (the reason when it did not);
-it needs the bot connected. Below, each of twelve kinds of message (reminders, tasks, scheduled tasks, hook results,
-hook failures, hook notices, new mail, Clara's own notices, answer ready, other notifications, updates, alerts) has a
+it needs the bot connected. Below, each of thirteen kinds of message (reminders, tasks, scheduled tasks, hook results,
+hook failures, hook notices, new mail, Clara's own notices, booked calls, answer ready, other notifications, updates,
+alerts) has a
 selector: `#notification`, `#general`, `#alerts`, or off on Discord. Nothing changes until you choose; a change applies to
 the next message. A common use: send *Hook failures* to `#alerts`, or switch *New mail* off on Discord and keep it on the
 web site. Approval requests and the questions of scheduled runs cannot be moved, and alerts cannot be switched off. The
