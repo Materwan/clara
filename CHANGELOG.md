@@ -3,6 +3,48 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.3.0 — 31/10/2026
+
+**Cleaning up what automations make.** Every hook run and every run of a per-run schedule leaves a conversation behind, and
+they pile up. You can now set limits and Clara deletes the conversations of her automations that pass them. **Nothing changes
+until you set one:** all the limits are off (0) after the update, and no conversation is deleted.
+
+- **What is cleaned:** the conversation of each hook run and each conversation a per-run schedule makes. Never touched: a
+  schedule's shared conversation, the chats reminders and tasks post into, project chats and every other conversation. Messages
+  you talk in are still kept until you delete them.
+- **Two limits, whichever comes first:** an **age** (days and hours since the last message) and a **count** (the latest N
+  conversations of each schedule or hook). A kept conversation takes its place in the count.
+- **Where you set them:** three new runtime settings on the Admin page (`automation_keep_days` with `automation_keep_hours`,
+  and `automation_keep_last`), and a **Cleaning up** section on each schedule (per-run) and hook of the Automation page, with
+  its own limits. Empty follows the Admin setting; `0` there means no limit for that automation.
+- **Kept whatever the limits:** a pinned conversation; one **you** archived (an archive made by Discord's idle week or by
+  switching a history group off does not count, and neither does closing a run's thread by hand on Discord: archive it from
+  Clara to keep it); a run that is queued, running or waiting for an answer; a conversation with an approval request pending.
+- **Said before it is kept:** deletion is for good, so the Admin page asks to confirm a limit that would delete something, the
+  Automation form writes how many conversations the next pass would delete, and Clara's request says it too. The counts only
+  include what the change adds to what the limits already saved delete.
+- **Clara's Automations tool** may change the limits, as an ordinary change that asks (`-1` follows the setting). If more would
+  be deleted by the time you allow it than the request said, nothing is changed and Clara asks again. The global settings are
+  not in the tool.
+- **How it deletes:** a pass every 10 minutes, in a loop of its own. It is the usual deletion: messages and files go, the
+  Discord thread is removed, the run keeps its row without the link, and the facts the automation learned stay. Backups keep
+  the text for as long as for any deleted conversation.
+
+**Interface changes:**
+
+- **New route:** `GET /v1/retention/preview`: how many conversations the next pass would delete for limits not saved yet
+  (the runtime settings as given, or with `kind` and `id` one automation's own). Nothing is deleted.
+- **Changed:** `POST /v1/schedules`, `PATCH /v1/schedules/{schedule_id}`, `POST /v1/triggers` and
+  `PATCH /v1/triggers/{trigger_id}` take `keep_days`, `keep_hours` and `keep_last` (null follows the settings).
+- **Tools:** `automation_create` and `automation_update` take `keep_days`, `keep_hours` and `keep_last`.
+- **Settings:** the runtime settings `automation_keep_days` (0), `automation_keep_hours` (0) and `automation_keep_last` (0).
+
+**Migrations:** 0024 adds `keep_days`, `keep_hours` and `keep_last` to schedules and hooks, empty on the ones that exist
+(they follow the settings). The server takes its backup before running it.
+
+**Docs:** [DECISIONS.md](docs/DECISIONS.md) (« Automation retention », with the decisions of this release),
+[FEATURES.md](FEATURES.md) and [DATA-MAP.md](docs/DATA-MAP.md).
+
 ## v1.2.0 — 30/10/2026
 
 **A memory for each project, schedule and hook.** Next to the global memory, every project, schedule and hook keeps a memory

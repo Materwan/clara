@@ -74,9 +74,9 @@ from inside the server, through the same gate, as "unattended".
 From a release (built by `.github/workflows/release.yml`):
 
 ```bash
-curl -LO https://github.com/<owner>/clara/releases/download/v1.2.0/clara-v1.2.0.tar.gz
-mkdir clara-v1.2.0 && tar -xzf clara-v1.2.0.tar.gz -C clara-v1.2.0
-sudo clara-v1.2.0/deploy/install.sh clara-v1.2.0.tar.gz
+curl -LO https://github.com/<owner>/clara/releases/download/v1.3.0/clara-v1.3.0.tar.gz
+mkdir clara-v1.3.0 && tar -xzf clara-v1.3.0.tar.gz -C clara-v1.3.0
+sudo clara-v1.3.0/deploy/install.sh clara-v1.3.0.tar.gz
 ```
 
 The installer creates the `clara` system user (with what rootless Podman needs), `/opt/clara/releases/<tag>` and the
@@ -110,7 +110,7 @@ uv sync --all-extras                     # Python 3.12 virtualenv with the dev t
 uv run pytest -q                         # the test suite (a Podman test runs when rootless Podman is there)
 uv run ruff check src tests scripts      # lint
 scripts/build-web.sh                     # the web site, in a pinned Node container (svelte-check, then vite build)
-scripts/build-release.sh v1.2.0          # a release, checked the way the updater checks it
+scripts/build-release.sh v1.3.0          # a release, checked the way the updater checks it
 ```
 
 Running a development server against a throwaway folder:

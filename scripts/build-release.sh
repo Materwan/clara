@@ -7,12 +7,12 @@
 #   SHA256SUMS           sums of the two files above
 #   SHA256SUMS.sig       Ed25519 signature, when CLARA_RELEASE_SIGNING_KEY is set (scripts/release_signing.py)
 #
-#   scripts/build-release.sh v1.2.0
-#   SANDBOX_IMAGE=ghcr.io/me/clara-sandbox@sha256:… scripts/build-release.sh v1.2.0
+#   scripts/build-release.sh v1.3.0
+#   SANDBOX_IMAGE=ghcr.io/me/clara-sandbox@sha256:… scripts/build-release.sh v1.3.0
 #   SKIP_WEB=1 …   reuse the site already in src/clara/web/dist
 set -euo pipefail
 
-tag="${1:?give the tag, for example v1.2.0}"
+tag="${1:?give the tag, for example v1.3.0}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 UV="${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}"
