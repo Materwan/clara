@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .llm import Catalog, Providers, Router
     from .memory.conversations import Conversations
     from .memory.facts import Facts
+    from .memory.retention import AutomationRetention
     from .ops.alerts import Alerts
     from .ops.lifecycle import Lifecycle
     from .ops.logstream import LogHub
@@ -72,6 +73,7 @@ class Services:
     router: Router
     allowances: Allowances
     folders: FolderGrants
+    retention: AutomationRetention = None  # type: ignore[assignment]
     toolbox: Toolbox = None  # type: ignore[assignment]
     agent: Agent = None  # type: ignore[assignment]
     lifecycle: Lifecycle = None  # type: ignore[assignment]

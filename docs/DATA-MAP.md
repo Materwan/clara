@@ -29,13 +29,13 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 
 | Table | Holds | Kept |
 | --- | --- | --- |
-| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, the packs switched on, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message; with `CLARA_PURGE_SUMMARISED`, summarised messages go |
+| `conversations`, `messages`, `messages_fts` | Conversations (title, summary, model, project, flags, the packs switched on, client), every message and its versions, tool calls and results, the full-text index | Until you delete the conversation; incognito ones 24 h after their last message; the conversations of hook runs and per-run schedules past their automation's limits, once you set them (`automation_keep_*`, off at first; pinned, archived-by-you and waiting ones stay); with `CLARA_PURGE_SUMMARISED`, summarised messages go |
 | `conversation_files` | Files sent in a conversation (their bytes) and their text | With the conversation |
 | `folder_grants`, `conversation_allowances` | The folder a web chat opened on your computer (its name, not its path), the bytes of file content read through it, and the hidden or ignored files you allowed for the conversation (the file names; the content is never kept here) | With the conversation |
 | `facts`, `facts_fts`, `forgotten` | Facts with source, dates, pin, expiry, supersede; tombstones of forgotten facts (their folded text) | Until you delete them; superseded and expired facts stay visible on the Memory page |
 | `projects`, `project_sources`, `project_files` | Project settings, GitHub sources, file contents | Until you delete the project |
 | `created_files` | The Drive files Clara created (id, name, conversation, time), which have no history of ours to read back | Until deleted |
-| `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features; a schedule's packs, model and policies; each run's status (including `waiting`), summary and conversation | Until deleted; a once-only reminder goes when it fires |
+| `reminders`, `tasks`, `task_reminders`, `schedules`, `schedule_runs` | Time features; a schedule's packs, model and policies and how long the conversations of its runs are kept; each run's status (including `waiting`), summary and conversation | Until deleted; a once-only reminder goes when it fires |
 | `events`, `event_cursors` | Reminders fired, notifications, approval news, alerts, server and update news; each token's read position | Until every active client read them (a day at least), 90 days at most |
 | `approvals` | Requests with their frozen action and arguments, answer, result | 30 days after they finish |
 | `rules` | Your rules | Until you delete them |
@@ -45,7 +45,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `ws_runs` | Script runs: command digest, exit code, duration, network flag, commit | Not pruned (a few hundred bytes a run) |
 | `connections`, `resources` | GitHub, Google and Gmail account names (a mailbox's address), connection state; the repositories, files and folders Clara may use | Until you remove them |
 | `trigger_events` | The events hooks were started by: kind, a stable key, the actor (a sender's address), a title and JSON data (for mail: mailbox, sender, subject, a 160-character snippet, whether it has attachments), when it happened | 30 days (longer while a run waits for it) |
-| `triggers`, `trigger_runs` | Your hooks (filter, prompt, tools, limits) and each run: its events, status, summary, conversation | Until you delete the hook; runs `CLARA_RETENTION_DAYS` (400) |
+| `triggers`, `trigger_runs` | Your hooks (filter, prompt, tools, limits, how long the conversations of its runs are kept) and each run: its events, status, summary, conversation (empty once the conversation is deleted) | Until you delete the hook; runs `CLARA_RETENTION_DAYS` (400) |
 | `mail_cursors` | Per mailbox, the time of the newest inbox message already announced and the ids of the last 100 (new-mail notifications) | Until you disconnect the mailbox |
 | `secrets`, `secrets_meta` | Encrypted secrets (AES-GCM) and the key check value | Until removed |
 | `tokens`, `web_sessions` | Token hashes, names, scopes, last use; web session hashes | Revoked tokens stay listed; sessions until they expire |

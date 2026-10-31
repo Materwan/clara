@@ -4,7 +4,8 @@
 * every minute: the debug switch's hour; the disk (alert above CLARA_DISK_ALERT_PERCENT); the Discord bot's heartbeat
   (alert after 5 minutes of silence, when CLARA_DISCORD_EXPECTED or CLARA_DISCORD_AUTOSTART); the systemd watchdog,
   fed only while every loop turns on time: a pass is expected every period, two minutes of lateness are allowed;
-* every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted;
+* every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted; and, apart, the conversations of
+  hook runs and per-run schedules past their automation's limits (age, count; memory/retention.py);
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
   sessions, and the events of hooks older than 30 days (those a run still needs stay);
 * every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
@@ -47,6 +48,7 @@ class Upkeep:
             ("approvals", 10.0, self.approvals),
             ("minute", 60.0, self.every_minute),
             ("incognito", 600.0, self.incognito),
+            ("retention", 600.0, self.retention),
             ("hourly", 3600.0, self.hourly),
         ):
             self._tasks.append(asyncio.create_task(self._loop(name, seconds, job), name=f"upkeep-{name}"))
@@ -131,6 +133,11 @@ class Upkeep:
         deleted = self.s.conversations.sweep_incognito(self.s.settings.incognito_hours)
         if deleted:
             log.info("deleted %d incognito conversation(s)", deleted)
+
+    def retention(self) -> None:
+        deleted = self.s.retention.sweep()
+        if deleted:
+            log.info("deleted %d conversation(s) of automations past their limits", deleted)
 
     def hourly(self) -> None:
         s = self.s

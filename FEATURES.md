@@ -65,8 +65,8 @@ you point at them and can be dismissed. The first Tab stop is **Skip to content*
 | Memory (Settings) | The global memory's facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown. The memory of a project, a schedule or a hook is on its own page |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel |
 | Automation | One page for what Clara does by herself, unattended: one list of her **schedules** (at a time) and **hooks** (when something happens), and one **New automation** button. Its first step says what sets it off, and the steps after it show what fits that choice. The old address `#/schedules` still leads there. Another kind of automation is one more trigger in that first step. Each item has an **Auto level** selector, the level its runs have (empty: its project's, else the default of runs nobody watches), and a **Memory** button that opens the facts it keeps (the count on the button, and a tag when some wait for you); deleting an item says how many facts go with it. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, and the tool has no level field, so she cannot give an automation a level |
-| Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail |
-| Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run; **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
+| Automation → Schedules | The items at a time: prompts that run unattended on a schedule, made with **New automation** (*At a time*): add, edit, pause, run now, see past runs and their summaries; tick the **special tools** (packs) its runs get, choose one conversation for all runs or one per run, what happens to runs missed while the server was off and to a run that comes due before the last one is over, and a model of its own, and how many tries a run gets when the model is busy (1 to 3, 3 by default); answer or close a run that waits for you; **Show in history** lists its conversations in the rail; for a per-run schedule, **Cleaning up** (the age, the count: the Admin settings or its own), with how many conversations the next pass would delete |
+| Automation → Hooks | The items set off by an event: what each waits for, in words, with what each waits for in words, its tools, its pace, what is waiting and its last run; **New automation** (with a kind of event as its trigger) and **Edit**, with a condition builder (a field, a comparison, a value; commas mean « or »; a GitHub repository is picked from the ones added on Connections), run Clara or only notify, the tools (the safe default, or a list to tick), the project of the runs (none by default; its files and instructions are context for every run), and under *More options* the backlog policy, the hourly limit, how old a waiting run may get, a model, tries, own-account mail and repeating an interrupted run, and **Cleaning up** for a hook that runs Clara (the age, the count: the Admin settings or its own, with how many conversations the next pass would delete); **Test** (which event, the verdict, the tools, and the exact message Clara would get, nothing run); **Runs** (status, the event, what happened, a link to each conversation); **Pause**, **Show in history** (lists the hook's runs as a group of its own in the rail), **Delete**; *the events seen*. It warns, for a source a hook uses, when no mailbox is connected or no repository added, or when its polling is off, and reloads by itself while a run goes or waits |
 | Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Auto level** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with and how many facts it remembers (and how many wait for you). Its **Memory** panel is the same list of facts as the Memory page, for this project only: add, edit, pin, confirm (a fact Clara saved after reading outside content waits there, hidden from every conversation, until you confirm it) and forget; deleting the project says how many facts go with it |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs) |
@@ -302,6 +302,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   are left out (and you are told in a `warning` event); a message that alone exceeds half the window is refused.
 - **Incognito:** no fact is read or written, the conversation is never searched by `search_history`, and it is deleted
   `CLARA_INCOGNITO_HOURS` (24) after its last message.
+- **Automation conversations:** the conversation of each hook run and each conversation a per-run schedule makes are
+  deleted by the limits of their automation (age, count), once you set them; see *Retention* in section 13.
 - **Local only:** the conversation is answered only by local Ollama hosts (no fallback ever reaches a hosted
   provider, and titles and summaries are written locally too); the web, GitHub and Drive tools are not offered, and
   the gate refuses, whatever the rules, anything that would send something off the machine: web search and fetch,
@@ -399,6 +401,9 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
     runs or waits): `skip` records the new one as skipped; `replace` closes a waiting run, then starts the new one (a
     running one is waited for); `queue` starts it when the old one ends.
   - **Retry** (`attempts`, 3 by default): a run the model could not answer (429, 5xx, a timeout, no connection) is tried again after 1 and 5 minutes. A run that already used a tool or wrote text is not run again, so its actions are not repeated; a refused key or a bad request is not retried.
+  - **Cleaning up** (`keep_days`, `keep_hours`, `keep_last`; per-run schedules only, a shared conversation is never deleted):
+    the limits on the conversations its runs make, the same as a hook's. Empty (`null`) follows the runtime settings below;
+    see *Retention* in section 13.
   - **Where the result goes** (`deliver`, the same on a schedule and on a hook): `notice` (the default, what they always did: a
     short notification to every client, Discord's `#notification` included), `web` (the same, without Discord), `discord` (the
     run's **whole** answer on Discord, in the run's forum thread, which you answer; nothing else) or `both` (that, and the
@@ -470,7 +475,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   Clara's with your prompt, or `notify`: a text with `{from}`, `{subject}`, `{snippet}`, `{mailbox}`… (GitHub: `{repo}`, `{number}`, `{action}`, `{title}`,
   `{author}`, `{branch}`, `{message}`, `{sha}`, `{url}`) and no model, with a default text for each kind); its
   `tools`; an optional `project` (none by default); an optional `model`; `local_only`; `catch_up`; `max_per_hour`;
-  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`; `deliver` (where the result goes, below). Mail from Clara's own account is left out unless `include_self` (which does nothing for GitHub); a sender's
+  `max_age_hours`; `include_self`; `rerun_interrupted`; `attempts`; `announce`; `in_history`; `keep_days`, `keep_hours` and `keep_last` (the limits on the conversations of its runs, *Retention* in section 13); `deliver` (where the result goes, below). Mail from Clara's own account is left out unless `include_self` (which does nothing for GitHub); a sender's
   `From` can be forged, so a sender filter is a convenience, not a proof.
 - **A run** is an unattended turn in a conversation of its own, which belongs to the hook: the web history lists the conversations
   of a hook as a group under its name, like a schedule's, only when you switch the hook's `in_history` on (it starts off). The hook may
@@ -843,7 +848,7 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `finish_run` | End the scheduled run, with a summary | memory / write |
 | `automation_list` | Your schedules and hooks with their numbers, or one in full (pack Automations; chats only). The prompt and filter of a local-only automation are shown only to a local-only conversation | read |
 | `automation_create` | Make a schedule (at a time, once or repeating) or a hook (when a mail arrives or a GitHub pull request or push happens): every setting of the Automation page. It asks you first, with the whole automation (and, for a schedule, when it first runs) in the request; refused unattended; asks again in a tainted turn whatever a rule says. Made in a local-only conversation, it is local only | automation / write |
-| `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change | automation / write |
+| `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change. The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass | automation / write |
 | `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only, and not offered to a run that delivers to Discord: its thread is the forum's) | discord / write |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
@@ -993,8 +998,23 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   pending approvals.
 - **Retention:** events are deleted once every active listener has read them (and they are a day old), at the latest
   after `CLARA_EVENTS_MAX_DAYS` (90); a token silent for 30 days stops holding them back. Usage rows and audit lines:
-  `CLARA_RETENTION_DAYS` (400). Finished approval requests: 30 days. Incognito conversations: 24 h idle. Other
-  conversations and facts are kept until you delete them.
+  `CLARA_RETENTION_DAYS` (400). Finished approval requests: 30 days. Incognito conversations: 24 h idle. The
+  conversations of automations: past their limits, below (off at first). Other conversations and facts are kept until you
+  delete them.
+- **Automation conversations:** the conversation of each hook run, and each one a per-run schedule makes, are deleted when
+  they pass a limit, whichever comes first: an **age** (days and hours since the last message) or a **count** (the latest N
+  of each schedule or hook; a kept conversation takes its place in the count). A schedule's shared conversation, the chats
+  reminders and tasks post into, and every other conversation are never touched. Every pass (10 minutes) deletes what the
+  limits say. Both limits are off (0) until set: `automation_keep_days` with `automation_keep_hours`, and
+  `automation_keep_last`, runtime settings (the Admin page, Settings). A schedule or a hook may have its own (`keep_days`
+  with `keep_hours`, `keep_last`); empty follows the setting, and `0` there means no limit for it. **Kept whatever the
+  limits:** a pinned conversation, one **you** archived (an archive made by Discord's idle week or by switching a history
+  group off does not count), a run that is queued, running or waiting for an answer, and a conversation with an approval
+  request pending. The last message is the conversation's last change, so a waiting run you answered counts from your
+  answer. A conversation shown in the history is deleted like the others. Deleting is the usual deletion: messages and
+  files go, its Discord thread is removed, the run keeps its row (without the link), and the facts the automation learned
+  stay. `GET /v1/retention/preview` says what the next pass would delete for limits not saved yet; the Admin page asks
+  before saving a limit that deletes something, and the Automation form and Clara's request say it too.
 
 `clara` (run as the service user) has: `version`, `token create|list|revoke`, `secrets new-key|list|set|unset|rotate`,
 `doctor [--pull]`, `backup [now|init-remote]`, `restore <file> [--verify]`, `migrate`, `purge`, `preflight --database <file>`.
@@ -1108,6 +1128,9 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `approve_all_calls` | Calls an **Approve all next** button lets through without asking (50; 1 to 1,000) |
 | `folder_budget` | Bytes of file content Clara may read from a folder opened in a web chat, per grant (1,000,000; 0 to 100,000,000) |
 | `folder_budget_max` | The most a folder grant's budget may be raised to, in bytes (16,000,000; 1 to 100,000,000) |
+| `automation_keep_days` | Days after its last message at which the conversation of a hook run or of a per-run schedule is deleted, added to `automation_keep_hours` (0 and 0: no age limit; 0 to 3,650) |
+| `automation_keep_hours` | Hours added to `automation_keep_days` (0; 0 to 8,760) |
+| `automation_keep_last` | How many of the latest conversations of each schedule or hook are kept (0: no count limit; 0 to 10,000) |
 | `debug_until` | The debug content log's end (empty: off) |
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
@@ -1186,7 +1209,7 @@ keep-alive every 15 s.
 | `GET /v1/schedules` | Schedules |
 | `POST /v1/schedules` | Add one |
 | `GET /v1/schedules/{schedule_id}` | One schedule with its runs |
-| `PATCH /v1/schedules/{schedule_id}` | Change, pause or resume one; `in_history` lists its conversations in the web history |
+| `PATCH /v1/schedules/{schedule_id}` | Change, pause or resume one; `in_history` lists its conversations in the web history; `keep_days` with `keep_hours`, and `keep_last` (null: follow the settings) limit the conversations of its runs |
 | `POST /v1/schedules/{schedule_id}/run` | Run it now |
 | `POST /v1/schedules/{schedule_id}/close` | Close the run that waits for your answer, from what Clara has |
 | `DELETE /v1/schedules/{schedule_id}` | Delete one |
@@ -1287,6 +1310,7 @@ keep-alive every 15 s.
 | `POST /v1/triggers/{trigger_id}/test` | What would happen for an event (stored, sample or latest): match, message, tools; nothing is done |
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
+| `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
 | `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories (with since when hooks look at each), files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
@@ -1323,6 +1347,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Reminders | 200; 500 characters each |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Schedules | 100; prompt 20,000 characters; documents 150,000 characters |
+| Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on a schedule or a hook |
 | Approval requests waiting per conversation | 10 |
 | Notifications | 3 per turn from Clara; 10 a minute from clients |
 | Event text | 2,000 characters (6,000 for what an automation or `discord_say` says in `#general`; the bot splits it into messages of 2,000, Discord's limit); title 100 |

@@ -42,6 +42,7 @@ from .api import memory as memory_api
 from .api import models as models_api
 from .api import packs as packs_api
 from .api import projects as projects_api
+from .api import retention as retention_api
 from .api import time as time_api
 from .api import triggers as triggers_api
 from .api import vault as vault_api
@@ -65,6 +66,7 @@ from .llm import Catalog, NoModel, Providers, Router
 from .llm.retry import retryable
 from .memory.conversations import Conversations
 from .memory.facts import Facts
+from .memory.retention import AutomationRetention
 from .mirror.service import Mirror
 from .ops import setup as ops_setup
 from .ops.alerts import Alerts
@@ -182,6 +184,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         allowances=Allowances(db),
         folders=FolderGrants(db, runtime),
     )
+    s.retention = AutomationRetention(db, s.conversations, runtime)
     s.github_snapshots = GitHubSnapshots()
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
     s.levels.audit = audit
@@ -435,6 +438,7 @@ def create_app(s: Services) -> FastAPI:
         app.include_router(router)
     app.include_router(workspace_api.router)
     app.include_router(triggers_api.router)
+    app.include_router(retention_api.router)
     app.include_router(connections_api.router)
     app.include_router(vault_api.router)
     app.include_router(packs_api.router)

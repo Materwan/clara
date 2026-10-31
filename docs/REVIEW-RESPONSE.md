@@ -63,7 +63,7 @@ reminders across that very night (`tests/test_time.py`, `tests/test_reminders.py
 | 28 | Clara cannot search earlier conversations | `search_history` (FTS5 over messages; incognito ones excluded) |
 | 29 | Relationship score | Gone |
 | 30 | No memory off switch | Incognito conversations: no facts read or written, deleted 24 hours after their last message |
-| 31 | No retention limit, no disk ceiling | Traffic log 7 days; events until read (90 days at most); usage and audit 400 days; finished approvals 30 days; workspace 5 GB; disk alert at 85%. Messages and facts are kept until you delete them, by choice |
+| 31 | No retention limit, no disk ceiling | Traffic log 7 days; events until read (90 days at most); usage and audit 400 days; finished approvals 30 days; workspace 5 GB; disk alert at 85%. Messages and facts are kept until you delete them, by choice; the one exception is what automations make: the conversations of hook runs and per-run schedules are deleted past limits you set (off at first, `docs/DECISIONS.md`, « Automation retention ») |
 
 ## Part 4: running, updating, failing
 

@@ -28,6 +28,7 @@ from typing import Any
 
 from ..db import Database
 from ..events import Events, delivery
+from ..memory.retention import KEEP_FIELDS, RetentionError, check_own
 from ..timekeeping.dueloop import DueLoop
 from ..timekeeping.schedules import Stopping
 from ..timeutil import iso, now_iso, parse_iso, utcnow
@@ -81,6 +82,9 @@ class Trigger:
     updated_at: str
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
     auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
+    keep_days: int | None = None  # its own limits on the conversations of its runs (memory/retention.py); None: follow
+    keep_hours: int | None = None  # the global setting (days and hours are both set, or both None)
+    keep_last: int | None = None
 
     @property
     def effective_tools(self) -> tuple[str, ...]:
@@ -115,6 +119,9 @@ def _trigger(row) -> Trigger:
         row["updated_at"],
         row["deliver"],
         row["auto_level"],
+        row["keep_days"],
+        row["keep_hours"],
+        row["keep_last"],
     )
 
 
@@ -159,6 +166,9 @@ DEFAULTS: dict[str, Any] = {
     "announce": True,
     "in_history": False,
     "deliver": "notice",
+    "keep_days": None,
+    "keep_hours": None,
+    "keep_last": None,
 }
 
 
@@ -255,6 +265,10 @@ class Triggers(DueLoop):
             )
         except ValueError as error:
             raise TriggerError(str(error)) from None
+        try:
+            keep = check_own(values["keep_days"], values["keep_hours"], values["keep_last"])
+        except RetentionError as error:
+            raise TriggerError(str(error)) from None
         return {
             "name": name,
             "event_kind": kind.kind,
@@ -268,6 +282,9 @@ class Triggers(DueLoop):
             "max_age_hours": values["max_age_hours"],
             "attempts": values["attempts"],
             "deliver": deliver,
+            "keep_days": keep.days,
+            "keep_hours": keep.hours,
+            "keep_last": keep.last,
             **{
                 field: int(bool(values[field]))
                 for field in ("enabled", "local_only", "include_self", "rerun_interrupted", "announce", "in_history")
@@ -355,8 +372,13 @@ class Triggers(DueLoop):
             "announce": current.announce,
             "in_history": current.in_history,
             "deliver": current.deliver,
+            "keep_days": current.keep_days,
+            "keep_hours": current.keep_hours,
+            "keep_last": current.keep_last,
         }
-        merged.update({key: value for key, value in fields.items() if value is not None or key == "filter"})
+        merged.update(
+            {key: value for key, value in fields.items() if value is not None or key == "filter" or key in KEEP_FIELDS}
+        )
         values = self._normal(merged)
         other = self.by_name(values["name"])
         if other is not None and other.id != trigger_id:
@@ -417,6 +439,9 @@ class Triggers(DueLoop):
             "in_history": trigger.in_history,
             "deliver": trigger.deliver,
             "auto_level": trigger.auto_level,
+            "keep_days": trigger.keep_days,
+            "keep_hours": trigger.keep_hours,
+            "keep_last": trigger.keep_last,
             "created_at": trigger.created_at,
             "updated_at": trigger.updated_at,
             "queued": int(

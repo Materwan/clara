@@ -36,6 +36,7 @@ from typing import Any
 
 from ..db import Database
 from ..events import Events, delivery
+from ..memory.retention import KEEP_FIELDS, Own, RetentionError, check_own
 from ..timeutil import REPEATS, iso, next_local, now_iso, parse_iso, resolve_local, utcnow, zone
 from .clock import MomentError, local_text, read_moment, zone_of
 from .dueloop import DueLoop
@@ -116,6 +117,11 @@ class Schedule:
     attempts: int = MAX_ATTEMPTS  # tries of a run when the model is busy or unreachable (1: no retry)
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
     auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
+    keep_days: int | None = (
+        None  # its own limits on the conversations its runs make (memory/retention.py); None: follow
+    )
+    keep_hours: int | None = None  # the global setting (days and hours are both set, or both None)
+    keep_last: int | None = None
 
     @property
     def asks(self) -> bool:
@@ -155,6 +161,9 @@ def _schedule(row) -> Schedule:
         row["attempts"],
         row["deliver"],
         row["auto_level"],
+        row["keep_days"],
+        row["keep_hours"],
+        row["keep_last"],
     )
 
 
@@ -273,6 +282,13 @@ class Schedules(DueLoop):
             raise ScheduleError(str(error)) from None
 
     @staticmethod
+    def _keep(days: Any, hours: Any, last: Any) -> Own:
+        try:
+            return check_own(days, hours, last)
+        except RetentionError as error:
+            raise ScheduleError(str(error)) from None
+
+    @staticmethod
     def _attempts(value: int) -> int:
         if not isinstance(value, int) or not 1 <= value <= MAX_ATTEMPTS:
             raise ScheduleError(f"attempts must be a whole number from 1 to {MAX_ATTEMPTS} (1: no retry).")
@@ -331,16 +347,21 @@ class Schedules(DueLoop):
         model: str = "",
         attempts: int = MAX_ATTEMPTS,
         deliver: str = "notice",
+        keep_days: int | None = None,
+        keep_hours: int | None = None,
+        keep_last: int | None = None,
     ) -> Schedule:
         if int(self.db.value("SELECT COUNT(*) FROM schedules", (), 0)) >= MAX_SCHEDULES:
             raise ScheduleError(f"At most {MAX_SCHEDULES} scheduled tasks: delete some first.")
         docs = self._documents(documents)
         local, zone_name, repeat, days = self._timing(at, timezone, repeat, weekdays or [])
+        keep = self._keep(keep_days, keep_hours, keep_last)
         now = now_iso()
         schedule_id = self.db.insert(
             "INSERT INTO schedules (name, prompt, documents, conversation_id, project_id, repeat, weekdays, local_at,"
             " timezone, next_at, local_only, packs, per_run, missed, overlap, model, attempts, deliver, in_history,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " keep_days, keep_hours, keep_last, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._name(name),
                 self._prompt(prompt, docs),
@@ -361,6 +382,9 @@ class Schedules(DueLoop):
                 self._attempts(attempts),
                 self._deliver(deliver, local_only),
                 int(delivery.forum(deliver)),
+                keep.days,
+                keep.hours,
+                keep.last,
                 now,
                 now,
             ),
@@ -412,6 +436,13 @@ class Schedules(DueLoop):
             columns["attempts"] = self._attempts(fields["attempts"])
         if "in_history" in fields:
             columns["in_history"] = int(bool(fields["in_history"]))
+        if any(key in fields for key in KEEP_FIELDS):
+            keep = self._keep(
+                fields.get("keep_days", old.keep_days),
+                fields.get("keep_hours", old.keep_hours),
+                fields.get("keep_last", old.keep_last),
+            )
+            columns.update(keep_days=keep.days, keep_hours=keep.hours, keep_last=keep.last)
         if "deliver" in fields or "local_only" in fields:
             columns["deliver"] = self._deliver(
                 fields.get("deliver", old.deliver), bool(fields.get("local_only", old.local_only))
@@ -492,6 +523,9 @@ class Schedules(DueLoop):
             "attempts": schedule.attempts,
             "deliver": schedule.deliver,
             "auto_level": schedule.auto_level,
+            "keep_days": schedule.keep_days,
+            "keep_hours": schedule.keep_hours,
+            "keep_last": schedule.keep_last,
             "waiting_run": {
                 "id": waiting["id"],
                 "conversation": waiting["conversation_id"],

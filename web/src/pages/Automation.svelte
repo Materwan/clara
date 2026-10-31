@@ -53,6 +53,15 @@
     { value: 'both', label: 'Web and Discord', hint: 'The conversation on Discord, and the few lines on the other clients.' },
   ];
   const TALKS = ['discord', 'both'];
+  // Cleaning up the conversations of its runs: each limit follows the Admin setting or is the automation's own
+  const KEEP_AGE = [
+    { value: 'follow', label: 'The Admin setting', hint: 'automation_keep_days and automation_keep_hours (none at first).' },
+    { value: 'own', label: 'Its own age', hint: 'Deleted this long after the last message.' },
+  ];
+  const KEEP_COUNT = [
+    { value: 'follow', label: 'The Admin setting', hint: 'automation_keep_last (none at first).' },
+    { value: 'own', label: 'Its own count', hint: 'Only the latest ones are kept.' },
+  ];
   const TRIGGER_TIME = { value: TIME, label: 'At a time', hint: 'Once, or every day, week or month, from the first run you give.', icon: 'clock' };
 
   // The hooks' choices
@@ -131,6 +140,7 @@
     at: '', repeat: '', weekdays: [] as number[], project: 'none', local_only: false, documents: [] as any[], packs: ['web'] as string[],
     per_run: false, missed: 'skip', overlap: 'skip', model: '', catch_up: 'all', max_per_hour: 20, max_age_hours: 0, include_self: false,
     rerun_interrupted: false, attempts: 3, announce: true, deliver: 'notice',
+    keepAge: 'follow', keepDays: 0, keepHours: 0, keepCount: 'follow', keepLast: 0,
   });
 
   let schedules = $state<any[]>([]);
@@ -210,6 +220,39 @@
   // What is missing, and on which step. Next does not go past a step that holds something; the server says the same in its own words.
   // A number input gives null when it is empty or not a number.
   const whole = (value: unknown, least: number, most: number): boolean => typeof value === 'number' && Number.isInteger(value) && value >= least && value <= most;
+  // The conversations of its runs: a hook that runs Clara makes one per run, a schedule only when it is set to
+  const makesConversations = $derived(isTime ? form.per_run : form.action === 'run');
+  // null: follow the Admin setting. The age is both days and hours, or neither.
+  const keepBody = (): Record<string, number | null> => ({
+    keep_days: form.keepAge === 'own' ? Number(form.keepDays) : null,
+    keep_hours: form.keepAge === 'own' ? Number(form.keepHours) : null,
+    keep_last: form.keepCount === 'own' ? Number(form.keepLast) : null,
+  });
+  const keepText = (): string => {
+    const age = form.keepAge === 'follow' ? 'age by the Admin setting'
+      : Number(form.keepDays) + Number(form.keepHours) === 0 ? 'no age limit'
+      : `deleted ${[Number(form.keepDays) ? `${form.keepDays} day${Number(form.keepDays) === 1 ? '' : 's'}` : '', Number(form.keepHours) ? `${form.keepHours} h` : ''].filter(Boolean).join(' ')} after the last message`;
+    const count = form.keepCount === 'follow' ? 'count by the Admin setting' : Number(form.keepLast) === 0 ? 'no count limit' : `the latest ${form.keepLast} kept`;
+    return `${cap(age)}; ${count}.`;
+  };
+  // What the next pass would delete for this automation with the limits on the form (an automation not saved yet has nothing to delete)
+  let keepPreview = $state<{ would_delete: number; more: number } | null>(null);
+  $effect(() => {
+    keepPreview = null;
+    if (!open || !form.id || !makesConversations || step !== 'runs') return;
+    const params: Record<string, number | string> = { kind: isTime ? 'schedule' : 'hook', id: form.id };
+    const own = keepBody();
+    for (const [key, value] of Object.entries(own)) if (value !== null) params[key] = value;
+    const handle = setTimeout(async () => {
+      try {
+        keepPreview = await api.get('/v1/retention/preview', params);
+      } catch {
+        keepPreview = null;
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  });
+
   const problems = $derived.by<Problem[]>(() => {
     const found: Problem[] = [];
     if (isTime && !form.at) found.push({ step: 'trigger', field: 'af-at', message: 'Choose when it first runs.' });
@@ -244,6 +287,13 @@
     }
     if (!isTime && !whole(form.max_per_hour, 1, 600)) {
       found.push({ step: 'runs', field: 'af-max-hour', message: 'Runs an hour must be a whole number from 1 to 600.' });
+    }
+    if (makesConversations && form.keepAge === 'own') {
+      if (!whole(form.keepDays, 0, 3650)) found.push({ step: 'runs', field: 'af-keep-days', message: 'Days must be a whole number from 0 to 3650.' });
+      if (!whole(form.keepHours, 0, 8760)) found.push({ step: 'runs', field: 'af-keep-hours', message: 'Hours must be a whole number from 0 to 8760.' });
+    }
+    if (makesConversations && form.keepCount === 'own' && !whole(form.keepLast, 0, 10000)) {
+      found.push({ step: 'runs', field: 'af-keep-last', message: 'The number of conversations kept must be a whole number from 0 to 10000.' });
     }
     return found;
   });
@@ -415,19 +465,23 @@
   }
 
   async function edit(item: any): Promise<void> {
+    const keep = {
+      keepAge: item.keep_days === null ? 'follow' : 'own', keepDays: item.keep_days ?? 0, keepHours: item.keep_hours ?? 0,
+      keepCount: item.keep_last === null ? 'follow' : 'own', keepLast: item.keep_last ?? 0,
+    };
     form = item.on === TIME
       ? {
         ...empty(), id: item.id, name: item.name, prompt: item.prompt, at: item.local_at, repeat: item.repeat, weekdays: [...item.weekdays],
         project: item.project ? String(item.project) : 'none', local_only: item.local_only,
         documents: item.documents.map((doc: any) => ({ name: doc.name })), packs: [...item.packs], per_run: item.per_run, missed: item.missed,
-        overlap: item.overlap, model: item.model, attempts: item.attempts, deliver: item.deliver,
+        overlap: item.overlap, model: item.model, attempts: item.attempts, deliver: item.deliver, ...keep,
       }
       : {
         ...empty(), id: item.id, on: item.on, name: item.name, action: item.action, prompt: item.prompt, conditions: conditionsOf(item.filter),
         toolsMode: item.tools.length ? 'choose' : 'default', tools: [...item.tools], project: item.project ? String(item.project) : 'none',
         model: item.model, local_only: item.local_only, catch_up: item.catch_up, max_per_hour: item.max_per_hour,
         max_age_hours: item.max_age_hours, include_self: item.include_self, rerun_interrupted: item.rerun_interrupted,
-        attempts: item.attempts, announce: item.announce, deliver: item.deliver,
+        attempts: item.attempts, announce: item.announce, deliver: item.deliver, ...keep,
       };
     await openForm();
   }
@@ -445,7 +499,7 @@
           name: form.name, prompt: form.prompt, at: form.at, timezone: zone, repeat: form.repeat, weekdays: form.weekdays,
           project: form.project === 'none' ? null : Number(form.project), local_only: form.local_only, documents: form.documents,
           packs: form.packs, per_run: form.per_run, missed: form.missed, overlap: form.overlap, model: form.model, attempts: form.attempts,
-          deliver: form.deliver,
+          deliver: form.deliver, ...keepBody(),
         };
         if (form.id) await api.patch(`/v1/schedules/${form.id}`, body);
         else await api.post('/v1/schedules', body);
@@ -455,7 +509,7 @@
           tools: form.action === 'run' && form.toolsMode === 'choose' ? form.tools : [], model: form.model, local_only: form.local_only,
           catch_up: form.catch_up, max_per_hour: Number(form.max_per_hour), max_age_hours: Number(form.max_age_hours),
           include_self: form.include_self, rerun_interrupted: form.rerun_interrupted, attempts: Number(form.attempts), announce: form.announce,
-          deliver: form.deliver, project: form.project === 'none' ? 'none' : Number(form.project),
+          deliver: form.deliver, project: form.project === 'none' ? 'none' : Number(form.project), ...keepBody(),
         };
         if (form.id) await api.patch(`/v1/triggers/${form.id}`, body);
         else await api.post('/v1/triggers', { ...body, on: form.on });
@@ -744,6 +798,45 @@
             <span class="option-text"><strong>Local only</strong><span>Local models only; nothing leaves your machines.</span></span></label>
         </section>
       {:else if stepId === 'runs'}
+        {#snippet cleaning()}
+          {#if makesConversations}
+            <section class="block stack">
+              <h4>Cleaning up</h4>
+              <p class="hint">The conversations of its runs are deleted for good when they pass a limit, whichever comes first. A pinned one, one you archived and a run still waiting are kept. Both limits are off until one is set.</p>
+              <Choice legend="Age" options={KEEP_AGE} bind:value={form.keepAge} />
+              {#if form.keepAge === 'own'}
+                <div class="row">
+                  <label class="field narrow">Days
+                    <input id="af-keep-days" type="number" min="0" max="3650" bind:value={form.keepDays} aria-invalid={errorOf('af-keep-days') ? 'true' : undefined} />
+                    {#if errorOf('af-keep-days')}<span class="field-error">{errorOf('af-keep-days')}</span>{/if}
+                  </label>
+                  <label class="field narrow">Hours
+                    <input id="af-keep-hours" type="number" min="0" max="8760" bind:value={form.keepHours} aria-invalid={errorOf('af-keep-hours') ? 'true' : undefined} />
+                    {#if errorOf('af-keep-hours')}<span class="field-error">{errorOf('af-keep-hours')}</span>{/if}
+                  </label>
+                </div>
+                <p class="small muted">Counted from the last message. 0 days and 0 hours: never deleted for its age.</p>
+              {/if}
+              <Choice legend="Count" options={KEEP_COUNT} bind:value={form.keepCount} />
+              {#if form.keepCount === 'own'}
+                <label class="field narrow">Conversations kept
+                  <span class="hint">The latest ones. 0: no count limit.</span>
+                  <input id="af-keep-last" type="number" min="0" max="10000" bind:value={form.keepLast} aria-invalid={errorOf('af-keep-last') ? 'true' : undefined} />
+                  {#if errorOf('af-keep-last')}<span class="field-error">{errorOf('af-keep-last')}</span>{/if}
+                </label>
+              {/if}
+              {#if keepPreview}
+                <p class="small" class:danger={keepPreview.more > 0} role="status">
+                  {#if !keepPreview.would_delete}
+                    No conversation of its runs is past these limits now.
+                  {:else}
+                    The next pass (within 10 minutes) deletes {keepPreview.would_delete} conversation{keepPreview.would_delete === 1 ? '' : 's'} of its runs for good{keepPreview.more === keepPreview.would_delete ? '' : keepPreview.more ? `, ${keepPreview.more} of them because of this change` : ', none of them because of this change'}.
+                  {/if}
+                </p>
+              {/if}
+            </section>
+          {/if}
+        {/snippet}
         {#snippet delivery()}
           <div id="af-deliver">
             <Choice cards legend="Where the result goes" options={deliveryOptions} bind:value={form.deliver}
@@ -759,6 +852,7 @@
           <Choice cards legend="If the last run is not over" help="A run comes due while the previous one still runs or waits." options={OVERLAPS} bind:value={form.overlap} />
           <Choice legend="If the model is busy or unreachable" help={RETRY_HELP} options={ATTEMPTS}
             bind:value={() => String(form.attempts), (value) => (form.attempts = Number(value))} />
+          {@render cleaning()}
         {:else}
           <section class="block stack">
             <Choice cards legend="If it happened while the server was off" help="Events found more than 15 minutes after they happened." options={CATCH_UPS} bind:value={form.catch_up} />
@@ -796,6 +890,7 @@
                 <span class="option-text"><strong>Also for mail from my own account</strong><span>Mail sent from Clara's own account is left out, so a hook cannot answer its own answer.</span></span></label>
             {/if}
           </section>
+          {@render cleaning()}
         {/if}
       {:else}
         {#if problems.length}
@@ -830,6 +925,7 @@
             <dt>If the last run is not over</dt><dd>{labelOf(OVERLAPS, form.overlap)}</dd>
             <dt>If the model fails</dt><dd>{labelOf(ATTEMPTS, String(form.attempts))}</dd>
             <dt>Result</dt><dd>{labelOf(DELIVERIES, form.deliver)}</dd>
+            {#if form.per_run}<dt>Cleaning up</dt><dd>{keepText()}</dd>{/if}
           {:else}
             <dt>If the server was off</dt><dd>{labelOf(CATCH_UPS, form.catch_up)}</dd>
             <dt>Pace</dt>
@@ -837,6 +933,7 @@
             {#if form.action === 'run'}<dt>If the model fails</dt><dd>{labelOf(ATTEMPTS, String(form.attempts))}</dd>{/if}
             <dt>Result</dt><dd>{labelOf(DELIVERIES, form.deliver)}</dd>
             <dt>When a run ends</dt><dd>{form.announce ? 'You are told.' : 'Quiet if it went well; a failed one tells you.'}</dd>
+            {#if form.action === 'run'}<dt>Cleaning up</dt><dd>{keepText()}</dd>{/if}
           {/if}
         </dl>
       {/if}

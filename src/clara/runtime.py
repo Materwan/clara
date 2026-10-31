@@ -13,6 +13,7 @@ from typing import Any
 
 from .db import Database
 from .events.routing import check_routes
+from .memory.retention import MAX_DAYS, MAX_HOURS, MAX_LAST
 from .timeutil import now_iso
 
 
@@ -95,6 +96,23 @@ KNOBS: dict[str, Knob] = {
         16_000_000,
         _whole(1, 100_000_000),
         "The most a folder grant's budget may be raised to, in bytes (16 MB).",
+    ),
+    "automation_keep_days": Knob(
+        0,
+        _whole(0, MAX_DAYS),
+        "Days after its last message a conversation made by a hook run or a per-run schedule is deleted, added to "
+        "automation_keep_hours (0 and 0: no age limit; an automation may set its own).",
+    ),
+    "automation_keep_hours": Knob(
+        0,
+        _whole(0, MAX_HOURS),
+        "Hours added to automation_keep_days: the age after which such a conversation is deleted.",
+    ),
+    "automation_keep_last": Knob(
+        0,
+        _whole(0, MAX_LAST),
+        "How many conversations of each schedule or hook are kept, the latest ones; the others are deleted "
+        "(0: no count limit; an automation may set its own).",
     ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),

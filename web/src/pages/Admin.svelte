@@ -97,11 +97,28 @@
     load();
   }
 
+  // The limits that delete the conversations automations make: what this change adds to the next pass is said before it is saved
+  // (what the limits now saved delete anyway is not the change's doing).
+  async function confirmDeletions(key: string, value: unknown): Promise<boolean> {
+    if (typeof value !== 'number') return true; // the server refuses it with its own words
+    const found = await api.get('/v1/retention/preview', { [key.replace('automation_', '')]: value });
+    if (!found.more) return true;
+    const names = found.automations.filter((item: any) => item.more).map((item: any) => `${item.name} (${item.more})`).join(', ');
+    return confirmDialog({
+      title: 'Delete conversations',
+      message: `Saving ${key} = ${value} makes the next pass (within 10 minutes) delete ${found.more} more conversation${found.more === 1 ? '' : 's'} of automation runs, for good: ${names}. A pinned one, one you archived and a run still waiting are kept.`,
+      confirm: 'Save and delete',
+      danger: true,
+    });
+  }
+
   async function setSetting(item: any): Promise<void> {
     const text = await promptDialog({ title: `Change ${item.key}`, message: `${item.key} (JSON)`, label: `Value of ${item.key}, as JSON`, value: JSON.stringify(item.value) });
     if (text === null) return;
     try {
-      await api.put(`/v1/admin/settings/${item.key}`, { value: JSON.parse(text) });
+      const value = JSON.parse(text);
+      if (item.key.startsWith('automation_keep_') && !(await confirmDeletions(item.key, value))) return;
+      await api.put(`/v1/admin/settings/${item.key}`, { value });
       load();
     } catch (error) {
       toast((error as Error).message, 'error');

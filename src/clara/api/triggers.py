@@ -15,6 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
+from ..memory.retention import KEEP_AGE, KEEP_LAST, MAX_DAYS, MAX_HOURS, MAX_LAST
 from ..triggers import KINDS, SourceEvent, TriggerError
 from ..triggers.service import CATCH_UPS, MAX_ATTEMPTS
 from .common import ApiError, services
@@ -61,6 +62,9 @@ class NewTrigger(BaseModel):
         default="notice",
         description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
     )
+    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
+    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
+    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
     enabled: bool = True
 
 
@@ -82,6 +86,9 @@ class TriggerChange(BaseModel):
     announce: bool | None = None
     in_history: bool | None = None
     deliver: Deliver | None = None
+    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
+    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
+    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
     enabled: bool | None = None
 
 

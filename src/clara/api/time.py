@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..llm import ProviderError, split_ref
+from ..memory.retention import KEEP_AGE, KEEP_FIELDS, KEEP_LAST, MAX_DAYS, MAX_HOURS, MAX_LAST
 from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, ScheduleError, TaskError
 from ..timekeeping.tasks import MAX_DESCRIPTION, MAX_TITLE
 from .common import ApiError, caller, services
@@ -184,6 +185,9 @@ class NewSchedule(BaseModel):
         default="notice",
         description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
     )
+    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
+    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
+    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
 
 
 def _model(model: str) -> str:
@@ -221,6 +225,9 @@ def add_schedule(body: NewSchedule, request: Request) -> dict:
             model=_model(body.model),
             attempts=body.attempts,
             deliver=body.deliver,
+            keep_days=body.keep_days,
+            keep_hours=body.keep_hours,
+            keep_last=body.keep_last,
         )
     except ScheduleError as error:
         raise ApiError(422, str(error)) from None
@@ -256,12 +263,19 @@ class ScheduleChange(BaseModel):
     attempts: int | None = None
     in_history: bool | None = None
     deliver: Literal["notice", "web", "discord", "both"] | None = None
+    keep_days: int | None = Field(default=None, ge=0, le=MAX_DAYS, description=KEEP_AGE)
+    keep_hours: int | None = Field(default=None, ge=0, le=MAX_HOURS, description=KEEP_AGE)
+    keep_last: int | None = Field(default=None, ge=0, le=MAX_LAST, description=KEEP_LAST)
 
 
 @router.patch("/schedules/{schedule_id}")
 def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) -> dict:
     service = services(request).schedules
-    fields = {key: value for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
+    fields = {
+        key: value
+        for key, value in body.model_dump(exclude_unset=True).items()
+        if value is not None or key in KEEP_FIELDS  # null: follow the global limits again
+    }
     if "project" in fields:
         fields["project_id"] = fields.pop("project") or None
     if "model" in fields:

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..gate.actions import Action
 from ..llm import ProviderError, split_ref
+from ..memory.retention import KEEP_FIELDS, MAX_DAYS, MAX_HOURS, MAX_LAST, RetentionError
 from ..timekeeping import ScheduleError
 from ..timekeeping.clock import MomentError, local_text, zone_of
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, flag, texts, whole_number
@@ -34,7 +35,18 @@ WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 SHORT = 100  # a value this short is shown as « before → after » in a request to change
 TARGET = "automations"
 
-BOTH = ("name", "prompt", "project", "model", "local_only", "attempts", "deliver", "in_history", "enabled")
+BOTH = (
+    "name",
+    "prompt",
+    "project",
+    "model",
+    "local_only",
+    "attempts",
+    "deliver",
+    "in_history",
+    "enabled",
+    *KEEP_FIELDS,
+)
 SCHEDULE_ONLY = ("at", "timezone", "repeat", "weekdays", "packs", "per_run", "missed", "overlap")
 HOOK_ONLY = (
     "on",
@@ -51,6 +63,8 @@ HOOK_ONLY = (
 FLAGS = {"local_only", "in_history", "enabled", "per_run", "include_self", "rerun_interrupted", "announce"}
 NUMBERS = {"attempts", "max_per_hour", "max_age_hours"}
 LISTS = {"packs", "tools"}
+KEEP_MAX = {"keep_days": MAX_DAYS, "keep_hours": MAX_HOURS, "keep_last": MAX_LAST}
+FOLLOW = -1  # what the model writes to say « follow the global setting » (a null is « leave it as it is »)
 ORDER = (*BOTH, *SCHEDULE_ONLY, *HOOK_ONLY)
 LOCAL_ONLY_TURN = "This conversation is local only: an automation made or changed here stays local only."
 
@@ -94,6 +108,15 @@ def _filter(value: Any) -> dict:
     return value
 
 
+def _keep(key: str, value: Any) -> int | None:
+    number = whole_number(value, f"{key} must be a whole number.")
+    if number == FOLLOW:
+        return None
+    if not 0 <= number <= KEEP_MAX[key]:
+        raise ToolError(f"{key} must be from 0 to {KEEP_MAX[key]:,}, or {FOLLOW} to follow the global setting.")
+    return number
+
+
 def _weekdays(value: Any) -> list[int]:
     return [whole_number(item, "weekdays are numbers from 0 (Monday) to 6 (Sunday).") for item in texts(value)]
 
@@ -117,6 +140,8 @@ def _given(context: ToolContext, kind: str, fields: dict) -> dict:
             continue
         if key in FLAGS:
             values[key] = flag(raw)
+        elif key in KEEP_MAX:
+            values[key] = _keep(key, raw)
         elif key in NUMBERS:
             values[key] = whole_number(raw, f"{key} must be a whole number.")
         elif key in LISTS:
@@ -131,6 +156,12 @@ def _given(context: ToolContext, kind: str, fields: dict) -> dict:
             values[key] = _model(str(raw))
         else:
             values[key] = str(raw).strip() if key != "prompt" else str(raw)
+    if ("keep_days" in values) != ("keep_hours" in values) or (
+        "keep_days" in values and (values["keep_days"] is None) != (values["keep_hours"] is None)
+    ):
+        raise ToolError(
+            f"keep_days and keep_hours are one age: give both ({FOLLOW} and {FOLLOW} to follow the global setting)."
+        )
     if context.turn.local_only:
         if values.get("local_only") is False:
             raise ToolError(LOCAL_ONLY_TURN)
@@ -201,6 +232,8 @@ def _show(key: str, value: Any) -> str:
         return ", ".join(WEEKDAYS[number] for number in value if 0 <= number <= 6) or "(none)"
     if key == "project":
         return f"project {value}" if value else "(none)"
+    if key in KEEP_MAX and value is None:
+        return "the global setting"
     if isinstance(value, (list, tuple)):
         return ", ".join(map(str, value)) or "(none)"
     if isinstance(value, dict):
@@ -275,6 +308,25 @@ def _change(kind: str, d: dict, values: dict) -> str:
     return "\n".join(lines)
 
 
+def _deletion(context: ToolContext, kind: str, number: int, values: dict) -> str:
+    """What new retention limits would delete at the next pass beyond what the limits now saved delete anyway, said in the
+    request: this is the one change here that removes conversations."""
+    given = {key: values[key] for key in KEEP_FIELDS if key in values}
+    if not given:
+        return ""
+    try:
+        found = context.services.retention.preview_change(kind, number, **given)
+    except RetentionError as error:
+        raise ToolError(str(error)) from None
+    more = found["more"]
+    if not more:
+        return "\nThis deletes no conversation that the limits now saved would not delete."
+    return (
+        f"\nThe next pass (within 10 minutes) deletes {more} more conversation{'s' if more != 1 else ''} of its runs "
+        "for good: a pinned one, one you archived and a run still waiting are kept."
+    )
+
+
 # ----------------------------------------------------------------------
 # The gate
 # ----------------------------------------------------------------------
@@ -305,8 +357,10 @@ def _changes(context: ToolContext, arguments: dict) -> tuple[str, int, dict, dic
 
 @acts_as("automation")
 def _describe_update(context: ToolContext, arguments: dict) -> Action:
-    kind, _, values, current = _changes(context, arguments)
-    return Action("", "write", "automation", (TARGET,), _change(kind, current, values))
+    kind, number, values, current = _changes(context, arguments)
+    return Action(
+        "", "write", "automation", (TARGET,), _change(kind, current, values) + _deletion(context, kind, number, values)
+    )
 
 
 @acts_as("automation")
@@ -500,6 +554,18 @@ def automation_tools() -> list[Tool]:
             "description": "Where a run's result goes: a short notification, the web, Discord, or both.",
         },
         "in_history": {"type": "boolean", "description": "List its runs' conversations in the history."},
+        "keep_days": {
+            "type": "integer",
+            "description": "Conversations of its runs are deleted for good this many days (plus keep_hours) after "
+            f"their last message; 0 and 0: never by age; {FOLLOW} and {FOLLOW}: the global setting. Give with keep_hours. "
+            "Only for a hook, or a schedule with per_run.",
+        },
+        "keep_hours": {"type": "integer", "description": "Hours added to keep_days (always given together)."},
+        "keep_last": {
+            "type": "integer",
+            "description": "Only the latest this many conversations of its runs are kept, the older ones deleted for "
+            f"good; 0: no count limit; {FOLLOW}: the global setting.",
+        },
         "enabled": {"type": "boolean", "description": "false: paused."},
     }
     care = (
