@@ -6,6 +6,7 @@ import asyncio
 import os
 import shutil
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,29 @@ from .traffic import DEBUG_HOURS
 
 if TYPE_CHECKING:
     from ..services import Services
+
+
+class StatusProbe:
+    """The slow part of the status, one probe at a time. The apps ask every 3 s, and a vault locked by a long push would
+    otherwise hold one worker thread per ask until the push ends. While a probe is still running, an ask gets the answer of
+    the last probe that finished; only an ask that starts a probe, or comes before any answer, waits for it."""
+
+    def __init__(self) -> None:
+        self._task: asyncio.Task[dict] | None = None
+        self._answer: dict | None = None
+
+    async def read(self, work: Callable[[], dict]) -> dict:
+        if self._task is None or self._task.done():
+            self._task = asyncio.ensure_future(asyncio.to_thread(work))
+            self._task.add_done_callback(self._keep)
+        elif self._answer is not None:
+            return self._answer
+        # shielded: an ask that gives up (its client went away) does not stop the probe, whose answer the next ask uses
+        return await asyncio.shield(self._task)
+
+    def _keep(self, task: asyncio.Task[dict]) -> None:
+        if not task.cancelled() and task.exception() is None:
+            self._answer = task.result()
 
 
 def _size_mb(path) -> float:
@@ -62,7 +86,7 @@ def _from_disk_and_git(s: Services) -> dict:
 
 async def status(s: Services) -> dict:
     sandbox = s.sandbox
-    slow = await asyncio.to_thread(_from_disk_and_git, s)
+    slow = await s.status_probe.read(lambda: _from_disk_and_git(s))
     return {
         "version": __version__,
         "release": os.environ.get("CLARA_RELEASE", ""),

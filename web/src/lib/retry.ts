@@ -6,18 +6,28 @@
 export class TimedOut extends Error {}
 
 /**
- * Runs `run` with a signal that is aborted when `ms` have passed (0: never) or when `outer` is aborted. If the time ran out
- * and `run` failed because of it, the error is `TimedOut`; any other failure is `run`'s own.
+ * Runs `run` with a signal that is aborted when `ms` have passed (0: never) or when `outer` is aborted. `run` may call
+ * `answered` once the answer has started to come: from then on the time limit no longer applies, the rest of the answer is
+ * read to its end, and only `outer` can stop it. If the time ran out before that and `run` failed because of it, the error
+ * is `TimedOut`; any other failure is `run`'s own.
  */
-export async function within<T>(ms: number, outer: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+export async function within<T>(
+  ms: number,
+  outer: AbortSignal | undefined,
+  run: (signal: AbortSignal, answered: () => void) => Promise<T>,
+): Promise<T> {
   const inner = new AbortController();
   const forward = (): void => inner.abort();
   if (outer?.aborted) inner.abort();
   outer?.addEventListener('abort', forward, { once: true });
   let expired = false;
-  const clock = ms > 0 ? setTimeout(() => { expired = true; inner.abort(); }, ms) : undefined;
+  let clock = ms > 0 ? setTimeout(() => { expired = true; inner.abort(); }, ms) : undefined;
+  const answered = (): void => {
+    clearTimeout(clock);
+    clock = undefined;
+  };
   try {
-    return await run(inner.signal);
+    return await run(inner.signal, answered);
   } catch (error) {
     if (expired) throw new TimedOut(`No answer within ${Math.round(ms / 1000)} s.`);
     throw error;

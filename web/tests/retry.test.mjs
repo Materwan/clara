@@ -73,3 +73,22 @@ test('the caller aborting is its own error, not a timeout', async () => {
 test('a failure of the request itself is passed on as it is', async () => {
   await assert.rejects(within(1000, undefined, async () => { throw new TypeError('Failed to fetch'); }), TypeError);
 });
+
+test('once the answer has started, the time limit stops: a long body is read to its end', async () => {
+  const body = await within(20, undefined, async (signal, answered) => {
+    answered();
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    return 'whole body';
+  });
+  assert.equal(body, 'whole body');
+});
+
+test('after the answer has started, the caller can still stop the read', async () => {
+  const caller = new AbortController();
+  const asked = within(5000, caller.signal, (signal, answered) => {
+    answered();
+    return hangs(signal);
+  });
+  caller.abort();
+  await assert.rejects(asked, (error) => error.name === 'AbortError' && !(error instanceof TimedOut));
+});

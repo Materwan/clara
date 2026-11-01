@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { hidden } from '../lib/display.svelte';
@@ -85,13 +86,16 @@
     const mine = ++loads;
     const asked = query;
     try {
-      const [found, archived] = await Promise.all([
+      // Both are read together, but one failing does not hold back the other: the list is shown even if the archive is not read
+      const [found, archived] = await Promise.allSettled([
         api.get('/v1/conversations', { q: asked, kind: 'any', history: !asked, hide: asked ? '' : hidden(), limit: 200 }),
         asked ? Promise.resolve({ conversations: [] }) : api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 }),
       ]);
       if (mine !== loads) return;
-      items = found.conversations;
-      archivedItems = archived.conversations;
+      if (found.status === 'rejected') throw found.reason;
+      items = found.value.conversations;
+      if (archived.status === 'rejected') throw archived.reason;
+      archivedItems = archived.value.conversations;
     } catch (error) {
       if (mine === loads) toast((error as Error).message, 'error');
     }
@@ -102,10 +106,11 @@
     if (narrow.rail && !ui.rail) menu = null;
   });
 
+  // load() reads the search box itself: untracked, so that typing waits for the debounce in search() and not one request a key
   $effect(() => {
     void conversations.changed;
     void live.refresh;
-    load();
+    untrack(load);
   });
 
   function search(): void {

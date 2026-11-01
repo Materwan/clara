@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .mirror.service import Mirror
 from .ops.discord_report import DiscordReport
+from .ops.status import StatusProbe
 
 if TYPE_CHECKING:
     from .agent.turn import Agent
@@ -93,6 +94,8 @@ class Services:
     monitors: Any = None
     clients: dict[str, float] = field(default_factory=dict)  # client heartbeats: name -> monotonic time
     discord_report: DiscordReport = field(default_factory=DiscordReport)  # what the bot's heartbeats said
+    # the vault and disk part of the status, read one at a time (ops/status.py)
+    status_probe: StatusProbe = field(default_factory=StatusProbe)
     mirror: Mirror | None = None  # the conversations kept in Discord
     boot_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started: float = field(default_factory=time.monotonic)

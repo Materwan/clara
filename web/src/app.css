@@ -636,8 +636,11 @@ tr.off td { opacity: .5; }
 .context.hot .ring .fill { stroke: var(--accent-line); }
 .context.hot { color: var(--accent-text); font-weight: 650; }
 
-.messages { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-24) var(--sp-24) var(--sp-16); }
+.messages { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-24) var(--sp-24) var(--sp-16); overflow-anchor: none; }
 .messages-inner { max-width: var(--column); margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-32); }
+/* the messages drawn (see Chat.svelte): the spacers are its padding; the gap is the list's, narrow screens included */
+.window { display: flex; flex-direction: column; gap: inherit; min-width: 0; }
+.slot { display: flow-root; min-width: 0; }
 .msg { display: flex; max-width: 100%; min-width: 0; }
 .msg.user { justify-content: flex-end; }
 .msg.user .body { display: flex; flex-direction: column; align-items: flex-end; max-width: min(78%, 680px); min-width: 0; }

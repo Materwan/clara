@@ -33,6 +33,7 @@ from clara.db import backup_database
 from clara.gate import Action, Decision, Situation
 from clara.ops.backups import verify
 from clara.ops.discord_bot import DiscordBot, bot_environment
+from clara.ops.status import StatusProbe
 from clara.ops.tailscale import FunnelOn, Output, Tailscale, check_funnel_now, funnel_ports
 from clara.ops.updater import UpdateError, Updater, check_signature, check_sums, safe_extract
 from clara.settings import load_settings
@@ -618,3 +619,26 @@ def test_the_bot_is_only_started_when_asked(environ, tmp_path, llm):
         assert (s.discord is None) if expected is None else isinstance(s.discord, expected)
         s.traffic.close()
         db.close()
+
+
+async def test_status_probe_runs_one_read_at_a_time_and_serves_the_last_answer_meanwhile():
+    probe = StatusProbe()
+    assert await probe.read(lambda: {"n": 1}) == {"n": 1}
+    started, release = threading.Event(), threading.Event()
+    reads = []
+
+    def slow() -> dict:
+        reads.append(1)
+        started.set()
+        release.wait(5)
+        return {"n": 2}
+
+    first = asyncio.create_task(probe.read(slow))
+    await asyncio.to_thread(started.wait, 5)
+    # another ask while that read still runs: the answer before it, and no second thread
+    assert await probe.read(slow) == {"n": 1}
+    assert len(reads) == 1
+    release.set()
+    assert await first == {"n": 2}
+    # once it has finished, the next ask reads again
+    assert await probe.read(lambda: {"n": 3}) == {"n": 3}

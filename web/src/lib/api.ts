@@ -15,7 +15,8 @@ const HEADERS = { 'X-Clara-Web': '1', 'X-Clara-Client': 'web' };
 
 /** How a read waits and asks again. The other methods are not repeated (a repeated write could be done twice) and wait as long as they need. */
 export type ReadOptions = {
-  /** ms to wait for one answer before giving up on it (default 30 s). */
+  /** ms to wait for the answer to start before giving up on it (default 30 s; 0: no limit, for a request slow on purpose).
+   *  A long answer is read to its end whatever its size. */
   timeout?: number;
   /** How many more times to ask after a dropped connection, a timeout or a proxy answering while Clara restarts (default 2). */
   retries?: number;
@@ -23,17 +24,23 @@ export type ReadOptions = {
 const READ_TIMEOUT = 30_000;
 const READ_RETRIES = 2;
 const RESTARTING = new Set([502, 503, 504]); // what the proxy in front of Clara answers while she restarts or cannot be reached
+const NETWORK = 'Clara cannot be reached: check the connection and try again.';
 
 async function attempt<T>(method: string, path: string, body: unknown, signal: AbortSignal | undefined, timeout: number): Promise<T> {
   try {
-    return await within(timeout, signal, async (cancel) => {
+    return await within(timeout, signal, async (cancel, answered) => {
       const response = await fetch(path, {
         method,
         credentials: 'same-origin',
         headers: body === undefined ? HEADERS : { ...HEADERS, 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: cancel,
+      }).catch((error: unknown) => {
+        // status 0: the request never got an answer (the browser's own words, "Failed to fetch", say nothing to you); an abort is not this
+        if (error instanceof TypeError) throw new ApiError(0, 'network', NETWORK);
+        throw error;
       });
+      answered();
       if (response.status === 401 && !path.endsWith('/web-login')) session.signedIn = false;
       if (!response.ok) {
         let code = 'error';
@@ -47,13 +54,15 @@ async function attempt<T>(method: string, path: string, body: unknown, signal: A
         }
         throw new ApiError(response.status, code, message);
       }
-      const text = await response.text();
+      const text = await response.text().catch((error: unknown) => {
+        // the connection dropped while the answer was arriving: as if it had never answered
+        if (error instanceof TypeError) throw new ApiError(0, 'network', NETWORK);
+        throw error;
+      });
       return (text ? JSON.parse(text) : {}) as T;
     });
   } catch (error) {
-    // status 0: the request never got an answer (the browser's own words, "Failed to fetch", say nothing to you)
     if (error instanceof TimedOut) throw new ApiError(0, 'timeout', 'Clara did not answer in time: try again.');
-    if (error instanceof TypeError) throw new ApiError(0, 'network', 'Clara cannot be reached: check the connection and try again.');
     throw error;
   }
 }

@@ -20,6 +20,7 @@
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, note, summary } from '../lib/tools';
+  import { splitTurns } from '../lib/turns';
 
   type Shown = Call & { open?: boolean };
   // Clara's reply in the order she made it: text, runs of tool calls (calls with no text between them), requests, forms
@@ -29,6 +30,7 @@
     | { kind: 'approval'; approval: any }
     | { kind: 'form'; form: any };
   type Message = {
+    key: number; // what the list is keyed by: a message keeps it while older ones are added above it
     id?: number;
     role: 'user' | 'assistant';
     content: string; // the message as it is stored: what you wrote, and the documents in it (a reply's text is in its parts)
@@ -43,6 +45,7 @@
     notes: string[];
     versions?: number[];
     version?: number;
+    question?: Message; // a reply: the question it answers (the message before it), so that no reply reads its place in the list
     streaming?: boolean;
     compacting?: boolean; // the answer is complete and stored; the conversation is being summarised after it
     error?: string;
@@ -50,7 +53,8 @@
     upload?: { name: string; data: string }[]; // the files of a question not stored yet, to send again with it
   };
 
-  const blank = (role: Message['role'], content = ''): Message => ({ role, content, attachments: [], parts: [], files: [], notes: [] });
+  let keys = 0;
+  const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], files: [], notes: [] });
   /** Your message as the site draws it: your words in the bubble, a chip for each document in it. */
   function yours(content: string): Message {
     const sent = unpack(content);
@@ -162,6 +166,7 @@
   const followed = $derived(level.source === 'project' ? 'the project' : level.source === 'automation' ? 'its schedule or hook' : 'the default');
 
   async function setLevel(value: number | null): Promise<void> {
+    if (loadError) return;
     if (!conversationId) {
       fresh.level = value;
       return;
@@ -182,7 +187,7 @@
     busy = false;
   }
 
-  // Opening a conversation: a slow link must not make a read fail for good, nor hold the whole page back.
+  // Opening a conversation: the answer must start within 15 s on a slow link, or it is asked again; a long history is read to its end.
   const OPEN: ReadOptions = { timeout: 15_000, retries: 2 };
 
   /** The lists the pickers offer (models, tool packs, projects). Small, and not needed to read a conversation: they load beside it. */
@@ -201,6 +206,7 @@
     const mine = ++loads;
     leave();
     conversation = null;
+    drawing++; // the older exchanges of the conversation before are not drawn into this one
     messages = [];
     loadError = null;
     side = { files: [], notes: [], forms: [] };
@@ -242,11 +248,39 @@
     }
   }
 
+  // A long conversation is drawn newest first, a few exchanges at a time, each step in its own task: the newest exchange
+  // shows at once, and the page stays responsive while the older ones are added above it.
+  const DRAW_STEP = 5; // exchanges per step
+  let drawing = 0; // the draw in progress: a newer draw, or leaving the page or the conversation, cancels its steps
+
   function draw(found: any, history: any[], waiting: any[]): void {
     conversation = found;
-    messages = group(history, waiting);
-    scrollDown(true);
+    const mine = ++drawing;
+    const turns = splitTurns(history);
+    let end = turns.length;
+    const step = (first: boolean): void => {
+      if (mine !== drawing) return;
+      const start = Math.max(0, end - DRAW_STEP);
+      const chunk = group(turns.slice(start, end).flat(), first ? waiting : []);
+      end = start;
+      if (first) {
+        messages = chunk;
+        scrollDown(true);
+      } else {
+        messages = [...chunk, ...messages]; // one assignment: a shift of the reactive list would be a write per message
+        // the older messages go above the screen: it moves down by as much, unless it is pinned to the bottom
+        if (following) void scrollDown();
+        else if (scroller) scroller.scrollTop += chunk.length * (ESTIMATE + gap);
+      }
+      if (end > 0) setTimeout(() => step(false), 0);
+    };
+    step(true);
   }
+
+  $effect(() => () => {
+    drawing++; // leaving the page: the older exchanges still to be drawn are left out
+    observer?.disconnect();
+  });
 
   /** The stored messages of a conversation, drawn again (an answer that ended while we were not reading it). */
   async function refresh(id: string): Promise<void> {
@@ -346,6 +380,7 @@
       }
       if (!answer) {
         answer = blank('assistant');
+        answer.question = shown.at(-1);
         shown.push(answer);
       }
       if (item.role === 'assistant') {
@@ -367,6 +402,125 @@
   let following = true;
   let lastTop = 0;
 
+  // ---- the list, a window at a time -----------------------------------------------------------------------------------
+  // Only the messages on the screen and just around it are drawn. The others are spacers: each stands for the height the
+  // message had when it was last drawn, or an estimate if it never was. A drawn message reports its height (measure and
+  // onResize), so the spacers stay right, and what is on the screen stays where it was when a message above it changes size.
+  const ESTIMATE = 120; // px: a message that has not been drawn yet
+  const heights = new Map<number, number>(); // message key -> its height when it was drawn
+  let tops: number[] = []; // where each message starts, from the top of the list, the gap after each included
+  let keyIndex = new Map<number, number>(); // message key -> its place in the list
+  let gap = 0; // the space between two messages
+  let dirty = true; // tops must be worked out again
+  let windowEl = $state<HTMLElement>();
+  let range = $state({ start: 0, end: 0, padTop: 0, padBottom: 0 }); // the messages drawn now, and the spacers around them
+  const shown = $derived(messages.slice(range.start, range.end));
+
+  /** The first of the first n entries that is above y (binary search: the entries are in order). */
+  function upperBound(values: number[], y: number, n: number): number {
+    let low = 0;
+    let high = n;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (values[mid] <= y) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  }
+
+  function rebuild(): void {
+    const n = messages.length;
+    if (windowEl) gap = parseFloat(getComputedStyle(windowEl).rowGap) || 0;
+    tops = new Array<number>(n + 1);
+    keyIndex = new Map();
+    tops[0] = 0;
+    for (let i = 0; i < n; i++) {
+      const key = messages[i].key;
+      keyIndex.set(key, i);
+      tops[i + 1] = tops[i] + (heights.get(key) ?? ESTIMATE) + gap;
+    }
+    dirty = false;
+  }
+
+  /** Works out which messages the screen needs now, and the spacers for the rest. */
+  function reflow(): void {
+    if (!scroller || !windowEl) return;
+    const n = messages.length;
+    if (dirty) rebuild();
+    // how far the top of the screen is below the top of the list (the scroll position, less the padding above the list)
+    const relTop = scroller.getBoundingClientRect().top - windowEl.getBoundingClientRect().top;
+    const view = scroller.clientHeight;
+    const margin = Math.max(view, 600);
+    const start = Math.max(0, upperBound(tops, relTop - margin, n) - 1);
+    let end = Math.min(n, upperBound(tops, relTop + view + margin, n));
+    if (end <= start) end = Math.min(n, start + 1);
+    const next = { start, end, padTop: tops[start] ?? 0, padBottom: tops[n] - tops[end] };
+    if (next.start !== range.start || next.end !== range.end || next.padTop !== range.padTop || next.padBottom !== range.padBottom) {
+      range = next;
+    }
+  }
+
+  /** At the bottom: the page moves to the newest message, and the messages drawn follow it there. */
+  function pin(): void {
+    if (!scroller) return;
+    scroller.scrollTop = scroller.scrollHeight;
+    reflow();
+  }
+
+  /** Drawn messages report their heights here, once per batch (before the browser paints). */
+  function onResize(entries: ResizeObserverEntry[]): void {
+    if (!scroller || !windowEl) return;
+    if (dirty) rebuild();
+    const changed: { key: number; index: number; was: number; now: number }[] = [];
+    for (const entry of entries) {
+      const key = Number((entry.target as HTMLElement).dataset.key);
+      const index = keyIndex.get(key);
+      const now = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      const was = heights.get(key) ?? ESTIMATE;
+      if (index !== undefined && Math.abs(now - was) >= 0.5) changed.push({ key, index, was, now });
+    }
+    if (!changed.length) return;
+    if (!following) {
+      // what is above the screen grew or shrank: the scroll moves by as much, so what is on the screen stays where it is
+      const relTop = scroller.getBoundingClientRect().top - windowEl.getBoundingClientRect().top;
+      let shift = 0;
+      for (const c of changed) if (tops[c.index] < relTop) shift += c.now - c.was;
+      scroller.scrollTop += shift;
+    }
+    for (const c of changed) heights.set(c.key, c.now);
+    dirty = true;
+    reflow();
+    if (following) void scrollDown();
+  }
+
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
+
+  /** A drawn message: its element reports its height (see onResize). */
+  function measure(node: HTMLElement, key: number) {
+    node.dataset.key = String(key);
+    observer?.observe(node);
+    return {
+      destroy: () => observer?.unobserve(node),
+    };
+  }
+
+  // The list changed (messages added, replaced or removed): its layout is worked out again
+  $effect(() => {
+    void messages.length;
+    untrack(() => {
+      dirty = true;
+      reflow();
+    });
+  });
+
+  // The screen changed size: the messages it needs change too
+  $effect(() => {
+    if (!scroller) return;
+    const watch = new ResizeObserver(() => untrack(reflow));
+    watch.observe(scroller);
+    return () => watch.disconnect();
+  });
+
   function onScroll(): void {
     if (!scroller) return;
     const away = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
@@ -374,12 +528,15 @@
     else if (scroller.scrollTop < lastTop) following = false;
     else if (away < 40) following = true;
     lastTop = scroller.scrollTop;
+    reflow();
   }
 
-  function scrollDown(force = false): void {
+  /** Keeps the newest message in view while the page is at the bottom. `force`: go to the bottom now. */
+  async function scrollDown(force = false): Promise<void> {
     if (force) following = true;
     if (!following) return;
-    queueMicrotask(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+    await tick(); // the list draws what was added first
+    if (following) pin();
   }
 
   /** Archived: no new message. Unarchiving here is the same switch as the rail's. */
@@ -501,7 +658,7 @@
   }
 
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
-    if (conversation?.archived) return;
+    if (conversation?.archived || loadError) return; // a conversation that did not load takes no message
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
     const mine = new AbortController();
@@ -529,6 +686,7 @@
       user.upload = files;
       user.attachments.push(...files.map((file) => ({ name: file.name })));
       const answer = blank('assistant');
+      answer.question = user;
       answer.streaming = true;
       messages.push(user, answer);
       current = messages[messages.length - 1];
@@ -567,6 +725,7 @@
         if (!user.attachments.some((file) => file.name === name)) user.attachments.push({ name });
       }
       const answer = blank('assistant');
+      answer.question = user;
       answer.streaming = true;
       messages.push(user, answer);
       current = messages[messages.length - 1];
@@ -596,16 +755,22 @@
   }
 
   /** A reply that failed or was cut off can be tried again: its question is asked again (a new version when it is stored). */
-  function canRetry(message: Message, index: number): boolean {
-    const question = messages[index - 1];
+  // The last message, by reference: a reply reads this rather than its place in the list, which changes as older messages are
+  // drawn above it (a place in the list would make every reply run again at each step)
+  const last = $derived(messages.at(-1));
+
+  function canRetry(message: Message): boolean {
+    const question = message.question;
     if (busy || question?.role !== 'user' || !(message.error || message.interrupted)) return false;
-    return question.id !== undefined || index === messages.length - 1; // a question not stored: the reply after it is dropped
+    return question.id !== undefined || message === last; // a question not stored: the reply after it is dropped
   }
 
-  async function retry(index: number): Promise<void> {
-    const question = messages[index - 1];
+  async function retry(message: Message): Promise<void> {
+    const question = message.question;
+    if (!question) return;
     const stored = question.id !== undefined; // a stored question carries its documents in its content: none sent again
-    if (!stored) messages = messages.slice(0, index - 1);
+    const at = messages.findIndex((item) => item.key === question.key);
+    if (!stored && at >= 0) messages = messages.slice(0, at);
     await send(question.content, question.id ?? null, stored ? [] : (question.upload ?? []));
   }
 
@@ -618,6 +783,7 @@
   }
 
   async function summarise(): Promise<void> {
+    if (loadError) return;
     try {
       const done = await api.post(`/v1/conversations/${conversationId}/compact`, {});
       toast(`Summarised: ${Math.round(done.before)}% → ${Math.round(done.after)}%`, 'ok');
@@ -628,6 +794,7 @@
   }
 
   async function setModel(model: string): Promise<void> {
+    if (loadError) return;
     if (!conversationId) {
       fresh.model = model;
       return;
@@ -671,6 +838,7 @@
 
   /** Switch a special tool on or off: saved with the conversation, or kept for the one about to start. */
   async function togglePack(id: string): Promise<void> {
+    if (loadError) return;
     const next = activePacks.includes(id) ? activePacks.filter((item) => item !== id) : [...activePacks, id];
     if (!conversationId) {
       fresh.packs = next;
@@ -684,6 +852,7 @@
   }
 
   async function chooseProject(id: number | null): Promise<void> {
+    if (loadError) return;
     if (!conversationId) {
       chosenProject = id;
       return;
@@ -708,6 +877,7 @@
   function drop(event: DragEvent): void {
     event.preventDefault();
     dragging = false;
+    if (loadError) return; // a conversation that did not load takes no file
     addFiles([...(event.dataTransfer?.files ?? [])]);
   }
 
@@ -786,7 +956,7 @@
         </svg>
         <span>{percent}%<span class="label">{' of the context'}</span></span>
       </span>
-      <button class="ghost icon-btn" title="Summarise the conversation to free the context" aria-label="Summarise" onclick={summarise} disabled={busy}>
+      <button class="ghost icon-btn" title="Summarise the conversation to free the context" aria-label="Summarise" onclick={summarise} disabled={busy || !!loadError}>
         <Icon name="compress" size={18} />
       </button>
     {/if}
@@ -802,7 +972,7 @@
   <div class="chat-main" inert={showPanel && narrow.rail}>
 
   <div class="messages" bind:this={scroller} onscroll={onScroll}>
-    <div class="messages-inner">
+    <div class="messages-inner" data-count={messages.length}>
       {#if loadError}
         <div class="welcome" role="alert">
           <Mark size={56} />
@@ -827,8 +997,10 @@
             </div>
           {/if}
         </div>
-      {/if}
-      {#each messages as message, index (index)}
+      {:else}
+        <div class="window" bind:this={windowEl} style:padding-top={`${range.padTop}px`} style:padding-bottom={`${range.padBottom}px`}>
+          {#each shown as message (message.key)}
+            <div class="slot" use:measure={message.key}>
         {#if message.role === 'user'}
           <div class="msg user">
             <div class="body">
@@ -931,13 +1103,16 @@
                 <div class="reply-notes">{#each message.notes as line}<span>{line}</span>{/each}</div>
               {/if}
               {#if message.error}<div class="failed-note"><Icon name="warn" size={18} /><span>{message.error}</span></div>{/if}
-              {#if canRetry(message, index)}
-                <div class="retry"><button class="small" onclick={() => retry(index)}><Icon name="refresh" size={16} /> Try again</button></div>
+              {#if canRetry(message)}
+                <div class="retry"><button class="small" onclick={() => retry(message)}><Icon name="refresh" size={16} /> Try again</button></div>
               {/if}
             </div>
           </div>
         {/if}
-      {/each}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -985,11 +1160,11 @@
         <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
           onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
         <div class="composer-bar">
-          <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} onFiles={() => picker?.click()}
+          <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} disabled={!!loadError} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
           <input type="file" multiple hidden bind:this={picker} onchange={pick} />
-          <LevelSelect value={level.own} effective={level.level} follows={followed} onchange={setLevel} small />
-          <select class="model-select" aria-label="Model" value={conversationId ? conversation?.model ?? '' : fresh.model}
+          <LevelSelect value={level.own} effective={level.level} follows={followed} onchange={setLevel} small disabled={!!loadError} />
+          <select class="model-select" aria-label="Model" disabled={!!loadError} value={conversationId ? conversation?.model ?? '' : fresh.model}
             onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>
             <option value="">Default model ({models.default || 'none'})</option>
             {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
@@ -997,7 +1172,7 @@
           {#if busy}
             <button class="send stop" title={compacting ? 'Stop compacting' : 'Stop'} aria-label={compacting ? 'Stop compacting' : 'Stop'} onclick={stop}><Icon name="stop" /></button>
           {:else}
-            <button class="send" title="Send" aria-label="Send" disabled={!!conversation?.archived || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
+            <button class="send" title="Send" aria-label="Send" disabled={!!conversation?.archived || !!loadError || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
           {/if}
         </div>
       </div>
