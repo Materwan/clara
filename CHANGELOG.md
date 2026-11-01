@@ -3,6 +3,104 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.4.0 — 01/11/2026
+
+**A firewall against text written to steer Clara, and tool calls booked for later.** A web page, a mail or an attachment can
+carry sentences meant for an AI. Until now Clara read them as they were and the gate was the only backstop. Now a separate
+model reads that text first, and a conversation that read something from outside asks before it lets private text leave.
+Clara can also book a tool call to run later (« trash this mail in two days »). **The reader is on after the update** (see
+*What changes when you update*).
+
+**The quarantined reader.**
+
+- **What it reads:** the text of a web page, of a mail, of an attachment, of a workspace file that came from outside, and the
+  results of a web search or a mail search. It is a separate model call with **no tools and no memory**, and it must answer with
+  one JSON object of a fixed shape, which is checked field by field. Only that checked report reaches the conversation: a summary
+  and an answer to the model's `focus` (what to look for), up to 10 facts and, for a mail, the kind of message, what the sender
+  asks for and the dates it names. Text addressed to an AI sets `addressed_to_ai` and the report carries a warning.
+- **What the conversation no longer sees as written:** the sender's name, a mail's subject and preview, a page's title and the
+  words of its links, and an attachment's name. The headers it gets are addresses, dates and ids. In a list (a search, a mail
+  search) a result is its address and a one-line gist of 160 characters.
+- **It fails closed:** if the reader cannot answer (no model, an error, two answers that are not usable), the page, mail,
+  attachment or file is **not** given to the conversation and the tool says so; a list is shown without its gists.
+- **What it costs:** one model call for a page, a mail or an attachment, one for a list, in the usage log under the kind `reader`.
+  The model is `reader_model`, else the one of titles and summaries; it is local when the conversation is local only. The
+  conversation stays tainted afterwards.
+- **Hooks:** a run that a mail started is told the sender's address, the ids, the flags and a gist, not what the sender wrote.
+  GitHub events are shown as they were. Notifications (for you, not a model) and the *Test* dry run are not changed.
+
+**Asking more after outside content.**
+
+- **Fetching an address nobody gave** (`fetch_other`) asks in a tainted turn, whatever the level and the rules say. This
+  **reverses** the choice of 30/10 that left it out: an untrusted host can carry private text in its path. An address you wrote
+  or a search returned is still read without asking.
+- **A search query that repeats private text** asks: in a tainted turn, a query that repeats four words in a row, or an
+  identifier (an email address, a reference with a digit), from a mail, a file, a note or a fact, that you did not write. A query
+  that looks like a secret asks too. It is a screen, not a guarantee (`THREAT-MODEL.md` says what passes).
+- **Where a workspace file comes from:** a file that arrived from outside (an attachment kept by `mail_attachment_save`, what a
+  script changed when it ran with the network) is marked `quarantine`, and one Clara wrote after the conversation read outside
+  content is marked `tainted`. Reading a marked file taints the conversation, even a new one. The marks follow a move and
+  survive a delete and its undo. You trust a file on the Library page (**Trust this file**), with `/trust <path>` or through the
+  API; a file whose content changes is untrusted again. Only a token that may answer every request can trust, and the model
+  has no tool for it.
+- **Not covered yet:** GitHub, Drive and folder files keep the taint flag only, and a script that prints a marked file gives its
+  text to the conversation (see [TODO.md](TODO.md) and [THREAT-MODEL.md](docs/THREAT-MODEL.md)).
+
+**Booked calls.**
+
+- **How it works:** with the **Booked calls** pack of a chat (off until you switch it on, never offered to a run), Clara calls
+  `deferred_book` with a tool, its arguments and a date (between a minute and 366 days ahead, 50 waiting at most). The request
+  shows the whole call and its date and you allow that exact call once, as a request to make an automation does. At the due time
+  the server runs it by itself with the saved arguments: no model turn, nobody in the conversation.
+- **What still stops it:** the floor, the local-only rule and a rule that **refuses**; `deferred_book` refuses at once a call that
+  a rule would refuse then. A rule that **asks** turns the call into an ordinary approval request that runs only if you allow it
+  within 24 hours. A call whose summary changed since you read it (a mail already trashed, an automation edited) is not run.
+- **When it ran:** you get a notification (category `booked_calls`) saying it was done, failed or not run; Clara is not told. A
+  call due while the server was off runs once when it comes back (the `late:` alert says so); a call that was running when the
+  server stopped is marked `failed` and never run twice. A local-only call's notice stays off Discord and scripts.
+- **Where to see them:** the **Booked calls** tab of the Tasks & reminders page, with **Cancel** for one that waits; Clara can
+  list and cancel them too. Finished calls are kept 30 days.
+
+**Smaller changes:**
+
+- **Request cards name the item:** a request about a mail or a Drive file shows the subject and sender of the mail (the name of
+  the file) in quotes, with the id last, on the web site, the island and the phone. Clara's own prompt gets the plain wording.
+- **A local-only conversation's request never reaches Discord:** not its `#approval` message and, for the Discord token, not
+  `GET /v1/approvals`. The other clients still get it.
+- **The web site copes better with a slow link:** a conversation and its messages are fetched together; a GET is tried again twice
+  after a network error, a timeout or a 502 to 504 (a write never is); the time limit counts only the wait for an answer to start;
+  a conversation that failed to load takes no action (no Send, no menu). A long conversation is drawn newest first, a few
+  exchanges at a time, and only the messages near the screen are in the page, so a conversation of thousands of messages no
+  longer freezes the tab. The browser's find and a text selection across windows do not see the messages that are out of the window.
+- **`GET /v1/admin/status`** (polled every few seconds by the phone and the island) no longer reads the disk and git on the
+  event loop: one look at a time, and a poll during a slow one gets the last answer.
+
+**What changes when you update:**
+
+- The reader is on. Pages, mails and attachments cost a model call and Clara no longer sees a mail's subject or a sender's name
+  as written. `reader` off (Admin page) brings the old behaviour back for the text; the new asks stay.
+- A conversation that read outside content now asks before fetching an address nobody gave.
+- The Booked calls pack is off in every conversation until you switch it on.
+- The Discord category `booked_calls` goes to `#notification` unless you route it elsewhere.
+
+**Interface changes:**
+
+- **New routes:** `GET /v1/deferred` and `DELETE /v1/deferred/{deferred_id}`; `GET /v1/workspace/provenance`,
+  `POST /v1/workspace/trust` and `DELETE /v1/workspace/trust`.
+- **Changed:** `GET /v1/approvals` leaves out a local-only request for the Discord token.
+- **Tools:** 83 (80 before). New: `deferred_book`, `deferred_list`, `deferred_cancel`. `web_fetch`, `mail_read`,
+  `mail_attachment_read` and `ws_read` take `focus`; what `web_search`, `mail_search` and `ws_search` show is changed as above.
+- **Command:** `/trust [list] | <path> | untrust <path>`.
+- **Settings:** the runtime settings `reader` (on), `reader_model` (empty) and `reader_max_chars` (40,000). No new `CLARA_*`
+  setting. The auto-level class `deferred` asks from level 2 and runs at the last.
+
+**Migrations:** 0025 adds the booked calls (and the time zone of a request), 0026 remembers whether the turn that booked a call
+had read outside content, 0027 adds the marks of the workspace files and the conversations kept tainted. The server takes its
+backup before running them.
+
+**Docs:** [DECISIONS.md](docs/DECISIONS.md) (« Deferred tool calls », « A firewall against tainted conversations »),
+[FEATURES.md](FEATURES.md), [THREAT-MODEL.md](docs/THREAT-MODEL.md) and [DATA-MAP.md](docs/DATA-MAP.md).
+
 ## v1.3.0 — 31/10/2026
 
 **Cleaning up what automations make.** Every hook run and every run of a per-run schedule leaves a conversation behind, and
