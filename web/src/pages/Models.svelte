@@ -15,7 +15,8 @@
     busy = true;
     try {
       providers = (await api.get('/v1/admin/providers')).providers;
-      catalogue = await api.get('/v1/admin/models', { refresh });
+      // A refresh asks every provider for its models and their sizes: it can take longer than a read is allowed, and a retry would run it again
+      catalogue = await api.get('/v1/admin/models', { refresh }, { timeout: 0, retries: 0 });
     } finally {
       busy = false;
     }

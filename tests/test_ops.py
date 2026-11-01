@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import threading
 import time
 import zipfile
 from datetime import timedelta
@@ -32,6 +33,7 @@ from clara.db import backup_database
 from clara.gate import Action, Decision, Situation
 from clara.ops.backups import verify
 from clara.ops.discord_bot import DiscordBot, bot_environment
+from clara.ops.status import StatusProbe
 from clara.ops.tailscale import FunnelOn, Output, Tailscale, check_funnel_now, funnel_ports
 from clara.ops.updater import UpdateError, Updater, check_signature, check_sums, safe_extract
 from clara.settings import load_settings
@@ -377,6 +379,32 @@ async def test_backups_are_private_verified_and_kept(services):
     assert result["integrity"] == "ok" and result["schema"] >= 1 and "facts" in result["rows"]
 
 
+async def test_the_status_reads_the_disk_and_the_vault_off_the_event_loop(services, client, monkeypatch):
+    from clara.ops.backups import Backups
+
+    # The apps ask for the status every 3 s: the walk over the workspace, the backup files and `git` in the vault (which
+    # waits for a pull in progress) must not run on the thread of the event loop, or every request waits for them.
+    loop_thread = threading.get_ident()
+    seen: dict[str, int] = {}
+
+    def spy(name, result=None, original=None):
+        def call(*args, **kwargs):
+            seen[name] = threading.get_ident()
+            return original(*args, **kwargs) if original else result
+        return call
+
+    monkeypatch.setattr(services, "backups", Backups(services))
+    monkeypatch.setattr(services.workspace, "size_bytes", spy("workspace", original=services.workspace.size_bytes))
+    monkeypatch.setattr(services.backups, "describe", spy("backups", original=services.backups.describe))
+    monkeypatch.setattr(services, "vault", SimpleNamespace(status=spy("vault", {"notes": 0})))
+    answer = await client.get("/v1/admin/status")
+    assert answer.status_code == 200
+    body = answer.json()
+    assert body["vault"] == {"notes": 0} and body["storage"]["workspace_mb"] == 0.0 and "last" in body["backups"]
+    assert set(seen) == {"workspace", "backups", "vault"}
+    assert all(thread != loop_thread for thread in seen.values())
+
+
 def _restic_that(tmp_path, services, body: str):
     """A stand-in for restic: a script that writes its PID to a file, then does `body`."""
     import dataclasses
@@ -591,3 +619,26 @@ def test_the_bot_is_only_started_when_asked(environ, tmp_path, llm):
         assert (s.discord is None) if expected is None else isinstance(s.discord, expected)
         s.traffic.close()
         db.close()
+
+
+async def test_status_probe_runs_one_read_at_a_time_and_serves_the_last_answer_meanwhile():
+    probe = StatusProbe()
+    assert await probe.read(lambda: {"n": 1}) == {"n": 1}
+    started, release = threading.Event(), threading.Event()
+    reads = []
+
+    def slow() -> dict:
+        reads.append(1)
+        started.set()
+        release.wait(5)
+        return {"n": 2}
+
+    first = asyncio.create_task(probe.read(slow))
+    await asyncio.to_thread(started.wait, 5)
+    # another ask while that read still runs: the answer before it, and no second thread
+    assert await probe.read(slow) == {"n": 1}
+    assert len(reads) == 1
+    release.set()
+    assert await first == {"n": 2}
+    # once it has finished, the next ask reads again
+    assert await probe.read(lambda: {"n": 3}) == {"n": 3}

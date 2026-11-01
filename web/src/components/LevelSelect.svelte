@@ -5,8 +5,8 @@
   // The auto level of a conversation, a project, a schedule or a hook: how much its tools may do without asking. `value` is its
   // own level (null: it follows `follows`, the level it runs at then is `effective`). Choosing the last level asks first: it is
   // the one that suspends the raises. `onchange` hears the choice once it is confirmed.
-  let { value, effective, follows, label = 'Auto level', onchange, small = false }: {
-    value: number | null; effective: number; follows: string; label?: string; onchange: (value: number | null) => void; small?: boolean;
+  let { value, effective, follows, label = 'Auto level', onchange, small = false, disabled = false }: {
+    value: number | null; effective: number; follows: string; label?: string; onchange: (value: number | null) => void; small?: boolean; disabled?: boolean;
   } = $props();
   $effect(() => {
     loadLadder().catch(() => undefined);
@@ -26,7 +26,7 @@
   }
 </script>
 
-<select class="level-select" class:small aria-label={label} title="How much Clara may do without asking in this conversation" value={value === null ? '' : String(value)} onchange={pick}>
+<select class="level-select" class:small aria-label={label} title="How much Clara may do without asking in this conversation" value={value === null ? '' : String(value)} {disabled} onchange={pick}>
   <option value="">Follows {follows} ({ladder.loaded ? describe(effective) : effective})</option>
   {#each ladder.levels as level (level.position)}<option value={String(level.position)}>{level.position} · {level.name}</option>{/each}
 </select>

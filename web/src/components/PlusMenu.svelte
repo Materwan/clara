@@ -7,8 +7,8 @@
   // buttons that toggle (aria-pressed) and a select, not menu items.
   type Pack = { id: string; label: string; description: string; icon: string; available: boolean; reason: string };
   type Project = { id: number; name: string };
-  let { packs, active, projects, project, onFiles, onFolder, folderSupported, onToggle, onProject }: {
-    packs: Pack[]; active: string[]; projects: Project[]; project: number | null;
+  let { packs, active, projects, project, disabled = false, onFiles, onFolder, folderSupported, onToggle, onProject }: {
+    packs: Pack[]; active: string[]; projects: Project[]; project: number | null; disabled?: boolean;
     onFiles: () => void; onFolder: () => void; folderSupported: boolean; onToggle: (id: string) => void; onProject: (id: number | null) => void;
   } = $props();
   let open = $state(false);
@@ -30,11 +30,11 @@
 <svelte:window onkeydowncapture={keydown} onpointerdown={outside} onfocusin={outside} />
 
 <div class="plus" bind:this={root}>
-  <button type="button" class="ghost icon-btn plus-button" title="Add files and tools" aria-label="Add files and tools" aria-expanded={open}
-    aria-controls="plus-menu" bind:this={button} onclick={() => (open = !open)}>
+  <button type="button" class="ghost icon-btn plus-button" title="Add files and tools" aria-label="Add files and tools" aria-expanded={open && !disabled}
+    aria-controls="plus-menu" bind:this={button} {disabled} onclick={() => (open = !open)}>
     <Icon name="plus" />
   </button>
-  {#if open}
+  {#if open && !disabled}
     <div class="plus-menu frame" id="plus-menu" role="group" aria-label="Files and tools">
       <button type="button" class="plus-item" onclick={() => { open = false; onFiles(); }}>
         <Icon name="clip" size={18} /><span class="plus-text"><b>Add files</b><small>PDF, Word, text, pictures (4 at most)</small></span>

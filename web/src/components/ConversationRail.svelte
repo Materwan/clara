@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { hidden } from '../lib/display.svelte';
@@ -79,12 +80,24 @@
     return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year });
   }
 
+  let loads = 0; // the latest load: an older one that ends late (a search typed fast, a move just made) draws nothing
+
   async function load(): Promise<void> {
+    const mine = ++loads;
+    const asked = query;
     try {
-      items = (await api.get('/v1/conversations', { q: query, kind: 'any', history: !query, hide: query ? '' : hidden(), limit: 200 })).conversations;
-      archivedItems = query ? [] : (await api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 })).conversations;
+      // Both are read together, but one failing does not hold back the other: the list is shown even if the archive is not read
+      const [found, archived] = await Promise.allSettled([
+        api.get('/v1/conversations', { q: asked, kind: 'any', history: !asked, hide: asked ? '' : hidden(), limit: 200 }),
+        asked ? Promise.resolve({ conversations: [] }) : api.get('/v1/conversations', { kind: 'any', archived: 'yes', limit: 100 }),
+      ]);
+      if (mine !== loads) return;
+      if (found.status === 'rejected') throw found.reason;
+      items = found.value.conversations;
+      if (archived.status === 'rejected') throw archived.reason;
+      archivedItems = archived.value.conversations;
     } catch (error) {
-      toast((error as Error).message, 'error');
+      if (mine === loads) toast((error as Error).message, 'error');
     }
   }
 
@@ -93,10 +106,11 @@
     if (narrow.rail && !ui.rail) menu = null;
   });
 
+  // load() reads the search box itself: untracked, so that typing waits for the debounce in search() and not one request a key
   $effect(() => {
     void conversations.changed;
     void live.refresh;
-    load();
+    untrack(load);
   });
 
   function search(): void {
