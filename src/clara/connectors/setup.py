@@ -16,6 +16,7 @@ from .gmail import Gmail
 from .mail import LABELS, PROVIDERS, MailClient, MailError
 from .mail_tools import mail_tools
 from .mail_watch import MailWatch
+from .seen import Seen
 from .store import Connections
 from .tools import drive_tools, github_tools, web_tools
 from .web import Web
@@ -51,6 +52,7 @@ class Connectors:
         self._gmail_key = ""
         self.watch = MailWatch(s)
         self.github_watch = GitHubWatch(s)
+        self.seen = Seen()  # the subjects and names a conversation was shown, for its requests (connectors/seen.py)
 
     # ------------------------------------------------------------------
     def github_client(self) -> GitHub | None:

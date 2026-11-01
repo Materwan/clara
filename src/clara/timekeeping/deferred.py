@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from ..db import Database
 from ..events import TARGETS, Events
+from ..gate.outside import plain
 from ..timeutil import iso, parse_iso, utcnow, zone
 from .clock import MomentError, local_text, read_moment, zone_of
 from .dueloop import DueLoop
@@ -106,14 +107,20 @@ class DeferredCall:
         }
 
     def line(self, *, private: bool = False) -> str:
-        what = "(local only: read it from a local-only conversation)" if private and self.local_only else self.brief
+        """One line for the list Clara reads: without the subject or the file name the request shows you (`outside.py`)."""
+        what = (
+            "(local only: read it from a local-only conversation)" if private and self.local_only else self._first(True)
+        )
         return f"[{self.id}] {local_text(self.due_at, zone(self.timezone))} {self.tool} ({self.status}): {what}"
 
     @property
     def brief(self) -> str:
         """The first line of the summary: what the call does."""
+        return self._first(False)
+
+    def _first(self, plainly: bool) -> str:
         lines = [line for line in self.summary.splitlines() if line.strip()]
-        found = lines[0] if lines else self.tool
+        found = (plain(lines[0]) if plainly else lines[0]) if lines else self.tool
         return found if len(found) <= 200 else found[:200] + "…"
 
 

@@ -33,6 +33,7 @@ from typing import Any
 
 from ..agent.reader import ReaderError
 from ..gate.actions import Action
+from ..gate.outside import named
 from ..knowledge.ingest import IngestError, extract
 from ..knowledge.projects import read_lines
 from ..secretscan import secret_kinds
@@ -68,6 +69,7 @@ from .mail import (
     parse_day,
     safe_filename,
 )
+from .seen import say
 
 SENDS_PER_TURN = 5
 READ_LIMIT = 10_000_000  # an attachment bigger than this is not parsed for text (a PDF parser is a lot of code to feed)
@@ -117,6 +119,12 @@ def _failed(context: ToolContext, provider: str, error: MailError) -> ToolError:
 
 def _target(provider: str) -> str:
     return f"mail:{provider}"
+
+
+def _remember(context: ToolContext, provider: str, item: Summary) -> None:
+    """Keep what this conversation was shown of a message (its subject and sender) to say it in a request about it."""
+    words = named(item.subject, item.sender, empty="(no subject)")
+    _connectors(context).seen.note(context.turn.conversation_id, provider, item.id, words)
 
 
 ACCOUNT = {
@@ -239,6 +247,8 @@ async def _mail_search(
         found = await _client(context, provider).search(_search_of(arguments))
     except MailError as error:
         raise _failed(context, provider, error) from None
+    for item in found:
+        _remember(context, provider, item)
     if not found:
         return f"No message found in {LABELS[provider]}."
     head = f"{LABELS[provider]} ({_address(context, provider)}), {len(found)} message(s), newest first. {DATA}\n"
@@ -265,7 +275,10 @@ def _describe_message(what: str):
             found = message_id(arguments.get("message"))
         except MailError as error:
             raise ToolError(str(error)) from None
-        return Action("", "read", "mail_read", (_target(provider),), f"{what} {LABELS[provider]} message {found[:40]}")
+        fixed = f"{what} {LABELS[provider]} message"
+        return Action(
+            "", "read", "mail_read", (_target(provider),), say(context, provider, found, fixed, f"{fixed} {found[:40]}")
+        )
 
     describe.classes = ("mail_read",)  # type: ignore[attr-defined]
     return describe
@@ -280,6 +293,7 @@ async def _mail_read(
     except MailError as error:
         raise _failed(context, provider, error) from None
     head = found.summary
+    _remember(context, provider, head)
     reader = context.services.reader
     if not reader.on:
         return _mail_text(context, provider, found, start_line)
@@ -758,13 +772,14 @@ def _describe_label(context: ToolContext, arguments: dict) -> Action:
     if not adding and not removing:
         raise ToolError("Give the labels to add, or to remove, or both.")
     change = ", ".join([*(f"add {name}" for name in adding), *(f"remove {name}" for name in removing)])
-    return Action(
-        "",
-        "write",
-        "mail_label",
-        (_target(provider),),
+    summary = say(
+        context,
+        provider,
+        found,
+        f"Label a {LABELS[provider]} message ({change}):",
         f"Label {LABELS[provider]} message {found[:40]}: {change}"[:500],
     )
+    return Action("", "write", "mail_label", (_target(provider),), summary)
 
 
 async def _mail_label(
@@ -792,12 +807,13 @@ async def _mail_label(
 def _describe_trash(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     found = _message_arg(arguments.get("message"))
+    fixed = f"Move a {LABELS[provider]} message to the Trash (not emptied):"
     return Action(
         "",
         "destructive",
         "mail_trash",
         (_target(provider),),
-        f"Move a {LABELS[provider]} message to the Trash (not emptied): {found[:40]}",
+        say(context, provider, found, fixed, f"{fixed} {found[:40]}"),
     )
 
 
@@ -818,8 +834,9 @@ async def _mail_trash(context: ToolContext, message: str, account: str = "") -> 
 def _describe_mark_read(context: ToolContext, arguments: dict) -> Action:
     provider = _provider(context, arguments)
     found = _message_arg(arguments.get("message"))
+    fixed = f"Mark a {LABELS[provider]} message as read:"
     return Action(
-        "", "write", "mail_mark", (_target(provider),), f"Mark a {LABELS[provider]} message as read: {found[:40]}"
+        "", "write", "mail_mark", (_target(provider),), say(context, provider, found, fixed, f"{fixed} {found[:40]}")
     )
 
 

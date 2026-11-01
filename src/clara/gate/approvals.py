@@ -35,6 +35,7 @@ from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .actions import FOR_A_CONVERSATION, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
 from .grants import GRANTABLE
+from .outside import plain
 from .rules import RuleError, Rules, check_fields
 
 if TYPE_CHECKING:
@@ -54,6 +55,10 @@ SUMMARY_SHOWN = 500
 # classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation) or
 # be run later (a booked call)
 SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000}
+FREE_TEXT = (
+    "mail_send",
+    "automation",
+)  # classes whose summary is a text Clara wrote, not a line ending in someone's words
 # the turn of a booked call's run starts with this (app.run_deferred): nobody is in its conversation when it is answered
 BOOKED_TURN = "deferred-"
 # where a local-only request goes: every client but Discord, which is outside the machine
@@ -150,9 +155,16 @@ class Approval:
         return f"- #{self.id} nobody answered in time, so it was not done: {self.brief}."
 
     @property
+    def for_model(self) -> str:
+        """The summary as Clara reads it. The subject, the sender or the file name that the request shows you are left out
+        (`outside.py`): a mail's subject reaches the conversation only through the quarantined reader."""
+        return self.summary if self.action_class in FREE_TEXT else plain(self.summary)
+
+    @property
     def brief(self) -> str:
         """The summary as Clara is told it: the whole text of an email is for you to read, not for her prompt again."""
-        return self.summary if len(self.summary) <= SUMMARY_SHOWN else self.summary[:SUMMARY_SHOWN] + "…"
+        text = self.for_model
+        return text if len(text) <= SUMMARY_SHOWN else text[:SUMMARY_SHOWN] + "…"
 
 
 def _approval(row) -> Approval:

@@ -24,6 +24,7 @@ from typing import Any
 from ..gate.actions import Action, Situation
 from ..gate.approvals import SUMMARY_FULL
 from ..gate.engine import args_digest
+from ..gate.outside import plain
 from ..timekeeping import DeferredError
 from ..timekeeping.clock import local_text
 from ..timeutil import zone
@@ -159,7 +160,8 @@ def _book(context: ToolContext, **fields: Any) -> str:
         approval_id, read, situation = told
         tainted = "tainted" in situation  # the turn that asked (the answer comes in a turn of its own)
     booking = _booking(context, fields, tainted=tainted)
-    if told is not None and read != booking.text[: SUMMARY_FULL["deferred"]]:
+    # the subject or file name the request showed does not count: the server may have restarted since (connectors/seen.py)
+    if told is not None and plain(read) != plain(booking.text[: SUMMARY_FULL["deferred"]]):
         raise ToolError(
             "Nothing was booked: when you were asked, the call was not as it is now. Ask again, so that the "
             "request shows the call as it is."

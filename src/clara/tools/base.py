@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from ..egress import PrivateText
 from ..gate.actions import FOR_A_CONVERSATION, Action, Decision, Situation
 from ..gate.engine import Audit, Gate, args_digest
+from ..gate.outside import plain
 
 if TYPE_CHECKING:
     from ..gate.allowances import Allowances
@@ -399,7 +400,8 @@ class Toolbox:
         situation = context.turn.situation
         digest = args_digest(arguments)
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
-        if action.summary != summary:
+        # not the subject or the file name a request shows: the memory of them is lost with a restart, the call is the same
+        if plain(action.summary) != plain(summary):
             decision = Decision("refuse", "what the call would do changed since you read it")
             self.audit.record(action, situation, digest, decision, "refused", **common)
             return (

@@ -26,11 +26,13 @@ from ..agent.reader import ReaderError
 from ..agent.turn import normal_url
 from ..egress import PRIVATE
 from ..gate.actions import Action
+from ..gate.outside import named
 from ..secretscan import secret_kinds
 from ..timeutil import now_iso
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
 from .drive import DriveError
 from .github import GitHubError
+from .seen import say
 from .web import WebError
 
 MAX_WRITE = 1_000_000
@@ -308,11 +310,19 @@ def _file(arguments: dict, key: str = "file") -> str:
     return value
 
 
+def _remember(context: ToolContext, files: list[tuple[str, str]]) -> None:
+    """Keep the names this conversation was shown, to say them in a request about one of the files (connectors/seen.py)."""
+    seen = _connectors(context).seen
+    for ident, name in files:
+        seen.note(context.turn.conversation_id, "drive", ident, named(name))
+
+
 async def _drive_list(context: ToolContext, folder: str = "") -> str:
     connectors = _connectors(context)
     try:
         if folder:
             found = await _drive(context).children(_file({"folder": folder}, "folder"))
+            _remember(context, [(f["id"], f["name"]) for f in found])
             return (
                 "\n".join(f"[{f['id']}] {f['name']}{'/' if f['mimeType'].endswith('folder') else ''}" for f in found)
                 or "(empty, or nothing Clara may see)"
@@ -321,6 +331,7 @@ async def _drive_list(context: ToolContext, folder: str = "") -> str:
         connectors.drive_failed(error)
         raise ToolError(str(error)) from None
     resources = context.services.connections.resources()
+    _remember(context, [(r.locator, r.label) for r in resources if r.kind.startswith("drive")])
     lines = [
         f"[{r.locator}] {r.label}{'/' if r.kind == 'drive_folder' else ''}"
         for r in resources
@@ -345,6 +356,7 @@ async def _drive_search(context: ToolContext, query: str) -> str:
         found = await _drive(context).search(str(query))
     except DriveError as error:
         raise ToolError(str(error)) from None
+    _remember(context, [(f["id"], f["name"]) for f in found])
     return "\n".join(f"[{f['id']}] {f['name']} ({f['mimeType'].rsplit('.', 1)[-1]})" for f in found) or "No match."
 
 
@@ -375,6 +387,7 @@ async def _drive_create(
         made = await _drive(context).create(name, str(content), parent, flag(google_doc))
     except DriveError as error:
         raise ToolError(str(error)) from None
+    _remember(context, [(made["id"], str(made["name"]))])
     context.services.db.execute(
         "INSERT INTO created_files (kind, locator, name, mime, conversation_id, created_at) VALUES ('drive', ?, ?, ?, ?, ?)",
         (
@@ -394,6 +407,13 @@ async def _drive_update(context: ToolContext, file: str, content: str) -> str:
     except DriveError as error:
         raise ToolError(str(error)) from None
     return f"Replaced the content of [{updated['id']}] {updated['name']}."
+
+
+@acts_as("drive_write")
+def _describe_delete(context: ToolContext, arguments: dict) -> Action:
+    found = arguments.get("file")
+    summary = say(context, "drive", str(found or ""), "Trash Drive file", f"Trash Drive file {found}")
+    return Action("", "destructive", "drive_write", (f"drive:{found}",), summary)
 
 
 async def _drive_delete(context: ToolContext, file: str) -> str:
@@ -611,7 +631,7 @@ def drive_tools() -> list[Tool]:
                     "destructive",
                     "drive_write",
                     (f"drive:{_file(a)}",),
-                    f"Replace Drive file {a.get('file')}",
+                    say(c, "drive", _file(a), "Replace Drive file", f"Replace Drive file {a.get('file')}"),
                     tuple(secret_kinds(str(a.get("content") or ""))),
                 )
             ),
@@ -622,12 +642,7 @@ def drive_tools() -> list[Tool]:
             "drive_delete",
             "Move a Drive file to Drive's trash (it can be restored there).",
             _drive_delete,
-            fixed(
-                "drive_write",
-                "destructive",
-                lambda c, a: f"drive:{a.get('file')}",
-                lambda a: f"Trash Drive file {a.get('file')}",
-            ),
+            _describe_delete,
             {"file": file},
             ("file",),
         ),

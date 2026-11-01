@@ -16,6 +16,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from ..connectors.drive import DriveError
+from ..connectors.seen import say
 from ..events import delivery
 from ..gate.actions import Action
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, optional_number
@@ -139,7 +140,14 @@ def _describe_read_file(context: ToolContext, arguments: dict) -> Action:
     if kind in ("ws", "vault"):
         return Action("", "read", "read", (ref,), f"Read {ref}")
     if kind == "drive":
-        return Action("", "read", "drive_read", (ref,), f"Read the Drive file {ref}")
+        today = f"Read the Drive file {ref}"
+        return Action(
+            "",
+            "read",
+            "drive_read",
+            (ref,),
+            say(context, "drive", ref.partition(":")[2], "Read the Drive file", today, label=ref),
+        )
     if kind == "attached":
         return Action("", "read", "read", ("history",), f"Read the file {ref} you sent")
     raise ToolError("ref must start with ws:, vault:, drive: or attached:, as files_created gives it.")

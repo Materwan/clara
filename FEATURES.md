@@ -690,6 +690,16 @@ Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `de
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`, `deferred`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
+The summary of a request about a **mail** (`mail_read`, `mail_attachment_read`, `mail_label`, `mail_trash`, `mail_mark_read`) or a **Drive file**
+(`drive_update`, `drive_delete`, `read_created_file` of a `drive:` reference) names it, so that you can tell which one it is:
+`Move a Gmail message to the Trash (not emptied): "Invoice March" from Alice <alice@acme.com> [19a3f0c2d4e5]`. The subject, the sender or
+the file name come last, in quotes, with the id at the end; they are made one line with no quote, bracket or invisible character, cut
+(80 and 60 characters) and never change the words before them. They are what the conversation was shown by `mail_search`, `mail_read`,
+`drive_list` or `drive_search` (kept in the server's memory, per conversation, 2,000 at most, forgotten at a restart), or the name of a Drive file Clara
+created. An id never shown keeps the plain wording (`... (not emptied): 19a3f0c2d4e5`). The request cards of the web site, the Windows island and the phone show
+it whole; Clara's own prompt (the « waiting » and « ended » lines, the list of booked calls) gets the plain wording, since a subject reaches the
+conversation only through the quarantined reader. A booked call is compared by its plain wording when it is due.
+
 ### Auto levels (when no rule matches)
 
 What happens to a call when no rule matches is decided by the **auto level** of its conversation: a ladder from level 0, where

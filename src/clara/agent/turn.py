@@ -525,7 +525,7 @@ class Agent:
         waiting = approvals.waiting(conversation_id)
         parts = []
         if waiting:
-            parts.append("Waiting for the person's permission: " + "; ".join(f"#{a.id} {a.summary}" for a in waiting))
+            parts.append("Waiting for the person's permission: " + "; ".join(f"#{a.id} {a.for_model}" for a in waiting))
         if ended:
             parts.append(
                 "Since your last answer, requests you had put on hold ended:\n"
