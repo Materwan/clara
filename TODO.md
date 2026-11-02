@@ -318,3 +318,90 @@ What the current design already sets:
   owner's screen through the mirror, which only displays it, and never reaches the conversation through this path.
 - The bot sends with no mentions (`allowed_mentions` none, `clara_discord/bot.py`), so a subject or a commit title
   cannot ping anyone.
+
+## Clean the Discord channels: #notification, #alerts, #approval
+
+The owner asked (2026-11-02) for three channels to stop keeping what no longer helps:
+
+- `#notification`: the lines whose thread is gone. These are the "automation started" messages, which end with a link to
+  the run's forum thread. The thread was deleted (by the retention limits, by a deleted conversation, or by a dropped
+  forum), so the link opens nothing. The owner: "no use to have them on the channel".
+- `#alerts`: old alerts about problems that have since been corrected. The owner: "no use to have old alert about
+  corrected problems".
+- `#approval`: whether the history of every request is needed, since the server stores them. The owner asked; the first
+  decision below answers it.
+
+Decided (owner, 2026-11-02):
+
+- A thread line whose thread is gone is removed from `#notification`.
+- An alert about a corrected problem is removed from `#alerts`.
+
+Proposed (council, 2026-11-02; the owner to confirm):
+
+- `#approval` holds only pending requests. Settled and expired requests are not kept in Discord. The server keeps finished
+  requests for 30 days (`KEEP_DAYS`, `gate/approvals.py`) and the audit log keeps every decision for 400 days.
+
+Plan (council, 2026-11-02):
+
+**`#approval`**
+
+- On `approval_resolved` (sent when a request is settled or expires), the bot deletes its message instead of editing it to
+  "**status**" (`clara_discord/bot.py`, `deliver`, the edit near line 607).
+- At start, the bot deletes its own messages in `#approval` whose `#id` is not in `GET /v1/approvals?status=pending`. This
+  covers the backlog and anything settled while the bot was down.
+
+**`#alerts`**
+
+- `ops/alerts.py`: `clear()` publishes a new event kind, `alert_resolved`, with the key. Today it only drops the key from
+  `active` and `_sent`, and publishes nothing, so Discord never learns the problem was corrected.
+- Publish it when the key was active, and also on the first clear of each key in each server run. Without the second
+  rule, an alert raised before a restart (when `active` is empty) stays in Discord.
+- The bot writes `alert key → message id` into its state file when it posts an alert, as it already keeps the threads. On
+  `alert_resolved` it deletes that message and removes the entry.
+- Backlog: once, delete every bot message in `#alerts` (see the decisions below).
+
+**`#notification`**
+
+- A sweep in the bot, at start and then every hour. It reads the bot's messages in `#notification` (the whole history the
+  first time, then the newest 200), takes the thread link from each line that has one, fetches the thread, and deletes
+  the line only on NotFound. Any other error keeps it.
+- Reminders, schedule summaries, hook results and updates stay. How long they stay is a separate choice (see below).
+
+Blind spots:
+
+- After a server restart `alerts.active` is empty, so a fixed alert from before the restart stays in Discord (the
+  first-clear rule above covers it).
+- A sweep that reads only the newest 200 messages never reaches older links. The first run must read the whole channel.
+- Matching `#alerts` messages to the active alerts by their text is wrong. `raise_` changes the text in memory during the
+  cool-down while Discord keeps the old one, so a live alert would be deleted. Match by key only.
+- A sweep that deletes on any HTTP error removes lines during a Discord outage. Only NotFound may delete.
+- Retention runs every 10 minutes (`docs/DECISIONS.md`, automation retention), so a stale line can stay up to an hour
+  between two sweeps. Accepted.
+- A new event kind must be named in FEATURES.md, or `tests/test_docs.py` fails.
+
+Not decided:
+
+1. The `#approval` change (delete on settle or expiry, and the start-up sweep). Recommended; the owner's call.
+2. The `#alerts` backlog: delete every bot message in `#alerts` once (recommended; the web Admin page keeps the active
+   list), or keep the messages of alerts still active (needs the text match, rejected above).
+3. The restart gap: the first-clear rule (recommended), or keep the active alerts in the database so the server knows
+   them after a restart. The second is a bigger change, and it would also fix the Admin page after a restart.
+4. The `#notification` mechanism: the sweep (recommended: one path, survives restarts, covers retention, owner deletion
+   and forum drops), or event-driven removal in the bot's `remove_channel` and `remove_thread` (fewer API calls, misses
+   forum drops and retention unless the server publishes them).
+5. The sweep interval: every hour is proposed.
+6. Whether reminders, summaries and updates in `#notification` should also be removed after a time. Not asked; a cap by
+   age is a new rule.
+
+What the current design already sets:
+
+- The server decides the channel of each event (`events/routing.py`), and the bot posts what it is told. Alerts cannot be
+  switched off.
+- The Discord copy is a view: the server says what should be there and the bot makes it (`docs/DECISIONS.md`, « Discord
+  mirror »).
+- The bot can delete its own messages without Manage Messages, and the mirror already does so in threads. Bulk delete needs
+  Manage Messages and covers only messages under 14 days old: not used.
+- Destructive approvals are answered on the web site or with `clara-admin`, and the Discord token's scope is `safe`.
+- Alerts are in memory (`ops/alerts.py`: `active`, `_sent`, the cool-down). Any change to `clear()` must keep the cool-down
+  behaviour.
+- A new event kind goes in `events/store.py` and is named in FEATURES.md.
