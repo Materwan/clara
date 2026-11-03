@@ -92,6 +92,10 @@ async def run_due(s, clock: Clock, at: str) -> None:
     await s.schedules.wait_running()
 
 
+def schedule_conversation(s, schedule) -> str:
+    return s.schedules.get(schedule.id).conversation_id
+
+
 def runs(s, schedule_id: int) -> list[dict]:
     return list(reversed(s.schedules.runs(schedule_id)))
 
@@ -130,6 +134,46 @@ async def test_every_run_has_its_own_conversation_with_the_packs_and_the_model(s
     assert {"ask_person", "finish_run", "day_conversations", "vault_daily_block"} <= names
     assert "discord_thread" not in names  # the bot is not connected in this test
     assert "web_search" not in names  # its packs do not include the web
+
+
+async def test_a_run_is_shown_on_discord_by_its_name_and_its_due_time_and_the_model_reads_the_whole_prompt(s, llm, clock):
+    schedule = plan(s, documents=[{"name": "notes.md", "text": "corps du document"}])
+    llm.replies = ["Un.", "Deux."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    await run_due(s, clock, "2026-10-19T21:59:30")
+    turns = s.mirror.stored_turns(schedule_conversation(s, schedule))
+    assert [turn["user"]["text"] for turn in turns] == ["Scheduled task “Bilan” — 2026-10-18 23:59", "Scheduled task “Bilan” — 2026-10-19 23:59"]
+    message = llm.seen[0]["messages"][-1]["content"]
+    assert "Fais le bilan du jour." in message and "corps du document" in message  # the model's input is the whole message
+    stored = s.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id", (schedule_conversation(s, schedule),))
+    assert "Fais le bilan du jour." in stored and "(Attached: notes.md)" in stored
+
+
+async def test_a_run_with_a_conversation_of_its_own_is_shown_the_same_way(s, llm, clock):
+    schedule = plan(s, per_run=True, documents=[{"name": "notes.md", "text": "corps du document"}])
+    llm.replies = ["Un.", "Deux."]
+    await run_due(s, clock, "2026-10-18T21:59:30")
+    await run_due(s, clock, "2026-10-19T21:59:30")
+    first, second = runs(s, schedule.id)
+    for run, day in ((first, "2026-10-18"), (second, "2026-10-19")):
+        (turn,) = s.mirror.stored_turns(run["conversation_id"])
+        assert turn["user"]["text"] == f"Scheduled task “Bilan” — {day} 23:59" and "📎" not in turn["user"]["text"]
+        assert s.db.value("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user'", (run["conversation_id"],)) == turn["user"]["text"]
+
+
+async def test_the_time_of_a_run_is_on_the_clock_of_its_schedule_not_the_servers(s, llm, clock):
+    """The server's zone is CLARA_TIMEZONE; the schedule's is its own, and daylight saving follows the date of the run."""
+    schedule = s.schedules.create("Tokyo", "Fais le bilan.", "2026-10-19T08:30", timezone="Asia/Tokyo", repeat="daily")
+    assert s.settings.timezone != "Asia/Tokyo"
+    llm.replies = ["Un."]
+    await run_due(s, clock, "2026-10-18T23:30:30")  # 08:30 in Tokyo (UTC+9) is 23:30 UTC the evening before
+    (turn,) = s.mirror.stored_turns(schedule_conversation(s, schedule))
+    assert turn["user"]["text"] == "Scheduled task “Tokyo” — 2026-10-19 08:30"
+    winter = plan(s, name="Hiver")
+    llm.replies = ["Deux."]
+    await run_due(s, clock, "2026-11-02T22:59:30")  # Paris is back to UTC+1 on 2026-10-25: 23:59 is 22:59 UTC
+    (turn,) = s.mirror.stored_turns(schedule_conversation(s, winter))
+    assert turn["user"]["text"] == "Scheduled task “Hiver” — 2026-11-02 23:59"
 
 
 async def test_a_shared_conversation_is_kept_and_follows_the_schedule(s, llm, clock):

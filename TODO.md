@@ -268,57 +268,6 @@ What the current design already sets:
   must not mark the turn tainted.
 - A new tool needs a gate class, a level and a target, and FEATURES.md names it.
 
-## A short first message for an automation run
-
-The owner asked (2026-11-02) for a shorter first message on Discord when an automation starts. Its first message is the
-automation's instructions and the information the run works on (a GitHub PR, a mail, …), and it takes several Discord
-messages.
-
-Decided (owner, 2026-11-02):
-
-- The change is visual only. The model's input is not changed: a run is still given the whole message, and the stored
-  question stays whole.
-- The first message of an automation run shows only its origin: a mail's object (subject) and sender, a push's commit,
-  a PR's name, and so on. It does not show the automation's instructions.
-- The cut is for the trigger message only: the first message sent to Clara when an automation is triggered. Clara's
-  answers and the owner's next messages are shown as now.
-- For now it is for automation conversations only (the kinds `schedule` and `hook`).
-
-What the code does today (read on 2026-11-02):
-
-- A hook's first message is its prompt, then each event as JSON, up to 25 events (`message_of`, `triggers/message.py`).
-  A schedule's is its prompt, then `(Attached: …)` and the document names (`message_of`, `timekeeping/schedules.py`).
-  The mirror shows the stored question's text (`question_text`, `mirror/text.py`).
-- Each event already has a `title` that holds its origin: a mail is `sender: subject` (`connectors/mail_watch.py`), a PR
-  is `repo #number action: title` and a push is `repo branch: message` (`connectors/github_watch.py`). The titles are
-  cut in code.
-- The instructions go as a system message (`instructions_of`). They are not stored and not posted.
-- Discord takes 2,000 characters per message, and the mirror splits the question into as many messages as it needs
-  (`split`, `clara_discord/mirror.py`).
-
-Not decided:
-
-- A schedule has no outside origin. Its first message would be its name and the run number, and perhaps the names of
-  its attached documents. The owner to say whether the document names belong there.
-- Which fields each origin shows. The event `title` is the proposal; whether to add the actor, the time or a link to the
-  source is open.
-- A hook run with several events: one origin line per event, up to a limit, then how many are left out.
-- Where the origin is read from. Recommended: the events the run was started by (the `events` table, by id), not text
-  parsed out of the message, so the first message does not depend on what the model reads.
-- Whether the web chat also shows the origin-only first message. Until the owner says, the web chat keeps the whole
-  message.
-
-What the current design already sets:
-
-- The mirror's digest is taken from the text it shows (`_turns`, `mirror/service.py`). A new first message has a new
-  digest, so the first message of each automation thread already on Discord is rewritten once at the next sync.
-- The thread is made from the first question (DECISIONS, « a thread is made whole »), so the origin line is the first
-  thing the owner sees in it.
-- The model's input does not change, so the quarantined reader's rule holds as before: a mail's subject reaches the
-  owner's screen through the mirror, which only displays it, and never reaches the conversation through this path.
-- The bot sends with no mentions (`allowed_mentions` none, `clara_discord/bot.py`), so a subject or a commit title
-  cannot ping anyone.
-
 ## Clean the Discord channels: #notification, #alerts, #approval
 
 The owner asked (2026-11-02) for three channels to stop keeping what no longer helps:

@@ -47,7 +47,7 @@ class Watch:
 
     def __init__(self, mirror: Mirror, question: str, ref: str, thread: str):
         self.mirror = mirror
-        self.question = question  # the question as stored (its documents named, not repeated)
+        self.question = question  # what the mirror writes for it (`text.question_shown`)
         self.ref = ref
         self.thread = thread  # a Discord thread the question was asked in, for a new conversation
         self.turn: _Turn | None = None
@@ -312,7 +312,7 @@ class Mirror:
 
     def _turns(self, conversation_id: str) -> list[dict]:
         rows = self.db.all(
-            "SELECT id, role, content, turn_id, ref, tool_calls FROM messages"
+            "SELECT id, role, content, shown, turn_id, ref, tool_calls FROM messages"
             " WHERE conversation_id = ? AND active = 1 AND role IN ('user', 'assistant') ORDER BY id",
             (conversation_id,),
         )
@@ -320,7 +320,7 @@ class Mirror:
         current: dict | None = None
         for row in rows:
             if row["role"] == "user":
-                body, _ = text.question_text(row["content"])
+                body = text.question_shown(row["shown"], row["content"])
                 current = {
                     "key": row["turn_id"] or f"q{row['id']}",
                     "user": {"text": body, "ref": row["ref"]},
@@ -487,6 +487,7 @@ class Mirror:
         )
         return (row["conversation_id"], row["id"]) if row else None
 
-    def watch(self, message: str, ref: str = "", thread: str = "") -> Watch:
-        """A turn of a question `message` (as it is stored), followed while it runs."""
-        return Watch(self, text.question_text(message)[0], ref, thread)
+    def watch(self, message: str, ref: str = "", thread: str = "", shown: str = "") -> Watch:
+        """A turn of a question `message` (as it is stored), followed while it runs. `shown`, when the question carries one,
+        is what is written for it (the same text `sync` gives)."""
+        return Watch(self, text.question_shown(shown, message), ref, thread)

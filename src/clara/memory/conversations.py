@@ -520,18 +520,20 @@ class Conversations:
         client: str = "",
         turn_id: str | None = None,
         ref: str = "",
+        shown: str = "",
     ) -> int:
         """Store a question and what followed it after the end of the path. Returns the question's id. `ref`: the id of
-        the question's message on Discord, when it came from there."""
+        the question's message on Discord, when it came from there. `shown`: what the Discord mirror writes in place of the
+        question (an automation run's origin); the question itself is stored whole."""
         now = now_iso()
         with self.db.transaction() as tx:
             parent = tx.execute(
                 "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND active = 1", (conversation_id,)
             ).fetchone()[0]
             question_id = parent = tx.execute(
-                "INSERT INTO messages (conversation_id, parent_id, role, content, prefix, client, turn_id, ref, created_at)"
-                " VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?)",
-                (conversation_id, parent, question, prefix, client, turn_id, ref, now),
+                "INSERT INTO messages (conversation_id, parent_id, role, content, prefix, client, turn_id, ref, shown, created_at)"
+                " VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, parent, question, prefix, client, turn_id, ref, shown, now),
             ).lastrowid
             for row in rows:
                 parent = tx.execute(

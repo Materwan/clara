@@ -206,6 +206,39 @@ async def test_a_digest_is_one_run_that_names_every_event(services, llm):
     assert "5 more events are not shown" in message and services.triggers.runs(trigger.id)[0]["event_count"] == 30
 
 
+async def test_a_digest_is_shown_on_discord_as_five_origins_and_how_many_are_left(services, llm):
+    trigger = make(services, catch_up="digest")
+    services.triggers.ingest([event(f"old{n}", minutes_ago=120 - n, subject=f"Invoice {n}") for n in range(30)])
+    llm.replies = ["Handled the backlog."]
+    await work(services)
+    run = services.triggers.runs(trigger.id)[0]
+    (turn,) = services.mirror.stored_turns(run["conversation"])
+    lines = turn["user"]["text"].splitlines()
+    assert lines[:5] == [f"Billing <billing@acme.example>: Invoice {n}" for n in range(5)] and lines[5:] == ["+25 more"]
+    stored = services.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'", (run["conversation"],))
+    assert stored.count("<event ") == 25 and "Handle it." in stored  # the model's message, and the stored question, stay whole
+    # Two counts of two different things: Discord's is the events past the five origins it lists, the model's the events
+    # past the 25 it was given.
+    assert "[5 more events are not shown;" in stored and "5 more events are not shown" in str(llm.seen[-1]["messages"][-1]["content"])
+
+
+def test_the_origin_of_a_run_is_the_title_of_its_events_on_one_line_each():
+    from clara.triggers.message import shown_of
+
+    def stored(title: str, id_: int = 1):
+        return triggers_service.StoredEvent(source="github", kind="github.pull_request", key=f"k{id_}", occurred_at="2026-11-02T08:00:00Z",
+                                            actor="", self_caused=False, title=title, data={}, id=id_)
+
+    assert shown_of([stored("repo #3 opened: Fix\n  the   thing")]) == "repo #3 opened: Fix the thing"
+    assert shown_of([stored("")]) == "github github.pull_request"  # an event with no title is still named
+    assert shown_of([stored("a", 1), stored("b", 2)]) == "a\nb"
+    assert shown_of([stored("x", n) for n in range(5)]) == "x\nx\nx\nx\nx"  # five fill the message: nothing is left out, so no count
+    assert shown_of([stored("x", n) for n in range(6)]).endswith("\nx\n+1 more")
+    assert shown_of([stored(f"t{n}", n) for n in range(30)]).splitlines() == [f"t{n}" for n in range(5)] + ["+25 more"]
+    assert shown_of([stored("  \n ", 1)]) == "github github.pull_request"  # a title of blank space is no title
+    assert shown_of([stored("a [link](https://evil.example)\t**b**", 1)]) == "a [link](https://evil.example) **b**"  # one line, the words as written
+
+
 def test_events_and_runs_and_the_place_are_one_transaction(services):
     """The cursor moves with the events; if anything fails, nothing was stored and the source looks again."""
     trigger = make(services)
@@ -462,6 +495,11 @@ async def test_a_new_mail_starts_a_run_in_a_conversation_grouped_under_the_hook(
     assert '"snippet"' in prompt and '"body"' not in prompt  # a preview of the mail, not the mail: mail_read gets the rest
     assert ("mail_read", "ran") in [(row["tool"], row["outcome"]) for row in services.audit.recent()]
     assert [e.title for e in services.events.recent(5, ["schedule"])] == ["Hook: Invoices"]
+    (turn,) = services.mirror.stored_turns(run["conversation"])
+    title = next(e.title for e in services.triggers.recent_events() if e.key == "gmail:m1")
+    assert turn["user"]["text"] == title  # Discord shows where the run came from, not the hook's words or the event's data
+    assert "Handle it." in prompt and "Handle it." not in turn["user"]["text"]  # the model still read the whole message
+    assert turn["reply"]["text"].endswith("Nothing else to do.")  # and the answer is shown as it always was
 
 
 async def test_a_run_has_only_the_tools_of_the_hook_whatever_the_model_asks(services, llm, world):

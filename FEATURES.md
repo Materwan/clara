@@ -168,6 +168,12 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
     hook was not shown in the history yet, or the bot was off) gets it when its next question is asked, made whole: the
     thread starts with its first question, the earlier turns follow in order, then the new question; a rename of the conversation renames the thread; a question asked again or
     edited replaces its messages (the old ones are removed, the new ones posted); a deleted conversation removes its thread.
+  - *An automation run's first message:* the first message of a run of a schedule or a hook is its instructions and the
+    information it works on (a mail, a pull request), which would take several Discord messages. The thread shows only where
+    the run came from: a hook's events, one line each (a mail's sender and subject, a pull request's name, a push's commit;
+    five at most, then `+N more`), and a schedule's name with the moment the run was due. Clara is still given the whole
+    message, the conversation stores it whole and the web site shows it whole; only the Discord thread is shorter. Clara's
+    answers and your next messages are written as they are. The thread of a run made before this keeps the first message it has.
   - *Discord to Clara:* what you write in a thread goes to its conversation as the web site would send it: the same
     tools (the conversation's special tools, `/tools`), the same rule gate, files attached (as on the web). A new post in
     the main forum, in a project's forum or in the incognito forum starts a conversation there. An automation's forum

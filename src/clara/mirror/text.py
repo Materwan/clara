@@ -92,6 +92,13 @@ def question_text(text: str) -> tuple[str, list[str]]:
     return "\n".join(lines), names
 
 
+def question_shown(shown: str, content: str) -> str:
+    """What the mirror writes for a question: the text it stored for the purpose (an automation run's origin), as it is
+    (not a place for documents, so nothing in it is read as one), else the question's words as `question_text` gives them.
+    The one rule for `sync` and for the live turn, whose digests must be equal."""
+    return shown.strip() or question_text(content)[0]
+
+
 def answer_text(names: list[str], text: str) -> str:
     """The answer with its tool line above it."""
     line = tools_line(names)

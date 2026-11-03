@@ -11,7 +11,7 @@ from ..events import delivery
 from ..llm.retry import retryable
 from ..timekeeping.schedules import Stopping
 from .events import StoredEvent
-from .message import DIGEST_SHOWN, instructions_of, message_of
+from .message import DIGEST_SHOWN, instructions_of, message_of, shown_of
 from .service import Trigger, Triggers
 
 if TYPE_CHECKING:
@@ -72,6 +72,7 @@ async def run_trigger(s: Services, trigger: Trigger, run_id: int, events: list[S
         conversation=conversation.id,
         instructions=instructions_of(trigger.deliver),
         prefix=f"[Hook “{trigger.name}”, run {run_id}]",
+        shown=shown_of(events),
         timezone=s.settings.timezone,
         mode="unattended",
         kind="hook",
