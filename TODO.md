@@ -405,3 +405,49 @@ What the current design already sets:
 - Alerts are in memory (`ops/alerts.py`: `active`, `_sent`, the cool-down). Any change to `clear()` must keep the cool-down
   behaviour.
 - A new event kind goes in `events/store.py` and is named in FEATURES.md.
+
+## A tool to present a document at the end of an answer
+
+The owner asked (2026-11-02) for a new tool for Clara to present a document at the end of her answer: a document made in
+the conversation, or a file of the workspace when she can reach it. Once presented, the document can be downloaded or
+seen in the workspace.
+
+Not decided (the first reading is below; the owner to correct it):
+
+- "A document created on the conversation". The first reading: a document whose content Clara gives in the call itself
+  (text, Markdown, code), kept with the conversation as the files you send are (`conversation_files`), for when there is
+  no workspace or she does not want to write one. Whether she may also present a file of the workspace by its path (the
+  other half of the request) is taken as yes.
+- Which formats a document may have, and its size limit. Binary files (a PDF, a picture) can only come from the
+  workspace, since a call carries text.
+- "At the end of the answer". The first reading: a card under her last message, with the file's name, its kind, and the
+  two actions, not a card in the side panel. Whether it may show several documents in one answer, and what happens to the
+  card when the answer is edited, tried again or switched to another version.
+- "Seen in the workspace". For a workspace file it opens the Library on that path (`#/library?path=…`). A document that
+  lives only in the conversation has no place in the workspace: whether "see" then means a preview in the page, or only
+  a download, or a button that keeps it in the workspace (a write, which the gate decides).
+- Whether a presented file also gets a card in the side panel (it lists the workspace files she wrote in the
+  conversation), and whether a file she did not write (a mail attachment she saved, a file of a project) can be
+  presented.
+- Which path the tool takes for a workspace file that is hidden or ignored (`folder_sensitive`), or marked as coming from
+  outside: refuse, or ask each time.
+- What the other clients show: the Discord mirror (a name and a link, or the file itself), the desktop and phone apps
+  (`../coucou_copy`), and an unattended run (a reminder, a schedule, a hook) that presents a document nobody opens at
+  once.
+
+What the current design already sets:
+
+- The side panel already has a card for each workspace file Clara wrote in the conversation, found from the git history,
+  with a name, a folder, a time and **Download**. A click leads to the Library (`docs/DECISIONS.md`, « The side panel
+  lists the workspace files Clara wrote in the conversation, found from the git history »). The new tool is her own choice of what to hand over, at the end of an answer;
+  the panel lists everything she wrote.
+- Files sent in a conversation are stored with it and downloaded through
+  `GET /v1/conversations/{conversation_id}/files/{file_id}`; the file name is cleaned and sent as an attachment.
+- The workspace is untrusted: `workspace/paths.py` is the only door to a file (no links, no `.git`, regular files only,
+  reads capped at `CLARA_WORKSPACE_MAX_FILE`). The tool must read a path through it, and the download must not serve
+  anything the Library would not.
+- The workspace is `None` when it is off: the tool must still work, and say so, for a document made in the conversation.
+- A new tool needs a gate class, a level and a target, is named in FEATURES.md (the docs test checks it), and the tool
+  count line is updated. A new route or event kind is named there too.
+- The card is shown to the owner; it must not carry the document into the model's context, so presenting does not
+  read the file back to Clara.
