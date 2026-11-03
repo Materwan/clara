@@ -17,27 +17,6 @@ What it leaves, not decided:
 - The raw text of a page or a mail is not shown to you in the chat: only the report is. A card that opens the raw text, for you and not for
   the model, would need a client-side change.
 
-## GitHub as a special tool
-
-The owner asked for the GitHub tools to be a special tool of a conversation, as Mail is: a **GitHub** pack, switched per
-conversation from the "+" menu or `/tools`, off in a new conversation. The pack holds all five tools: `github_read`,
-`github_write`, `github_branch`, `github_pr` and `github_issue`.
-
-Not decided:
-
-- Today the five tools are offered in every chat once a token and a repository are set (`connectors/setup.py`). With a
-  pack they are offered only where it is on. Whether existing conversations keep them after the change is open.
-- Whether schedules, and the packs a project starts its conversations with, can take the GitHub pack, as they can take
-  Mail. Hook runs get `github_read` from their event kind, not from a pack.
-- Its check: unusable, with the reason, when no token or no repository is set, as Mail is when no mailbox is connected.
-
-What the current design already sets:
-
-- A pack only decides which tools exist. The rule gate still decides each call; a write asks first from level 4, as
-  the gate sets it.
-- A local-only conversation is never offered the GitHub tools, whatever packs are on.
-- `github_read` still taints the turn.
-
 ## A way for Clara to add to the TODO
 
 The owner asked for a way for Clara to add something to the TODO. The first reading is this file: she writes an item

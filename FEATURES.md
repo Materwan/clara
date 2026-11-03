@@ -283,7 +283,9 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **Versions:** editing a message or asking again keeps the earlier answer as another version; you move between them.
 - **Special tools (packs):** a pack is a name for a group of tools that exist only where it is switched on: **Web search**
   (on by default), **Second brain** (the vault open), **Mail** (your Gmail: search, read, draft, send, labels, the read mark and the Trash;
-  off until you switch it on, and offered only with a mailbox connected), **QCM** (`qcm`: the quiz tool; chats only, off until you
+  off until you switch it on, and offered only with a mailbox connected), **GitHub** (the five `github_*` tools: look at the
+  repositories you added, commit, branch, pull requests and issues; off until you switch it on, and offered only with a token and
+  a repository set; a change asks as before, see section 9), **QCM** (`qcm`: the quiz tool; chats only, off until you
   switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
   schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
@@ -504,7 +506,7 @@ added (`github.pull_request`) and a push to one of its branches (`github.push`);
   also name a **project**, whose files and instructions are then context for every run. It is **tainted from its first word**: every outside write (a send, a GitHub change, a
   Drive change) asks whatever the rules say, and approvals are pushed to you, never waited for. It has **only the tools the hook
   lists**; with none listed, the event kind's read tools and `notify` (mail: `mail_search`, `mail_read`, `mail_attachment_read`; GitHub: `github_read`),
-  so a hook never has more than you gave it (a hook learns from its runs only with `remember` in its list: see section 4). A run whose tools name a mail tool gets the Mail pack for that run. The same limits hold for the turn that follows one of its approvals. The event
+  so a hook never has more than you gave it (a hook learns from its runs only with `remember` in its list: see section 4). A run whose tools name a mail tool gets the Mail pack for that run, and one that names a GitHub tool gets the GitHub pack. The same limits hold for the turn that follows one of its approvals. The event
   reaches the model after your prompt, inside an `<event>` tag as JSON with `<` and `>` escaped, with a line saying it is
   data. To let a hook send, list `mail_send` in its tools **and** write the rule; the run is tainted, so each send still asks.
 - **A stop loses nothing and repeats nothing.** The events, the runs they plan and the place the poll (mail or GitHub) had reached are
@@ -651,6 +653,9 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 - **GitHub:** a fine-grained personal access token you paste on the Connections page, and the list of repositories
   Clara may use (others are refused before any request). Reading (tree, files, code search, branches, issues, pull
   requests, threads, and the changes of a pull request or a commit) is allowed; every change (commit, branch, issue, pull request, merge) asks by default.
+  The five tools are in the **GitHub** pack: a conversation has them only when the pack is switched on (off in a new one), a
+  schedule or a project may list it, and a local-only conversation never has them. The pack says it is unusable while no token
+  or no repository is set. A conversation or a schedule that had called a GitHub tool before the pack existed was given it once.
 - **Google Drive:** OAuth with the `drive.file` scope only (plus `openid email` to show which account you attach), with
   PKCE. Clara sees only files she created (in her own "Clara" folder) and files or folders you open to her with the
   Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
@@ -847,7 +852,7 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 ## 10. Tools
 
 83 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
-vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not offered.
+vault, no GitHub, Drive or Gmail connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
 | --- | --- | --- |
@@ -886,11 +891,11 @@ vault, no GitHub, Drive or Gmail connection, a local-only conversation) are not 
 | `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
 | `web_search` | Search the web (Brave, else SearXNG); the results are gists by the quarantined reader — untrusted | web_search / read |
 | `web_fetch` | Read a web page: a quarantined reader's report of it (`focus`: what to look for) — untrusted | fetch_trusted or fetch_other / read |
-| `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted | github_read / read |
-| `github_write` | Commit a file change (create, overwrite, append, delete) | github_write / write or destructive |
-| `github_branch` | Create or delete a branch | github_write / write or destructive |
-| `github_pr` | Open, comment, merge or close a pull request | github_write / write or destructive |
-| `github_issue` | Open, comment or close an issue | github_write / write; destructive to close |
+| `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted (pack GitHub) | github_read / read |
+| `github_write` | Commit a file change (create, overwrite, append, delete) (pack GitHub) | github_write / write or destructive |
+| `github_branch` | Create or delete a branch (pack GitHub) | github_write / write or destructive |
+| `github_pr` | Open, comment, merge or close a pull request (pack GitHub) | github_write / write or destructive |
+| `github_issue` | Open, comment or close an issue (pack GitHub) | github_write / write; destructive to close |
 | `drive_list` | List what Clara may use on Drive, or a folder — untrusted | drive_read / read |
 | `drive_read` | Read a Drive file (Docs, Sheets, Slides as text) — untrusted | drive_read / read |
 | `drive_search` | Search the Drive files Clara may see — untrusted | drive_read / read |

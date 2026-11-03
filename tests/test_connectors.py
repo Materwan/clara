@@ -68,10 +68,17 @@ def github_answers(request: httpx.Request) -> httpx.Response:
     return httpx.Response(404, json={"message": "Not Found"})
 
 
-async def test_github_reads_taint_and_changes_ask(services, llm, monkeypatch):
+GITHUB_TOOLS = {"github_read", "github_write", "github_branch", "github_pr", "github_issue"}
+
+
+def connect_github(services) -> None:
     services.secrets.set("github_token", "github_pat_test")
     services.connections.set("github", "me")
     services.connections.add("github", "github_repo", "me/repo", "me/repo")
+
+
+async def test_github_reads_taint_and_changes_ask(services, llm, monkeypatch):
+    connect_github(services)
     from clara.connectors import github as github_module
 
     real = github_module.GitHub.__init__
@@ -81,12 +88,98 @@ async def test_github_reads_taint_and_changes_ask(services, llm, monkeypatch):
     llm.replies = [calls(("github_read", {"repo": "me/repo", "action": "read", "path": "README.md"})),
                    calls(("github_write", {"repo": "me/repo", "action": "create", "path": "x.md", "content": "hi"})),
                    "done"]
-    await services.agent.answer(ChatRequest(message="go", client="cli", wait_for_approvals=False))
+    chat = services.conversations.create("cli", packs=["web", "github"]).id
+    await services.agent.answer(ChatRequest(message="go", client="cli", conversation=chat, wait_for_approvals=False))
     audit = [(row["tool"], row["outcome"]) for row in reversed(services.audit.recent())]
     assert audit == [("github_read", "ran"), ("github_write", "asked")]
     llm.replies = [calls(("github_read", {"repo": "someone/else", "action": "list"})), "done"]
-    await services.agent.answer(ChatRequest(message="go", client="cli"))
-    assert "not added" in next(m["content"] for m in llm.seen[-1]["messages"] if m["role"] == "tool")
+    await services.agent.answer(ChatRequest(message="go", client="cli", conversation=chat))
+    assert "not added" in [m["content"] for m in llm.seen[-1]["messages"] if m["role"] == "tool"][-1]
+
+
+def github_tools_offered(llm) -> set[str]:
+    chat = [call for call in llm.seen if call["tools"]][-1]  # not a title or summary job
+    return {tool["function"]["name"] for tool in chat["tools"]} & GITHUB_TOOLS
+
+
+def system_text(llm) -> str:
+    chat = [call for call in llm.seen if call["tools"]][-1]
+    return "\n".join(str(m["content"]) for m in chat["messages"] if m["role"] == "system")
+
+
+async def test_the_github_tools_exist_only_with_a_token_a_repository_and_the_github_pack_and_never_in_a_local_only_chat(
+    services, llm
+):
+    await services.agent.answer(ChatRequest(message="hi", client="cli"))
+    assert not github_tools_offered(llm)
+    services.secrets.set("github_token", "github_pat_test")  # a token, no repository: unusable
+    pack = next(item for item in services.packs.listing("chat") if item["id"] == "github")
+    assert not pack["available"] and "repository" in pack["reason"]
+    connect_github(services)
+    await services.agent.answer(ChatRequest(message="hi", client="cli"))  # usable, but the pack is off: no tools
+    assert not github_tools_offered(llm)
+    assert '"+" menu' in system_text(llm) and "github_*" not in system_text(llm) and "me/repo" in system_text(llm)
+    chat = services.conversations.create("cli", packs=["web", "github"]).id
+    await services.agent.answer(ChatRequest(message="hi", client="cli", conversation=chat))
+    assert github_tools_offered(llm) == GITHUB_TOOLS
+    assert "GitHub repositories (github_* tools): me/repo" in system_text(llm)
+    local = services.conversations.create("cli", packs=["web", "github"], local_only=True).id
+    await services.agent.answer(ChatRequest(message="hi", client="cli", conversation=local))
+    assert not github_tools_offered(llm)
+    assert "github_*" not in system_text(llm) and "me/repo" not in system_text(llm)  # nor does the prompt promise them
+
+
+def test_the_github_pack_is_unusable_without_a_token_and_holds_the_five_tools(services):
+    def reason() -> str:
+        return next(item for item in services.packs.listing("chat") if item["id"] == "github")["reason"]
+
+    assert "token" in reason()
+    services.secrets.set("github_token", "github_pat_test")
+    assert "repository" in reason()
+    connect_github(services)
+    pack = next(item for item in services.packs.listing("schedule") if item["id"] == "github")  # schedules take it too
+    assert pack["available"] and pack["reason"] == "" and set(pack["tools"]) == GITHUB_TOOLS
+    assert {name for name in services.toolbox.names if name.startswith("github_")} == GITHUB_TOOLS
+    assert services.packs.check(["github", "web"], "schedule") == ["web", "github"]  # a schedule or a project may list it
+
+
+def test_a_hook_that_names_a_github_tool_gets_the_pack_and_a_new_chat_does_not(services):
+    assert services.packs.starting_with(["notify"]) == ["web"]
+    assert services.packs.starting_with(["github_read", "notify"]) == ["web", "github"]
+    assert services.packs.starting_with(["github_*"]) == ["web", "github"]
+    assert services.packs.active(None) == ["web"]
+
+
+def test_migration_28_gives_the_github_pack_to_what_already_called_a_github_tool(tmp_path):
+    import importlib
+    import json
+
+    from clara.db.connection import connect
+
+    migrate_module = importlib.import_module("clara.db.migrate")
+    path = tmp_path / "old.db"
+    old = connect(path)
+    for migration in migrate_module.migrations()[:27]:
+        old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
+    for number, packs in ((1, '["web"]'), (2, '["web"]'), (3, '["web", "github"]')):
+        old.execute("INSERT INTO schedules (id, name, prompt, local_at, timezone, packs, created_at, updated_at) "
+                    "VALUES (?, 's', 'p', '08:00', 'Europe/Paris', ?, 't', 't')", (number, packs))
+    for run, schedule, tool in ((1, 1, "github_read"), (2, 2, "web_search"), (3, 3, "github_pr")):
+        old.execute("INSERT INTO conversations (id, client, created_at, updated_at) VALUES (?, 'server', 't', 't')", (f"c{run}",))
+        old.execute("INSERT INTO schedule_runs (id, schedule_id, due_at, status, conversation_id) "
+                    "VALUES (?, ?, 't', 'ok', ?)", (run, schedule, f"c{run}"))
+        old.execute("INSERT INTO audit_log (at, conversation_id, tool, level, situation, args_digest, effect, outcome) "
+                    "VALUES ('t', ?, ?, 'read', 'unattended', '', 'allow', 'ran')", (f"c{run}", tool))
+    old.execute("INSERT INTO conversations (id, client, created_at, updated_at) VALUES ('c4', 'web', 't', 't')")
+    old.execute("INSERT INTO audit_log (at, conversation_id, tool, level, situation, args_digest, effect, outcome) "
+                "VALUES ('t', 'c4', 'github_write', 'write', 'interactive', '', 'ask', 'asked')")
+    old.close()
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (27, migrate_module.LATEST_VERSION)
+    new = connect(path)
+    schedules = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM schedules")}
+    assert schedules == {1: ["web", "github"], 2: ["web"], 3: ["web", "github"]}  # schedule 3 keeps one pack, not two
+    chats = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM conversations")}
+    assert chats == {"c1": ["web", "github"], "c2": ["web"], "c3": ["web", "github"], "c4": ["web", "github"]}
 
 
 async def test_the_google_flow_is_bound_to_the_browser_that_started_it(services):

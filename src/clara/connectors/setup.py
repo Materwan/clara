@@ -141,22 +141,27 @@ class Connectors:
         return found
 
     # ------------------------------------------------------------------
-    def mail_pack_off(self, state: TurnState) -> bool:
-        """True when the Mail pack is off for this turn's conversation (its mail tools are then not offered)."""
+    def pack_off(self, state: TurnState, tool: str) -> bool:
+        """True when the pack holding this tool is off for this turn's conversation (its tools are then not offered)."""
         if self.s.packs is None:
             return False
         conversation = self.s.conversations.get(state.conversation_id) if state.conversation_id else None
-        return "mail_search" in self.s.packs.hidden(conversation)
+        return tool in self.s.packs.hidden(conversation)
 
     def context_block(self, state: TurnState) -> str:
         connections = self.s.connections
         lines = []
         repos = connections.resources("github_repo")
-        if repos and self.s.secrets.has("github_token"):
-            lines.append(
-                "- GitHub repositories (github_* tools): "
-                + ", ".join(r.locator + (f" (branch {r.branch})" if r.branch else "") for r in repos)
-            )
+        # in a local-only chat the GitHub tools are not offered either, so the prompt does not say they exist
+        if repos and self.s.secrets.has("github_token") and not state.local_only:
+            names = ", ".join(r.locator + (f" (branch {r.branch})" if r.branch else "") for r in repos)
+            if self.pack_off(state, "github_read"):
+                lines.append(
+                    f"- GitHub repositories: {names}, but the GitHub tools are off in this conversation: the person "
+                    'switches the GitHub pack on in the "+" menu.'
+                )
+            else:
+                lines.append(f"- GitHub repositories (github_* tools): {names}")
         if connections.get("google") and self.s.secrets.has("google_refresh_token"):
             drive = [r for r in connections.resources() if r.kind.startswith("drive")]
             lines.append(
@@ -173,7 +178,7 @@ class Connectors:
                 if self.mail_connected(name)
             ]
         )
-        if mailboxes and self.mail_pack_off(state):
+        if mailboxes and self.pack_off(state, "mail_search"):
             lines.append(
                 '- Mail: connected, but its tools are off in this conversation: the person switches the Mail pack on in the "+" menu.'
             )
