@@ -198,9 +198,9 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   | Channel | What |
   | --- | --- |
   | `#general` | Notices and where to answer: a line saying where to answer when she waits for an approval; `/new` opens a conversation in the Conversations forum |
-  | `#approval` | Approval requests (not a local-only conversation's), with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals |
+  | `#approval` | Approval requests (not a local-only conversation's), with buttons: Allow once, Allow always, Refuse once, Refuse always. The token's default approval scope is `safe`: Discord may answer everything except destructive actions, which stay with the web site and the terminals. Only the requests that wait stay: a request that is answered or expires is deleted from the channel |
   | `#notification` | Reminders, notifications, task reminders, schedule and hook summaries and update news (by default: see below) |
-  | `#alerts` | Alerts |
+  | `#alerts` | Alerts. An alert whose problem is over is deleted from the channel; the Admin page lists the alerts that last |
 
 - **Which channel carries what (Admin page, Discord tab; runtime setting `discord_routes`):** approval requests always go
   to `#approval` (not a local-only conversation's: Discord is outside the machine) and the questions of scheduled runs that do not deliver to Discord to `#general` (the ones that do ask
@@ -214,6 +214,25 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   off. The page shows what each channel receives now. The server works out the channel when it sends an event to the
   bot (the event's `channel`), so a change applies to the next message and the bot holds no table of its own beyond the
   fallback for a server that does not say. The page never sees or sets channel ids; they stay in the bot's settings.
+- **Clean channels:** the bot deletes its own messages that no longer help (never yours, and it needs no right to do
+  it). The server decides nothing here but the facts it already publishes.
+  - `#approval`: an `approval_resolved` event (a request answered, or expired) deletes its message. At start and then every
+    hour the bot also deletes every card of its own whose request is not pending (answered while it was away, or an old
+    card from before this rule) and a second card of a request that waits; if Clara cannot say what is pending, it
+    deletes nothing. Other messages in the channel (a test message, yours) stay.
+  - `#alerts`: when an alert ends, the server publishes an `alert_resolved` event with its `key` (to the bot only) and the
+    bot deletes the messages it posted for that key, wherever the routes put them (it keeps `key → messages` in its
+    state file, `discord-state.json`, 10 messages and 100 keys at most). The event is published when the alert was
+    active, and the first time each key is cleared in a server run, so an alert from before a restart that is fixed
+    since is deleted too. The first time a bot with this feature starts, it deletes all its older messages in `#alerts`
+    (they are not tied to a key; an alert that still lasts is on the Admin page, and its next repeat is posted again).
+  - `#notification`: the line posted when a run starts, with the link of its forum thread, is deleted once the thread is
+    gone (retention, a deleted conversation or forum). At start and then every hour the bot looks at its own lines
+    there (the whole channel the first time, then the newest 200 messages), asks Discord for each linked thread, and
+    deletes the line only when Discord says the thread does not exist; any other answer keeps it. Reminders, schedule and
+    hook summaries, mail and update news are not touched.
+  - The bot needs *Read Message History* in `#approval`, `#notification` and `#alerts` for this; the Admin page's Discord
+    tab shows it when it is missing.
 - **What the page shows about the bot:** whether it is connected (its last heartbeat), its name, whether the server
   started it, a problem it ended with, and for each of the four channels the name Discord gives it and the rights the
   bot lacks there. The heartbeat carries it (every minute). **Test message:** a button per channel posts a short message
@@ -449,7 +468,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
   news, and updates go to one event store with a read cursor per token. Each client gets what it missed when it comes
   back (`GET /v1/events`, or the live stream `GET /v1/events/stream`, which tells the Discord bot each event's `channel`). Event kinds: `reminder`, `notification`,
-  `approval`, `approval_resolved`, `alert`, `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone; and, for Discord alone, a message to answer in `#general`, stage `said`; for a run that delivers to Discord these lines carry `forum` and are written in its forum thread instead). A run that delivers to Discord also tells Discord, with a `notification` of source `automations`, when it starts.
+  `approval`, `approval_resolved`, `alert`, `alert_resolved` (an alert's problem is over: its `key`, for the Discord bot only, which deletes the alert's message), `server`, `schedule`, `task`, `update`, `ask` (what a scheduled run says to you: its question, reminder and end for the web site and Discord, and the thread it opens, writes in or removes for Discord alone; and, for Discord alone, a message to answer in `#general`, stage `said`; for a run that delivers to Discord these lines carry `forum` and are written in its forum thread instead). A run that delivers to Discord also tells Discord, with a `notification` of source `automations`, when it starts.
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
@@ -1031,7 +1050,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 - **Schema versions:** numbered migrations, the version in `PRAGMA user_version`, a backup before each migration, and
   a database newer than the code is refused.
 - **Alerts** (in every client's inbox and in Discord's `#alerts`; each repeats at most every 6 hours while it lasts; most clear
-  by themselves when the cause is gone, and `/alerts clear <key>` clears one):
+  by themselves when the cause is gone, and `/alerts clear <key>` clears one; Discord then deletes the alert's message):
 
   | Key | When |
   | --- | --- |

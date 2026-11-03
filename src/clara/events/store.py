@@ -24,6 +24,7 @@ KINDS = (
     "approval",
     "approval_resolved",
     "alert",
+    "alert_resolved",
     "server",
     "schedule",
     "task",

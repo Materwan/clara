@@ -53,7 +53,7 @@ def test_each_message_has_a_category(kind, source, payload, category):
     assert category_of(kind, source, payload) == category
 
 
-@pytest.mark.parametrize("kind", ["approval", "approval_resolved", "server", "ask"])
+@pytest.mark.parametrize("kind", ["approval", "approval_resolved", "alert_resolved", "server", "ask"])
 def test_approvals_questions_and_server_states_are_not_routed(kind):
     assert category_of(kind, "server", {}) is None
 
@@ -220,15 +220,16 @@ async def test_a_test_message_is_for_the_bot_only_and_names_its_channel(client, 
     assert event.targets == ("discord",) and not event.for_client("web") and not event.for_client("cli")
     assert event.source == "discord-test" and event.payload == {"discord_test": "approval"}
     assert "#approval" in event.text and "approval requests" in event.text
-    bot = await stream_as(client, services, bot)
-    assert [(item["type"], item["channel"]) for item in bot] == [("notification", "approval")]
+    told = [item for item in await stream_as(client, services, bot) if item["type"] != "alert_resolved"]  # the heartbeat ended the `discord` alert
+    assert [(item["type"], item["channel"]) for item in told] == [("notification", "approval")]
 
 
 async def test_the_test_goes_where_it_says_whatever_the_routes_say(client, services, bot):
     services.runtime.set("discord_routes", {"mail": "general", "alerts": "general"})
     await beat(client, bot)
     reply = await client.post("/v1/admin/discord/test", json={"channel": "alerts"})
-    assert [item["channel"] for item in await stream_as(client, services, bot)] == ["alerts"]
+    told = [item for item in await stream_as(client, services, bot) if item["type"] != "alert_resolved"]
+    assert [item["channel"] for item in told] == ["alerts"]
     assert services.events.get(reply.json()["event"]).text == "This is #alerts. It receives: nothing at the moment."  # alerts moved to #general
 
 
@@ -271,3 +272,59 @@ async def test_a_silent_bot_is_called_so(client, services, monkeypatch, bot):
     page = (await client.get("/v1/admin/discord")).json()
     assert page["bot"]["state"] == "silent"
     assert (await client.post("/v1/admin/discord/test", json={"channel": "general"})).status_code == 409
+
+
+# ----------------------------------------------------------------------
+# The end of an alert: Discord is told, nobody else
+# ----------------------------------------------------------------------
+def ended(services) -> list[str]:
+    return [event.payload["key"] for event in services.events.recent(50, ["alert_resolved"])][::-1]
+
+
+def test_clearing_an_active_alert_tells_discord_which_one_ended(services):
+    services.alerts.raise_("disk", "The disk is nearly full", "91% used.")
+    services.alerts.clear("disk")
+    [event] = services.events.recent(5, ["alert_resolved"])
+    assert event.payload == {"key": "disk"} and event.targets == ("discord",)
+    assert "disk" not in services.alerts.active
+
+
+def test_a_key_cleared_again_and_again_says_it_once_a_run_but_an_alert_that_comes_back_says_it_every_time(services):
+    for _ in range(3):  # every good poll of a mailbox clears its key
+        services.alerts.clear("gmail")
+    assert ended(services) == ["gmail"]
+    services.alerts.raise_("gmail", "Google refused", "x")
+    services.alerts.clear("gmail")
+    services.alerts.raise_("gmail", "Google refused", "x")
+    services.alerts.clear("gmail")
+    services.alerts.clear("gmail")
+    assert ended(services) == ["gmail", "gmail", "gmail"]
+
+
+def test_an_alert_raised_before_a_restart_is_ended_by_the_first_clear_of_the_new_run(services):
+    """`active` is empty after a restart: only the first clear of the key can tell Discord the old message is stale."""
+    from clara.ops.alerts import Alerts
+
+    fresh = Alerts(services.events)
+    fresh.clear("vault_push")
+    assert ended(services) == ["vault_push"]
+
+
+def test_clearing_does_not_change_the_cool_down(services):
+    now = [0.0]
+    from clara.ops.alerts import Alerts
+
+    alerts = Alerts(services.events, clock=lambda: now[0])
+    assert alerts.raise_("disk", "Disk", "full") and not alerts.raise_("disk", "Disk", "still full")
+    alerts.clear("disk")
+    assert alerts.raise_("disk", "Disk", "full again")  # the next occurrence alerts at once
+    assert len(services.events.recent(10, ["alert"])) == 2
+
+
+async def test_only_the_bot_hears_that_an_alert_ended(client, services, token, bot):
+    services.alerts.raise_("disk", "Disk", "full")
+    services.alerts.clear("disk")
+    told = await stream_as(client, services, bot)
+    assert [(event["type"], event.get("channel")) for event in told] == [("alert", "alerts"), ("alert_resolved", None)]
+    assert told[-1]["payload"] == {"key": "disk"}
+    assert [event["type"] for event in await stream_as(client, services, {"Authorization": f"Bearer {token}"})] == ["alert"]

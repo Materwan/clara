@@ -35,23 +35,45 @@ def settings(tmp_path):
     return Settings.load(env_for(tmp_path))
 
 
+BOT, OWNER = 7, 42  # the ids of the bot's own user and of the owner, for the messages in a fake channel
+
+
 class FakeChannel:
-    """A text channel that remembers what was sent to it."""
+    """A text channel that remembers what was sent to it (`sent`) and what is in it now (`messages`, oldest first)."""
 
     def __init__(self, channel_id: int):
         self.id = channel_id
         self.name = f"channel-{channel_id}"
         self.sent: list[tuple[str, object]] = []
+        self.messages: list[SimpleNamespace] = []
 
-    async def send(self, content=None, view=None, file=None):
-        message = SimpleNamespace(content=content, view=view, edits=[])
+    def put(self, content: str, author: int = BOT, view=None) -> SimpleNamespace:
+        """A message that is in the channel: the bot's own by default."""
+        message = SimpleNamespace(id=self.id * 1000 + len(self.messages) + len(self.sent) + 1, content=content,
+                                  view=view, edits=[], channel=self, author=SimpleNamespace(id=author))
 
         async def edit(**fields):
             message.edits.append(fields)
 
-        message.edit = edit
-        self.sent.append((content, view))
+        async def delete():
+            if message not in self.messages:
+                raise refusal(404, "Unknown Message")
+            self.messages.remove(message)
+
+        message.edit, message.delete = edit, delete
+        self.messages.append(message)
         return message
+
+    async def send(self, content=None, view=None, file=None):
+        self.sent.append((content, view))
+        return self.put(content, view=view)
+
+    async def history(self, limit=None):
+        for message in list(reversed(self.messages))[:limit]:
+            yield message
+
+    def get_partial_message(self, message_id):
+        return next((m for m in self.messages if m.id == message_id), None) or SimpleNamespace(id=message_id, delete=self.put("").delete)
 
     def typing(self):
         class Typing:
@@ -66,11 +88,13 @@ class FakeChannel:
 
 @pytest.fixture
 async def bot(settings):
-    found = ClaraBot(settings)
-    found.channels = {name: FakeChannel(channel_id) for name, channel_id in settings.channels.items()}
-    found.guild_id = GUILD
-    yield found
-    await found.clara.close()
+    with pytest.MonkeyPatch.context() as patch:  # not the test's own monkeypatch: that one is undone before this teardown
+        patch.setattr(ClaraBot, "user", SimpleNamespace(id=BOT))
+        found = ClaraBot(settings)
+        found.channels = {name: FakeChannel(channel_id) for name, channel_id in settings.channels.items()}
+        found.guild_id = GUILD
+        yield found
+        await found.clara.close()
 
 
 def texts(channel: FakeChannel) -> list[str]:
@@ -205,6 +229,7 @@ async def test_approvals_come_with_buttons_in_the_approval_channel(bot):
 
     await bot.deliver({"type": "approval_resolved", "payload": {"approval": {"id": 1, "summary": "Comment", "status": "done"}}})
     assert bot.asked.get(1) is None
+    assert [message.content for message in approval.messages] == [second]  # a settled request leaves #approval
 
 
 async def test_a_request_during_a_chat_is_pointed_to_from_general(bot, monkeypatch):
@@ -332,7 +357,8 @@ async def test_the_heartbeat_tells_who_the_bot_is_and_what_it_sees_in_each_chann
         def __getattr__(self, right):
             return right not in self.lacks
 
-    lacks = {GENERAL: {"manage_threads"}, NOTIFICATION: set(), APPROVAL: {"send_messages", "attach_files"}, ALERTS: set()}
+    lacks = {GENERAL: {"manage_threads", "read_message_history"}, NOTIFICATION: set(),
+             APPROVAL: {"send_messages", "attach_files"}, ALERTS: {"read_message_history"}}
     live = {channel_id: SimpleNamespace(name=f"live-{channel_id}", permissions_for=lambda me, c=channel_id: Rights(lacks[c]))
             for channel_id in lacks}
     monkeypatch.setattr(bot, "get_guild", lambda guild_id: SimpleNamespace(me=object()))
@@ -346,7 +372,7 @@ async def test_the_heartbeat_tells_who_the_bot_is_and_what_it_sees_in_each_chann
         "general": {"name": f"live-{GENERAL}", "missing": ["manage_threads"]},
         "notification": {"name": f"live-{NOTIFICATION}", "missing": []},
         "approval": {"name": f"live-{APPROVAL}", "missing": ["send_messages", "attach_files"]},
-        "alerts": {"name": f"live-{ALERTS}", "missing": []}}}
+        "alerts": {"name": f"live-{ALERTS}", "missing": ["read_message_history"]}}}
 
 
 async def test_a_bot_that_is_not_ready_says_only_that_it_is_not(bot, monkeypatch):
@@ -910,3 +936,284 @@ async def test_a_notice_whose_thread_never_comes_is_posted_without_a_link_and_a_
     await bot.deliver(started(created_at=iso(utcnow() - timedelta(minutes=20))))  # the bot was away: it is not news
     await bot.deliver(started(created_at="not a date"))
     assert len(bot.channels["notification"].sent) == 1
+
+
+# ----------------------------------------------------------------------
+# Clean channels: #approval holds what waits, #alerts what lasts, #notification no line about a gone thread
+# ----------------------------------------------------------------------
+def pending_are(bot, monkeypatch, *ids: int):
+    async def call(method, path, **options):
+        assert (method, path, options.get("params")) == ("GET", "/v1/approvals", {"status": "pending"})
+        return {"approvals": [{"id": number} for number in ids]}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+
+
+def left(channel: FakeChannel) -> list[str]:
+    return [message.content for message in channel.messages]
+
+
+async def test_a_request_that_expires_leaves_approval_like_one_that_is_settled(bot):
+    await bot.show_approval({"id": 4, "level": "write", "summary": "Create a file", "reason": ""})
+    await bot.show_approval({"id": 5, "level": "write", "summary": "Send a mail", "reason": ""})
+    await bot.deliver({"type": "approval_resolved", "payload": {"approval": {"id": 4, "summary": "Create a file", "status": "expired"}}})
+    assert len(bot.channels["approval"].messages) == 1 and "#5" in left(bot.channels["approval"])[0]
+    await bot.deliver({"type": "approval_resolved", "payload": {"approval": {"id": 4, "summary": "Create a file", "status": "expired"}}})
+    assert len(bot.channels["approval"].messages) == 1  # said twice, or deleted by hand: no error
+
+
+async def test_a_button_answer_removes_the_card_and_a_refused_one_says_why(bot, monkeypatch):
+    await bot.show_approval({"id": 6, "level": "write", "summary": "Create a file", "reason": ""})
+    card = bot.asked[6]
+    answers = iter([{"status": "approved", "summary": "Create a file"}, bot_module.ClaraError(409, "answered a moment ago")])
+
+    async def call(method, path, **options):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def defer():
+        pass
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    press = SimpleNamespace(user=SimpleNamespace(id=OWNER), client=bot, response=SimpleNamespace(defer=defer), message=card)
+    await bot_module.ApprovalButton(6, "allow_once").callback(press)
+    assert bot.channels["approval"].messages == [] and 6 not in bot.asked
+    other = bot.channels["approval"].put("🔐 Clara asks (#7, write): x")
+    await bot_module.ApprovalButton(7, "allow_once").callback(SimpleNamespace(
+        user=SimpleNamespace(id=OWNER), client=bot, response=SimpleNamespace(defer=defer), message=other))
+    assert other.edits == [{"content": "🔐 #7: answered a moment ago", "view": None}] and bot.channels["approval"].messages == [other]
+
+
+async def test_asking_again_for_the_waiting_requests_replaces_their_messages(bot, monkeypatch):
+    await bot.show_approval({"id": 1, "level": "write", "summary": "Create a file", "reason": ""})
+
+    async def call(method, path, **options):
+        return {"approvals": [{"id": 1, "level": "write", "summary": "Create a file", "reason": ""}]}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    call_asked, said = interaction(42, GUILD)
+    await bot.tree.get_command("approvals").callback(call_asked)
+    assert said == [("1 waiting.", True)] and len(bot.channels["approval"].messages) == 1
+
+
+async def test_at_start_approval_keeps_only_the_cards_of_requests_that_still_wait(bot, monkeypatch):
+    approval = bot.channels["approval"]
+    approval.put("🔐 Clara asks (#1, write): Settled while the bot was away")
+    approval.put("🔐 #2 Comment on issue #3: **approved**")  # the old way of saying a request was settled
+    approval.put("🔐 Clara asks (#3, write): Still waiting, an old card")
+    approval.put("🧪 **Test from Clara's web site**\nThis is #approval.")
+    approval.put("Can you look at #3?", author=OWNER)
+    approval.put("🔐 #9 not the bot's", author=555)
+    newest = approval.put("🔐 Clara asks (#3, write): Still waiting")
+    approval.put("🔐 Clara asks (#4, destructive): Delete notes/old.md\nThis one is answered on the web site or with clara-admin.")
+    pending_are(bot, monkeypatch, 3, 4)
+    assert await bot.sweep_approvals() == 3
+    assert left(approval) == ["🧪 **Test from Clara's web site**\nThis is #approval.", "Can you look at #3?",
+                              "🔐 #9 not the bot's", newest.content, "🔐 Clara asks (#4, destructive): Delete notes/old.md\n"
+                              "This one is answered on the web site or with clara-admin."]
+    assert bot.asked[3] is newest and 4 in bot.asked  # the next answer finds them
+    await bot.deliver({"type": "approval_resolved", "payload": {"approval": {"id": 3, "summary": "x", "status": "approved"}}})
+    assert newest not in approval.messages
+
+
+async def test_a_card_the_bot_is_tracking_is_the_one_that_stays(bot, monkeypatch):
+    approval = bot.channels["approval"]
+    old = approval.put("🔐 Clara asks (#3, write): posted before the restart")
+    await bot.show_approval({"id": 3, "level": "write", "summary": "asked again", "reason": ""})
+    pending_are(bot, monkeypatch, 3)
+    assert await bot.sweep_approvals() == 1
+    assert old not in approval.messages and bot.asked[3] in approval.messages
+
+
+async def test_when_clara_cannot_say_what_waits_nothing_is_deleted(bot, monkeypatch):
+    approval = bot.channels["approval"]
+    approval.put("🔐 Clara asks (#1, write): x")
+
+    async def down(method, path, **options):
+        raise bot_module.ClaraError(503, "down")
+
+    monkeypatch.setattr(bot.clara, "call", down)
+    await bot.attempt("#approval", bot.sweep_approvals)
+    assert len(approval.messages) == 1
+
+
+async def test_an_alert_is_deleted_when_its_problem_is_over_and_only_that_one(bot):
+    disk = {"type": "alert", "title": "The disk is nearly full", "text": "91% used.", "payload": {"key": "disk"}}
+    await bot.deliver(disk)
+    await bot.deliver({"type": "alert", "title": "Backup failed", "text": "no space", "payload": {"key": "backup"}})
+    await bot.deliver({"type": "alert", "title": "Old kind of alert", "text": "no key"})
+    alerts = bot.channels["alerts"]
+    assert len(alerts.messages) == 3 and set(bot.alert_messages()) == {"disk", "backup"}
+    await bot.deliver({"type": "alert_resolved", "title": "Alert over", "text": "disk", "payload": {"key": "disk"}})
+    assert left(alerts) == ["⚠️ **Backup failed**\nno space", "⚠️ **Old kind of alert**\nno key"]
+    assert set(bot.alert_messages()) == {"backup"}
+    await bot.deliver({"type": "alert_resolved", "payload": {"key": "disk"}})  # not told twice, and never an error
+    await bot.deliver({"type": "alert_resolved", "payload": {}})
+    assert len(alerts.messages) == 2
+
+
+async def test_an_alert_that_was_repeated_and_one_the_routes_moved_are_all_deleted(bot):
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "full", "payload": {"key": "disk"}})
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "still full", "payload": {"key": "disk"}, "channel": "general"})
+    await bot.deliver({"type": "alert", "title": "Long", "text": "word " * 600, "payload": {"key": "long"}})
+    assert len(bot.channels["alerts"].messages) == 3 and len(bot.channels["general"].messages) == 1
+    await bot.deliver({"type": "alert_resolved", "payload": {"key": "disk"}})
+    await bot.deliver({"type": "alert_resolved", "payload": {"key": "long"}})
+    assert not bot.channels["alerts"].messages and not bot.channels["general"].messages and bot.alert_messages() == {}
+
+
+async def test_the_alerts_that_last_are_remembered_across_a_restart_of_the_bot(bot, settings):
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "full", "payload": {"key": "disk"}})
+    again = ClaraBot(settings)  # same state file
+    again.channels = bot.channels
+    await again.deliver({"type": "alert_resolved", "payload": {"key": "disk"}})
+    assert not bot.channels["alerts"].messages
+    await again.clara.close()
+
+
+async def test_the_memory_of_alerts_is_bounded(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "ALERTS_KEPT", 3)
+    monkeypatch.setattr(bot_module, "ALERT_MESSAGES_KEPT", 2)
+    for number in range(5):
+        await bot.deliver({"type": "alert", "title": "A", "text": "x", "payload": {"key": f"k{number}"}})
+    for _ in range(4):
+        await bot.deliver({"type": "alert", "title": "A", "text": "x", "payload": {"key": "k4"}})
+    kept = bot.alert_messages()
+    assert list(kept) == ["k2", "k3", "k4"] and len(kept["k4"]) == 2
+
+
+async def test_once_the_backlog_of_alerts_goes_but_not_what_the_bot_posted_by_key_or_what_is_yours(bot):
+    alerts = bot.channels["alerts"]
+    alerts.put("⚠️ **Disk**\nan alert from long ago")
+    alerts.put("⚠️ **Backup**\nfixed since")
+    alerts.put("my own note", author=OWNER)
+    await bot.deliver({"type": "alert", "title": "Brave", "text": "refused", "payload": {"key": "brave"}})
+    backlog = await bot.own_messages(alerts, None)
+    assert await bot.empty_alerts(backlog) == 2
+    assert left(alerts) == ["my own note", "⚠️ **Brave**\nrefused"] and bot._state()["alerts_swept"] is True
+
+
+async def test_a_backlog_that_could_not_all_be_deleted_is_done_again_at_the_next_start(bot):
+    alerts = bot.channels["alerts"]
+    stuck = alerts.put("⚠️ **Disk**\nold")
+
+    async def refused():
+        raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), "down")
+
+    stuck.delete = refused
+    alerts.put("⚠️ **Backup**\nold")
+    assert await bot.empty_alerts(await bot.own_messages(alerts, None)) == 1
+    assert "alerts_swept" not in bot._state()
+
+
+async def test_tidy_lists_alerts_before_the_relay_may_post_and_empties_them_only_once(bot, monkeypatch):
+    async def ready():
+        pass
+
+    swept = []
+
+    async def sweep(*args):
+        swept.append(args)
+        return 0
+
+    monkeypatch.setattr(bot, "wait_until_ready", ready)
+    monkeypatch.setattr(bot, "sweep_approvals", sweep)
+    monkeypatch.setattr(bot, "sweep_notification", sweep)
+    monkeypatch.setattr(bot_module, "TIDY_EVERY", 0.01)
+    alerts = bot.channels["alerts"]
+    alerts.put("⚠️ **Disk**\nold")
+    assert not bot.listed.is_set()
+    task = asyncio.create_task(bot.tidy())
+    await asyncio.wait_for(bot.listed.wait(), 2)
+    await asyncio.sleep(0.1)
+    task.cancel()
+    assert alerts.messages == [] and len(swept) >= 2  # both sweeps ran again after the pause
+    alerts.put("⚠️ **Disk**\nnew")
+    task = asyncio.create_task(bot.tidy())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert left(alerts) == ["⚠️ **Disk**\nnew"]  # the backlog goes once
+
+
+def run_line(thread_id: int, guild: int = GUILD, title: str = "Scheduled task: Bilan") -> str:
+    return f"▶️ **{title}**\nStarted.\n🔗 https://discord.com/channels/{guild}/{thread_id}"
+
+
+def threads_are(bot, monkeypatch, alive: set[int], unsure: set[int] = frozenset()):
+    asked = []
+
+    async def fetch_channel(channel_id):
+        asked.append(channel_id)
+        if channel_id in unsure:
+            raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), "down")
+        if channel_id not in alive:
+            raise refusal(404, "Unknown Channel")
+        return SimpleNamespace(id=channel_id)
+
+    monkeypatch.setattr(bot, "fetch_channel", fetch_channel)
+    return asked
+
+
+async def test_a_line_about_a_thread_that_is_gone_leaves_notification_and_nothing_else_does(bot, monkeypatch):
+    notification = bot.channels["notification"]
+    notification.put(run_line(111))  # its thread was deleted
+    live = notification.put(run_line(222))
+    notification.put(run_line(111, title="Hook: PR review"))  # the same thread again: asked once
+    reminder = notification.put(f"🔔 **Hook: PR review**\nlook at it\n🔗 https://discord.com/channels/{GUILD}/111")  # not a run's line
+    elsewhere = notification.put(run_line(111, guild=GUILD + 1))  # another server's thread: not ours to judge
+    nolink = notification.put("▶️ **Scheduled task: Bilan**\nStarted.")  # the thread never came
+    yours = notification.put(run_line(111), author=OWNER)
+    asked = threads_are(bot, monkeypatch, alive={222})
+    assert await bot.sweep_notification() == 2
+    assert notification.messages == [live, reminder, elsewhere, nolink, yours] and asked.count(111) == 1
+
+
+async def test_only_a_thread_discord_says_is_missing_deletes_its_line(bot, monkeypatch):
+    notification = bot.channels["notification"]
+    unknown = notification.put(run_line(333))
+    notification.put(run_line(444))  # its thread does not exist
+    threads_are(bot, monkeypatch, alive=set(), unsure={333})
+    assert await bot.sweep_notification() == 1
+    assert notification.messages == [unknown] and "notification_swept" not in bot._state()  # the whole channel is read again
+
+
+async def test_a_thread_that_discord_still_has_cached_is_not_asked_for(bot, monkeypatch):
+    notification = bot.channels["notification"]
+    line = notification.put(run_line(222))
+    asked = threads_are(bot, monkeypatch, alive=set())
+    monkeypatch.setattr(bot, "get_channel", lambda channel_id: SimpleNamespace(id=channel_id))
+    assert await bot.sweep_notification() == 0 and asked == [] and notification.messages == [line]
+
+
+async def test_the_first_pass_reads_the_whole_channel_and_later_ones_the_newest_messages(bot, monkeypatch):
+    monkeypatch.setattr(bot_module, "NOTIFICATION_RECENT", 5)
+    notification = bot.channels["notification"]
+    oldest = notification.put(run_line(111))
+    notification.put(run_line(112))
+    for number in range(20):
+        notification.put(f"🔔 note {number}")
+    newest = notification.put(run_line(113))
+    threads_are(bot, monkeypatch, alive=set())
+    assert await bot.sweep_notification() == 3 and oldest not in notification.messages
+    assert bot._state()["notification_swept"] is True
+    older = notification.put(run_line(114))
+    for number in range(8):
+        notification.put(f"🔔 later {number}")
+    assert await bot.sweep_notification() == 0 and older in notification.messages and newest not in notification.messages
+    del notification.messages[-8:]
+    assert await bot.sweep_notification() == 1 and older not in notification.messages  # now among the newest
+
+
+async def test_a_pass_that_cannot_read_the_channel_deletes_nothing_and_is_tried_again(bot, monkeypatch):
+    notification = bot.channels["notification"]
+    notification.put(run_line(111))
+
+    async def history(limit=None):
+        raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Access")
+        yield
+
+    notification.history = history
+    await bot.attempt("#notification", bot.sweep_notification)
+    assert len(notification.messages) == 1 and "notification_swept" not in bot._state()
