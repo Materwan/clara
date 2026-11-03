@@ -10,6 +10,7 @@ has read it (tokens unused for 30 days, or revoked, stop counting), and never lo
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
@@ -99,7 +100,7 @@ class Events:
     def __init__(self, db: Database, max_days: int = 90):
         self.db = db
         self.max_days = max_days
-        self._listeners: set[asyncio.Queue] = set()
+        self._listeners: dict[asyncio.Queue, asyncio.AbstractEventLoop] = {}  # a stream's queue -> the loop it runs in
         self.closed = False
 
     def publish(
@@ -131,9 +132,23 @@ class Events:
         )
         event = self.get(event_id)
         assert event is not None
-        for queue in list(self._listeners):
-            queue.put_nowait(event)
+        for queue, loop in list(self._listeners.items()):
+            self._hand(queue, loop, event)
         return event
+
+    @staticmethod
+    def _hand(queue: asyncio.Queue, loop: asyncio.AbstractEventLoop, event: Event | None) -> None:
+        """Put an event in a stream's queue. `publish` is also called from worker threads (alerts, the vault, ...): a
+        queue is not thread-safe, and the stream would only wake at the loop's next unrelated turn."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            queue.put_nowait(event)
+            return
+        with contextlib.suppress(RuntimeError):  # the loop is closed: nobody is reading that stream any more
+            loop.call_soon_threadsafe(queue.put_nowait, event)
 
     def get(self, event_id: int) -> Event | None:
         row = self.db.one("SELECT * FROM events WHERE id = ?", (event_id,))
@@ -173,7 +188,7 @@ class Events:
         """The events for this client: what it missed since its cursor (or `after`), then each new one as it comes.
         A token that never listened starts from now. The caller acknowledges what it delivered."""
         queue: asyncio.Queue = asyncio.Queue()
-        self._listeners.add(queue)
+        self._listeners[queue] = asyncio.get_running_loop()
         try:
             start = after if after is not None else self.cursor(token_id)
             if start is None:
@@ -198,13 +213,13 @@ class Events:
                 if event.for_client(client):
                     yield event
         finally:
-            self._listeners.discard(queue)
+            self._listeners.pop(queue, None)
 
     def close(self) -> None:
         """End every live stream (the server stops): clients reconnect when it is back."""
         self.closed = True
-        for queue in list(self._listeners):
-            queue.put_nowait(None)
+        for queue, loop in list(self._listeners.items()):
+            self._hand(queue, loop, None)
 
     @property
     def listeners(self) -> int:

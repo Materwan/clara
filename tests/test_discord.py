@@ -46,10 +46,12 @@ class FakeChannel:
         self.name = f"channel-{channel_id}"
         self.sent: list[tuple[str, object]] = []
         self.messages: list[SimpleNamespace] = []
+        self.made = 0  # messages ever put here: an id is never given twice, whatever was deleted since
 
     def put(self, content: str, author: int = BOT, view=None) -> SimpleNamespace:
         """A message that is in the channel: the bot's own by default."""
-        message = SimpleNamespace(id=self.id * 1000 + len(self.messages) + len(self.sent) + 1, content=content,
+        self.made += 1
+        message = SimpleNamespace(id=self.id * 1000 + self.made, content=content,
                                   view=view, edits=[], channel=self, author=SimpleNamespace(id=author))
 
         async def edit(**fields):
@@ -73,7 +75,14 @@ class FakeChannel:
             yield message
 
     def get_partial_message(self, message_id):
-        return next((m for m in self.messages if m.id == message_id), None) or SimpleNamespace(id=message_id, delete=self.put("").delete)
+        """What discord.py gives for any id, even one that is gone: deleting it then fails with 404, as on Discord."""
+        async def delete():
+            message = next((m for m in self.messages if m.id == message_id), None)
+            if message is None:
+                raise refusal(404, "Unknown Message")
+            self.messages.remove(message)
+
+        return SimpleNamespace(id=message_id, delete=delete)
 
     def typing(self):
         class Typing:
@@ -943,7 +952,7 @@ async def test_a_notice_whose_thread_never_comes_is_posted_without_a_link_and_a_
 # ----------------------------------------------------------------------
 def pending_are(bot, monkeypatch, *ids: int):
     async def call(method, path, **options):
-        assert (method, path, options.get("params")) == ("GET", "/v1/approvals", {"status": "pending"})
+        assert (method, path, options.get("params")) == ("GET", "/v1/approvals", {"status": "pending", "limit": 500})
         return {"approvals": [{"id": number} for number in ids]}
 
     monkeypatch.setattr(bot.clara, "call", call)
@@ -1217,3 +1226,160 @@ async def test_a_pass_that_cannot_read_the_channel_deletes_nothing_and_is_tried_
     notification.history = history
     await bot.attempt("#notification", bot.sweep_notification)
     assert len(notification.messages) == 1 and "notification_swept" not in bot._state()
+
+
+async def test_a_button_answer_whose_card_cannot_be_deleted_at_least_loses_its_buttons(bot, monkeypatch):
+    await bot.show_approval({"id": 8, "level": "write", "summary": "Create a file", "reason": ""})
+    card = bot.asked[8]
+
+    async def refused():
+        raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), "down")
+
+    async def call(method, path, **options):
+        return {"status": "approved", "summary": "Create a file"}
+
+    async def defer():
+        pass
+
+    card.delete = refused
+    monkeypatch.setattr(bot.clara, "call", call)
+    await bot_module.ApprovalButton(8, "allow_once").callback(SimpleNamespace(
+        user=SimpleNamespace(id=OWNER), client=bot, response=SimpleNamespace(defer=defer), message=card))
+    assert card.edits == [{"view": None}] and 8 not in bot.asked
+
+
+async def test_the_parts_of_a_long_alert_are_remembered_even_if_a_later_one_fails(bot, monkeypatch):
+    alerts = bot.channels["alerts"]
+    send = alerts.send
+    posted = []
+
+    async def flaky(content=None, view=None, file=None):
+        if posted:
+            raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), "down")
+        posted.append(await send(content))
+        return posted[-1]
+
+    monkeypatch.setattr(alerts, "send", flaky)
+    with pytest.raises(discord.HTTPException):
+        await bot.deliver({"type": "alert", "title": "Long", "text": "word " * 600, "payload": {"key": "long"}})
+    assert bot.alert_messages() == {"long": [[alerts.id, posted[0].id]]}
+    await bot.deliver({"type": "alert_resolved", "payload": {"key": "long"}})
+    assert alerts.messages == []
+
+
+async def test_a_channel_whose_history_the_bot_may_not_read_is_never_counted_as_swept(bot, monkeypatch):
+    """Discord answers such a bot with an empty list, not an error: the one-time sweeps must wait for the right."""
+    async def ready():
+        pass
+
+    lacking = {name: ("x", ["read_message_history"]) for name in ("alerts", "notification")}
+    monkeypatch.setattr(bot, "lacking_rights", lambda: lacking)
+    monkeypatch.setattr(bot, "wait_until_ready", ready)
+    monkeypatch.setattr(bot, "sweep_approvals", lambda: asyncio.sleep(0, 0))
+    monkeypatch.setattr(bot_module, "TIDY_EVERY", 0.01)
+    bot.channels["alerts"].put("⚠️ **Disk**\nold")
+    bot.channels["notification"].put(run_line(111))
+    threads_are(bot, monkeypatch, alive=set())
+    task = asyncio.create_task(bot.tidy())
+    await asyncio.wait_for(bot.listed.wait(), 2)
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert "alerts_swept" not in bot._state() and "notification_swept" not in bot._state()
+    assert len(bot.channels["alerts"].messages) == 1 and len(bot.channels["notification"].messages) == 1
+    lacking.clear()  # the right is given: the next start does the whole job
+    assert await bot.sweep_notification() == 1 and bot._state()["notification_swept"] is True
+
+
+async def test_an_ended_alert_that_discord_would_not_delete_is_deleted_by_a_later_pass(bot, monkeypatch):
+    await bot.deliver({"type": "alert", "title": "Disk", "text": "full", "payload": {"key": "disk"}})
+    alerts = bot.channels["alerts"]
+    real = alerts.get_partial_message
+    down = [True]
+
+    def partial(message_id):
+        found = real(message_id)
+        delete = found.delete
+
+        async def maybe():
+            if down[0]:
+                raise discord.HTTPException(SimpleNamespace(status=500, reason="Server Error"), "down")
+            await delete()
+
+        return SimpleNamespace(id=message_id, delete=maybe)
+
+    monkeypatch.setattr(alerts, "get_partial_message", partial)
+    await bot.deliver({"type": "alert_resolved", "payload": {"key": "disk"}})  # Clara says it once
+    assert len(alerts.messages) == 1 and bot.alert_messages() == {} and len(bot.undeleted_alerts()) == 1
+    assert await bot.delete_undeleted_alerts() == 0 and len(bot.undeleted_alerts()) == 1  # still down: kept
+    down[0] = False
+    assert await bot.delete_undeleted_alerts() == 1
+    assert alerts.messages == [] and bot.undeleted_alerts() == []
+    assert await bot.delete_undeleted_alerts() == 0
+
+
+async def test_a_message_that_is_already_gone_or_whose_channel_is_unknown_is_not_tried_again(bot):
+    alerts = bot.channels["alerts"]
+    bot._save(alerts_undeleted=[[ALERTS, 12345], [555, 1]])  # no such message; a channel the routes no longer use
+    assert await bot.delete_undeleted_alerts() == 2 and bot.undeleted_alerts() == []
+    assert alerts.messages == []
+
+
+async def test_the_hourly_pass_deletes_what_an_ended_alert_left_behind(bot, monkeypatch):
+    async def ready():
+        pass
+
+    async def nothing():
+        return 0
+
+    monkeypatch.setattr(bot, "wait_until_ready", ready)
+    monkeypatch.setattr(bot, "sweep_approvals", nothing)
+    monkeypatch.setattr(bot, "sweep_notification", nothing)
+    monkeypatch.setattr(bot_module, "TIDY_EVERY", 0.01)
+    bot._save(alerts_swept=True)
+    old = bot.channels["alerts"].put("⚠️ **Disk**\nfull")
+    bot._save(alerts_undeleted=[[ALERTS, old.id]])
+    task = asyncio.create_task(bot.tidy())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert bot.channels["alerts"].messages == [] and bot.undeleted_alerts() == []
+
+
+async def test_a_slow_reading_of_alerts_does_not_hold_the_relay_back_and_is_finished_at_the_next_start(bot, monkeypatch):
+    alerts = bot.channels["alerts"]
+    for number in range(3):
+        alerts.put(f"⚠️ **Old {number}**")
+    release = asyncio.Event()
+
+    async def slow(limit=None):  # Discord answers the first page, then the rate limit holds the next ones
+        for message in list(reversed(alerts.messages))[:2]:
+            yield message
+        await release.wait()
+
+    async def ready():
+        pass
+
+    monkeypatch.setattr(alerts, "history", slow)
+    monkeypatch.setattr(bot, "wait_until_ready", ready)
+    monkeypatch.setattr(bot, "sweep_approvals", lambda: asyncio.sleep(0, 0))
+    monkeypatch.setattr(bot, "sweep_notification", lambda: asyncio.sleep(0, 0))
+    monkeypatch.setattr(bot_module, "LISTING_LIMIT", 0.05)
+    monkeypatch.setattr(bot_module, "TIDY_EVERY", 60)
+    task = asyncio.create_task(bot.tidy())
+    await asyncio.wait_for(bot.listed.wait(), 2)  # the limit, not the end of the reading, lets the relay go
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert left(alerts) == ["⚠️ **Old 0**"]  # the two newest were read, and cleaned
+    assert "alerts_swept" not in bot._state()  # the oldest one is for the next start
+
+
+async def test_a_forum_thread_found_alive_is_not_asked_about_again_for_a_while(bot, monkeypatch):
+    notification = bot.channels["notification"]
+    notification.put(run_line(222))
+    asked = threads_are(bot, monkeypatch, alive={222})
+    assert await bot.sweep_notification() == 0 and asked == [222]
+    assert await bot.sweep_notification() == 0 and asked == [222]  # the second pass trusts the first one
+    bot.alive[222] -= bot_module.THREAD_RECHECK + 1  # a long time later
+    assert await bot.sweep_notification() == 0 and asked == [222, 222]  # it is asked again
+    bot.alive[222] -= bot_module.THREAD_RECHECK + 1
+    threads_are(bot, monkeypatch, alive=set())  # and when Discord says it is gone, the line goes
+    assert await bot.sweep_notification() == 1 and 222 not in bot.alive and notification.messages == []

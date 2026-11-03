@@ -225,11 +225,11 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
     state file, `discord-state.json`, 10 messages and 100 keys at most). The event is published when the alert was
     active, and the first time each key is cleared in a server run, so an alert from before a restart that is fixed
     since is deleted too. The first time a bot with this feature starts, it deletes all its older messages in `#alerts`
-    (they are not tied to a key; an alert that still lasts is on the Admin page, and its next repeat is posted again).
+    (they are not tied to a key; an alert that still lasts is on the Admin page, and its next repeat is posted again); reading the channel takes 30 seconds at most, after which what was read is cleaned and the rest is done at the next start. A message Discord refuses to delete is remembered (100 at most) and deleted at the next hourly pass.
   - `#notification`: the line posted when a run starts, with the link of its forum thread, is deleted once the thread is
     gone (retention, a deleted conversation or forum). At start and then every hour the bot looks at its own lines
     there (the whole channel the first time, then the newest 200 messages), asks Discord for each linked thread, and
-    deletes the line only when Discord says the thread does not exist; any other answer keeps it. Reminders, schedule and
+    deletes the line only when Discord says the thread does not exist; any other answer keeps it. A thread found alive is not asked about again for 6 hours. Reminders, schedule and
     hook summaries, mail and update news are not touched.
   - The bot needs *Read Message History* in `#approval`, `#notification` and `#alerts` for this; the Admin page's Discord
     tab shows it when it is missing.
