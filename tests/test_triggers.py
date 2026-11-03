@@ -217,6 +217,9 @@ async def test_a_digest_is_shown_on_discord_as_five_origins_and_how_many_are_lef
     assert lines[:5] == [f"Billing <billing@acme.example>: Invoice {n}" for n in range(5)] and lines[5:] == ["+25 more"]
     stored = services.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'", (run["conversation"],))
     assert stored.count("<event ") == 25 and "Handle it." in stored  # the model's message, and the stored question, stay whole
+    # Two counts of two different things: Discord's is the events past the five origins it lists, the model's the events
+    # past the 25 it was given.
+    assert "[5 more events are not shown;" in stored and "5 more events are not shown" in str(llm.seen[-1]["messages"][-1]["content"])
 
 
 def test_the_origin_of_a_run_is_the_title_of_its_events_on_one_line_each():
@@ -228,7 +231,12 @@ def test_the_origin_of_a_run_is_the_title_of_its_events_on_one_line_each():
 
     assert shown_of([stored("repo #3 opened: Fix\n  the   thing")]) == "repo #3 opened: Fix the thing"
     assert shown_of([stored("")]) == "github github.pull_request"  # an event with no title is still named
-    assert shown_of([stored("a", 1), stored("b", 2)]) == "a\nb" and shown_of([stored("x", n) for n in range(6)]).endswith("\n+1 more")
+    assert shown_of([stored("a", 1), stored("b", 2)]) == "a\nb"
+    assert shown_of([stored("x", n) for n in range(5)]) == "x\nx\nx\nx\nx"  # five fill the message: nothing is left out, so no count
+    assert shown_of([stored("x", n) for n in range(6)]).endswith("\nx\n+1 more")
+    assert shown_of([stored(f"t{n}", n) for n in range(30)]).splitlines() == [f"t{n}" for n in range(5)] + ["+25 more"]
+    assert shown_of([stored("  \n ", 1)]) == "github github.pull_request"  # a title of blank space is no title
+    assert shown_of([stored("a [link](https://evil.example)\t**b**", 1)]) == "a [link](https://evil.example) **b**"  # one line, the words as written
 
 
 def test_events_and_runs_and_the_place_are_one_transaction(services):

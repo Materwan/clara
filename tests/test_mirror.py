@@ -3,8 +3,11 @@ and reports, the archive, the limits, and what Discord changes by itself (which 
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
+from clara.agent.turn import ChatRequest
 from clara.gate.approvals import ApprovalError
 from clara.memory.conversations import TurnRow
 from clara.mirror import text
@@ -228,6 +231,61 @@ def test_a_question_that_stores_a_shown_text_is_written_as_that_text_by_the_sync
     assert turn["user"]["text"] == "Billing: Invoice 42\n+3 more" and "📎" not in turn["user"]["text"]
     assert published[0]["text"] == turn["user"]["text"] and published[0]["digest"] == turn["user"]["digest"]
     assert services.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'", (conversation.id,)) == question
+
+
+def test_the_one_rule_for_what_a_question_shows():
+    """The stored text wins, as it is; a question with none (every one made before migration 0028, every chat's) shows its words
+    with its documents named; a text that is only blank space stores nothing."""
+    document = '<document name="x.md" type="text">\nbody\n</document>\nDo the task.'
+    assert text.question_text(document)[0] == "Do the task.\n📎 x.md"
+    assert text.question_shown("  Billing: Invoice 42\n+3 more ", document) == "Billing: Invoice 42\n+3 more"
+    assert text.question_shown("", document) == "Do the task.\n📎 x.md"
+    assert text.question_shown(" \n\t ", document) == "Do the task.\n📎 x.md"
+    assert text.question_shown('📎 y.md <document name="y.md" type="text">z</document>', "q") == '📎 y.md <document name="y.md" type="text">z</document>'
+
+
+def test_a_question_stored_with_no_shown_text_is_written_as_before(services):
+    """Threads already on Discord are not rewritten: the sync gives a question made before the column the text it always gave."""
+    question = '<document name="x.md" type="text">\nbody\n</document>\nDo the task.'
+    conversation = talk(services, question=question)
+    assert services.db.value("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user'", (conversation,)) == ""
+    (turn,) = services.mirror.stored_turns(conversation)
+    assert turn["user"]["text"] == "Do the task.\n📎 x.md"
+
+
+async def test_asking_the_first_message_of_a_run_again_shows_the_whole_message(services, llm):
+    """Pinned, not wanted: only the run itself knows the origin it stores. A question asked again or edited from the web is
+    a new question that stores none, so Discord writes the whole message for it, as it always did for every question."""
+    conversation = services.conversations.create("server", title="Run").id
+    message = "Do the task.\n\n<event>big data</event>"
+    llm.replies = ["First."]
+    await services.agent.answer(ChatRequest(message=message, client="server", conversation=conversation, shown="Billing: Invoice 42"))
+    (first,) = services.mirror.stored_turns(conversation)
+    assert first["user"]["text"] == "Billing: Invoice 42"
+    question = services.db.value("SELECT id FROM messages WHERE conversation_id = ? AND role = 'user'", (conversation,))
+    llm.replies = ["Second."]
+    await services.agent.answer(ChatRequest(message=message, client="web", conversation=conversation, fork_of=question))
+    (again,) = services.mirror.stored_turns(conversation)
+    assert again["reply"]["text"] == "Second." and again["user"]["text"] == message
+    shown = services.db.all("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id", (conversation,))
+    assert [row["shown"] for row in shown] == ["Billing: Invoice 42", ""]
+
+
+async def test_a_run_that_is_cut_short_is_written_as_its_origin_too(services, llm):
+    """A run stopped or failed stores its question by the second path (`_keep_interrupted`): it carries the text the same."""
+    conversation = services.conversations.create("server", title="Run").id
+    message = "Do the task.\n\n<event>big data</event>"
+    llm.replies = ["A long answer that will be cut somewhere in the middle of it."]
+    request = ChatRequest(message=message, client="server", conversation=conversation, shown="Billing: Invoice 42")
+    async with contextlib.aclosing(services.agent.turn(request)) as events:
+        async for event in events:
+            if event["type"] == "token":
+                break
+    stored = services.conversations.read_back(conversation)
+    assert stored[0]["content"] == message and "[This answer was interrupted" in stored[1]["content"]
+    assert services.db.value("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user'", (conversation,)) == "Billing: Invoice 42"
+    (turn,) = services.mirror.stored_turns(conversation)
+    assert turn["user"]["text"] == "Billing: Invoice 42"
 
 
 def test_a_turn_that_starts_in_a_conversation_with_no_thread_tells_the_bot_what_came_before(services, monkeypatch):

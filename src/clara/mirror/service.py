@@ -47,7 +47,7 @@ class Watch:
 
     def __init__(self, mirror: Mirror, question: str, ref: str, thread: str):
         self.mirror = mirror
-        self.question = question  # the question as stored (its documents named, not repeated)
+        self.question = question  # what the mirror writes for it (`text.question_shown`)
         self.ref = ref
         self.thread = thread  # a Discord thread the question was asked in, for a new conversation
         self.turn: _Turn | None = None
@@ -320,7 +320,7 @@ class Mirror:
         current: dict | None = None
         for row in rows:
             if row["role"] == "user":
-                body = text.shown_question(row["shown"]) or text.question_text(row["content"])[0]
+                body = text.question_shown(row["shown"], row["content"])
                 current = {
                     "key": row["turn_id"] or f"q{row['id']}",
                     "user": {"text": body, "ref": row["ref"]},
@@ -490,4 +490,4 @@ class Mirror:
     def watch(self, message: str, ref: str = "", thread: str = "", shown: str = "") -> Watch:
         """A turn of a question `message` (as it is stored), followed while it runs. `shown`, when the question carries one,
         is what is written for it (the same text `sync` gives)."""
-        return Watch(self, text.shown_question(shown) or text.question_text(message)[0], ref, thread)
+        return Watch(self, text.question_shown(shown, message), ref, thread)

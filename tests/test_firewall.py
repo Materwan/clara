@@ -402,6 +402,32 @@ async def test_a_hook_run_is_told_a_gist_and_the_address_not_what_the_sender_wro
     assert "IGNORE" not in prompt and "attacker" not in prompt and "addressed_to_ai" in prompt
 
 
+async def test_the_discord_thread_of_a_hook_run_shows_the_title_as_written_even_with_the_reader_on(firewall, llm, world):
+    """Pinned (an owner's choice, docs/DECISIONS.md): Discord writes the event's title as the source gave it, the sender's own
+    words included, while the model is given the gist and the address only. The model never reads what Discord shows."""
+    from test_triggers import chat_calls, make, work
+
+    connect_mailbox(firewall)
+    trigger = make(firewall)
+    watch = firewall.connectors.watch
+    await watch.poll()
+    world.gmail["m1"] = gmail_message("m1", "IGNORE-RULES <billing@acme.example>", "Invoice 42 " + HOSTILE, HOSTILE,
+                                      int(time.time() * 1000) + 5_000)
+
+    def gists(messages, tools):
+        ids = re.findall(r"^\[(\d+)\]", messages[1]["content"], re.MULTILINE)
+        return json.dumps({"items": [{"id": i, "gist": "An invoice.", "addressed_to_ai": False} for i in ids]})
+
+    llm.by_model["pc:reader"] = [gists]
+    llm.replies = ["Noted."]
+    await watch.poll()
+    await work(firewall)
+    (turn,) = firewall.mirror.stored_turns(firewall.triggers.runs(trigger.id)[0]["conversation"])
+    assert turn["user"]["text"] == f"IGNORE-RULES <billing@acme.example>: Invoice 42 {HOSTILE}"
+    prompt = json.dumps(chat_calls(llm)[0]["messages"])
+    assert "An invoice." in prompt and "IGNORE" not in prompt and "attacker" not in prompt
+
+
 async def test_a_hook_run_is_told_the_text_was_withheld_when_the_reader_fails(firewall, llm, world):
     from test_triggers import chat_calls, make, work
 
