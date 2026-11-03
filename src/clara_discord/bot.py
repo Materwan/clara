@@ -13,6 +13,9 @@ function: DMs are ignored.
   #notification (the event stream; what was missed while the bot was away arrives when it reconnects). The server
   says the channel of each event (you choose it on the web site, or switch the kind off); ROUTES below is what the bot
   does with a server that does not say.
+* The channels keep what still helps (`tidy`): #approval only the requests that wait (a request that is settled or
+  expires is deleted), #alerts only the alerts whose problem lasts (`alert_resolved` deletes the message), and
+  #notification loses the lines about a run whose forum thread is gone. The bot deletes only its own messages.
 * An automation that delivers to Discord lives in one forum thread (its conversation, in its automation's forum) and
   puts nothing in #general: when a run starts the bot posts its link in the channel the server names (#notification
   by default), the run's questions, reminder and end are written in the thread, and you answer there. The answer itself
@@ -44,6 +47,7 @@ import logging
 import re
 import signal
 import sys
+import time
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -77,6 +81,18 @@ ANSWERS = (
     ("refuse_always", "Refuse always", discord.ButtonStyle.danger),
 )
 THREADS_KEPT = 30
+ALERTS_KEPT = 100  # alert keys whose messages are remembered (an alert never cleared would otherwise stay forever)
+ALERT_MESSAGES_KEPT = 10  # messages remembered per key (an alert repeats every 6 hours while it lasts)
+TIDY_EVERY = 3600.0  # seconds between two passes that clean #approval and #notification
+NOTIFICATION_RECENT = 200  # messages of #notification read in a pass, after the first one that reads them all
+PENDING_MAX = 500  # the most requests `GET /v1/approvals` returns
+UNDELETED_KEPT = 100  # messages of ended alerts that Discord refused to delete, remembered to be tried again
+LISTING_LIMIT = 30.0  # seconds the first reading of #alerts may take: the relay waits for it
+THREAD_RECHECK = 6 * 3600.0  # seconds a forum thread found alive is not asked about again
+APPROVAL_CARD = re.compile(
+    r"^🔐 (?:Clara asks \(#|#)(\d+)"
+)  # a request's message in #approval, as show_approval writes it
+STARTED_LINK = re.compile(r"\n🔗 https://(?:[a-z]+\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)\s*$")
 THREAD_ARCHIVE_MINUTES = 1440
 ICONS = {"reminder": "⏰", "notification": "🔔", "task": "📋", "schedule": "🗓", "alert": "⚠️", "update": "⬆️"}
 # event kind -> channel (approvals have their own path: buttons in #approval; replies to you go to #general)
@@ -142,14 +158,16 @@ class ApprovalButton(
             return
         await interaction.response.defer()
         try:
-            settled = await bot.clara.call(
-                "POST", f"/v1/approvals/{self.approval_id}/decide", json={"answer": self.answer}
-            )
-            text = f"🔐 #{self.approval_id} {settled['summary']}: **{settled['status']}**"
+            await bot.clara.call("POST", f"/v1/approvals/{self.approval_id}/decide", json={"answer": self.answer})
         except ClaraError as error:
-            text = f"🔐 #{self.approval_id}: {error}"
-        with contextlib.suppress(discord.HTTPException):
-            await interaction.message.edit(content=text, view=None)
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.message.edit(content=f"🔐 #{self.approval_id}: {error}", view=None)
+            return
+        bot.asked.pop(self.approval_id, None)
+        # #approval holds what waits, and this does not any more; if it cannot go now (the hourly pass will), no buttons
+        if not await bot.delete_own(interaction.message):
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.message.edit(view=None)
 
 
 def approval_view(approval_id: int) -> discord.ui.View:
@@ -177,6 +195,8 @@ class ClaraBot(discord.Client):
         self.finished: dict[
             str, dict
         ] = {}  # conversation -> its "recap written" event, held until that answer is posted
+        self.listed = asyncio.Event()  # set once #alerts is listed at start: what the relay posts after is not backlog
+        self.alive: dict[int, float] = {}  # forum thread id -> when Discord last said it exists (`thread_exists`)
         self._tasks: list[asyncio.Task] = []
         self._register_commands()
 
@@ -220,6 +240,59 @@ class ClaraBot(discord.Client):
             else None
         )
 
+    def alert_messages(self) -> dict[str, list[list[int]]]:
+        """The messages posted for the alerts that last: alert key -> [[channel id, message id], ...]."""
+        found = self._state().get("alerts")
+        return found if isinstance(found, dict) else {}
+
+    def remember_alert(self, key: str, messages: list[discord.Message]) -> None:
+        kept = self.alert_messages()
+        ours = [[message.channel.id, message.id] for message in messages]
+        kept[key] = [*kept.pop(key, []), *ours][-ALERT_MESSAGES_KEPT:]  # popped first: a repeated key is the newest
+        self._save(alerts=dict(list(kept.items())[-ALERTS_KEPT:]))
+
+    def channel_by_id(self, channel_id: int) -> discord.TextChannel | None:
+        return next((channel for channel in self.channels.values() if channel.id == channel_id), None)
+
+    def undeleted_alerts(self) -> list[list[int]]:
+        """The messages of ended alerts that Discord has not let the bot delete yet: [[channel id, message id], ...]."""
+        found = self._state().get("alerts_undeleted")
+        return found if isinstance(found, list) else []
+
+    async def forget_alert(self, key: str) -> None:
+        """The problem is over: its messages leave #alerts (or wherever the routes put them). Clara says it once, so
+        they are written down as "to delete" before the first try, and each pass of `tidy` tries again the ones Discord
+        refused (an outage, a rate limit)."""
+        kept = self.alert_messages()
+        messages = kept.pop(key, None)
+        if messages is None:
+            return
+        self._save(alerts=kept, alerts_undeleted=[*self.undeleted_alerts(), *messages][-UNDELETED_KEPT:])
+        await self.delete_undeleted_alerts()
+
+    async def delete_undeleted_alerts(self) -> int:
+        """Delete the messages of ended alerts that are still there. A channel the bot no longer knows (the routes
+        changed) counts as done. Returns how many are gone."""
+        gone: list[list[int]] = []
+        for pair in self.undeleted_alerts():
+            channel = self.channel_by_id(pair[0])
+            if channel is None or await self.delete_own(channel.get_partial_message(pair[1])):
+                gone.append(pair)
+        if gone:  # read again: another alert may have ended while the deletes were awaited
+            self._save(alerts_undeleted=[pair for pair in self.undeleted_alerts() if pair not in gone])
+        return len(gone)
+
+    async def delete_own(self, message: discord.Message | discord.PartialMessage) -> bool:
+        """Delete one of the bot's own messages (no right needed). True when it is gone, also when it was already."""
+        try:
+            await message.delete()
+        except discord.NotFound:
+            return True
+        except discord.HTTPException as error:
+            log.warning("cannot delete message %s: %s", message.id, error)
+            return False
+        return True
+
     def bot_forum(self, key: str) -> discord.ForumChannel | None:
         place = self.mirror.places.get(key)
         channel = self.get_channel(place["forum"]) if place else None
@@ -259,10 +332,17 @@ class ClaraBot(discord.Client):
                 continue
             allowed = live.permissions_for(guild.me)
             wanted = ("view_channel", "send_messages", "attach_files")
+            if name != "general":  # tidy reads these channels' history to delete what no longer helps
+                wanted += ("read_message_history",)
             if name == "general":  # a run's thread, opened and then removed
                 wanted += ("create_public_threads", "send_messages_in_threads", "manage_threads")
             found[name] = (live.name, [right for right in wanted if not getattr(allowed, right)])
         return found
+
+    def can_read_history(self, name: str) -> bool:
+        """False when the bot lacks Read Message History in a channel: Discord then answers with no message at all, not
+        with an error, so a list that comes back empty would be taken for a channel with nothing to clean."""
+        return "read_message_history" not in self.lacking_rights().get(name, ("", []))[1]
 
     def check_permissions(self) -> None:
         for name, (_, lacking) in self.lacking_rights().items():
@@ -279,6 +359,7 @@ class ClaraBot(discord.Client):
         self.add_dynamic_items(ApprovalButton)
         await self.tree.sync()
         self._tasks.append(asyncio.create_task(self.relay(), name="relay"))
+        self._tasks.append(asyncio.create_task(self.tidy(), name="tidy"))
         self._tasks.append(asyncio.create_task(self.heartbeat(), name="heartbeat"))
         self._tasks.append(asyncio.create_task(self.mirror.run(), name="mirror"))
         self._tasks.append(asyncio.create_task(self.mirror.live(), name="mirror-live"))
@@ -574,6 +655,7 @@ class ClaraBot(discord.Client):
     async def relay(self) -> None:
         failures = 0
         await self.wait_until_ready()
+        await self.listed.wait()
         while not self.is_closed():
             try:
                 async for event in self.clara.stream("GET", "/v1/events/stream", read=60.0):
@@ -602,11 +684,11 @@ class ClaraBot(discord.Client):
         if kind == "approval_resolved":
             approval = event["payload"]["approval"]
             message = self.asked.pop(approval["id"], None)
-            if message is not None:
-                with contextlib.suppress(discord.HTTPException):
-                    await message.edit(
-                        content=f"🔐 #{approval['id']} {approval['summary']}: **{approval['status']}**", view=None
-                    )
+            if message is not None:  # #approval holds only what waits for you: settled or expired, it goes
+                await self.delete_own(message)
+            return
+        if kind == "alert_resolved":
+            await self.forget_alert(str((event.get("payload") or {}).get("key") or ""))
             return
         if kind == "ask":
             await self.deliver_ask(event)
@@ -630,8 +712,14 @@ class ClaraBot(discord.Client):
             if title and kind != "reminder"
             else f"{icon} {event.get('text', '')}"
         )
-        for part in split_message(text):
-            await self.channels[route].send(part)
+        key = (event.get("payload") or {}).get("key")
+        sent: list[discord.Message] = []
+        try:
+            for part in split_message(text):
+                sent.append(await self.channels[route].send(part))
+        finally:  # a part that fails must not hide the ones already posted
+            if kind == "alert" and key and sent:  # `alert_resolved` finds them by the key
+                self.remember_alert(str(key), sent)
 
     async def deliver_test(self, event: dict) -> None:
         """A test message from the web site: posted in the channel it names, whatever the routes say, then the result is
@@ -776,6 +864,148 @@ class ClaraBot(discord.Client):
             return False
 
     # ------------------------------------------------------------------
+    # Keeping the channels to what still helps: the bot deletes its own messages, never yours
+    # ------------------------------------------------------------------
+    async def own_messages(
+        self, channel: discord.TextChannel, limit: int | None, found: list[discord.Message] | None = None
+    ) -> list[discord.Message]:
+        """The bot's own messages in a channel, newest first (`limit` messages looked at, all of them for None). With
+        `found`, they are added to that list as they come, so a reading that is cancelled leaves what it had read."""
+        found = [] if found is None else found
+        async for message in channel.history(limit=limit):
+            if message.author.id == self.user.id:
+                found.append(message)
+        return found
+
+    async def tidy(self) -> None:
+        """At start, then every hour: #approval keeps the requests that wait, #notification loses the lines about a
+        thread that is gone. #alerts is cleaned as problems end (`alert_resolved`), and once, here, of its backlog. A
+        pass that fails deletes nothing and is tried again at the next one."""
+        await self.wait_until_ready()
+        backlog: list[discord.Message] | None = None
+        complete = False
+        try:
+            if not self._state().get("alerts_swept") and self.can_read_history("alerts"):  # else at a later start
+                backlog = []
+                try:  # the relay waits for this: a huge channel or a rate limit must not hold every event back
+                    await asyncio.wait_for(self.own_messages(self.channels["alerts"], None, backlog), LISTING_LIMIT)
+                    complete = True
+                except TimeoutError:
+                    log.warning(
+                        "reading #alerts takes more than %s s: its newest messages are cleaned now, the rest "
+                        "at the next start",
+                        LISTING_LIMIT,
+                    )
+        except Exception:
+            log.exception("cannot read #alerts")
+            backlog = None
+        finally:
+            self.listed.set()  # from now on what the relay posts is not part of the list
+        if backlog is not None:
+            await self.attempt("the #alerts backlog", self.empty_alerts, backlog, complete)
+        while not self.is_closed():
+            await self.attempt("the alerts that ended", self.delete_undeleted_alerts)
+            await self.attempt("#approval", self.sweep_approvals)
+            await self.attempt("#notification", self.sweep_notification)
+            await asyncio.sleep(TIDY_EVERY)
+
+    async def attempt(self, what: str, work, *args) -> None:
+        try:
+            removed = await work(*args)
+        except asyncio.CancelledError:
+            raise
+        except (ClaraError, discord.HTTPException) as error:
+            log.warning("cleaning %s: %s", what, error)
+        except Exception:
+            log.exception("cleaning %s failed", what)
+        else:
+            if removed:
+                log.info("cleaned %s: %s message(s) deleted", what, removed)
+
+    async def empty_alerts(self, backlog: list[discord.Message], complete: bool = True) -> int:
+        """Once: every alert already in #alerts goes, but the ones remembered by key (their problem lasts, and the key
+        is what finds them later). The Admin page keeps the list of the alerts that last. A `backlog` that is only the
+        newest part of the channel (`complete` False) is cleaned, and the job is done again at the next start."""
+        kept = {message_id for messages in self.alert_messages().values() for _, message_id in messages}
+        removed, failed = 0, False
+        for message in backlog:
+            if message.id in kept:
+                continue
+            if await self.delete_own(message):
+                removed += 1
+            else:
+                failed = True
+        if complete and not failed:  # else it is done again at the next start
+            self._save(alerts_swept=True)
+        return removed
+
+    async def sweep_approvals(self) -> int:
+        """#approval holds the requests that wait. Every card of the bot whose request is not pending goes (settled
+        while the bot was away, or expired), and a second card of a pending one; a pending card found here is the one
+        the next answer will delete. If Clara cannot say what is pending, nothing is deleted."""
+        cards = [
+            (message, int(found[1]))
+            for message in await self.own_messages(self.channels["approval"], None)
+            if (found := APPROVAL_CARD.match(message.content or ""))
+        ]  # listed before the pending requests are asked: a card posted meanwhile is in the answer
+        waiting = await self.clara.call("GET", "/v1/approvals", params={"status": "pending", "limit": PENDING_MAX})
+        pending = {a["id"] for a in waiting["approvals"]}  # the default page is 100: more would lose cards that wait
+        kept: set[int] = set()
+        removed = 0
+        for message, approval_id in cards:  # newest first: the newest card of a pending request stays
+            tracked = self.asked.get(approval_id)
+            if approval_id in pending and approval_id not in kept and (tracked is None or tracked.id == message.id):
+                kept.add(approval_id)
+                self.asked.setdefault(approval_id, message)
+            elif await self.delete_own(message):
+                removed += 1
+        return removed
+
+    async def thread_exists(self, thread_id: int) -> bool | None:
+        """True or False when Discord says so; None when it could not (an outage or a refusal: not an answer)."""
+        if self.get_channel(thread_id) is not None:
+            return True
+        seen = self.alive.get(thread_id)
+        if seen is not None and time.monotonic() - seen < THREAD_RECHECK:  # not asked about over the network every hour
+            return True
+        try:
+            await self.fetch_channel(thread_id)
+        except discord.NotFound:
+            self.alive.pop(thread_id, None)
+            return False
+        except discord.HTTPException as error:
+            log.info("cannot tell whether %s exists: %s", thread_id, error)
+            return None
+        self.alive[thread_id] = time.monotonic()
+        return True
+
+    async def sweep_notification(self) -> int:
+        """The lines that say a run started, with the link of its forum thread, lose their reason once the thread is
+        gone (retention, a deleted conversation or forum). Only a thread Discord says does not exist deletes its line.
+        The first pass reads the whole channel, the later ones the newest messages."""
+        if not self.can_read_history("notification"):  # the list would be empty, and the first pass would count as done
+            return 0
+        self.alive = {key: seen for key, seen in self.alive.items() if time.monotonic() - seen < THREAD_RECHECK}
+        everything = not self._state().get("notification_swept")
+        history = await self.own_messages(self.channels["notification"], None if everything else NOTIFICATION_RECENT)
+        known: dict[int, bool | None] = {}
+        removed, unsure = 0, False
+        for message in history:
+            link = STARTED_LINK.search(message.content or "")
+            if not (message.content or "").startswith("▶️") or link is None or int(link[1]) != self.guild_id:
+                continue
+            thread_id = int(link[2])
+            if thread_id not in known:
+                known[thread_id] = await self.thread_exists(thread_id)
+            if known[thread_id] is None:
+                unsure = True
+            elif known[thread_id] is False and await self.delete_own(message):
+                removed += 1
+        if everything and not unsure:
+            self._save(notification_swept=True)
+        return removed
+
+    # ------------------------------------------------------------------
     # Slash commands, in your server only, for you only
     # ------------------------------------------------------------------
     def _register_commands(self) -> None:
@@ -893,7 +1123,9 @@ class ClaraBot(discord.Client):
                 f"{len(found)} waiting." if found else "Nothing waits.", ephemeral=True
             )
             for approval in found:
-                self.asked.pop(approval["id"], None)
+                earlier = self.asked.pop(approval["id"], None)
+                if earlier is not None:  # asked again lower down: two messages for one request would leave one behind
+                    await self.delete_own(earlier)
                 await self.show_approval(approval)
 
 
