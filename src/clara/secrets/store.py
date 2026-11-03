@@ -53,17 +53,20 @@ KNOWN_SECRETS: dict[str, str] = {
     "google_refresh_token": "Google refresh token (set by the Drive connection, not by hand)",
     "google_picker_api_key": "Google API key for the Drive Picker",
     "gmail_refresh_token": "Gmail refresh token (set by the Gmail connection, not by hand)",
+    "moodle_token": "Moodle token (set by the Moodle sign-in, not by hand)",
+    "auriga_refresh_token": "Auriga refresh token (set by the Auriga sign-in, not by hand)",
     "vault_git_token": "Token to push the Obsidian vault over HTTPS",
     "restic_password": "Password of the restic repository for remote backups",
     "release_token": "Optional GitHub token for release downloads (public repositories need none)",
 }
 
 # Set by a connection flow after you confirm the account, never by hand (an unconfirmed account must not be attachable)
-CONNECTION_TOKENS = frozenset({"google_refresh_token", "gmail_refresh_token"})
+CONNECTION_TOKENS = frozenset({"google_refresh_token", "gmail_refresh_token", "moodle_token", "auriga_refresh_token"})
 
 _GITHUB_TOKENS = ("GitHub", "Create a fine-grained token", "https://github.com/settings/personal-access-tokens/new")
 _GOOGLE_CREDENTIALS = ("Google", "Google Cloud credentials", "https://console.cloud.google.com/apis/credentials")
 _CONNECTIONS = ("Google", "Connect it on the Connections page", "#/connections")
+_SCHOOL = ("Moodle and Auriga", "Sign in on the Connections page", "#/connections")
 
 # Where each secret comes from, in the order the Admin page shows them: the group it is listed under, and the page of its
 # provider where its value is made (a label, and a fixed address). An address that starts with "#/" is a page of this site.
@@ -81,6 +84,8 @@ SECRET_SOURCES: dict[str, tuple[str, str, str]] = {
     "google_picker_api_key": _GOOGLE_CREDENTIALS,
     "google_refresh_token": _CONNECTIONS,
     "gmail_refresh_token": _CONNECTIONS,
+    "moodle_token": _SCHOOL,
+    "auriga_refresh_token": _SCHOOL,
     "vault_git_token": ("Vault and backups", "Create a fine-grained token on GitHub", _GITHUB_TOKENS[2]),
     "restic_password": (
         "Vault and backups",

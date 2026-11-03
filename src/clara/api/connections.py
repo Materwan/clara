@@ -16,11 +16,16 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
+from ..connectors.auriga import AurigaError
+from ..connectors.auriga import authorize_url as auriga_authorize_url
+from ..connectors.auriga import sign_in as auriga_sign_in
 from ..connectors.drive import FOLDER, DriveError, authorize_url, email_of, pkce
 from ..connectors.github import REPO, GitHub, GitHubError
 from ..connectors.gmail import Gmail
 from ..connectors.gmail import authorize_url as gmail_authorize_url
 from ..connectors.mail import MailError
+from ..connectors.moodle import MoodleError, launch_url
+from ..connectors.moodle import sign_in as moodle_sign_in
 from .common import ApiError, caller, services
 
 router = APIRouter(prefix="/v1/connections", tags=["connections"])
@@ -69,11 +74,22 @@ def status(request: Request) -> dict:
             "files": [r.describe() for r in s.connections.resources() if r.kind.startswith("drive")],
         },
         "gmail": _mailbox_state(s, connectors, "gmail", connectors.google_auth() is not None),
+        "moodle": _school_state(s, connectors, "moodle"),
+        "auriga": _school_state(s, connectors, "auriga"),
         "mail": {
             "notify": s.runtime.get("mail_notify"),
             "senders": s.runtime.get("mail_notify_senders"),
             "poll_seconds": s.settings.mail_poll_seconds,
         },
+    }
+
+
+def _school_state(s, connectors, site: str) -> dict:
+    found = s.connections.get(site)
+    return {
+        "connected": connectors.school_state(site) != "off",
+        "account": found["account"] if found else "",
+        "status": found["status"] if found else "",
     }
 
 
@@ -374,3 +390,78 @@ async def mail_disconnect(mailbox: Mailbox, request: Request) -> dict:
     connectors.watch.forget(mailbox)
     s.alerts.clear(mailbox)
     return {"connected": False, "revoked": revoked}
+
+
+# ----------------------------------------------------------------------
+# Moodle and Auriga (EPITA): the owner signs in once in a browser and pastes back what the site gave
+# ----------------------------------------------------------------------
+class MoodleLink(BaseModel):
+    link: str = Field(min_length=10, max_length=2000)
+
+
+@router.post("/moodle/start")
+def moodle_start(request: Request) -> dict:
+    """The page to open, signed in to Moodle: it answers with the link `moodlemobile://token=…` to paste back."""
+    _connectors(request)
+    return {"url": launch_url()}
+
+
+@router.put("/moodle")
+async def moodle_connect(body: MoodleLink, request: Request) -> dict:
+    """Read the token out of the pasted link, and keep it only if Moodle accepts it."""
+    _, connectors = _connectors(request)
+    try:
+        token, name = await moodle_sign_in(body.link)
+    except MoodleError as error:
+        raise ApiError(422, str(error)) from None
+    connectors.school_connect("moodle", token, name)
+    return {"account": name}
+
+
+@router.delete("/moodle")
+def moodle_disconnect(request: Request) -> dict:
+    _, connectors = _connectors(request)
+    connectors.school_disconnect("moodle")
+    return {"connected": False}
+
+
+@router.post("/auriga/start")
+def auriga_start(request: Request) -> dict:
+    """The sign-in page to open. It sends the browser to a page of Auriga that shows nothing; the address of that page is
+    pasted back (the sign-in belongs to this browser session)."""
+    _, connectors = _connectors(request)
+    who = caller(request)
+    if who.web_session is None:
+        raise ApiError(409, "Connect Auriga from the web site: the sign-in is tied to your browser.")
+    verifier, challenge = pkce()
+    state = connectors.new_flow(who.web_session, verifier, "auriga")
+    return {"url": auriga_authorize_url(state, challenge), "state": state}
+
+
+class AurigaAddress(BaseModel):
+    state: str = Field(min_length=10, max_length=100)
+    address: str = Field(min_length=10, max_length=4000)
+
+
+@router.post("/auriga/finish")
+async def auriga_finish(body: AurigaAddress, request: Request) -> dict:
+    """Swap the pasted code for tokens, and keep them only if Auriga's API answers with them."""
+    _, connectors = _connectors(request)
+    try:
+        flow = connectors.flow(body.state, caller(request).web_session, "auriga")
+    except ValueError as error:
+        raise ApiError(409, str(error)) from None
+    try:
+        refresh, account, kept = await auriga_sign_in(body.address, body.state, flow.verifier)
+    except AurigaError as error:
+        raise ApiError(422, str(error)) from None
+    connectors.flows.pop(body.state, None)
+    connectors.school_connect("auriga", refresh, account)
+    return {"account": account, "lasting": kept}
+
+
+@router.delete("/auriga")
+def auriga_disconnect(request: Request) -> dict:
+    _, connectors = _connectors(request)
+    connectors.school_disconnect("auriga")
+    return {"connected": False}

@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .auth import APPROVALS, CLIENTS, TokenError, TokenInfo
+from .connectors.school import LABELS as SCHOOL_LABELS
+from .connectors.school import SECRETS as SCHOOL_SECRETS
+from .connectors.school import SITES as SCHOOL_SITES
 from .gate import ANSWERS, AlreadyAnswered, ApprovalError, LevelError, RuleError
 from .gate.levels import WHOLE
 from .llm import NoModel, ProviderError, split_ref
@@ -172,7 +175,8 @@ def _tokens(s: Services, args: list[str], token: TokenInfo) -> str:
     )
 
 
-ALERT_OF_SECRET = {"brave_api_key": "brave"}  # an alert that is over once its secret is replaced or removed
+# an alert that is over once its secret is replaced or removed (the key of a school site's alert is the site)
+ALERT_OF_SECRET = {"brave_api_key": "brave", **{secret: site for site, secret in SCHOOL_SECRETS.items()}}
 
 
 def secret_changed(s: Services, name: str) -> None:
@@ -180,6 +184,8 @@ def secret_changed(s: Services, name: str) -> None:
     s.providers.forget_backends()
     if name in ALERT_OF_SECRET:
         s.alerts.clear(ALERT_OF_SECRET[name])
+        if name in SCHOOL_SECRETS.values() and s.secrets.has(name) and s.connections is not None:
+            s.connections.mark(ALERT_OF_SECRET[name], "ok")  # a new token to try (no-op without a connection)
 
 
 def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
@@ -201,6 +207,28 @@ def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
         secret_changed(s, args[1])
         return f"{args[1]}: set"
     return "Usage: /secrets [list] | set <name> <value> | unset <name>   (clara-admin asks for the value hidden)"
+
+
+def _school(s: Services, args: list[str], token: TokenInfo) -> str:
+    if s.connectors is None:
+        return "Moodle and Auriga are not available."
+    if args and args[0] == "disconnect" and len(args) == 2 and args[1] in SCHOOL_SITES:
+        forgotten = s.connectors.school_disconnect(args[1])
+        return f"{SCHOOL_LABELS[args[1]]}: {'disconnected, its token forgotten' if forgotten else 'was not connected'}"
+    if args and args[0] != "status":
+        sites = "|".join(SCHOOL_SITES)
+        return f"Usage: /school [status] | disconnect <{sites}>   (sign in on the Connections page, or `clara <{sites}> connect`)"
+    lines = []
+    for site in SCHOOL_SITES:
+        state = s.connectors.school_state(site)
+        found = s.connections.get(site) or {}
+        lines.append(
+            f"{SCHOOL_LABELS[site]:<8} "
+            + {"ok": f"connected as {found.get('account') or '?'}", "off": "not connected"}.get(
+                state, f"must be signed in again (was {found.get('account') or '?'})"
+            )
+        )
+    return "\n".join(lines)
 
 
 def _rules(s: Services, args: list[str], token: TokenInfo) -> str:
@@ -601,6 +629,12 @@ COMMANDS: list[Command] = [
         "tokens", "/tokens [list] | create | revoke | approvals", "Client tokens (revoking works at once).", _tokens
     ),
     Command("secrets", "/secrets [list] | set <name> <value> | unset <name>", "The encrypted secrets store.", _secrets),
+    Command(
+        "school",
+        "/school [status] | disconnect <moodle|auriga>",
+        "Moodle and Auriga: who is connected, or forget a site's token.",
+        _school,
+    ),
     Command("rules", "/rules [list] | add | del | on | off | test", "The rule gate.", _rules),
     Command("tainted", "/tainted [on|off]", "The tainted-turn rule.", _tainted),
     Command(

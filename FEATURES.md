@@ -124,6 +124,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/upkeep [<ref> \| none]` | The model of titles and summaries |
 | `/tokens [list] \| create \| revoke \| approvals` | Client tokens (revoking works at once) |
 | `/secrets [list] \| set <name> <value> \| unset <name>` | The encrypted secrets store |
+| `/school [status] \| disconnect <moodle\|auriga>` | Moodle and Auriga: who is connected and whether a sign-in lapsed, or forget a site's token (signing in is the Connections page or `clara moodle connect`, `clara auriga connect`) |
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
 | `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
@@ -310,7 +311,9 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   (on by default), **Second brain** (the vault open), **Mail** (your Gmail: search, read, draft, send, labels, the read mark and the Trash;
   off until you switch it on, and offered only with a mailbox connected), **GitHub** (the five `github_*` tools: look at the
   repositories you added, commit, branch, pull requests and issues; off until you switch it on, and offered only with a token and
-  a repository set; a change asks as before, see section 9), **QCM** (`qcm`: the quiz tool; chats only, off until you
+  a repository set; a change asks as before, see section 9), **Moodle/Auriga** (your EPITA calendar, grades, Moodle courses and
+  documents, read only; off until you switch it on, and offered only with Moodle or Auriga connected, for chats and for schedules),
+  **QCM** (`qcm`: the quiz tool; chats only, off until you
   switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
   schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
@@ -710,13 +713,38 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   backlog goes on at the next poll, from where this one stopped); the place only moves once a poll's messages were handled,
   so an error half way repeats the poll instead of skipping anything.
   This loop is not counted by the systemd watchdog.
+- **Moodle and Auriga (EPITA), read only:** a special tool (pack **Moodle/Auriga**), not a service of the Connections page's rules: it is
+  switched on per conversation, like Mail, and is offered in a chat and in the packs of a schedule. Each site is connected once by
+  signing in in a browser and pasting back what the site gave (the Connections page, or `clara moodle connect` and `clara auriga connect`).
+  **Moodle** has no password form (the only way in is EPITA's « Forge ID »), so the sign-in is the one of Moodle's mobile app: the page the
+  command or the card gives, opened signed in, shows a link `moodlemobile://token=…`; the pasted link holds the token, which Clara keeps
+  (`moodle_token`) only if Moodle accepts it (`core_webservice_get_site_info`), and the private access key the link or the site may carry is
+  never kept. Moodle has no renewal: when the token lapses (`invalidtoken`) you sign in again. The token has all your rights on Moodle and
+  Moodle cannot make one read-only, so Clara calls only seven read functions (`core_webservice_get_site_info`, `core_enrol_get_users_courses`,
+  `core_course_get_enrolled_courses_by_timeline_classification`, `core_course_get_contents`, `core_calendar_get_action_events_by_timesort`,
+  `mod_quiz_get_quizzes_by_courses`, `gradereport_user_get_grade_items`) and nothing else, and sends it only to `moodle.epita.fr` (a redirect
+  is not followed). **Auriga** is signed in as its own page does, with Keycloak (client `np-front`, authorization code with PKCE,
+  scope `openid profile email offline_access`, redirect `https://auriga.epita.fr/clara-callback`, a blank page of the site whose address you
+  paste back): Clara keeps the refresh token (`auriga_refresh_token`), renews the 60-second access token herself, and keeps each new refresh
+  token Keycloak gives. With `offline_access` the token lasts until it has been idle for a month; if Keycloak gives a session token only, the
+  sign-in says so and ends with the Keycloak session. A site whose sign-in is refused is marked « sign in again » on the Connections page, raises
+  its alert (`moodle` or `auriga`), is not asked again, and the tools say how to sign in again; the alert is over when the site works again.
+  **Reading these sites does not taint the turn** (the owner's choice, unlike Mail, GitHub and Drive): their text is data in the answers, with no
+  quarantined reader, so a course page or a document that carries sentences meant for an AI is read as it is. The school calendar is Auriga's
+  planning (classes, tutorials, exams, with room and teacher) and Moodle's dates (assignments and activities to complete, from the Timeline; quizzes
+  opening and closing, from the quizzes of the courses in progress, since this Moodle's calendar has no quiz event), for a period of 92 days at most
+  (7 by default); the grades are Auriga's two saved queries of the page (« Mes notes (synthèse) » and « Mes notes (éval) », fetched and posted back,
+  for a school year such as `2627`) or Moodle's grade items of one course; a Moodle document is saved to the workspace, never over an existing
+  file, with a text copy beside it for a PDF or a Word file (`<name>.pdf.txt`, which `ws_read` reads), at most `CLARA_WORKSPACE_MAX_FILE` or 60 MB,
+  and counted as it arrives. Nothing is written to either site: no submission, no message, no calendar entry. A local-only conversation is never
+  offered these tools.
 - **Content leaving the machine:** a call that would send text looking like a secret to GitHub, Drive, the vault's
   remote, a draft, an email or a networked script is raised to `ask`, naming the kind of secret found.
 
 ## 9. The rule gate
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
-(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
+(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `school:moodle`, `school:auriga`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`, `deferred`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change rules, and no tool answers a request.
 
@@ -791,6 +819,8 @@ threshold), so nothing becomes more permissive. A built-in level is found again 
 | `mail_trash`: mail trash: move a message to the Trash (never emptied) | 3 | 4 |
 | `mail_mark`: mail mark: take the unread mark off a message (nothing else changes) | 3 | 4 |
 | `mail_label_delete`: mail label delete: delete one of your labels (its messages stay) | 4 | 5 |
+| `school_read`: Moodle and Auriga read: your courses, calendar, grades and the files of a course | 2 | 2 |
+| `school_save`: Moodle save: a course document written to the workspace (with a text copy) | 2 | 3 |
 | `vault_write`: create or edit vault notes (git history) | 2 | 3 |
 | `vault_destroy`: delete or move vault notes | 2 | 3 |
 | `web_search`: web search | 2 | 2 |
@@ -876,8 +906,8 @@ the arguments (never the arguments themselves), the deciding rule, the effect an
 
 ## 10. Tools
 
-83 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
-vault, no GitHub, Drive or Gmail connection, a pack that is off, a local-only conversation) are not offered.
+88 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
 | --- | --- | --- |
@@ -939,6 +969,11 @@ vault, no GitHub, Drive or Gmail connection, a pack that is off, a local-only co
 | `mail_trash` | Move one message to the Trash; never emptied; asks, and Approve all next covers it (pack Mail) | mail_trash / destructive |
 | `mail_mark_read` | Take the unread mark off one message; nothing else changes, never an archive (pack Mail) | mail_mark / write |
 | `mail_label_delete` | Delete one of your labels; it comes off its messages, which stay; asks, not grantable (pack Mail) | mail_label_delete / destructive |
+| `school_calendar` | The school calendar between two dates: Auriga's classes and exams, Moodle's assignments, activities and quizzes (pack Moodle/Auriga) | school_read / read |
+| `school_grades` | Auriga's grades of a school year (`synthese` or `eval`), or Moodle's grades of one course (pack Moodle/Auriga) | school_read / read |
+| `moodle_courses` | The Moodle courses (in progress, past, future or all) (pack Moodle/Auriga) | school_read / read |
+| `moodle_files` | The documents of a Moodle course, section by section, with the id to save each one (pack Moodle/Auriga) | school_read / read |
+| `moodle_file_save` | Save a Moodle document to the workspace, never over an existing file; a PDF or Word file gets a text copy beside it (pack Moodle/Auriga) | school_save / write |
 | `day_conversations` | What was said on a day, with the context of conversations begun earlier (pack Day conversations) | read |
 | `read_conversation` | One conversation in full, a page at a time | read |
 | `day_activity` | Tasks, reminders, scheduled runs and Clara's actions of a day (pack Day activity) | read |
@@ -1078,6 +1113,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `google` | Google refused the refresh token (reconnect Drive) |
   | `trigger:<id>` | A hook has more than 500 runs waiting: the newest events were recorded but not run |
   | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
+  | `moodle` | Moodle refused the token (sign in to Moodle again); over once Moodle accepts a call |
+  | `auriga` | Auriga's sign-in service refused the refresh token (sign in to Auriga again); over once Auriga accepts a call |
   | `update` | An update was not installed, or was rolled back |
   | `funnel` | Funnel was found on and turned off |
   | `tailscale` | Tailscale has not been serving Clara for 2 minutes |
@@ -1260,6 +1297,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `google_client_secret` | Google OAuth client secret (Drive and Gmail) |
 | `google_refresh_token` | Google refresh token (set by connecting Drive, never by hand) |
 | `gmail_refresh_token` | Gmail refresh token (set by connecting Gmail, never by hand) |
+| `moodle_token` | Moodle token (set by the Moodle sign-in on the Connections page or `clara moodle connect`, not by hand) |
+| `auriga_refresh_token` | Auriga refresh token (set by the Auriga sign-in on the Connections page or `clara auriga connect`, not by hand) |
 | `google_picker_api_key` | Google API key for the Drive Picker |
 | `vault_git_token` | Token to push the vault over HTTPS |
 | `restic_password` | Password of the restic repository |
@@ -1424,7 +1463,7 @@ keep-alive every 15 s.
 | `GET /v1/triggers/{trigger_id}/runs` | Its runs |
 | `GET /v1/trigger-events` | The events stored |
 | `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
-| `GET /v1/connections` | GitHub, Drive and Gmail: state, repositories (with since when hooks look at each), files; the mail notification settings |
+| `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when hooks look at each), files; the mail notification settings |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |
@@ -1440,6 +1479,12 @@ keep-alive every 15 s.
 | `POST /v1/connections/mail/{mailbox}/finish` | Exchange the code and prove the mailbox is reachable; returns its address |
 | `POST /v1/connections/mail/{mailbox}/confirm` | Attach that mailbox |
 | `DELETE /v1/connections/mail/{mailbox}` | Disconnect (revoked at Google) |
+| `POST /v1/connections/moodle/start` | The address of Moodle's mobile sign-in page, to open signed in to Moodle |
+| `PUT /v1/connections/moodle` | Paste the `moodlemobile://token=…` link: the token is kept only if Moodle accepts it; returns the account |
+| `DELETE /v1/connections/moodle` | Forget the Moodle token |
+| `POST /v1/connections/auriga/start` | Start the Auriga sign-in (web session only): the Keycloak address and the `state` to finish with |
+| `POST /v1/connections/auriga/finish` | Paste the address of the page after the sign-in: swaps the code, proves the API answers, keeps the refresh token; returns the account and whether the token is an offline one |
+| `DELETE /v1/connections/auriga` | Forget the Auriga token |
 | `GET /v1/vault` | Vault status |
 | `GET /v1/vault/notes` | The notes |
 | `GET /v1/vault/search` | Search |

@@ -94,7 +94,9 @@ class SecretValue(BaseModel):
 def set_secret(name: str, body: SecretValue, request: Request) -> dict:
     s = services(request)
     if name not in KNOWN_SECRETS or name in CONNECTION_TOKENS:
-        raise ApiError(404, f"Unknown secret {name} (refresh tokens are set by connecting Drive or Gmail).")
+        raise ApiError(
+            404, f"Unknown secret {name} (connection tokens are set by connecting Drive, Gmail, Moodle or Auriga)."
+        )
     try:
         s.secrets.set(name, body.value.strip())
     except SecretError as error:

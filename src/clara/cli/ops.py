@@ -5,6 +5,8 @@ clara token list | revoke <name>
 clara secrets new-key                       a fresh raw key for the systemd credential
 clara secrets list | set <name> | unset <name>
 clara secrets rotate --new-key-file <path>  re-encrypt every secret under a new key
+clara moodle connect | disconnect           sign in to Moodle (paste back the link of the mobile sign-in), or forget the token
+clara auriga connect | disconnect           sign in to Auriga (paste back the address of the page you land on), or forget it
 clara doctor [--pull]                       check what Clara needs (rootless Podman, Tailscale, providers…)
 clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
 clara restore --verify <file>               open a backup, check it, count its rows
@@ -20,6 +22,7 @@ import asyncio
 import getpass
 import json
 import os
+import secrets as secrets_module
 import shutil
 import sqlite3
 import sys
@@ -30,6 +33,13 @@ import httpx
 
 from .. import __version__
 from ..auth import APPROVALS, CLIENTS, TokenError, Tokens
+from ..connectors.auriga import authorize_url
+from ..connectors.auriga import sign_in as auriga_sign_in
+from ..connectors.drive import pkce
+from ..connectors.moodle import launch_url
+from ..connectors.moodle import sign_in as moodle_sign_in
+from ..connectors.school import LABELS, SECRETS, SchoolError
+from ..connectors.store import Connections
 from ..db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, backup_database, migrate
 from ..ops.backups import verify
 from ..ops.private import check_private
@@ -118,6 +128,55 @@ def secrets(args: argparse.Namespace) -> int:
         new = KeyMaterial.parse(Path(args.new_key_file).read_text(encoding="utf-8"), args.new_key_file)
         count = store.rotate(new)
         print(f"Re-encrypted {count} secret(s). Now point the clara-secret-key credential at the new key and restart.")
+    return 0
+
+
+# ----------------------------------------------------------------------
+def _pasted(prompt: str) -> str:
+    """What the owner pastes: hidden at a terminal (a link holds a token), a line of the input otherwise."""
+    return getpass.getpass(prompt).strip() if sys.stdin.isatty() else sys.stdin.readline().strip()
+
+
+def school(args: argparse.Namespace) -> int:
+    """Sign in to Moodle or Auriga from this machine (the same sign-in as the Connections page), or forget the token."""
+    site = args.command
+    settings = _settings()
+    db = _database(settings)
+    store, connections = _store(settings, db), Connections(db)
+    if args.action == "disconnect":
+        removed = store.unset(SECRETS[site])
+        removed = connections.remove(site) or removed
+        print(f"{LABELS[site]}: {'disconnected, its token forgotten' if removed else 'was not connected'}")
+        return 0
+    try:
+        if site == "moodle":
+            print(
+                "Open this address in a browser where you are signed in to Moodle:\n\n  "
+                f"{launch_url()}\n\nThe page shows a link «Cliquez ici si l'app ne s'ouvre pas automatiquement». "
+                "Copy the address of that link (it starts with moodlemobile://token=) and paste it here."
+            )
+            secret, account = asyncio.run(moodle_sign_in(_pasted("Link (hidden): ")))
+            note = "Moodle has no renewal: when the token lapses, run this again."
+        else:
+            verifier, challenge = pkce()
+            state = secrets_module.token_urlsafe(24)
+            print(
+                "Open this address in a browser and sign in to Auriga (with Microsoft, as usual):\n\n  "
+                f"{authorize_url(state, challenge)}\n\nYou land on a blank page of auriga.epita.fr (a 404 is normal). "
+                "Copy the whole address of that page and paste it here."
+            )
+            secret, account, kept = asyncio.run(auriga_sign_in(_pasted("Address (hidden): "), state, verifier))
+            note = (
+                "Auriga keeps this sign-in until it has been idle for a month."
+                if kept
+                else "Auriga gave a session token only: it ends with Auriga's session, so you will sign in again often."
+            )
+    except SchoolError as error:
+        print(error, file=sys.stderr)
+        return 1
+    store.set(SECRETS[site], secret)
+    connections.set(site, account)
+    print(f"{LABELS[site]}: connected as {account}. {note}")
     return 0
 
 
@@ -347,6 +406,10 @@ def main(argv: list[str] | None = None) -> int:
     keys.add_argument("name", nargs="?")
     keys.add_argument("--new-key-file")
     keys.set_defaults(run=secrets)
+    for site in ("moodle", "auriga"):
+        sign_in = commands.add_parser(site)
+        sign_in.add_argument("action", choices=("connect", "disconnect"))
+        sign_in.set_defaults(run=school)
     check = commands.add_parser("doctor")
     check.add_argument("--pull", action="store_true", help="pull the sandbox image first")
     check.set_defaults(run=doctor)
