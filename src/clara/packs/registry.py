@@ -59,6 +59,12 @@ def _mail_needed(s: Services) -> str:
     return "" if connected else "No mailbox is connected (the Connections page connects Gmail)."
 
 
+def _github_needed(s: Services) -> str:
+    if s.connectors is None:
+        return "No GitHub token is set (the Connections page connects GitHub)."
+    return s.connectors.github_missing()
+
+
 PACKS: tuple[Pack, ...] = (
     Pack(
         "web",
@@ -99,6 +105,15 @@ PACKS: tuple[Pack, ...] = (
         ),
         icon="mail",
         check=_mail_needed,
+    ),
+    Pack(
+        "github",
+        "GitHub",
+        "The repositories you added: look at files, code, issues, pull requests and their changes; commit, branch, open "
+        "and merge pull requests, open and close issues. A change asks you first, unless your rules allow it.",
+        frozenset({"github_read", "github_write", "github_branch", "github_pr", "github_issue"}),
+        icon="branch",
+        check=_github_needed,
     ),
     Pack(
         "qcm",
