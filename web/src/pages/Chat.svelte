@@ -3,7 +3,6 @@
   import ApprovalCard from '../components/ApprovalCard.svelte';
   import AskQuestions from '../components/AskQuestions.svelte';
   import Checkbox from '../components/Checkbox.svelte';
-  import FileCard from '../components/FileCard.svelte';
   import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
   import LevelSelect from '../components/LevelSelect.svelte';
@@ -17,7 +16,7 @@
   import { grants, stop as stopGrants } from '../lib/grants.svelte';
   import { ladder } from '../lib/levels.svelte';
   import { markdown } from '../lib/markdown';
-  import { type PanelFile, type PanelNote, panel, remember } from '../lib/panel.svelte';
+  import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, note, summary } from '../lib/tools';
@@ -42,8 +41,7 @@
     parts: Part[];
     thinking?: string;
     thinkingOpen?: boolean;
-    files: any[];
-    presented: { path: string; size: number | null; origin?: string | null; missing?: boolean }[]; // files Clara handed over: cards at the end of the answer
+    presented: Presented[]; // files Clara handed over: cards at the end of the answer
     notes: string[];
     versions?: number[];
     version?: number;
@@ -56,7 +54,7 @@
   };
 
   let keys = 0;
-  const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], files: [], presented: [], notes: [] });
+  const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], presented: [], notes: [] });
   /** Your message as the site draws it: your words in the bubble, a chip for each document in it. */
   function yours(content: string): Message {
     const sent = unpack(content);
@@ -391,7 +389,7 @@
         if (item.content) addText(answer, (answer.parts.at(-1)?.kind === 'text' ? '\n\n' : '') + item.content);
         for (const call of item.tool_calls ?? []) addCall(answer, { name: call.name, arguments: call.arguments });
         for (const form of item.forms ?? []) answer.parts.push({ kind: 'form', form });
-        for (const card of item.presented ?? []) if (!answer.presented.some((shown) => shown.path === card.path)) answer.presented.push(card);
+        for (const card of item.presented ?? []) if (!answer.presented.some((shown) => (shown.ref ?? shown.path) === (card.ref ?? card.path))) answer.presented.push(card);
       } else if (item.role === 'tool') {
         const open = openCall(answer, item.tool_name, false);
         if (open) open.result = item.content;
@@ -586,12 +584,8 @@
         case 'questions_done':
           if (pendingAsk?.id === event.id) pendingAsk = null;
           break;
-        case 'file':
-          current.files.push(event);
-          schedulePanel(id);
-          break;
         case 'present':
-          if (!current.presented.some((card) => card.path === event.path)) current.presented.push({ path: event.path, size: event.size, origin: event.origin });
+          if (!current.presented.some((card) => (card.ref ?? card.path) === (event.ref ?? event.path))) current.presented.push(event);
           break;
         case 'retrying':
           current.notes.push(event.message);
@@ -990,7 +984,7 @@
         <div class="welcome">
           <Mark size={56} />
           <h2 class="greeting">{greeting()}</h2>
-          <p>Ask Clara anything. The notes she writes are saved in your workspace and show here as cards.</p>
+          <p>Ask Clara anything. The files and notes she writes are saved in your workspace and listed in the side panel; she hands one over with a card at the end of her answer.</p>
           {#if !models.default}
             <div class="flag-notes" role="status">
               <p class="flag-note"><Icon name="chip" size={16} /><span>No default model is chosen yet, so Clara cannot answer. <a href="#/models">Choose one on Models</a> (a local Ollama model, or one of the providers whose key you add under Admin &gt; Secrets).</span></p>
@@ -1100,8 +1094,7 @@
                   {/if}
                 {/each}
                 {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
-                {#each message.files as card}<FileCard {card} />{/each}
-                {#each message.presented as card (card.path)}<PresentCard {card} />{/each}
+                {#each message.presented as card (card.ref ?? card.path)}<PresentCard {card} />{/each}
               </div>
               {#if message.compacting}
                 <div class="compacting" role="status"><span class="spin" aria-hidden="true"></span><span>Compacting the conversation…</span></div>

@@ -532,8 +532,10 @@ class ClaraBot(discord.Client):
                             await channel.send(
                                 f"🔐 Waiting for your answer in <#{self.settings.channels['approval']}>."
                             )
-                    elif kind == "present" and event.get("path") and event["path"] not in presented:
-                        presented.append(event["path"])
+                    elif kind == "present":
+                        ref = event.get("ref") or event.get("path")
+                        if ref and ref not in presented:
+                            presented.append(ref)
                     elif kind == "done":
                         done = event
                         reply = event.get("reply") or ""

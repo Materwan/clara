@@ -18,6 +18,18 @@ export interface PanelNote {
   size: number;
 }
 
+/** A file Clara handed over at the end of an answer (the `present` event, and `presented` on a stored message). */
+export interface Presented {
+  kind?: 'workspace' | 'vault' | 'drive';
+  ref?: string; // what Clara named: a workspace path, `vault:<note>` or `drive:<id>`; the same file is one card
+  path: string; // a workspace path, a note's path, or a Drive file's id
+  size: number | null;
+  origin?: string | null; // where a workspace file came from, when it came from outside and you have not trusted it
+  name?: string; // a Drive file's name, when this server knows it
+  url?: string; // a Drive file's link
+  missing?: boolean; // the file is not there any more (a conversation opened again later)
+}
+
 export type Choice = 'open' | 'closed' | null;
 
 const KEY = 'clara-panel';

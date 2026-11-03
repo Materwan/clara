@@ -89,9 +89,9 @@ class Watch:
             self.turn.names.append(str(event.get("name", "")))
             self.mirror.live.publish(self._event("summary", text=text.tools_line(self.turn.names)))
         elif kind == "present":
-            path = str(event.get("path", ""))
-            if path and path not in self.turn.presented:
-                self.turn.presented.append(path)
+            ref = str(event.get("ref") or event.get("path") or "")
+            if ref and ref not in self.turn.presented:
+                self.turn.presented.append(ref)
         elif kind == "done":
             self._finish(event)
 

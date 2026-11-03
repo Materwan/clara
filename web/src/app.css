@@ -817,7 +817,6 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .file-card.present .info { flex: 1 1 9rem; } /* a basis, so that on a narrow screen the buttons drop under the name instead of squeezing it */
 .file-card.present .actions { display: flex; flex-wrap: wrap; gap: var(--sp-6); margin-left: auto; }
 .file-card.present.gone .info strong { text-decoration: line-through; color: var(--muted); }
-.file-card .file-body { border-top: 1px solid var(--line); padding: var(--sp-12) var(--sp-16); max-height: 60vh; overflow: auto; font-size: var(--fs-md); }
 
 /* ---- the side panel of a conversation: the files Clara wrote and her QCMs ------------------------------------ */
 .chat-body { flex: 1; min-height: 0; display: flex; }
