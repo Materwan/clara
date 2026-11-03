@@ -32,6 +32,7 @@ const NOTES: Record<string, [string, string, string?]> = {
   ws_edit: ['file', 'Edited', 'path'],
   ws_move: ['file', 'Moved', 'path'],
   ws_delete: ['file', 'Deleted', 'path'],
+  present: ['file', 'Presented', 'path'],
   ws_run: ['terminal', 'Ran', 'command'],
   web_search: ['globe', 'Searched the web for', 'query'],
   web_fetch: ['globe', 'Read a page', 'url'],

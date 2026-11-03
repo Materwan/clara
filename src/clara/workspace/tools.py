@@ -1,13 +1,15 @@
-"""The nine workspace tools.
+"""The ten workspace tools.
 
     ws_list, ws_read, ws_search, ws_log   read                               class read
+    present                               read; hands a file over to the person   class read
     ws_write                              write; destructive when it overwrites   ws_write / ws_destroy
     ws_edit                               write                              ws_write
     ws_move                               write; destructive when the target exists    ws_write / ws_destroy
     ws_delete                             destructive                        ws_destroy
     ws_run                                write; `network: true` is its own target `net`   run / run_network
 
-A markdown file written under `notes/` is shown in the chat as a card you can open and download.
+A markdown file written under `notes/` is shown in the chat as a card you can open and download. `present` makes a card for
+any file Clara chooses to hand over (workspace/present.py).
 
 Where a file comes from (workspace/provenance.py): one that arrived from outside (a mail attachment, what a script fetched) or
 that was written after untrusted content was read is marked. Reading a marked file taints the conversation; an attachment or a
@@ -24,6 +26,7 @@ from ..gate.actions import Action
 from ..knowledge.projects import read_lines
 from ..secretscan import secret_kinds
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
+from . import present
 from .paths import PathError, clean
 from .store import WorkspaceError, human_size
 
@@ -248,6 +251,38 @@ async def _ws_delete(context: ToolContext, path: str) -> str:
 
 
 # ----------------------------------------------------------------------
+# Presenting
+# ----------------------------------------------------------------------
+async def _present(context: ToolContext, path: str) -> str:
+    """A card under the answer for a file: made from what the workspace says about it, the file is never read."""
+    s = context.services
+    name = _path(path)
+    if not name:
+        raise ToolError("Give the path of the file to present.")
+    if context.turn.counts.get(f"{present.PRESENT}:{name}"):
+        return f"{name} is already presented in this answer."
+    if context.turn.counts.get(present.PRESENT, 0) >= present.MAX_PER_ANSWER:
+        raise ToolError(f"At most {present.MAX_PER_ANSWER} files per answer: mention the others in your words.")
+    conversation = context.turn.conversation_id
+    try:
+        card = present.card(s, name)
+        if not present.granted(s, conversation):  # the pack lets her present any file; without it, only her own
+            made_here = {item["path"] for item in await _workspace(context).conversation_files(conversation, 1000)}
+            if name not in made_here:
+                raise ToolError(
+                    f"{name} was not written in this conversation, so you cannot present it. The person can let you "
+                    'present any file of the workspace by switching on the "Files created" tool pack (the + menu of '
+                    "the box they write in)."
+                )
+    except (WorkspaceError, PathError) as error:
+        raise ToolError(str(error)) from None
+    context.turn.counts[present.PRESENT] = context.turn.counts.get(present.PRESENT, 0) + 1
+    context.turn.counts[f"{present.PRESENT}:{name}"] = 1
+    context.events.append({"type": "present", **card})
+    return present.result(name, card["size"])
+
+
+# ----------------------------------------------------------------------
 # Running
 # ----------------------------------------------------------------------
 @acts_as("run", "run_network")
@@ -403,6 +438,18 @@ def workspace_tools() -> list[Tool]:
             "Delete a file or folder of the workspace (it stays in the git history and can be undone).",
             _ws_delete,
             fixed("ws_destroy", "destructive", lambda c, a: _target(a), lambda a: f"Delete {a.get('path')}"),
+            {"path": path},
+            ("path",),
+        ),
+        Tool(
+            present.PRESENT,
+            "Hand a workspace file over to the person, at the end of your answer: they get a card under it with "
+            "Download and See in the workspace. Use it for a file you made for them (a report, a PDF, the output of a "
+            "script). You may present the files you wrote in this conversation; any other file of the workspace only if "
+            'the person switched on the "Files created" tool pack. You do not read the file and its content is not '
+            f"shown to you. At most {present.MAX_PER_ANSWER} files per answer.",
+            _present,
+            fixed("read", "read", lambda c, a: _target(a), lambda a: f"Present {a.get('path')}"),
             {"path": path},
             ("path",),
         ),

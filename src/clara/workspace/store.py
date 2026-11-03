@@ -216,6 +216,19 @@ class Workspace:
             raise WorkspaceError(f"{clean(relative)} is bigger than {human_size(self.max_file_bytes)}: it is not read.")
         return data
 
+    def file_size(self, relative: str) -> int:
+        """The size of a file, without reading it. A path the Library would not serve (a folder, a named pipe, a file over
+        the limit) is refused here too: what is presented can be downloaded."""
+        name = clean(relative)
+        info = resolve(self.root, name, must_exist=True).lstat()
+        if stat.S_ISDIR(info.st_mode):
+            raise WorkspaceError(f"{name} is a folder.")
+        if not stat.S_ISREG(info.st_mode):
+            raise WorkspaceError(f"{name} is not a regular file.")
+        if info.st_size > self.max_file_bytes:
+            raise WorkspaceError(f"{name} is bigger than {human_size(self.max_file_bytes)}: it is not served.")
+        return info.st_size
+
     def read_text(self, relative: str) -> str:
         data = self.read_bytes(relative)
         if looks_binary(data):

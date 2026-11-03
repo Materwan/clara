@@ -517,6 +517,7 @@ class ClaraBot(discord.Client):
         failures are said here."""
         reply = ""
         done: dict = {}
+        presented: list[str] = []  # the files Clara handed over: a line each under her answer
         conversation = body.get("conversation")
         if conversation:
             self.answering.add(conversation)
@@ -531,6 +532,8 @@ class ClaraBot(discord.Client):
                             await channel.send(
                                 f"🔐 Waiting for your answer in <#{self.settings.channels['approval']}>."
                             )
+                    elif kind == "present" and event.get("path") and event["path"] not in presented:
+                        presented.append(event["path"])
                     elif kind == "done":
                         done = event
                         reply = event.get("reply") or ""
@@ -545,7 +548,8 @@ class ClaraBot(discord.Client):
         if mirrored and reply.startswith("⚠️"):
             await channel.send(reply[:LIMIT])
         elif not mirrored:
-            for part in split_message(reply or "(no answer)"):
+            lines = "".join(f"\n📎 {path}" for path in presented)
+            for part in split_message((reply or "(no answer)") + lines):
                 await channel.send(part)
             for card in done.get("files", []):
                 try:

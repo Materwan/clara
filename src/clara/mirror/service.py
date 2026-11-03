@@ -21,6 +21,7 @@ from ..db import Database
 from ..events.store import Events
 from ..memory.conversations import Conversations
 from ..timeutil import now_iso
+from ..workspace.present import PRESENT, presented
 from . import text
 from .clock import bump
 from .live import Live
@@ -39,6 +40,7 @@ class _Turn:
     turn: str
     names: list[str] = field(default_factory=list)
     text: list[str] = field(default_factory=list)
+    presented: list[str] = field(default_factory=list)  # the files she handed over (a line each under the answer)
     done: bool = False
 
 
@@ -86,6 +88,10 @@ class Watch:
         elif kind == "tool_start":
             self.turn.names.append(str(event.get("name", "")))
             self.mirror.live.publish(self._event("summary", text=text.tools_line(self.turn.names)))
+        elif kind == "present":
+            path = str(event.get("path", ""))
+            if path and path not in self.turn.presented:
+                self.turn.presented.append(path)
         elif kind == "done":
             self._finish(event)
 
@@ -100,7 +106,7 @@ class Watch:
         self.turn.done = True
         stored = self.mirror.answer_of(self.turn.conversation, self.turn.turn)
         if stored is None:  # not stored (a question that was not kept): what was written is what there is
-            body = text.answer_text(self.turn.names, "".join(self.turn.text))
+            body = text.answer_text(self.turn.names, "".join(self.turn.text), self.turn.presented)
         else:
             body = stored["text"]
         self.mirror.live.publish(
@@ -118,7 +124,7 @@ class Watch:
         if self.turn is None or self.turn.done:
             return
         self.turn.done = True
-        body = text.answer_text(self.turn.names, "".join(self.turn.text))
+        body = text.answer_text(self.turn.names, "".join(self.turn.text), self.turn.presented)
         self.mirror.live.publish(self._event("done", text=body, digest=text.digest(body), files=[], failed=True))
 
 
@@ -312,9 +318,10 @@ class Mirror:
 
     def _turns(self, conversation_id: str) -> list[dict]:
         rows = self.db.all(
-            "SELECT id, role, content, shown, turn_id, ref, tool_calls FROM messages"
-            " WHERE conversation_id = ? AND active = 1 AND role IN ('user', 'assistant') ORDER BY id",
-            (conversation_id,),
+            "SELECT id, role, content, shown, turn_id, ref, tool_calls, tool_name FROM messages"
+            " WHERE conversation_id = ? AND active = 1 AND (role IN ('user', 'assistant')"
+            " OR (role = 'tool' AND tool_name = ?)) ORDER BY id",
+            (conversation_id, PRESENT),
         )
         turns: list[dict] = []
         current: dict | None = None
@@ -326,11 +333,16 @@ class Mirror:
                     "user": {"text": body, "ref": row["ref"]},
                     "names": [],
                     "texts": [],
+                    "calls": [],
+                    "results": [],
                 }
                 current["user"]["digest"] = "ref" if row["ref"] else text.digest(body)
                 turns.append(current)
+            elif current is not None and row["role"] == "tool":
+                current["results"].append(row["content"])
             elif current is not None:
                 for call in json.loads(row["tool_calls"] or "[]"):
+                    current["calls"].append(call.get("function") or {})
                     name = (call.get("function") or {}).get("name") or ""
                     if name:
                         current["names"].append(name)
@@ -340,7 +352,9 @@ class Mirror:
         for turn in turns:
             reply = None
             if turn["names"] or turn["texts"]:
-                body = text.answer_text(turn["names"], "\n\n".join(turn["texts"]))
+                body = text.answer_text(
+                    turn["names"], "\n\n".join(turn["texts"]), presented(turn["calls"], turn["results"])
+                )
                 reply = {"text": body, "digest": text.digest(body)}
             result.append({"key": turn["key"], "user": turn["user"], "reply": reply})
         return result

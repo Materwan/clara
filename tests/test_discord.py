@@ -257,6 +257,20 @@ async def test_a_request_during_a_chat_is_pointed_to_from_general(bot, monkeypat
     assert len(bot.channels["approval"].sent) == 1
 
 
+async def test_a_file_clara_presents_is_a_line_with_its_path_and_is_not_uploaded(bot, monkeypatch):
+    async def stream(method, path, body=None, **options):
+        yield {"type": "turn", "conversation": "c1"}
+        yield {"type": "present", "path": "reports/plan.md", "size": 7, "origin": None}
+        yield {"type": "present", "path": "reports/plan.md", "size": 7, "origin": None}  # the same file again: one line
+        yield {"type": "done", "reply": "Below.", "files": []}
+
+    monkeypatch.setattr(bot.clara, "stream", stream)
+    monkeypatch.setattr(bot, "set_conversation", lambda conversation: None)
+    await bot.ask(bot.channels["general"], {"message": "give me the plan"})
+    assert texts(bot.channels["general"]) == ["Below.\n📎 reports/plan.md"]
+    assert len(bot.channels["general"].sent) == 1  # one message: nothing was fetched from the workspace to upload
+
+
 # ----------------------------------------------------------------------
 # Events: each kind to its own channel
 # ----------------------------------------------------------------------

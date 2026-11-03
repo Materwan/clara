@@ -9,6 +9,7 @@
   import LevelSelect from '../components/LevelSelect.svelte';
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
+  import PresentCard from '../components/PresentCard.svelte';
   import SidePanel from '../components/SidePanel.svelte';
   import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
@@ -42,6 +43,7 @@
     thinking?: string;
     thinkingOpen?: boolean;
     files: any[];
+    presented: { path: string; size: number | null; origin?: string | null; missing?: boolean }[]; // files Clara handed over: cards at the end of the answer
     notes: string[];
     versions?: number[];
     version?: number;
@@ -54,7 +56,7 @@
   };
 
   let keys = 0;
-  const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], files: [], notes: [] });
+  const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], files: [], presented: [], notes: [] });
   /** Your message as the site draws it: your words in the bubble, a chip for each document in it. */
   function yours(content: string): Message {
     const sent = unpack(content);
@@ -389,6 +391,7 @@
         if (item.content) addText(answer, (answer.parts.at(-1)?.kind === 'text' ? '\n\n' : '') + item.content);
         for (const call of item.tool_calls ?? []) addCall(answer, { name: call.name, arguments: call.arguments });
         for (const form of item.forms ?? []) answer.parts.push({ kind: 'form', form });
+        for (const card of item.presented ?? []) if (!answer.presented.some((shown) => shown.path === card.path)) answer.presented.push(card);
       } else if (item.role === 'tool') {
         const open = openCall(answer, item.tool_name, false);
         if (open) open.result = item.content;
@@ -586,6 +589,9 @@
         case 'file':
           current.files.push(event);
           schedulePanel(id);
+          break;
+        case 'present':
+          if (!current.presented.some((card) => card.path === event.path)) current.presented.push({ path: event.path, size: event.size, origin: event.origin });
           break;
         case 'retrying':
           current.notes.push(event.message);
@@ -1095,6 +1101,7 @@
                 {/each}
                 {#if message.streaming && !message.parts.length && !message.thinking}<span class="waiting" role="status" aria-label="Clara is answering"></span>{/if}
                 {#each message.files as card}<FileCard {card} />{/each}
+                {#each message.presented as card (card.path)}<PresentCard {card} />{/each}
               </div>
               {#if message.compacting}
                 <div class="compacting" role="status"><span class="spin" aria-hidden="true"></span><span>Compacting the conversation…</span></div>
