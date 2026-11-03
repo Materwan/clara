@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..agent.reader import Gist
 
 DIGEST_SHOWN = 25
+ORIGINS_SHOWN = 5  # the origin lines Discord shows for a run that is several events
 TEMPLATE = re.compile(r"\{([a-z_]{1,30})\}")
 # what a mail event keeps when the reader is on: identifiers and flags, nothing the sender wrote
 MAIL_KEPT = ("account", "mailbox", "message", "thread", "has_attachment", "unread", "received")
@@ -107,6 +108,17 @@ def message_of(name: str, prompt: str, events: list[StoredEvent], quiet: Mapping
     if len(events) > len(shown):
         blocks += f"\n[{len(events) - len(shown)} more events are not shown; ids {events[DIGEST_SHOWN].id} to {events[-1].id}.]"
     return f"{prompt.strip()}\n\n{lead}\n{blocks}"
+
+
+def shown_of(events: list[StoredEvent]) -> str:
+    """What the Discord mirror writes for the run's first message: where it comes from, one line per event (its title: a
+    mail's sender and subject, a pull request's name, a push's commit), up to a few and then how many are left out. Not the
+    hook's prompt and not the events' data: the run is still given all of that (`message_of`). Built from the events
+    themselves, never read back out of the message."""
+    lines = [" ".join(event.title.split()) or f"{event.source} {event.kind}" for event in events[:ORIGINS_SHOWN]]
+    if len(events) > ORIGINS_SHOWN:
+        lines.append(f"+{len(events) - ORIGINS_SHOWN} more")
+    return "\n".join(lines)
 
 
 def fill(template: str, data: dict) -> str:

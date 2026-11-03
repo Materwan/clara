@@ -184,6 +184,12 @@ def message_of(schedule: Schedule) -> str:
     return "\n\n".join(parts)
 
 
+def shown_of(schedule: Schedule, due: datetime) -> str:
+    """What the Discord mirror writes for a run's first message: the schedule and the moment the run was due, on the
+    schedule's own clock. Not its prompt or its documents: the run is still given all of that (`message_of`)."""
+    return f"Scheduled task “{schedule.name}” — {due.astimezone(zone(schedule.timezone)).strftime('%Y-%m-%d %H:%M')}"
+
+
 def instructions_of(schedule: Schedule) -> str:
     if schedule.asks:
         return INSTRUCTIONS_ASKING

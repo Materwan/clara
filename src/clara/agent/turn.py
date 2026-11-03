@@ -178,6 +178,9 @@ class ChatRequest:
     tainted: bool = False  # the turn starts as if it had read untrusted content (a run an outside event started)
     only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (a hook's allow-list)
     ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
+    # What the Discord mirror shows in place of the message (an automation run's origin). The model is given, and the
+    # conversation stores, the whole message: this changes what is displayed, not what Clara reads.
+    shown: str = ""
     mirror_thread: str = ""  # a new conversation started in a Discord forum post: its thread
     folder: FolderRequest | None = None  # a folder on the person's computer, opened in this web chat (folder tools)
     can_answer_questions: bool = False  # not the web site, but a client that shows Clara's questions (island, phone)
@@ -619,7 +622,7 @@ class Agent:
         self.stats.active += 1
         self.stats.turns += 1
         started = time.monotonic()
-        watch = self.s.mirror.watch(request.message, request.ref, request.mirror_thread)
+        watch = self.s.mirror.watch(request.message, request.ref, request.mirror_thread, request.shown)
         try:
             async with contextlib.aclosing(self._turn(request, plan)) as events:
                 async for event in events:
@@ -843,6 +846,7 @@ class Agent:
                     client=request.client,
                     turn_id=state.turn_id,
                     ref=request.ref,
+                    shown=request.shown,
                 )
                 detached.clear()
                 if told:
@@ -1123,6 +1127,7 @@ class Agent:
                 client=request.client,
                 turn_id=state.turn_id,
                 ref=request.ref,
+                shown=request.shown,
             )
         except Exception:
             log.exception("could not store the interrupted turn of %s", conversation_id)

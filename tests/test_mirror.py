@@ -212,6 +212,24 @@ def test_a_turn_of_a_mirrored_conversation_is_watched_from_its_start_to_its_stor
     assert published[-1]["digest"] == text.digest(published[-1]["text"])
 
 
+def test_a_question_that_stores_a_shown_text_is_written_as_that_text_by_the_sync_and_the_live_turn(services, monkeypatch):
+    """An automation run's first message is whole in the conversation; Discord writes its origin. Both paths write the
+    same text, so the sync does not rewrite what the live turn posted."""
+    published: list[dict] = []
+    monkeypatch.setattr(services.mirror.live, "publish", published.append)
+    conversation = services.conversations.create("server", title="Run")
+    question = '<document name="x.md" type="text">\nbody\n</document>\nDo the task.\n\n<event>...</event>'
+    watch = services.mirror.watch(question, shown="  Billing: Invoice 42\n+3 more ")
+    watch.see({"type": "turn", "id": "t-1", "conversation": conversation.id})
+    services.conversations.add_turn(
+        conversation.id, question, [TurnRow("assistant", "Done.")], client="server", turn_id="t-1", shown="  Billing: Invoice 42\n+3 more "
+    )
+    (turn,) = services.mirror.stored_turns(conversation.id)
+    assert turn["user"]["text"] == "Billing: Invoice 42\n+3 more" and "📎" not in turn["user"]["text"]
+    assert published[0]["text"] == turn["user"]["text"] and published[0]["digest"] == turn["user"]["digest"]
+    assert services.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user'", (conversation.id,)) == question
+
+
 def test_a_turn_that_starts_in_a_conversation_with_no_thread_tells_the_bot_what_came_before(services, monkeypatch):
     """A project switched into the history after its conversations began, a bot that was off: the conversation reached
     Discord at its latest question only, and its earlier turns came last."""

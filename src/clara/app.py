@@ -89,7 +89,7 @@ from .settings import Settings, SettingsError, load_settings
 from .timekeeping import DeferredCall, DeferredCalls, Reminders, Schedules, Stopping, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
 from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
-from .timekeeping.schedules import Run, Schedule, instructions_of, message_of
+from .timekeeping.schedules import Run, Schedule, instructions_of, message_of, shown_of
 from .timeutil import parse_iso, zone
 from .tools.base import Toolbox, ToolContext, TurnState
 from .tools.discord_tools import can_say, discord_tools
@@ -316,6 +316,7 @@ async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -
         conversation=conversation_id,
         instructions=instructions_of(schedule),
         prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
+        shown=shown_of(schedule, run.due),
         timezone=schedule.timezone,
         mode="unattended",
         kind="schedule",

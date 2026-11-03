@@ -92,6 +92,12 @@ def question_text(text: str) -> tuple[str, list[str]]:
     return "\n".join(lines), names
 
 
+def shown_question(shown: str) -> str:
+    """What a question stores for the mirror to write in its place, as it is written ('' when it stores none). It is shown as
+    it is: not a place for documents, so nothing in it is read as one."""
+    return shown.strip()
+
+
 def answer_text(names: list[str], text: str) -> str:
     """The answer with its tool line above it."""
     line = tools_line(names)
