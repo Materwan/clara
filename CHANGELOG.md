@@ -3,6 +3,107 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.5.0 — 03/11/2026
+
+**Clara reaches your school, hands files over, and Discord stays tidy.** Moodle and Auriga (EPITA) can be read by Clara, read
+only. A new tool, `present`, hands a file over as a card under her answer. The Discord channels no longer keep what stopped being
+true: settled requests, ended alerts and lines whose thread is gone are deleted. GitHub becomes a pack, as Mail is. A run of an
+automation shows Discord only where it came from. **The Moodle/Auriga pack has never been tried against the real sites** (see
+below).
+
+**Moodle and Auriga, read only.**
+
+- **A pack of five tools, « Moodle/Auriga »:** `school_calendar` (Auriga's classes, tutorials and exams with room and teacher,
+  Moodle's assignments, activities and quizzes; 92 days at most, 7 by default), `school_grades` (Auriga's grades of a school year,
+  or Moodle's grades of one course), `moodle_courses`, `moodle_files` and `moodle_file_save`. Switch it on per conversation in the
+  « + » menu, as Mail; it is offered in a chat and in the packs of a schedule, only while a site is connected, never in a
+  local-only conversation.
+- **Signing in, once, in a browser:** on the Connections page (two new cards), or `clara moodle connect` and `clara auriga connect`.
+  Moodle has no password form, so you open the page of its mobile app signed in and paste the `moodlemobile://token=…` link back;
+  Auriga is signed in through its Keycloak and you paste back the address of the blank page you land on. No password is kept. Clara
+  keeps the Moodle token only if Moodle accepts it, and renews Auriga's sign-in herself. `/school` shows who is connected and
+  whether a sign-in lapsed, and forgets a token.
+- **Read only, on purpose:** Moodle's token has all your rights there and cannot be made read-only, so Clara calls seven read
+  functions and nothing else, and sends the token only to `moodle.epita.fr` (a redirect is not followed). Nothing is written to
+  either site. A Moodle document is saved to the workspace, never over an existing file, with a text copy beside a PDF or a Word
+  file.
+- **A lapsed sign-in is said, not hidden:** the connection is marked « sign in again », the alert `moodle` or `auriga` is
+  raised, and the tools say how to sign in again.
+- **Reading these sites does not taint the turn** (your choice, unlike Mail, GitHub and Drive): their text reaches the
+  conversation as written, with no quarantined reader.
+- **Not tried live:** the tests run against stand-ins built from what was read of the two sites on 1 and 2 November. The shapes
+  Auriga's planning and grades answers have are the likeliest to differ; a line that does not fit is left out, so a wrong guess
+  shows as missing lines, not as a crash. The first real use is the check; [TODO.md](TODO.md) lists what to look at.
+
+**Handing a file over: `present`.**
+
+- Clara calls `present` with a workspace path, `vault:<note>` (the second brain, once open in the conversation) or `drive:<id>`,
+  and you get a **card** at the end of her answer: name, folder and size, **See in the workspace** (or the vault) and
+  **Download**; a Drive file is an **Open in Drive** link and nothing is downloaded through the server. At most 5 cards an answer.
+- She may present the files she wrote in the conversation; any other workspace file only when the **Files created** pack is on.
+- The file is not read: the model gets one line, and presenting does not taint the conversation. A file that came from outside
+  (a mail attachment, what a script fetched) carries a « from outside » tag until you trust it.
+- The card is found again when you open the conversation, and follows an answer that is edited, tried again or switched to
+  another version. Discord shows a line `📎 <reference>` under the answer and uploads nothing.
+- **A file she writes no longer shows a card by itself:** the web site used to draw an Open / Copy / Download card when Clara wrote a
+  note under `notes/`, gone after a reload. The side panel still lists what she wrote, and her persona now tells her to call
+  `present` to hand a file over.
+
+**Clean Discord channels.**
+
+- **`#approval`** holds only the requests that wait: a request that is answered or expires is deleted from the channel. A button
+  answer deletes its card at once.
+- **`#alerts`**: when an alert's problem is over, the server publishes `alert_resolved` and the bot deletes that alert's message.
+  The Admin page lists the alerts that last.
+- **`#notification`**: the line posted when a run starts, with the link of its thread, is deleted once the thread is gone
+  (retention, a deleted conversation). Reminders, summaries, mail and update news stay.
+- The bot deletes only its own messages, in its own process. It needs *Read Message History* in the three channels (the Admin
+  page's Discord tab shows it when it is missing).
+
+**Smaller changes:**
+
+- **An automation run's first message in Discord:** the instructions and the data of a run (a mail, a pull request) fill several
+  messages. The thread now shows only where the run came from: a hook's events, one line each (five at most, then `+N more`),
+  or a schedule's name and the moment it was due. Clara is still given the whole message; the web site shows it whole.
+- **GitHub is a pack:** the five `github_*` tools are offered only when the **GitHub** pack is switched on in the « + » menu (off in
+  a new conversation), and only with a token and a repository set. A hook's run gets it from the tools its list names. What already
+  used GitHub keeps it (see *What changes when you update*).
+- **Run lines:** the Moodle and Auriga tools and `present` have their own words in the lines that say what Clara did, on the web
+  site and on Discord.
+
+**What changes when you update:**
+
+- **Discord, once:** the first time the updated bot starts, it deletes **all its older messages in `#alerts`** (they carry no key,
+  so nothing says which problem they were about; an alert that still lasts is on the Admin page and is posted again at its next
+  repeat), and it reads the whole of `#notification` and `#approval` to delete the stale lines and cards. Give the bot *Read Message
+  History* in those channels first, or it cleans nothing.
+- The GitHub tools disappear from a conversation or a schedule that never used them, until you switch the pack on. A conversation
+  and a schedule that called a GitHub tool before are given the pack once.
+- The Moodle/Auriga pack is off everywhere and does nothing until a site is connected.
+- A note Clara writes no longer shows a card in the chat; she hands files over with `present`.
+
+**Interface changes:**
+
+- **New routes:** `POST /v1/connections/moodle/start`, `PUT /v1/connections/moodle`, `DELETE /v1/connections/moodle`,
+  `POST /v1/connections/auriga/start`, `POST /v1/connections/auriga/finish` and `DELETE /v1/connections/auriga`.
+  `GET /v1/connections` also lists Moodle and Auriga. The messages of a conversation carry `presented`.
+- **Tools:** 89 (83 before). New: `present`, `school_calendar`, `school_grades`, `moodle_courses`, `moodle_files`,
+  `moodle_file_save`. The five `github_*` tools are in the pack GitHub.
+- **Events:** the stream event `present` (a card for a presented file); the event `alert_resolved`, for the Discord bot only.
+- **Commands:** `/school [status] | disconnect <moodle|auriga>`; `clara moodle connect` and `clara auriga connect`.
+- **Secrets:** `moodle_token` and `auriga_refresh_token`, set by the sign-in, never by hand. **Alerts:** `moodle` and `auriga`.
+- **Auto levels:** the classes `school_read` (asks from level 2, runs from 2) and `school_save` (asks from 2, runs from 3). Targets
+  `school:moodle` and `school:auriga`.
+- No new `CLARA_*` setting and no new runtime setting.
+
+**Migrations:** 0028 adds the shorter text Discord shows for a question (`messages.shown`), 0029 gives the GitHub pack to what
+already used GitHub, and 0030 adds the Moodle and Auriga connections (it rebuilds `connections` and `resources`, and keeps every
+repository and Drive file you added). The server takes its backup before running them.
+
+**Docs:** [DECISIONS.md](docs/DECISIONS.md) (« Clean Discord channels », « GitHub is a pack », « Moodle and Auriga »,
+« Presenting a file », and the first message of an automation run), [FEATURES.md](FEATURES.md) and
+[OPERATIONS.md](docs/OPERATIONS.md) (« Moodle and Auriga (EPITA) »).
+
 ## v1.4.0 — 01/11/2026
 
 **A firewall against text written to steer Clara, and tool calls booked for later.** A web page, a mail or an attachment can
