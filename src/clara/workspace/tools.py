@@ -305,8 +305,10 @@ async def _present(context: ToolContext, path: str) -> str:
                     )
     except ToolError:
         raise
-    except (ValueError, OSError) as error:  # the workspace's, the vault's, Drive's and present's errors
+    except ValueError as error:  # the workspace's, the vault's, Drive's and present's errors
         raise ToolError(str(error)) from None
+    except OSError as error:  # its text holds the real path on the server: the model reads the kind only
+        raise ToolError(f"{ref} cannot be reached ({type(error).__name__}).") from None
     context.turn.counts[present.PRESENT] = context.turn.counts.get(present.PRESENT, 0) + 1
     context.turn.counts[f"{present.PRESENT}:{ref}"] = 1
     context.events.append({"type": "present", **card})

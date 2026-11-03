@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import islice
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -11,7 +12,7 @@ from ..auth import CLIENTS
 from ..connectors.forms import forms_in, with_answers
 from ..gate import LevelError
 from ..memory.conversations import ANY, ConversationError
-from ..workspace.present import cards_for
+from ..workspace.present import PRESENT, cards_for
 from .common import ApiError, caller, failure, refuse_when_stopping, services
 from .levels import may_set
 
@@ -166,14 +167,16 @@ def messages(conversation_id: str, request: Request, calls: bool = False) -> dic
             if forms:
                 later = [item["content"] for item in shown[index + 1 :] if item["role"] == "user"]
                 message["forms"] = with_answers(forms, later)
-            results = []  # the results of its calls are the tool messages right after it
-            for item in shown[index + 1 :]:
-                if item["role"] != "tool":
-                    break
-                results.append(item["content"])
-            cards = cards_for(s, message["tool_calls"], results)
-            if cards:
-                message["presented"] = cards
+            if any(call.get("name") == PRESENT for call in message["tool_calls"]):
+                results = []  # the results of its calls are the tool messages right after it
+                for item in islice(shown, index + 1, None):
+                    if item["role"] != "tool":
+                        break
+                    if item.get("tool_name") == PRESENT:
+                        results.append(item["content"])
+                cards = cards_for(s, message["tool_calls"], results)
+                if cards:
+                    message["presented"] = cards
     if not calls:
         shown = [
             {key: value for key, value in message.items() if key != "tool_calls"}

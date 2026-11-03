@@ -551,7 +551,7 @@ class ClaraBot(discord.Client):
             await channel.send(reply[:LIMIT])
         elif not mirrored:
             lines = "".join(f"\n📎 {path}" for path in presented)
-            for part in split_message((reply or "(no answer)") + lines):
+            for part in split_message((reply or ("" if presented else "(no answer)")) + lines):
                 await channel.send(part)
             for card in done.get("files", []):
                 try:

@@ -42,6 +42,7 @@ BOOKED_NEVER = {
     "qcm": "it needs the person in front of the page",
     "finish_run": "it ends a scheduled run",
     "open_second_brain": "it opens the vault in a conversation",
+    "present": "it hands a card to the person in the conversation, and nobody is there to see it",
     "discord_say": "it speaks in the thread of a conversation",
     "discord_thread": "it works on the thread of a conversation",
     "discord_forget": "only an approved request runs it",

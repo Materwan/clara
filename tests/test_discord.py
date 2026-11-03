@@ -271,6 +271,18 @@ async def test_a_file_clara_presents_is_a_line_with_its_path_and_is_not_uploaded
     assert len(bot.channels["general"].sent) == 1  # one message: nothing was fetched from the workspace to upload
 
 
+async def test_a_file_presented_with_no_words_is_not_called_no_answer(bot, monkeypatch):
+    async def stream(method, path, body=None, **options):
+        yield {"type": "turn", "conversation": "c1"}
+        yield {"type": "present", "ref": "reports/plan.md", "path": "reports/plan.md", "size": 7, "origin": None}
+        yield {"type": "done", "reply": "", "files": []}
+
+    monkeypatch.setattr(bot.clara, "stream", stream)
+    monkeypatch.setattr(bot, "set_conversation", lambda conversation: None)
+    await bot.ask(bot.channels["general"], {"message": "give me the plan"})
+    assert texts(bot.channels["general"]) == ["📎 reports/plan.md"]
+
+
 # ----------------------------------------------------------------------
 # Events: each kind to its own channel
 # ----------------------------------------------------------------------

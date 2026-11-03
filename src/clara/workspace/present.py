@@ -36,6 +36,7 @@ PRESENTED = "Presented"  # a result that starts with this line, then the referen
 WORKSPACE, VAULT, DRIVE = "workspace", "vault", "drive"
 PREFIXES = (("vault:", VAULT), ("drive:", DRIVE), ("ws:", WORKSPACE))
 DRIVE_ID = re.compile(r"[A-Za-z0-9_-]{1,200}")  # as connectors/tools.py::_file
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a line break would cut the first line of the result the card is found by
 MAX_NAME = 200
 
 
@@ -61,6 +62,8 @@ def canonical(reference: object) -> str:
             raise PathError("drive: must be followed by a Drive file id, as listed.")
         return f"drive:{what}"
     name = clean(what)
+    if CONTROL.search(name):
+        raise PathError("A path to present cannot hold a line break or another control character.")
     return f"vault:{name}" if kind == VAULT else name
 
 
