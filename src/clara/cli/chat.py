@@ -336,6 +336,8 @@ class Chat:
                 print(f"\n  [{event['name']}]", end="", flush=True)
             elif kind == "approval":
                 self.answer_inline(event["approval"])
+            elif kind == "present":
+                print(f"\n  📎 {event.get('ref') or event['path']} (see it on the web site)", end="", flush=True)
             elif kind == "tool_requests":
                 self.run_local(event)
             elif kind in ("warning", "retrying"):

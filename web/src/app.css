@@ -805,14 +805,18 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .grant-bar .icon { flex: none; color: var(--warn); }
 .run-head .tag { margin-left: var(--sp-8); }
 
-/* a markdown file Clara wrote */
+/* a file Clara handed over (the `present` tool) */
 .file-card { border: 1px solid var(--line-strong); border-radius: var(--r-md); max-width: 560px; font-size: var(--fs-md); }
 .file-card-head { display: flex; align-items: center; gap: var(--sp-12); padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-12); }
 .glyph { flex: none; display: grid; place-items: center; width: 2.2rem; height: 2.2rem; border-radius: var(--r-sm); background: var(--panel-2); color: var(--text); }
 .file-card .info { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
 .file-card .info strong { font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-card .info span { font-size: var(--fs-xs); color: var(--muted); }
-.file-card .file-body { border-top: 1px solid var(--line); padding: var(--sp-12) var(--sp-16); max-height: 60vh; overflow: auto; font-size: var(--fs-md); }
+.file-card .info > span { font-size: var(--fs-xs); color: var(--muted); } /* the line under the name, not the tag inside it */
+/* a presented file: the two actions have words, so they go under the name when the line is short */
+.file-card.present .file-card-head { flex-wrap: wrap; }
+.file-card.present .info { flex: 1 1 9rem; } /* a basis, so that on a narrow screen the buttons drop under the name instead of squeezing it */
+.file-card.present .actions { display: flex; flex-wrap: wrap; gap: var(--sp-6); margin-left: auto; }
+.file-card.present.gone .info strong { text-decoration: line-through; color: var(--muted); }
 
 /* ---- the side panel of a conversation: the files Clara wrote and her QCMs ------------------------------------ */
 .chat-body { flex: 1; min-height: 0; display: flex; }

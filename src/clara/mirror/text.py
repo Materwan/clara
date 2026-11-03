@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 
 from ..knowledge.attachments import DOCUMENT_BLOCK, documents_in
 
@@ -36,6 +37,7 @@ LABELS: dict[str, str] = {
     "ws_edit": "Edited",
     "ws_move": "Moved",
     "ws_delete": "Deleted",
+    "present": "Presented",
     "ws_run": "Ran",
     "web_search": "Searched the web",
     "web_fetch": "Read a page",
@@ -104,10 +106,12 @@ def question_shown(shown: str, content: str) -> str:
     return shown.strip() or question_text(content)[0]
 
 
-def answer_text(names: list[str], text: str) -> str:
-    """The answer with its tool line above it."""
+def answer_text(names: list[str], text: str, presented: Sequence[str] = ()) -> str:
+    """The answer with its tool line above it, and a line under it for each file Clara handed over (its path only: the
+    file stays in the workspace)."""
     line = tools_line(names)
-    return "\n".join(part for part in (line, text.strip()) if part)
+    files = "\n".join(f"📎 {path}" for path in presented)
+    return "\n".join(part for part in (line, text.strip(), files) if part)
 
 
 def digest(text: str) -> str:

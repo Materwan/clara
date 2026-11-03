@@ -1,13 +1,15 @@
-"""The nine workspace tools.
+"""The ten workspace tools.
 
     ws_list, ws_read, ws_search, ws_log   read                               class read
+    present                               read; hands a file over to the person   class read (drive_read for a Drive file)
     ws_write                              write; destructive when it overwrites   ws_write / ws_destroy
     ws_edit                               write                              ws_write
     ws_move                               write; destructive when the target exists    ws_write / ws_destroy
     ws_delete                             destructive                        ws_destroy
     ws_run                                write; `network: true` is its own target `net`   run / run_network
 
-A markdown file written under `notes/` is shown in the chat as a card you can open and download.
+A markdown file written under `notes/` is announced with a `file` event (Discord uploads it; the web site draws nothing for it).
+`present` is how Clara hands a file over: a card for any file she chooses (workspace/present.py).
 
 Where a file comes from (workspace/provenance.py): one that arrived from outside (a mail attachment, what a script fetched) or
 that was written after untrusted content was read is marked. Reading a marked file taints the conversation; an attachment or a
@@ -24,6 +26,7 @@ from ..gate.actions import Action
 from ..knowledge.projects import read_lines
 from ..secretscan import secret_kinds
 from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed, flag, optional_number
+from . import present
 from .paths import PathError, clean
 from .store import WorkspaceError, human_size
 
@@ -248,6 +251,71 @@ async def _ws_delete(context: ToolContext, path: str) -> str:
 
 
 # ----------------------------------------------------------------------
+# Presenting
+# ----------------------------------------------------------------------
+def _ref(value: Any) -> str:
+    try:
+        return present.canonical(value)
+    except PathError as error:
+        raise ToolError(str(error)) from None
+
+
+@acts_as("read", "drive_read")
+def _describe_present(context: ToolContext, arguments: dict) -> Action:
+    """A workspace file or a vault note is a read of it, as `ws_read` and `vault_read` are (a rule on the path applies);
+    a Drive file is a Drive read, as the Drive tools are."""
+    ref = _ref(arguments.get("path"))
+    kind, what = present.split(ref)
+    if kind == present.DRIVE:
+        return Action("", "read", "drive_read", (ref,), f"Present the Drive file {what}")
+    if kind == present.VAULT:
+        return Action("", "read", "read", (ref,), f"Present the note {what}")
+    return Action("", "read", "read", ("ws:" + ref,), f"Present {ref}")
+
+
+async def _present(context: ToolContext, path: str) -> str:
+    """A card under the answer for a file: made from what the workspace, the vault or Drive says about it, the file is
+    never read."""
+    s = context.services
+    ref = _ref(path)
+    if not ref:
+        raise ToolError("Give the path of the file to present.")
+    if context.turn.counts.get(f"{present.PRESENT}:{ref}"):
+        return f"{ref} is already presented in this answer."
+    if context.turn.counts.get(present.PRESENT, 0) >= present.MAX_PER_ANSWER:
+        raise ToolError(f"At most {present.MAX_PER_ANSWER} files per answer: mention the others in your words.")
+    kind, what = present.split(ref)
+    conversation = context.turn.conversation_id
+    try:
+        if kind == present.DRIVE:
+            card = await present.drive_live(s, ref, what)
+        elif kind == present.VAULT:
+            if not present.vault_open(s, conversation):
+                raise ToolError("The second brain is not open in this conversation: open_second_brain first.")
+            card = present.vault_card(s, ref, what)
+        else:
+            card = present.workspace_card(s, ref)
+            if not present.granted(s, conversation):  # the pack lets her present any file; without it, only her own
+                made_here = {item["path"] for item in await _workspace(context).conversation_files(conversation, 1000)}
+                if ref not in made_here:
+                    raise ToolError(
+                        f"{ref} was not written in this conversation, so you cannot present it. The person can let you "
+                        'present any file of the workspace by switching on the "Files created" tool pack (the + menu of '
+                        "the box they write in)."
+                    )
+    except ToolError:
+        raise
+    except ValueError as error:  # the workspace's, the vault's, Drive's and present's errors
+        raise ToolError(str(error)) from None
+    except OSError as error:  # its text holds the real path on the server: the model reads the kind only
+        raise ToolError(f"{ref} cannot be reached ({type(error).__name__}).") from None
+    context.turn.counts[present.PRESENT] = context.turn.counts.get(present.PRESENT, 0) + 1
+    context.turn.counts[f"{present.PRESENT}:{ref}"] = 1
+    context.events.append({"type": "present", **card})
+    return present.result(card)
+
+
+# ----------------------------------------------------------------------
 # Running
 # ----------------------------------------------------------------------
 @acts_as("run", "run_network")
@@ -404,6 +472,24 @@ def workspace_tools() -> list[Tool]:
             _ws_delete,
             fixed("ws_destroy", "destructive", lambda c, a: _target(a), lambda a: f"Delete {a.get('path')}"),
             {"path": path},
+            ("path",),
+        ),
+        Tool(
+            present.PRESENT,
+            "Hand a file over to the person, at the end of your answer: they get a card under it. Use it for a file you "
+            "made for them (a report, a PDF, the output of a script). Name it as a workspace path (`reports/plan.md`), "
+            "`vault:<note>` for a note of the second brain (open it first), or `drive:<file id>` for a Google Drive file "
+            "(an Open in Drive link). You may present the workspace files you wrote in this conversation; any other file of "
+            'the workspace only if the person switched on the "Files created" tool pack. You do not read the file and its '
+            f"content is not shown to you. At most {present.MAX_PER_ANSWER} files per answer.",
+            _present,
+            _describe_present,
+            {
+                "path": {
+                    "type": "string",
+                    "description": "A workspace path (reports/plan.md), vault:<note path or name>, or drive:<file id>.",
+                }
+            },
             ("path",),
         ),
         Tool(

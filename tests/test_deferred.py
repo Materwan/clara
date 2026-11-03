@@ -207,7 +207,7 @@ async def test_at_most_fifty_calls_wait(services, probe):
     assert result.approval is None and f"At most {MAX_PENDING}" in result.text
 
 
-@pytest.mark.parametrize("name", ["deferred_book", "ask_person", "qcm", "finish_run", "discord_say", "open_second_brain"])
+@pytest.mark.parametrize("name", ["deferred_book", "ask_person", "qcm", "finish_run", "discord_say", "open_second_brain", "present"])
 async def test_a_tool_that_needs_a_person_or_a_conversation_cannot_be_booked(services, name):
     result = await call(services, "deferred_book", {"tool": name, "at": SOON})
     assert result.approval is None and "cannot be booked" in result.text

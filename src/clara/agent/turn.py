@@ -7,7 +7,7 @@
 (the answer is the `done` event). After `done`, a long conversation is summarised: `compacting`, then `compacted` or
 `warning`.
 
-    turn, thinking, token, tool_start, tool, qcm, file, tool_requests, approval, retrying, discarded, usage,
+    turn, thinking, token, tool_start, tool, qcm, file, present, tool_requests, approval, retrying, discarded, usage,
     done, compacting, compacted, warning
 
 **Client tools** are tools a client describes in its request and runs on its own machine: when the model calls one,
