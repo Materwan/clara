@@ -59,6 +59,14 @@ class Connectors:
         token = self.s.secrets.get("github_token")
         return GitHub(token) if token else None
 
+    def github_missing(self) -> str:
+        """Why the GitHub tools cannot be used now ("": they can): no token, or no repository added."""
+        if not self.s.secrets.has("github_token"):
+            return "No GitHub token is set (the Connections page connects GitHub)."
+        if not self.s.connections.resources("github_repo"):
+            return "No repository is added (the Connections page adds one)."
+        return ""
+
     def github_failed(self, error: GitHubError) -> None:
         if error.reconnect:
             self.s.connections.mark("github", "needs_reconnect")
@@ -141,34 +149,19 @@ class Connectors:
         return found
 
     # ------------------------------------------------------------------
-    def pack_off(self, state: TurnState, tool: str) -> bool:
-        """True when the pack holding this tool is off for this turn's conversation (its tools are then not offered)."""
+    def hidden_tools(self, state: TurnState) -> set[str]:
+        """The tools of the packs that are off for this turn's conversation (they are then not offered)."""
         if self.s.packs is None:
-            return False
+            return set()
         conversation = self.s.conversations.get(state.conversation_id) if state.conversation_id else None
-        return tool in self.s.packs.hidden(conversation)
+        return self.s.packs.hidden(conversation)
 
     def context_block(self, state: TurnState) -> str:
         connections = self.s.connections
         lines = []
         repos = connections.resources("github_repo")
-        # in a local-only chat the GitHub tools are not offered either, so the prompt does not say they exist
-        if repos and self.s.secrets.has("github_token") and not state.local_only:
-            names = ", ".join(r.locator + (f" (branch {r.branch})" if r.branch else "") for r in repos)
-            if self.pack_off(state, "github_read"):
-                lines.append(
-                    f"- GitHub repositories: {names}, but the GitHub tools are off in this conversation: the person "
-                    'switches the GitHub pack on in the "+" menu.'
-                )
-            else:
-                lines.append(f"- GitHub repositories (github_* tools): {names}")
-        if connections.get("google") and self.s.secrets.has("google_refresh_token"):
-            drive = [r for r in connections.resources() if r.kind.startswith("drive")]
-            lines.append(
-                "- Google Drive (drive_* tools): "
-                + (", ".join(f"{r.label} [{r.locator}]" for r in drive) or "your own folder only")
-            )
-        # in a local-only chat the mail tools are not offered, so the prompt does not say they exist
+        # in a local-only chat the GitHub and mail tools are not offered, so the prompt does not say they exist
+        github = bool(repos) and self.s.secrets.has("github_token") and not state.local_only
         mailboxes = (
             []
             if state.local_only
@@ -178,7 +171,23 @@ class Connectors:
                 if self.mail_connected(name)
             ]
         )
-        if mailboxes and self.pack_off(state, "mail_search"):
+        off = self.hidden_tools(state) if github or mailboxes else set()  # one look at the packs for both lines
+        # like Mail, a chat that does not use GitHub is not told the repositories (private ones) either
+        if github and "github_read" in off:
+            lines.append(
+                "- GitHub: connected, but its tools are off in this conversation: the person switches the GitHub pack on "
+                'in the "+" menu.'
+            )
+        elif github:
+            names = ", ".join(r.locator + (f" (branch {r.branch})" if r.branch else "") for r in repos)
+            lines.append(f"- GitHub repositories (github_* tools): {names}")
+        if connections.get("google") and self.s.secrets.has("google_refresh_token"):
+            drive = [r for r in connections.resources() if r.kind.startswith("drive")]
+            lines.append(
+                "- Google Drive (drive_* tools): "
+                + (", ".join(f"{r.label} [{r.locator}]" for r in drive) or "your own folder only")
+            )
+        if mailboxes and "mail_search" in off:
             lines.append(
                 '- Mail: connected, but its tools are off in this conversation: the person switches the Mail pack on in the "+" menu.'
             )
@@ -212,9 +221,7 @@ def install(s: Services) -> None:
         s.agent.tool_conditions[tool.name] = lambda state: web.can_search()
     for tool in github_tools():
         s.toolbox.add(tool)
-        s.agent.tool_conditions[tool.name] = lambda state: bool(
-            s.secrets.has("github_token") and s.connections.resources("github_repo")
-        )
+        s.agent.tool_conditions[tool.name] = lambda state: not s.connectors.github_missing()
     for tool in drive_tools():
         s.toolbox.add(tool)
         s.agent.tool_conditions[tool.name] = lambda state: bool(

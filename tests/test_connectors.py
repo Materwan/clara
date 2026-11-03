@@ -118,7 +118,8 @@ async def test_the_github_tools_exist_only_with_a_token_a_repository_and_the_git
     connect_github(services)
     await services.agent.answer(ChatRequest(message="hi", client="cli"))  # usable, but the pack is off: no tools
     assert not github_tools_offered(llm)
-    assert '"+" menu' in system_text(llm) and "github_*" not in system_text(llm) and "me/repo" in system_text(llm)
+    assert '"+" menu' in system_text(llm) and "github_*" not in system_text(llm)
+    assert "me/repo" not in system_text(llm)  # a chat that does not use GitHub is not told which repositories there are
     chat = services.conversations.create("cli", packs=["web", "github"]).id
     await services.agent.answer(ChatRequest(message="hi", client="cli", conversation=chat))
     assert github_tools_offered(llm) == GITHUB_TOOLS
@@ -150,7 +151,7 @@ def test_a_hook_that_names_a_github_tool_gets_the_pack_and_a_new_chat_does_not(s
     assert services.packs.active(None) == ["web"]
 
 
-def test_migration_28_gives_the_github_pack_to_what_already_called_a_github_tool(tmp_path):
+def test_the_github_pack_migration_gives_it_to_what_already_called_a_github_tool(tmp_path):
     import importlib
     import json
 
@@ -159,7 +160,9 @@ def test_migration_28_gives_the_github_pack_to_what_already_called_a_github_tool
     migrate_module = importlib.import_module("clara.db.migrate")
     path = tmp_path / "old.db"
     old = connect(path)
-    for migration in migrate_module.migrations()[:27]:
+    everything = migrate_module.migrations()
+    ours = next(m.version for m in everything if m.name.endswith("_github_pack.sql"))  # its number is taken at merge
+    for migration in everything[: ours - 1]:
         old.executescript(f"BEGIN IMMEDIATE;\n{migration.sql}\nPRAGMA user_version = {migration.version};\nCOMMIT;")
     for number, packs in ((1, '["web"]'), (2, '["web"]'), (3, '["web", "github"]')):
         old.execute("INSERT INTO schedules (id, name, prompt, local_at, timezone, packs, created_at, updated_at) "
@@ -173,13 +176,16 @@ def test_migration_28_gives_the_github_pack_to_what_already_called_a_github_tool
     old.execute("INSERT INTO conversations (id, client, created_at, updated_at) VALUES ('c4', 'web', 't', 't')")
     old.execute("INSERT INTO audit_log (at, conversation_id, tool, level, situation, args_digest, effect, outcome) "
                 "VALUES ('t', 'c4', 'github_write', 'write', 'interactive', '', 'ask', 'asked')")
+    old.execute("INSERT INTO conversations (id, client, created_at, updated_at) VALUES ('c5', 'web', 't', 't')")
+    old.execute("INSERT INTO audit_log (at, conversation_id, tool, level, situation, args_digest, effect, outcome) "
+                "VALUES ('t', 'c5', 'githubish', 'read', 'interactive', '', 'allow', 'ran')")  # `_` is no wildcard
     old.close()
-    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (27, migrate_module.LATEST_VERSION)
+    assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (ours - 1, migrate_module.LATEST_VERSION)
     new = connect(path)
     schedules = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM schedules")}
     assert schedules == {1: ["web", "github"], 2: ["web"], 3: ["web", "github"]}  # schedule 3 keeps one pack, not two
     chats = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM conversations")}
-    assert chats == {"c1": ["web", "github"], "c2": ["web"], "c3": ["web", "github"], "c4": ["web", "github"]}
+    assert chats == {"c1": ["web", "github"], "c2": ["web"], "c3": ["web", "github"], "c4": ["web", "github"], "c5": ["web"]}
 
 
 async def test_the_google_flow_is_bound_to_the_browser_that_started_it(services):

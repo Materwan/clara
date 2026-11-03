@@ -1,4 +1,4 @@
--- Schema version 28: the GitHub pack. The five GitHub tools are no longer offered in every conversation: the "+" menu switches
+-- Schema version 29: the GitHub pack. The five GitHub tools are no longer offered in every conversation: the "+" menu switches
 -- them on (a pack, like the web and Mail). A conversation or a schedule that has called a GitHub tool before keeps them: the pack
 -- is added to it once, from the audit log. Every other conversation starts with it off. A hook needs nothing here: its runs get
 -- the pack from the tools its allow-list names.

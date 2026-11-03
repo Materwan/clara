@@ -60,11 +60,9 @@ def _mail_needed(s: Services) -> str:
 
 
 def _github_needed(s: Services) -> str:
-    if s.connections is None or not s.secrets.has("github_token"):
+    if s.connectors is None:
         return "No GitHub token is set (the Connections page connects GitHub)."
-    if not s.connections.resources("github_repo"):
-        return "No repository is added (the Connections page adds one)."
-    return ""
+    return s.connectors.github_missing()
 
 
 PACKS: tuple[Pack, ...] = (
