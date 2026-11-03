@@ -67,6 +67,11 @@ const NOTES: Record<string, [string, string, string?]> = {
   mail_trash: ['mail', 'Moved a mail to the Trash'],
   mail_mark_read: ['mail', 'Marked a mail as read'],
   mail_label_delete: ['mail', 'Deleted a mail label', 'name'],
+  school_calendar: ['calendar', 'Read your school calendar'],
+  school_grades: ['book', 'Read your grades'],
+  moodle_courses: ['book', 'Listed your Moodle courses'],
+  moodle_files: ['folder', 'Listed the files of a Moodle course', 'course'],
+  moodle_file_save: ['download', 'Saved a Moodle document', 'path'],
 };
 
 export type Call = { name: string; arguments: any; result?: string; running?: boolean; granted?: number }; // granted: the Approve all next that allowed it

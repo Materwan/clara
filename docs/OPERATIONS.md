@@ -111,6 +111,24 @@ a token of its own.
 4. Disconnecting revokes the Gmail token at Google. Google may count Drive's and Gmail's tokens as one grant: if Drive
    then asks to be reconnected after you disconnected Gmail, that is why (to verify with a real account).
 
+### Moodle and Auriga (EPITA)
+
+Two school sites, read only, as the **Moodle/Auriga** pack (switched on in the "+" menu). Nothing to set in `clara.env`. Each site is
+signed in once, in a browser, and what it gives is pasted back; no password is kept. Do it on the Connections page (the two cards at the
+end), or from the machine with `clara moodle connect` and `clara auriga connect` (hidden prompt; `uv run clara …` in a checkout).
+
+1. **Moodle:** the card (or the command) gives the address of Moodle's mobile sign-in page. Open it signed in to Moodle: it shows a link
+   « Cliquez ici si l'app ne s'ouvre pas automatiquement ». Copy that link's address (it starts with `moodlemobile://token=`) and paste it.
+   Clara keeps the token only if Moodle accepts it. Moodle cannot renew a token: when it lapses, the `moodle` alert and the card say so, and
+   you repeat this.
+2. **Auriga:** open the address the card gives and sign in with Microsoft. You land on a blank page of `auriga.epita.fr` (a 404 is
+   normal): copy its whole address and paste it. Clara swaps the code in it for tokens and renews the sign-in herself. The card says if Auriga
+   gave a session token only (it then ends with Auriga's session, and you sign in again often) instead of one kept for a month of inactivity.
+3. `/school` (console) shows who is connected and whether a sign-in lapsed; `/school disconnect moodle|auriga`, or **Disconnect**, forgets a
+   token (it stays valid on the site until it expires: Moodle has no page to revoke it).
+4. The token Moodle gives has all your rights there, and Moodle cannot make a read-only one: Clara calls only seven read functions. Reading
+   these sites does not taint a conversation; a document saved with `moodle_file_save` is an ordinary workspace file.
+
 ### Mail in daily use
 
 - **Approving an email** needs the web site or the console. Discord cannot, because sending is a `destructive` action

@@ -59,6 +59,10 @@ def _mail_needed(s: Services) -> str:
     return "" if connected else "No mailbox is connected (the Connections page connects Gmail)."
 
 
+def _school_needed(s: Services) -> str:
+    return s.connectors.school_unusable() if s.connectors is not None else "No connection is available."
+
+
 PACKS: tuple[Pack, ...] = (
     Pack(
         "web",
@@ -99,6 +103,15 @@ PACKS: tuple[Pack, ...] = (
         ),
         icon="mail",
         check=_mail_needed,
+    ),
+    Pack(
+        "school",
+        "Moodle/Auriga",
+        "Your EPITA courses, read only: the calendar (classes and exams from Auriga, assignments and quizzes from Moodle), "
+        "the grades, the Moodle courses and their documents, which can be saved to the workspace.",
+        frozenset({"school_calendar", "school_grades", "moodle_courses", "moodle_files", "moodle_file_save"}),
+        icon="calendar",
+        check=_school_needed,
     ),
     Pack(
         "qcm",

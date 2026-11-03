@@ -10,6 +10,12 @@
   let repo = $state('');
   let branch = $state('');
   let senders = $state('');
+  // Moodle and Auriga (EPITA): the owner signs in once in a browser and pastes back what the site gave
+  let moodleUrl = $state('');
+  let moodleLink = $state('');
+  let aurigaUrl = $state('');
+  let aurigaState = $state('');
+  let aurigaAddress = $state('');
   type Mailbox = 'gmail';
   const WATCHED: Record<string, string> = { 'github.pull_request': 'pull requests', 'github.push': 'pushes' };
 
@@ -145,6 +151,55 @@
     load();
   }
 
+  async function startMoodle(): Promise<void> {
+    try {
+      moodleUrl = (await api.post('/v1/connections/moodle/start')).url;
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function connectMoodle(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    try {
+      const done = await api.put('/v1/connections/moodle', { link: moodleLink.trim() });
+      moodleLink = moodleUrl = '';
+      toast(`Moodle connected as ${done.account}.`, 'ok');
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function startAuriga(): Promise<void> {
+    try {
+      const started = await api.post('/v1/connections/auriga/start');
+      aurigaUrl = started.url;
+      aurigaState = started.state;
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function connectAuriga(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    try {
+      const done = await api.post('/v1/connections/auriga/finish', { state: aurigaState, address: aurigaAddress.trim() });
+      aurigaAddress = aurigaUrl = aurigaState = '';
+      toast(done.lasting ? `Auriga connected as ${done.account}.` : `Auriga connected as ${done.account}, for the session only: you will have to sign in again often.`, done.lasting ? 'ok' : 'info');
+      load();
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  async function disconnectSchool(site: 'moodle' | 'auriga'): Promise<void> {
+    const name = site === 'moodle' ? 'Moodle' : 'Auriga';
+    if (!(await confirmDialog({ title: `Disconnect ${name}`, message: `Disconnect ${name}? Its token is forgotten here (it stays valid on the site until it expires).`, confirm: 'Disconnect', danger: true }))) return;
+    await api.del(`/v1/connections/${site}`);
+    load();
+  }
+
   function picker(): void {
     window.open('/picker.html', 'clara-picker', 'width=900,height=650');
     addEventListener('focus', load, { once: true });
@@ -238,5 +293,43 @@
         </form>
       </section>
     {/if}
+    <section class="panel stack">
+      <h2><Icon name="book" size={18} /> Moodle {#if info.moodle.connected}<span class="tag ok">{info.moodle.account}</span>{/if}
+        {#if info.moodle.status === 'needs_reconnect'}<span class="tag danger">sign in again</span>{/if}</h2>
+      <p class="muted small">Clara reads your courses, assignment and quiz dates, grades and documents, and changes nothing on Moodle. The sign-in
+        is the one of Moodle's mobile app: you sign in once, and Moodle has no renewal, so you do it again when the token lapses.</p>
+      <div class="row">
+        <button onclick={startMoodle}>{moodleUrl ? 'New address' : info.moodle.connected ? 'Sign in again' : 'Sign in to Moodle'}</button>
+        {#if moodleUrl}<a href={moodleUrl} target="_blank" rel="noopener noreferrer">Open Moodle's sign-in page <Icon name="external" size={14} /></a>{/if}
+        {#if info.moodle.connected}<button class="danger" onclick={() => disconnectSchool('moodle')}>Disconnect</button>{/if}
+      </div>
+      {#if moodleUrl}
+        <p class="muted small">Signed in to Moodle, that page shows a link «Cliquez ici si l'app ne s'ouvre pas automatiquement».
+          Copy the address of that link (right-click, copy the link address): it starts with <code>moodlemobile://token=</code>. Paste it here.</p>
+        <form class="row" onsubmit={connectMoodle}>
+          <input class="grow" type="password" autocomplete="off" aria-label="Moodle link" placeholder="moodlemobile://token=…" bind:value={moodleLink} />
+          <button class="primary" disabled={!moodleLink.trim()}>Connect</button>
+        </form>
+      {/if}
+    </section>
+    <section class="panel stack">
+      <h2><Icon name="calendar" size={18} /> Auriga {#if info.auriga.connected}<span class="tag ok">{info.auriga.account}</span>{/if}
+        {#if info.auriga.status === 'needs_reconnect'}<span class="tag danger">sign in again</span>{/if}</h2>
+      <p class="muted small">Clara reads your schedule and grades, and changes nothing on Auriga. You sign in once with Microsoft, as usual;
+        Auriga then lets Clara renew the sign-in by herself, and asks you again only if it ends.</p>
+      <div class="row">
+        <button onclick={startAuriga}>{aurigaUrl ? 'New address' : info.auriga.connected ? 'Sign in again' : 'Sign in to Auriga'}</button>
+        {#if aurigaUrl}<a href={aurigaUrl} target="_blank" rel="noopener noreferrer">Open Auriga's sign-in page <Icon name="external" size={14} /></a>{/if}
+        {#if info.auriga.connected}<button class="danger" onclick={() => disconnectSchool('auriga')}>Disconnect</button>{/if}
+      </div>
+      {#if aurigaUrl}
+        <p class="muted small">After signing in you land on a blank page of <code>auriga.epita.fr</code> (a «404» is normal). Copy the whole
+          address of that page from your browser's address bar and paste it here.</p>
+        <form class="row" onsubmit={connectAuriga}>
+          <input class="grow" type="password" autocomplete="off" aria-label="Address of the page after the sign-in" placeholder="https://auriga.epita.fr/clara-callback?…" bind:value={aurigaAddress} />
+          <button class="primary" disabled={!aurigaAddress.trim()}>Connect</button>
+        </form>
+      {/if}
+    </section>
   {/if}
 </div>

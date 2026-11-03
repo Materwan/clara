@@ -8,6 +8,7 @@ Targets name what is touched, with a prefix:
     ws:<path>          a workspace path            (a rule may leave the prefix out: `scratch/**`)
     github:<owner/repo>                            drive:<file id>          vault:<note path>
     mail:gmail             a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
+    school:moodle          Moodle or Auriga (read)   school:auriga
     domain:<host>      a web address's host        net                      a script that asks for the network
     folder:<path>      a path in the folder you opened on your computer (a web chat; the empty path is its top)
     memory, reminders, tasks, notify, forms        Clara's own records
@@ -59,6 +60,16 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "mail_trash": ("files_vault", "mail", "Mail trash: move a message to the Trash (never emptied)"),
     "mail_mark": ("files_vault", "mail", "Mail mark: take the unread mark off a message (nothing else changes)"),
     "mail_label_delete": ("mail", "all", "Mail label delete: delete one of your labels (its messages stay)"),
+    "school_read": (
+        "any_read",
+        "any_read",
+        "Moodle and Auriga read: your courses, calendar, grades and the files of a course",
+    ),
+    "school_save": (
+        "any_read",
+        "files_vault",
+        "Moodle save: a course document written to the workspace (with a text copy)",
+    ),
     "vault_write": ("any_read", "files_vault", "Create or edit vault notes (git history)"),
     "vault_destroy": ("any_read", "files_vault", "Delete or move vault notes"),
     "web_search": ("any_read", "any_read", "Web search"),
@@ -137,12 +148,14 @@ LEAVES_MACHINE = OUTSIDE | frozenset(
         "mail_trash",
         "mail_mark",
         "mail_label_delete",
+        "school_read",
+        "school_save",
         "vault_destroy",
         "discord",
     }
 )
 
-PREFIXES = ("ws:", "github:", "drive:", "mail:", "vault:", "domain:", "folder:")
+PREFIXES = ("ws:", "github:", "drive:", "mail:", "school:", "vault:", "domain:", "folder:")
 SPECIAL_TARGETS = (
     "net",
     "search",
