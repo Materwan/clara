@@ -104,7 +104,7 @@ async def test_the_secrets_listing_is_grouped_and_links_each_secret_to_its_provi
     assert by_name["legacy_key"]["group"] == "Other" and by_name["legacy_key"]["link"] is None
     assert by_name["legacy_key"]["settable"] is False
     groups = list(dict.fromkeys(item["group"] for item in listing))
-    assert groups == ["Model providers", "Web search", "GitHub", "Google", "Vault and backups", "Other"]
+    assert groups == ["Model providers", "Web search", "GitHub", "Google", "Moodle and Auriga", "Vault and backups", "Other"]
     assert "x" not in {str(value) for item in listing for key, value in item.items() if key == "value"}
 
 

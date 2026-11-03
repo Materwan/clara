@@ -66,6 +66,8 @@ OUTSIDE_TOOL_PREFIXES = (
     "github_",
     "drive_",
     "mail_",
+    "moodle_",
+    "school_",
 )  # tools that only reach outside: not offered when local only
 RECENT_TOOL_RESULTS_KEPT = 5
 TOOL_HISTORY_SHARE = 0.15
