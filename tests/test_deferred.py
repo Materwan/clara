@@ -98,13 +98,21 @@ async def fire(services) -> int:
 # ----------------------------------------------------------------------
 # The pack
 # ----------------------------------------------------------------------
-def test_the_pack_is_for_chats_only_and_off_in_a_new_conversation(services):
+def test_the_pack_is_for_chats_and_runs_and_off_in_a_new_conversation(services):
     pack = next(pack for pack in PACKS if pack.id == "deferred_calls")
-    assert pack.where == "chat" and not pack.default and pack.tools == NAMES
+    assert pack.where == "both" and not pack.default and pack.tools == NAMES
     assert {tool.name for tool in deferred_tools()} == NAMES
     assert "deferred_calls" in [item["id"] for item in services.packs.listing("chat")]
-    assert "deferred_calls" not in [item["id"] for item in services.packs.listing("schedule")]
+    assert "deferred_calls" in [item["id"] for item in services.packs.listing("schedule")]
     assert "deferred_calls" not in services.packs.active(None)
+    assert services.packs.check(["deferred_calls"], "schedule") == ["deferred_calls"]
+
+
+def test_a_hook_gets_the_pack_only_when_its_allow_list_names_a_booking_tool(services):
+    assert "deferred_calls" not in services.packs.starting_with(["notify"])
+    assert "deferred_calls" in services.packs.starting_with(["deferred_book", "notify"])
+    assert "deferred_calls" in services.packs.starting_with(["deferred_*"])
+    assert "automations" not in services.packs.starting_with(["automation_*", "deferred_*"])  # still never a run's
 
 
 async def test_the_tools_are_offered_only_where_the_pack_is_on(services, llm):
@@ -118,14 +126,38 @@ async def test_the_tools_are_offered_only_where_the_pack_is_on(services, llm):
     assert NAMES <= {tool["function"]["name"] for tool in llm.seen[-1]["tools"]}
 
 
-async def test_a_scheduled_run_is_never_offered_them_even_if_its_conversation_has_the_pack(services):
+async def test_a_scheduled_run_is_offered_them_when_its_pack_is_on_and_still_not_the_automations(services):
     schedule = services.schedules.create("Run", "x", "2099-01-05T09:00", timezone="Europe/Paris")
-    cid = services.conversations.create("web", title="Run", packs=["web", "deferred_calls"]).id
+    cid = services.conversations.create("web", title="Run", packs=["web", "deferred_calls", "automations"]).id
     services.db.execute(
         "INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id, started_at) VALUES (?, ?, 'running', ?, ?)",
         (schedule.id, "2099-01-05T08:00:00+00:00", cid, "2099-01-05T08:00:00+00:00"),
     )
-    assert NAMES <= services.packs.hidden(services.conversations.get(cid))
+    hidden = services.packs.hidden(services.conversations.get(cid))
+    assert not NAMES & hidden
+    assert "automation_create" in hidden
+    off = services.conversations.create("web", title="Off", packs=["web"]).id  # a run whose schedule did not list the pack
+    services.db.execute(
+        "INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id, started_at) VALUES (?, ?, 'running', ?, ?)",
+        (schedule.id, "2099-01-06T08:00:00+00:00", off, "2099-01-06T08:00:00+00:00"),
+    )
+    assert NAMES <= services.packs.hidden(services.conversations.get(off))
+
+
+async def test_a_run_books_a_call_and_it_waits_for_you_like_any_request(services, probe):
+    """Nobody holds the request of an unattended run: it stays pending, and the call is booked when you allow it."""
+    result = await call(services, "deferred_book", {"tool": "probe", "arguments": {"x": 1}, "at": SOON}, mode="unattended")
+    assert result.approval is not None and result.approval.status == "pending" and services.deferred.listing() == []
+    settled = await services.approvals.decide(result.approval.id, "allow_once", owner(services))
+    assert settled.status == "done", settled.result
+    booked = services.deferred.listing()[0]
+    assert (booked.tool, booked.arguments, booked.status) == ("probe", {"x": 1}, "pending")
+
+
+async def test_a_run_that_read_untrusted_content_is_asked_whatever_a_rule_says(services, probe):
+    services.rules.add("allow", tool="deferred_book")
+    result = await call(services, "deferred_book", {"tool": "probe", "at": SOON}, mode="unattended", tainted=True)
+    assert result.approval is not None and result.approval.status == "pending"
 
 
 # ----------------------------------------------------------------------

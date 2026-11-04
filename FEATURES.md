@@ -318,8 +318,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
   schedules and hooks, see the Automation page; every change asks you first and a scheduled or hook run is never offered it),
-  **Booked calls** (chats only, off until you switch it on: Clara books a tool call to run later, see *Booked calls* in
-  section 5), and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
+  **Booked calls** (off until you switch it on, in a chat or in the packs of a schedule or the allow-list of a hook: Clara
+  books a tool call to run later, see *Booked calls* in section 5), and, for scheduled runs only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
   it, so it follows the conversation to every client, and a new conversation starts with web search only. A **project** can
   start its conversations with other tools: its `packs` (chosen when the project is made or later, on its page) are copied to each
@@ -455,9 +455,9 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
     wait for your answer, write the day into a block of that day's daily note (`vault_daily_block`), mark the tasks you
     confirmed done and finish; unanswered, she writes it from what she read, the uncertain points under « À confirmer ».
     Delete or pause it as any schedule; it is not made again.
-- **Booked calls (deferred tool calls):** with the **Booked calls** pack of a chat, Clara decides now that one of her tools
+- **Booked calls (deferred tool calls):** with the **Booked calls** pack, in a chat or in a scheduled or hook run, Clara decides now that one of her tools
   runs later: « trash this mail in two days » is `deferred_book` with the tool `mail_trash`, its arguments and a date
-  (`at`, in the chat's time zone, between a minute and 366 days ahead; 50 booked calls waiting at most). The request
+  (`at`, in the time zone of the chat or of the schedule, between a minute and 366 days ahead; 50 booked calls waiting at most). The request
   (class `deferred`, at the level of the booked call, so Discord cannot allow a destructive one) shows the whole call
   (what its tool says it would do, its arguments) and its date, and you allow that exact call once; it asks at every auto
   level but the last, it asks again in a tainted turn whatever a rule says, and a booked call cannot book another. At the due
@@ -471,10 +471,11 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   `booked_calls`) when it ended: done, failed (the error, e.g. the mail is gone) or not run; a local-only call's stays off Discord
   and scripts. A crash while it ran marks it `failed` (« check before booking it again »): it is never run twice. The
   **Tasks & reminders** page lists them (waiting, running, held, ended) with a **Cancel** for one that waits for its date;
-  `deferred_cancel` and `DELETE /v1/deferred/{deferred_id}` do the same, and Clara can list them (`deferred_list`). Only a chat
-  books one: there is no way to book from the API. Finished calls are kept 30 days. Not bookable: the tools that need a
+  `deferred_cancel` and `DELETE /v1/deferred/{deferred_id}` do the same, and Clara can list them (`deferred_list`). Only Clara
+  books one, in a chat or in a run; there is no way to book from the API. A run does not wait for your answer: its request
+  is stored and pushed like any other of an unattended run, and the call is booked when you allow it. Finished calls are kept 30 days. Not bookable: the tools that need a
   person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`),
-  those run by your browser (the computer folder) and a tool that the chat is not offered.
+  those run by your browser (the computer folder) and a tool that the conversation is not offered.
 - **Notifications:** Clara may notify you (3 per turn, only when asked or when long work is done); you can notify
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
@@ -989,7 +990,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `automation_create` | Make a schedule (at a time, once or repeating) or a hook (when a mail arrives or a GitHub pull request or push happens): every setting of the Automation page. It asks you first, with the whole automation (and, for a schedule, when it first runs) in the request; refused unattended; asks again in a tainted turn whatever a rule says. Made in a local-only conversation, it is local only | automation / write |
 | `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). A hook's kind of event cannot change. The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass; if more would be deleted by the time you allow it, nothing is changed and Clara asks again | automation / write |
 | `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
-| `deferred_book` | Book a tool call to run later, by itself: a tool, its arguments and a date. You read the whole call and allow it once; a refusing rule, the floor and the local-only rule still apply when it is due (pack Booked calls; chats only) | deferred / the level of the booked call |
+| `deferred_book` | Book a tool call to run later, by itself: a tool, its arguments and a date. You read the whole call and allow it once; a refusing rule, the floor and the local-only rule still apply when it is due (pack Booked calls) | deferred / the level of the booked call |
 | `deferred_list` | The booked calls that wait and the latest ones that ended, with their numbers; the summary of a local-only call is shown only to a local-only conversation (pack Booked calls) | read |
 | `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; scheduled runs only, and not offered to a run that delivers to Discord: its thread is the forum's) | discord / write |

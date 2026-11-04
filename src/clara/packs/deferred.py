@@ -10,8 +10,11 @@ arguments, no model turn and no conversation open (timekeeping/deferred.py). The
 rule, the floor and the local-only rule still stop it; a rule that asks makes it an ordinary request), and a call that
 now says something else than what you read is not run (`Toolbox.call_booked`).
 
-The pack is for chats only (registry.py): a run of an automation is never offered these tools, so a booked call cannot
-book another one, and a message read by a run cannot book anything.
+The pack is for chats and for the runs of automations (registry.py): a schedule lists it among its packs, a hook gets it
+when its allow-list names one of the tools. A run does not wait for the answer: its request is held for you like any
+other, and the call is booked when you allow it. A run that read untrusted content (a mail, a page) is a tainted turn,
+so its booking asks you whatever a rule says. A booked call itself never books another one (`BOOKED_NEVER`): it is run
+by the server with no model turn.
 """
 
 from __future__ import annotations
@@ -237,7 +240,7 @@ def deferred_tools() -> list[Tool]:
                 },
                 "at": {
                     "type": "string",
-                    "description": "The local date and time it runs, YYYY-MM-DDTHH:MM in this chat's time zone, at "
+                    "description": "The local date and time it runs, YYYY-MM-DDTHH:MM in this conversation's time zone, at "
                     "least a minute from now.",
                 },
             },
