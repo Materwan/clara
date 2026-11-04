@@ -3,6 +3,38 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## v1.5.1 — 04/11/2026
+
+**Booked calls reach the runs of automations.** The **Booked calls** pack (`deferred_book`, `deferred_list`, `deferred_cancel`)
+was offered in a chat only. A schedule or a hook can now have it, so Clara can book a tool call to run later from an automation
+run too. A small release: no new tool, route, setting or migration.
+
+**What changes:**
+
+- **A schedule lists the pack:** **Booked calls** is among the packs you can give a schedule. It is off in every run until it
+  is listed.
+- **A hook gets the pack from its allow-list:** when the list names `deferred_book`, `deferred_list` or `deferred_cancel`, or a
+  pattern that matches them. A hook's default list (the read tools of its kind and `notify`) does not include them.
+- **A run does not wait for your answer:** the request for `deferred_book` is stored and pushed to your clients like any other
+  request of an unattended run. It shows the whole call and its date, and the call is booked only when you allow it (a request
+  expires after 24 hours; a conversation may have 10 waiting). Nothing changed in the gate.
+- **The same care as in a chat, and a little more:** a run that read a mail or a page is a tainted turn, so its booking asks
+  whatever a rule says; the unattended level asks too and refuses below level 2. A run that read a hostile message can put a
+  request to book a call in front of you, so read the whole call before you allow it. At the last auto level the booking runs
+  without asking, as in a chat.
+- **What did not change:** a booked call still cannot book another one, and the **Automations** pack is still never given to a run.
+  The `at` of a booking is read in the time zone of the chat or of the schedule.
+
+**What changes when you update:** nothing, until you list **Booked calls** in a schedule or name a `deferred_*` tool in a
+hook's allow-list. No existing automation is given the pack.
+
+**Interface changes:** none. The tool count is unchanged (89), with no new route, event, setting, secret, alert or command.
+
+**Migrations:** none.
+
+**Docs:** [DECISIONS.md](docs/DECISIONS.md) (« The runs of automations may have the pack too », which changes the choice of
+31/10 that made the pack chat-only) and [FEATURES.md](FEATURES.md) (*Booked calls*).
+
 ## v1.5.0 — 03/11/2026
 
 **Clara reaches your school, hands files over, and Discord stays tidy.** Moodle and Auriga (EPITA) can be read by Clara, read
