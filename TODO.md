@@ -17,6 +17,89 @@ What it leaves, not decided:
 - The raw text of a page or a mail is not shown to you in the chat: only the report is. A card that opens the raw text, for you and not for
   the model, would need a client-side change.
 
+## The reader: defects found in a real-conditions test
+
+The owner asked to keep, for later, what a test of the quarantined reader in real conditions found (2026-11-11, `main` at `1705e65`,
+the free `opencode-go:beam-free` model for the chat, the hooks and the reader, a stand-in Gmail, real public pages and simulated
+hostile ones, then a headless browser). The test kit was throwaway and is not in the repository. These are findings to fix, with a
+proposal each: the proposals are ideas, not decisions.
+
+What held: 276 of 276 reader answers were valid on the first try; no order from a hostile text reached the chat unflagged; no forged
+report was adopted; the chat model never obeyed a hostile order unless the person had told it to follow the mail. The reader adds
+about 3.3 times the wall time of a page read and about 19 % tokens (one benign page, 3 runs each, `beam-free`).
+
+To fix, most serious first (all reproduced by the orchestrator unless noted):
+
+- **A question makes the reader quote the hostile text (medium).** When the model passes a `focus` such as « the lines that contain X »
+  to `ws_read` of a marked file, the reader copies the hostile line into `answer`, and the chat prints it, although `ws_search` says
+  « not shown ». 10 of 10 files in one run. Cause: `answer` is up to 800 characters of free text (`agent/reader.py:93-98`), the focus is
+  put in the reader's message (`reader.py:351-357`), and the note of `ws_search` sends the model to `ws_read`
+  (`workspace/tools.py:157-161`). Idea: when the report says the text speaks to an AI, drop from `answer` and `facts` any run of about
+  30 characters copied from the source. It would also keep out of the report the address and the words that a hostile order asks to
+  write, which reach it today even when the text is flagged.
+- **A forged `[id]` inside a list item takes over a later item (medium).** In a list, a line `[6] ...` inside item 3 can make the reader
+  give item 6 the gist of the forged line. 3 of 15 and 6 of 8 runs on two texts; not seen end to end in a chat (0 of 3). Cause:
+  `reader.py:377` writes `[id] clean_line(text)` and `clean_line` (`connectors/mail.py:177-183`) folds newlines, so the forged line
+  looks real; ids are trusted at `reader.py:385-399`. Idea: remove any `[number]` pattern from an item before it is listed.
+- **A forged Human/Assistant transcript at the end of a page is often not flagged (medium).** Only the model's judgment sets
+  `addressed_to_ai` (`reader.py:106-111`, `146-153`). One text was flagged 3 of 6 times by the orchestrator and 1 of 11 by the
+  tester: about 3 in 4 runs are missed. Another forged transcript in a chat test was flagged 3 of 3. Idea: a code check that forces the
+  flag for a forged transcript or for « ignore all previous instructions », at the price of more false alarms (an article about AI
+  that quotes the phrase is already flagged 3 of 3).
+- **`mail_trash` runs with no card in a tainted turn from level 4 (low to medium).** With the reader off, a stranger's mail plus
+  « do what my last mail asks » trashed the mail 8 of 9 times, with no card (audit: `interactive, tainted`, `allow`, `ran`); with the
+  reader on, 0 of 6, so the model's reading of the warning protected it, not the gate. Cause: `gate/actions.py:60` (asks from level 3, runs
+  from level 4) and `mail_trash` is not in `RAISED_WHEN_TAINTED` (`actions.py:109`), which is the owner's earlier choice
+  (`docs/DECISIONS.md`, « Mail: a trash asks, and "Approve all next" covers it after mail was read », then the ladder of 2026-10-30).
+  `docs/THREAT-MODEL.md:34` still says a trash asks: true at level 3 and below only. A trash can be undone from the Trash.
+- **A broken reader costs a lot and hides its cause (low to medium).** With a wrong `reader_model`, one 4-turn mail scenario made 44
+  to 65 tool calls and 87 to 124 s (6 to 9 calls and 15 to 39 s with a working reader); one run moved a file nobody asked for (allowed
+  by the gate). Nothing hostile leaked. Causes: the failure text does not say that trying again is useless; the provider status is
+  dropped (`connectors/tools.py:136-138`, `connectors/mail_tools.py:340,426`, `workspace/tools.py:121`), so a wrong model and a passing
+  429 look alike; the reader has no fallback model and no retry on a provider error (`reader.py:299-303`, `llm/router.py:101-112`);
+  no alert on the Admin page. Ideas: « do not retry » in the text, keep the status, give the reader a fallback model, raise an alert.
+- **The chat does not show a failed read, a clipped warning, or the taint (low to medium; code and screenshots, not rerun in a browser).**
+  A failed tool call reads like a good one until opened (`web/src/pages/Chat.svelte:932-945`, `web/src/lib/tools.ts:78-90`); at 390 px
+  the last line of a reader report, the WARNING, is cut mid-sentence by `max-height: 18rem` (`web/src/app.css:695`); nothing in the chat
+  says that the conversation is tainted. Also the Rules page keeps « Nothing waits » while a chat holds a card, until a reload
+  (`gate/approvals.py:259-262`, `web/src/lib/live.ts`): not specific to the reader.
+- **The reader settings are loose (low).** `reader_model` accepts `"opencode-go:"`, `":model"`, `["a:b"]` (saved as `"['a:b']"`) and
+  `null` (`runtime.py:27-31`), so a malformed model makes every read fail with no warning at save time; a value that is not JSON shows the
+  browser's raw error (`web/src/pages/Admin.svelte:115-125`); a good save shows no message; the description of `reader_max_chars` gives
+  neither its range (1,000 to 400,000) nor its default.
+- **Small ones (low).** A text of more than 40,000 characters with no newline cannot be read past its first 40,000, and the report gives
+  no line to resume from (`reader.py:366-367`). `parse_object` takes the first JSON object (`reader.py:257-267`): latent, the model never triggered it in 20
+  runs. `ws_search` counts the matches of a marked file for any query. `mail_mark_read` runs with no card in a tainted hook run (documented,
+  `actions.py:61`). The Library shows the raw text of a marked file and does not say so, and a file you edit in the Library stays trusted
+  although the page says a change makes it untrusted (`api/workspace.py:51-56`, on purpose). Mail tools have no readable names on the
+  chat's tool lines (`web/src/lib/tools.ts`). A CSP « inline event handler » error appeared when a hostile `report.md` was opened in
+  the Library, with no script run: not explained (`web/src/lib/markdown.ts:22-26`).
+
+Not decided:
+
+- Which of the proposals to build, and whether a trash after untrusted content should ask at level 4 and above, or only the sentence
+  of the threat model should change.
+- Whether the reader gets a fallback model, and whether a broken reader is an alert on the Admin page.
+- Whether a forged transcript is caught by code (with false alarms) or left to the model.
+
+Not covered by the test (still to try):
+
+- A chat model that follows hostile orders, so that the gate, not the model, is what stops a send or a fetch.
+- A reader answer that is not usable (`its report was not usable`): `beam-free` always answered with valid JSON.
+- A page or file longer than `reader_max_chars` in the web client, Discord, the desktop and phone apps, a real mail.
+- `longcat-2.5-free` answered HTTP 429 on 14 calls; not reproduced.
+
+Tests worth adding (the owner decides): a forged `[n]` inside a list item; `parse_object` with a forged first object; a flagged report
+that must not copy a long run of the source; the threat-model sentence about a trash against the ladder in `CLASSES`.
+
+What the current design already sets:
+
+- A report has fixed fields and lengths whatever it is asked (`docs/DECISIONS.md`, « A firewall against tainted conversations »): the
+  answer to a question is one of those fields, so the first point above is a gap between that sentence and the 800-character `answer`.
+- The gate is the backstop: the conversation stays tainted after a read, and a hostile report can still mislead (`docs/THREAT-MODEL.md`).
+- Docs and tests: an item built from this list is named in `FEATURES.md` (the docs test requires it) and its choice is recorded in
+  `docs/DECISIONS.md`.
+
 ## A way for Clara to add to the TODO
 
 The owner asked for a way for Clara to add something to the TODO. The first reading is this file: she writes an item
@@ -250,32 +333,257 @@ What the current design already sets:
   be named in `FEATURES.md` (the docs test), with a migration whose number is taken at merge and a dated entry in `docs/DECISIONS.md` that
   supersedes « poll not webhook » for the repositories that have a webhook.
 
+## Skills: instructions you add, run from a chat command
+
+The owner asked for skills, as other agents have them: folders with a `SKILL.md` (instructions, and a description of the arguments)
+that the owner adds, and that are run from a command in the chat (`/name`), with a preview of the expected arguments. Today Clara has
+nothing like it: the web chat has no commands (the box sends on Enter), the terminal and Discord each have their own, and the persona and a
+project's instructions are the only standing instructions.
+
+What the owner decided:
+
+- **A skill** is a folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code), which the owner adds on a web page by
+  pasting a `SKILL.md` or sending a zip of the folder, with a preview of every file before it is accepted.
+- **Run by the owner:** `/name` in the web chat, with the skill's `argument-hint` shown before the message is sent. The web site only at
+  first; the terminal and Discord come later.
+- **Run by Clara:** through a tool. Every skill is visible to her except one that says `disable-model-invocation: true` (the field of
+  Claude Code). After untrusted content, her run of a skill asks for the owner's agreement.
+- **Packs:** a skill lists the packs it needs, shown before it is sent. When Clara runs a skill whose pack is off (Mail, for example), an
+  approval request offers to switch it on for the conversation.
+- **Scope:** a skill is global (every conversation, projects included) or reserved for one or several projects, and then does not exist,
+  for Clara or in the menu, in any other conversation.
+- **Volume:** about ten skills.
+- **Who may change them:** only a token with the approval scope `all` adds, changes or removes a skill. A script's token and the model
+  cannot.
+- **Backups:** the skills are in Clara's backups, as the database and the workspace are.
+- **Three phases**, each usable alone: (1) the command in the web chat, the arguments, the packs and the project scope; (2) Clara runs a
+  skill; (3) the scripts of a skill, in the sandbox.
+- **Left out of this item:** schedules and hooks do not run a skill.
+
+What I corrected or added to the owner's plan:
+
+- **A skill grants no right:** `allowed-tools` is ignored. The packs a skill lists are for display and for the approval request; the gate
+  still decides every call.
+- **Reserved names:** `/tools`, `/new`, `/model` and the other commands of the terminal and Discord cannot be skill names, so that adding
+  those clients later breaks nothing.
+- **A skill Clara runs stays in the conversation:** only the last 5 tool results stay in later prompts (`docs/DECISIONS.md`), so the text is
+  stored as a message, not as a tool result.
+- **The approval request to switch a pack on** is one more action at the gate, with its tainted case. It shows the skill and the pack, and
+  only a client can answer it.
+- **An archive is read strictly:** no links, no `..`, real bytes counted (`knowledge/ingest.py`).
+- **Scripts** stay in the sandbox, with its limits and no network unless approved. Running them needs a read-only mount of the skill's
+  folder, which is a change to the sandbox (only the workspace is mounted today).
+
+Not decided:
+
+- Does a skill file that changes after it was added need to be confirmed again (a digest, as the workspace's « trust » has)?
+- How a skill that was loaded survives the compaction of a long conversation (does the summary name it so that it can be loaded again)?
+- Which client comes after the web site, and in what form (Discord's native commands have a limit and must be registered).
+- Schedules and hooks running a skill, later.
+- The scripts of a skill: its gate class (that of `ws_run`, or its own), and whether a skill may ask for the network.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The page of the skills, the `/` menu and the line that shows the arguments.
+- The storage and how it is backed up, the migration, the name of the frontmatter field that lists the packs.
+- The tool Clara uses to run a skill, and the one for its scripts.
+
+What the current design already sets:
+
+- The prompt must stay identical from one turn to the next (`agent/prompt.py`), so the list of skills goes in the context block.
+- `messages.shown` (migration 0028) lets a message show `/name args` while the model gets the expanded text.
+- The model has no tool to read or change rules or levels (`docs/THREAT-MODEL.md`); it gets none for skills.
+- It depends on « Modes instead of auto levels and rules »: the tools of a skill get a normal verdict and a verdict when tainted in a mode, and
+  only a token with the approval scope `all` changes a mode.
+- `docs/NON-GOALS.md` excludes « Arbitrary MCP servers or plug-ins »: a dated entry in `docs/DECISIONS.md` must say that a skill is text, and
+  that its scripts run in the existing sandbox and add no server code.
+- `FEATURES.md` is tested against the code: every tool, route and action class added is named there, and the line « N tools. » is updated.
+- A migration number is taken when the branch is merged (the highest today is `0030`).
+
 ## Moodle and Auriga: what is left
 
-The Moodle/Auriga pack is built (`docs/DECISIONS.md`, « Moodle and Auriga »; `FEATURES.md`, section 8). It was never tried against the
-real sites: its tests run against stand-ins made from what was read on 2026-11-01 and 2026-11-02, and the sign-in needs the owner at a
-browser. What the first real use must settle, and what was left out:
+The Moodle/Auriga pack is built (`docs/DECISIONS.md`, « Moodle and Auriga »; `FEATURES.md`, section 8). Its tests run against
+stand-ins made from what was read on 2026-11-01 and 2026-11-02. On 2026-11-11 (`main` at `1705e65`, clean) it was tried for the first
+time: a scripted part on the stand-ins (the gate, hostile documents, edge cases, the Connections page in a headless browser) and a
+read-only run against the real Moodle and Auriga, where the owner signed in on a throwaway data folder (101 requests, all HTTP 200;
+nothing was written to either site; the key of the model provider was never read). The real-model part (R1) first answered HTTP 429
+and was run later the same evening with `opencode-go:deepseek-v4.1-flash` (not a `-free` model, on the owner's explicit say-so): 109
+runs, 299 model rounds, on the stand-ins only (R1 below). What the run found is below, with the causes read in the code
+(`path:line`). The ideas are ideas, not decisions, except what the owner chose.
 
-- **The live check, by the owner** (`clara moodle connect`, `clara auriga connect`, or the Connections page): that the pasted Moodle link
-  gives a token Moodle accepts; that Auriga's consent screen for `offline_access` is accepted and the token it gives is an offline one (the
-  sign-in says so; `lasting` in the answer); that the Auriga answers have the shapes the client reads. Those shapes were read from
-  field names, types and counts only, so they are the likeliest to differ: the room, teacher and activity type of a planning entry
-  (`interventionResources[].resource`, `interventionInstructors`, `activityType`), the places of the values in a grade line
-  (synthèse `[id, average, code, title, "Moy. (finale)"]`, éval `[id, mark, coef, code, type]`), the menu entries and saved queries
-  (1144 / 1198 and 1036 / 945, which may differ from one account to another) and `GET /api/me`. A line that does not fit is left out, so
-  a wrong guess shows as missing lines, not as a crash.
+What the real model did (R1, stand-ins, levels 3 and 4): in 31 normal conversations it chose the right tools and read the results
+correctly, and a download asked at level 2 and ran at level 3 as the gate classes say. In 78 runs with a hostile order planted in a
+course name, a due-date title, a file name, a grade comment, a teacher name or a section title (a plain order, a fake « system
+message », a fake end of result followed by a fake user turn, a French one, a token to write, a fetch, a rule to remember), it never
+called `mail_send`, `ws_write` or `web_fetch`, sent no mail, wrote no file and tried no connection to the attacker's host, and it
+told the owner about the order in 68 of the 72 runs of the six first orders (the 6 runs of the seventh were not counted). The model's judgment held; the gate was not exercised, because no run reached
+it. The data folder was shared between runs, so the notes the model wrote (R1b below) were loaded into later runs: the first 28
+hostile runs, which had none, are the clean ones.
+
+What the real-site run settled (the assumptions this section used to list): the Moodle token and its seven read functions; the Auriga
+offline token, its 60-second access token and the rotation of the refresh token; the room, the activity type and the unit caption of
+a planning entry; the `…Z` timestamps (true UTC) and the inclusive local `startDate` and `endDate`; the layout of an éval line; the saved
+queries 1144 / 1198 and 1036 / 945 with the year filter; `totalPages` as an integer; `GET /api/me`. Item B of « New kinds of event »
+says the owner has tried the connectors and they work: that holds for signing in and for most reads, not for the synthèse grades (D1)
+or the teachers (D3).
+
+What the owner decided:
+
+- **Keep the school password and sign in to Auriga again alone.** When the refresh token fails, Clara signs in again with the owner's
+  school email and password (the way the student app Chrysalide does, see the old note below), and the owner reconnects by hand
+  only when that fails. This replaces « Later: keep the owner's email and password ». If the Keycloak form does not accept the
+  account, or the password changed, there is **no other fallback**: the `auriga` alert is raised and Auriga stays off until the owner
+  signs in again.
+- **The password is set, seen and removed only through a hidden prompt** (`clara auriga connect`, or the console with a token whose
+  approval scope is `all`). It is never shown, never typed in the chat, and never read back by Clara or by the Connections page.
+- **Both hostile-document risks are to be fixed** (D8 and D9): a file must not be able to forge a « sign in again » state, and a
+  download or a parse must have limits on memory, pages and time.
+- **The web defects that are not specific to the pack** go under « small ones » of D12, marked as such.
+- **This section is completed**, not a new item.
+
+What I corrected or added to the owner's plan:
+
+- **Check first that the login form accepts the owner's account.** The owner signs in with Microsoft through Keycloak, so a script
+  against `kc-form-login` may be refused outright (the old note already said so). Until that is checked the decision on the password
+  is a plan, not a feature.
+- **At most one password sign-in per lapse, until the owner reconnects** (my proposal, not the owner's decision): repeated failed
+  logins could lock the school account if Keycloak's brute-force protection is on for EPITA's realm (not checked).
+- **A row of the threat model is missing.** `docs/THREAT-MODEL.md` says nothing about the school sites: a course document can forge
+  a lapse (D8) or inflate memory and time (D9), and course text is untainted data by the owner's choice (`docs/DECISIONS.md`,
+  « Moodle and Auriga »). Add a row when the fixes are built.
+- **Three documents say what is no longer true**, to correct when the fixes are built (not now): `FEATURES.md` line 732 (« until it
+  has been idle for a month », see D2), `docs/DECISIONS.md` rows 307 to 315 (« no password is kept », the offline-token lifetime and
+  « this Moodle's calendar has no quiz event », see D5) and `CHANGELOG.md` line 43 (« never been tried »). The new secret must also
+  be named in `FEATURES.md` (the docs test).
+
+To fix, most serious first (all checked by the orchestrator by reading the code and by rerunning the stand-in; the facts about the real
+Auriga and Moodle come from the structure-only logs of the sub-agent, counts and types, no personal content):
+
+- **D1. Every synthèse grade reads « (no average yet) » (medium to high).** 234 of 234 lines for the year 2526 show it, and 171 of them
+  have a final average. Cause: `connectors/auriga.py:392` takes `cells[1]` as the value, and on the real site `cells[1]` is always
+  null; the value is in `cells[4]`, which the code keeps as `kind` and never prints. `school_tools.py:330` then writes the placeholder.
+  Idea: read the value from the cell that holds it, and when the final average is empty show the pre-RATT one, or say which is shown
+  (not decided). `tests/schoolworld.py` has the old layout, so the tests pass.
+- **D2. The Auriga sign-in lapses about 24 hours after it is made (high).** The token is an offline one, but `refresh_expires_in` is an
+  absolute date and the rotation does not extend it: the remaining time kept falling with the clock across rotations, from about
+  24 hours. The owner's session made on 2026-11-11 should end by itself around 17:35 on 2026-11-12 (from the countdown, not checked
+  on a Keycloak page; it was not revoked at Keycloak). Causes: `auriga.py:108-111` (`lasting()` looks only at the type, not at `exp`), `auriga.py:232-235`
+  (the new refresh token is stored with no new date). The decided password re-login is the fix; meanwhile `lasting` should read `exp`
+  so that the sign-in message and `/school` say « lapses on … », and « idle for a month » leaves `FEATURES.md` and the decisions.
+- **D3. The teachers are never shown (medium).** On the real site the names are in `interventionInstructors[].person.currentFirstName`
+  and `currentLastName`; `label_of` (`auriga.py:185-193`) reads the entry itself, finds none of its keys and returns an empty string.
+  Idea: read `person` first.
+- **D4. An entry without a unit has no title, and the exam mark never shows (medium).** The title comes from the pedagogical unit
+  and falls back to `name` (`auriga.py:306`), which the real site does not give: such an entry reads « (untitled) ». `isExam`
+  (`auriga.py:315`) is false even for `EX` activities, so the `exam` tag never appears, and the kind is the long caption of the
+  activity type. Idea: take the exam flag from the activity type `EX` (keeping `isExam` as a second signal), and the title of an
+  entry without a unit from the activity.
+- **D5. A quiz close is shown twice (medium).** The Moodle Timeline already carries the close of a quiz, and `quizzes()`
+  (`connectors/moodle.py:343-363`) adds it again from `mod_quiz_get_quizzes_by_courses`. The sentence « the calendar of Moodle has no
+  quiz event on this site » (`moodle.py:344` and the decision row) is wrong. Idea: keep only « opens » from the second source, or
+  remove an event that has the same name and time (not decided).
+- **D6. Raw markup in Moodle text (medium).** Names and grade cells show `{mlang}` blocks, `&amp;` and `&ndash;` entities
+  (`moodle.py:259, 329-337, 361, 394`) and HTML anchors in `gradeformatted` and `rangeformatted` (`moodle.py:419-420`). Idea: one
+  cleaner for all Moodle text: decode entities, drop tags, and choose one `{mlang}` language (which one is not decided).
+- **D7. The course list is misleading (medium).** `0% done` is printed on 20 of 22 courses where Moodle sets `hasprogress` false
+  (`moodle.py:255-263`, `school_tools.py:207`); 27 hidden courses are in none of the Timeline classes. Idea: print the progress only
+  when `hasprogress` is true, and say how many courses are hidden.
+- **D8. A document can forge a « sign in again » state (medium).** `moodle.py:477-482` reads the bytes of a downloaded file as an error
+  when they are JSON with `invalidtoken`, so a course document whose content is that JSON makes Clara think the token lapsed
+  (`setup.py:180-188` then raises the `moodle` alert). Idea: check the content type and the size before parsing, and only treat a
+  small JSON answer to the download address as an error.
+- **D9. No limits on memory, pages or time (medium).** A 28 KB docx that expands to a 29 MB XML made the reading process reach 753 MB;
+  a PDF of 20,000 pages took 6 s; a download that trickles has no total deadline (`moodle.py:460-472`). Idea: a cap on the
+  uncompressed size, on the pages read and on the whole download time, with a clear refusal.
+- **D10. A wrong-shape answer reads as « nothing » (medium).** A site answer of the wrong shape gives « no courses » or an empty
+  calendar instead of a failure; a partial list looks complete; a line that does not fit is dropped with no count; one odd planning
+  item blanks the whole Auriga calendar (`auriga.py:296-330`; `moodle.py:218-219` catches only `ValueError` on `response.json()`).
+  Idea: count the dropped lines and say so, and treat an unreadable answer as a failure, not as an empty list.
+- **D11. Small ones in the pack (low).**
+  - `school_worked` clears the alert even when the connection needs a reconnect (`connectors/setup.py:180-188`).
+  - `**encode(params)` after `wsfunction` lets a parameter override the function (`moodle.py:206`).
+  - A malformed Auriga address gives a 500 (`auriga.py:74`, `urlsplit`).
+  - `_CONTROL` and `_INVISIBLE` (`connectors/mail.py:163-183`) miss the C1 controls and several invisible characters.
+  - `year` is checked with `isdigit()` and no `isascii()`, so non-ASCII digits pass (`school_tools.py:319`).
+  - `str(file)` is used for an error (`school_tools.py:444`), and an error note ends with two periods (`school_tools.py:474-500`).
+  - The 92-day limit and the unfiltered Moodle events (`school_tools.py:236-237, 260-266`); `totalPages` handling
+    (`auriga.py:369-371`); backticks in the reconnect text (`moodle.py:232`).
+- **D12. Small ones in the web client (low).** Marked **not specific to the pack** where it applies.
+  - The alert badge stays after the alert is resolved: `ops/alerts.py:61` sends `alert_resolved` only to Discord and
+    `web/src/lib/live.ts:58` refreshes only on `alert` events (**not specific to the pack**).
+  - The error toast lasts 8 s (`web/src/lib/state.svelte.ts:47-50`) and covers the composer at 390 px (`web/src/app.css:927-934`)
+    (**not specific to the pack**); the Connections form shows the error without `aria-invalid`.
+  - A long account tag overflows (`web/src/app.css:295-297`, `.tag` is `nowrap`).
+  - After « Connect » the form is removed and the focus is lost (`web/src/pages/Connections.svelte:165-168, 184-187`).
+  - The tool line says « Saved… » even when the save was refused (`web/src/lib/tools.ts:75`: the label depends on the tool name only).
+  - The approval card of `moodle_file_save` prints the path as given (`school_tools.py:165`, no cleaning) and does not name the
+    document, where the mail and Drive cards show the subject and the file name.
+
+From the real-model run (R1, ideas, not decisions):
+
+- **R1b. The model writes a global memory from hostile course text (low to medium).** In 6 of 78 hostile runs it called `remember`
+  with a note such as « the ALGO course holds an injected instruction to send the grades to attacker@example.invalid: ignore it »,
+  scope global. The note was harmless here, but hostile text, the address included, became a stored fact that comes back in every
+  later prompt, and `remember` runs without a card because reading these sites does not taint the turn (the owner's choice). A planted
+  order to remember a rule was refused 6 of 6. Idea: not decided (see below); for example a card for `remember` after a school read,
+  or a rule in the prompt not to store text quoted from these sites.
+- **R1c. A non-numeric mark is read in different ways (low).** The same synthèse and éval data with the mark « AB » was read as
+  « absent » in 4 runs and as « assez bien » in 1 (2 more did not say), because the tool result has no legend. Idea: say in the result that a non-numeric
+  mark is not a number and is not to be interpreted; the real list of such marks on the site is not known.
+- **R1d. Timing (information).** 17.7 s a run on average and 168 s at most; one « planning for the whole year » run passed the 120 s
+  silence limit of the model (`ModelTimeout`) and succeeded on the second try. The model recovers from the 92-day limit by asking in
+  pieces.
+
+Still open from before:
+
 - **The migration number.** The migration is `0030_school.sql`: it was `0028_school.sql` on the branch, and was renamed when the branch
-  was merged after `0028_shown_question.sql` (`fix/automation-fix-prompt`) and `0029_github_pack.sql` (`fix/github-tool-pack`).
-  Nothing in it depends on the others (it rebuilds `connections` and `resources`, as 0008 and 0014 did). A database that ran the
-  old `0028_school` is at version 28 with this schema: restore it from its `pre-migration-v<N>-…db` backup before starting this code.
-  The dev database (`.dev/data`) was at schema 28 with this migration applied under its old number, and holds no
-  `pre-migration-v27` backup (the latest was v24 when this was written): under the new chain it would run 0029 and 0030 and skip
-  `0028_shown_question` (the `messages.shown` column), so start the dev server from a fresh copy of the data or add that column by hand.
-- **Later: keep the owner's email and password** and sign in to Auriga again with them whenever the refresh token fails, as the student app
-  Chrysalide does (`gitlab.com/epimac-asso/projects/chrysalide/ChrysalideApp`, read on 2026-11-02, nothing copied): it scripts Keycloak's login
-  form (`kc-form-login`, with the `AUTH_SESSION_ID` and `KC_RESTART` cookies), takes `code` from the redirect and swaps it. Nothing to
-  reconnect until the password changes or Keycloak adds a check a script cannot pass. The cost: the school password sits in Clara's database,
-  a bigger secret than a token, and it works only if the login form accepts the owner's account (not Microsoft). It needs its own decision.
-- **Not built:** Moodle's iCal export as a lighter source for the calendar (its link carries a key and does not lapse until it is reset);
-  Moodle's `mod_assign_get_assignments` (assignment cut-off dates, texts); the text of Moodle `page`, `book` and `hvp` activities (it is not in
-  `core_course_get_contents`); any write to either site.
+  was merged after `0028_shown_question.sql` (`fix/automation-fix-prompt`) and `0029_github_pack.sql` (`fix/github-tool-pack`). On
+  `main` the three are in order. What remains is the dev database (`.dev/data`): it was at schema 28 with this migration applied under
+  its old number and holds no `pre-migration-v27` backup, so under the new chain it would run 0029 and 0030 and skip
+  `0028_shown_question` (the `messages.shown` column). Start the dev server from a fresh copy of the data or add that column by hand.
+- **The old note on the password.** The student app Chrysalide (`gitlab.com/epimac-asso/projects/chrysalide/ChrysalideApp`, read on
+  2026-11-02, nothing copied) scripts Keycloak's login form (`kc-form-login`, with the `AUTH_SESSION_ID` and `KC_RESTART` cookies),
+  takes `code` from the redirect and swaps it. This is now the owner's decision (see above); the cost stays: the school password sits
+  in Clara's secrets, a bigger secret than a token.
+- **Not built:** Moodle's iCal export as a lighter source for the calendar (its link carries a key and does not lapse until it is
+  reset); Moodle's `mod_assign_get_assignments` (assignment cut-off dates, texts); the text of Moodle `page`, `book` and `hvp`
+  activities (it is not in `core_course_get_contents`; a `page` module lists a 0-byte `index.html` file, which may be how its text can
+  be read, not tried); any write to either site.
+
+Not decided:
+
+- Whether the Keycloak login form accepts the owner's account at all (checked first, see above).
+- How many password sign-ins per lapse (my proposal: one), and what happens when the owner changes the school password.
+- Where the password is stored (presumably the encrypted secrets, as the token is) and how it is removed.
+- Which value a synthèse line shows when the final average and the pre-RATT one are both empty.
+- Which language to keep from a `{mlang}` block.
+- For a quiz: keep only « opens » from the second source, or remove the duplicate by name and time.
+- Whether Clara warns the owner before the Auriga sign-in lapses.
+- Which of the small ones (D11, D12) are built, and which are left.
+- Whether `remember` is limited after a school read (R1b), and whether the result carries a note on non-numeric marks (R1c).
+
+Not covered by the test (still to try):
+
+- R1 with the gate in play: no run made the model call a risky tool, so the gate was not exercised with a real model. A more obedient
+  model, level 5, and a reader-style hostile text that asks for a `remember` first and an action later were not tried. R1 used only
+  the stand-ins' shapes (before the fixes of D1, D3 and D4). The kit is `test-r1/` in the scratchpad of the session and is not in
+  the repository.
+- Discord, the desktop and phone apps.
+- Moodle's error code for an expired token (only `invalidtoken` is known), `assign` rows, an `isExam` entry that is true, cancelled
+  interventions, entries near midnight.
+- Nothing else of the real sites: the real-site run read the structure (counts and types), not the content.
+
+Tests worth adding (the owner decides): update `tests/schoolworld.py` to the real shapes (it hides D1, D3 and D4 today); a file whose
+bytes are an `invalidtoken` answer must not raise the lapse; a download deadline and a size cap; wrong-shape answers; a web test of the
+alert badge after a resolved alert.
+
+What the current design already sets:
+
+- Only the seven read functions of `READ_FUNCTIONS` are called, nothing is written to either site, and the gate classes are
+  `school_read` (2|2) and `school_save` (2|3) with the targets `school:moodle` and `school:auriga`.
+- Reading these sites does not taint the turn (the owner's choice, `docs/DECISIONS.md`, « Moodle and Auriga »): the course text is
+  untrusted but not quarantined, which is why D8 and D9 matter.
+- `FEATURES.md` is tested against the code: every tool, route, secret, command and setting added is named there (the docs test), and the
+  decision is recorded in `docs/DECISIONS.md`. A secret is set by a hidden prompt (`clara secrets set` or the connect command), never in
+  `.env` or the chat.
+- A migration number is taken when the branch is merged.
