@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Icon from '../components/Icon.svelte';
   import { api, when } from '../lib/api';
@@ -16,7 +17,17 @@
   let aurigaUrl = $state('');
   let aurigaState = $state('');
   let aurigaAddress = $state('');
+  let aurigaLapses = $state<unknown>(null); // `lapses` of the last sign-in answer, when the server sends it (an ISO date)
+  /** When the sign-in lapses, in local time: empty when the server did not say, or said something that is not a date. */
+  const lapseOf = (value: unknown): string => (typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? when(value) : '');
+  const aurigaLapse = $derived(lapseOf(info?.auriga?.lapses) || lapseOf(aurigaLapses));
   type Mailbox = 'gmail';
+  // What went wrong in a form, by form: written under it and tied to its field until that field is edited again
+  let problems = $state<Record<string, string>>({});
+  let moodleStart = $state<HTMLButtonElement>();
+  let aurigaStart = $state<HTMLButtonElement>();
+  const invalid = (form: string): { 'aria-invalid'?: 'true'; 'aria-describedby'?: string } =>
+    problems[form] ? { 'aria-invalid': 'true', 'aria-describedby': `${form}-error` } : {};
   const WATCHED: Record<string, string> = { 'github.pull_request': 'pull requests', 'github.push': 'pushes' };
 
   async function load(): Promise<void> {
@@ -60,24 +71,26 @@
 
   async function connectGitHub(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    problems.github = '';
     try {
       const done = await api.put('/v1/connections/github', { token: githubToken.trim() });
       githubToken = '';
       toast(`GitHub connected as ${done.account}.`, 'ok');
       load();
     } catch (error) {
-      toast((error as Error).message, 'error');
+      problems.github = (error as Error).message;
     }
   }
 
   async function addRepo(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    problems.repo = '';
     try {
       await api.post('/v1/connections/github/repos', { repo, branch });
       repo = branch = '';
       load();
     } catch (error) {
-      toast((error as Error).message, 'error');
+      problems.repo = (error as Error).message;
     }
   }
 
@@ -131,11 +144,12 @@
 
   async function saveSenders(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    problems.senders = '';
     try {
       await api.put('/v1/admin/settings/mail_notify_senders', { value: senders.split(',').map((word) => word.trim()).filter(Boolean) });
       toast('Saved.', 'ok');
     } catch (error) {
-      toast((error as Error).message, 'error');
+      problems.senders = (error as Error).message;
     }
     load();
   }
@@ -161,13 +175,16 @@
 
   async function connectMoodle(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    problems.moodle = '';
     try {
       const done = await api.put('/v1/connections/moodle', { link: moodleLink.trim() });
       moodleLink = moodleUrl = '';
       toast(`Moodle connected as ${done.account}.`, 'ok');
-      load();
+      await load();
+      await tick();
+      moodleStart?.focus(); // the form that had the focus is gone: the section's own button takes it
     } catch (error) {
-      toast((error as Error).message, 'error');
+      problems.moodle = (error as Error).message;
     }
   }
 
@@ -183,13 +200,19 @@
 
   async function connectAuriga(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    problems.auriga = '';
     try {
       const done = await api.post('/v1/connections/auriga/finish', { state: aurigaState, address: aurigaAddress.trim() });
       aurigaAddress = aurigaUrl = aurigaState = '';
-      toast(done.lasting ? `Auriga connected as ${done.account}.` : `Auriga connected as ${done.account}, for the session only: you will have to sign in again often.`, done.lasting ? 'ok' : 'info');
-      load();
+      aurigaLapses = done.lapses;
+      const lapse = lapseOf(done.lapses);
+      toast((done.lasting ? `Auriga connected as ${done.account}.` : `Auriga connected as ${done.account}, for the session only: you will have to sign in again often.`)
+        + (lapse ? ` It lapses on ${lapse}.` : ''), done.lasting ? 'ok' : 'info');
+      await load();
+      await tick();
+      aurigaStart?.focus();
     } catch (error) {
-      toast((error as Error).message, 'error');
+      problems.auriga = (error as Error).message;
     }
   }
 
@@ -197,6 +220,7 @@
     const name = site === 'moodle' ? 'Moodle' : 'Auriga';
     if (!(await confirmDialog({ title: `Disconnect ${name}`, message: `Disconnect ${name}? Its token is forgotten here (it stays valid on the site until it expires).`, confirm: 'Disconnect', danger: true }))) return;
     await api.del(`/v1/connections/${site}`);
+    if (site === 'auriga') aurigaLapses = null;
     load();
   }
 
@@ -206,24 +230,30 @@
   }
 </script>
 
+{#snippet problem(form: string)}
+  {#if problems[form]}<span class="field-error" id={`${form}-error`} role="alert">{problems[form]}</span>{/if}
+{/snippet}
+
 <div class="page stack">
   <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
     each GitHub and Drive change asks you first, and an email is sent only after you have read it in an approval request.</p>
   {#if info}
     <section class="panel stack">
-      <h2><Icon name="branch" size={18} /> GitHub {#if info.github.connected}<span class="tag ok">{info.github.account}</span>{/if}
+      <h2><Icon name="branch" size={18} /> GitHub {#if info.github.connected}<span class="tag ok account" title={info.github.account}>{info.github.account}</span>{/if}
         {#if info.github.status === 'needs_reconnect'}<span class="tag danger">token refused</span>{/if}</h2>
       <form class="row" onsubmit={connectGitHub}>
-        <input class="grow" type="password" aria-label="GitHub token" placeholder="A fine-grained personal access token (only the repositories and permissions Clara needs)" bind:value={githubToken} />
+        <input class="grow" type="password" aria-label="GitHub token" placeholder="A fine-grained personal access token (only the repositories and permissions Clara needs)" bind:value={githubToken} oninput={() => (problems.github = '')} {...invalid('github')} />
         <button class="primary" disabled={!githubToken.trim()}>{info.github.connected ? 'Replace token' : 'Connect'}</button>
         {#if info.github.connected}<button type="button" class="danger" onclick={() => disconnect('github')}>Disconnect</button>{/if}
       </form>
+      {@render problem('github')}
       {#if info.github.connected}
         <form class="row" onsubmit={addRepo}>
-          <input class="grow" aria-label="Repository" placeholder="owner/name" bind:value={repo} required />
+          <input class="grow" aria-label="Repository" placeholder="owner/name" bind:value={repo} oninput={() => (problems.repo = '')} {...invalid('repo')} required />
           <input aria-label="Branch" placeholder="branch (optional)" bind:value={branch} />
           <button>Add repository</button>
         </form>
+        {@render problem('repo')}
         {#each info.github.repos as item (item.id)}
           <div class="row"><span class="grow">{item.locator}{item.branch ? ` (branch ${item.branch})` : ''}
             {#each Object.entries<string>(item.watching ?? {}) as [kind, since] (kind)}<span class="muted small">· {WATCHED[kind] ?? kind} since {when(since)} </span>{/each}</span><button class="small danger" onclick={() => removeResource(item.id)}>Remove</button></div>
@@ -231,7 +261,7 @@
       {/if}
     </section>
     <section class="panel stack">
-      <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok">{info.google.account}</span>{/if}
+      <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok account" title={info.google.account}>{info.google.account}</span>{/if}
         {#if info.google.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.google.configured}
         <p class="muted small">Google Drive is not set up on this server. Clara asks only for <code>drive.file</code>: the files she creates and those you open to her.</p>
@@ -255,7 +285,7 @@
       {/each}
     </section>
     <section class="panel stack">
-      <h2><Icon name="mail" size={18} /> Gmail {#if info.gmail.connected}<span class="tag ok">{info.gmail.account}</span>{/if}
+      <h2><Icon name="mail" size={18} /> Gmail {#if info.gmail.connected}<span class="tag ok account" title={info.gmail.account}>{info.gmail.account}</span>{/if}
         {#if info.gmail.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.gmail.configured}
         <p class="muted small">Gmail is not set up on this server. Clara cannot archive, delete a message for good or change any setting of your mailbox.</p>
@@ -288,18 +318,19 @@
             every client, Discord's notification channel included.</p>
         {/if}
         <form class="row" onsubmit={saveSenders}>
-          <input class="grow" aria-label="Only for these senders" placeholder="Only from senders containing (comma separated; empty: everyone)" bind:value={senders} />
+          <input class="grow" aria-label="Only for these senders" placeholder="Only from senders containing (comma separated; empty: everyone)" bind:value={senders} oninput={() => (problems.senders = '')} {...invalid('senders')} />
           <button>Save</button>
         </form>
+        {@render problem('senders')}
       </section>
     {/if}
     <section class="panel stack">
-      <h2><Icon name="book" size={18} /> Moodle {#if info.moodle.connected}<span class="tag ok">{info.moodle.account}</span>{/if}
+      <h2><Icon name="book" size={18} /> Moodle {#if info.moodle.connected}<span class="tag ok account" title={info.moodle.account}>{info.moodle.account}</span>{/if}
         {#if info.moodle.status === 'needs_reconnect'}<span class="tag danger">sign in again</span>{/if}</h2>
       <p class="muted small">Clara reads your courses, assignment and quiz dates, grades and documents, and changes nothing on Moodle. The sign-in
         is the one of Moodle's mobile app: you sign in once, and Moodle has no renewal, so you do it again when the token lapses.</p>
       <div class="row">
-        <button onclick={startMoodle}>{moodleUrl ? 'New address' : info.moodle.connected ? 'Sign in again' : 'Sign in to Moodle'}</button>
+        <button bind:this={moodleStart} onclick={startMoodle}>{moodleUrl ? 'New address' : info.moodle.connected ? 'Sign in again' : 'Sign in to Moodle'}</button>
         {#if moodleUrl}<a href={moodleUrl} target="_blank" rel="noopener noreferrer">Open Moodle's sign-in page <Icon name="external" size={14} /></a>{/if}
         {#if info.moodle.connected}<button class="danger" onclick={() => disconnectSchool('moodle')}>Disconnect</button>{/if}
       </div>
@@ -307,18 +338,20 @@
         <p class="muted small">Signed in to Moodle, that page shows a link «Cliquez ici si l'app ne s'ouvre pas automatiquement».
           Copy the address of that link (right-click, copy the link address): it starts with <code>moodlemobile://token=</code>. Paste it here.</p>
         <form class="row" onsubmit={connectMoodle}>
-          <input class="grow" type="password" autocomplete="off" aria-label="Moodle link" placeholder="moodlemobile://token=…" bind:value={moodleLink} />
+          <input class="grow" type="password" autocomplete="off" aria-label="Moodle link" placeholder="moodlemobile://token=…" bind:value={moodleLink} oninput={() => (problems.moodle = '')} {...invalid('moodle')} />
           <button class="primary" disabled={!moodleLink.trim()}>Connect</button>
         </form>
+        {@render problem('moodle')}
       {/if}
     </section>
     <section class="panel stack">
-      <h2><Icon name="calendar" size={18} /> Auriga {#if info.auriga.connected}<span class="tag ok">{info.auriga.account}</span>{/if}
+      <h2><Icon name="calendar" size={18} /> Auriga {#if info.auriga.connected}<span class="tag ok account" title={info.auriga.account}>{info.auriga.account}</span>{/if}
         {#if info.auriga.status === 'needs_reconnect'}<span class="tag danger">sign in again</span>{/if}</h2>
       <p class="muted small">Clara reads your schedule and grades, and changes nothing on Auriga. You sign in once with Microsoft, as usual;
         Auriga then lets Clara renew the sign-in by herself, and asks you again only if it ends.</p>
+      {#if info.auriga.connected && aurigaLapse}<p class="muted small">The sign-in lapses on {aurigaLapse}.</p>{/if}
       <div class="row">
-        <button onclick={startAuriga}>{aurigaUrl ? 'New address' : info.auriga.connected ? 'Sign in again' : 'Sign in to Auriga'}</button>
+        <button bind:this={aurigaStart} onclick={startAuriga}>{aurigaUrl ? 'New address' : info.auriga.connected ? 'Sign in again' : 'Sign in to Auriga'}</button>
         {#if aurigaUrl}<a href={aurigaUrl} target="_blank" rel="noopener noreferrer">Open Auriga's sign-in page <Icon name="external" size={14} /></a>{/if}
         {#if info.auriga.connected}<button class="danger" onclick={() => disconnectSchool('auriga')}>Disconnect</button>{/if}
       </div>
@@ -326,9 +359,10 @@
         <p class="muted small">After signing in you land on a blank page of <code>auriga.epita.fr</code> (a «404» is normal). Copy the whole
           address of that page from your browser's address bar and paste it here.</p>
         <form class="row" onsubmit={connectAuriga}>
-          <input class="grow" type="password" autocomplete="off" aria-label="Address of the page after the sign-in" placeholder="https://auriga.epita.fr/clara-callback?…" bind:value={aurigaAddress} />
+          <input class="grow" type="password" autocomplete="off" aria-label="Address of the page after the sign-in" placeholder="https://auriga.epita.fr/clara-callback?…" bind:value={aurigaAddress} oninput={() => (problems.auriga = '')} {...invalid('auriga')} />
           <button class="primary" disabled={!aurigaAddress.trim()}>Connect</button>
         </form>
+        {@render problem('auriga')}
       {/if}
     </section>
   {/if}

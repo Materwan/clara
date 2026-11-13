@@ -21,6 +21,10 @@ export function render(text: string): { html: string; formulas: { tex: string; d
       return display ? `\n\n<div data-math="${formulas.length - 1}"></div>\n\n` : `<span data-math="${formulas.length - 1}"></span>`;
     });
   });
+  // A file with an `onerror=` or `onclick=` in it makes the browser log « Executing inline event handler violates the Content Security
+  // Policy » (a `script-src-attr` violation) while this runs: DOMPurify parses the raw HTML in a document of its own, and Chromium checks
+  // the page's policy for each such attribute as it builds it. The attribute is removed from what comes out, nothing runs, and the
+  // policy is not to be loosened for it.
   const html = DOMPurify.sanitize(marked.parse(pieces.join('')) as string, {
     FORBID_ATTR: ['style'],
     FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe'],

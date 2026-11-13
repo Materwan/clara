@@ -19,7 +19,7 @@
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
-  import { type Call, note, summary } from '../lib/tools';
+  import { type Call, type Outcome, OUTCOME_TAGS, note, problems, summary, withoutWarnings } from '../lib/tools';
   import { splitTurns } from '../lib/turns';
 
   type Shown = Call & { open?: boolean };
@@ -178,6 +178,15 @@
     }
   }
 
+  // The conversation read outside content (a page, a mail, a file from outside): `conversation.tainted`, read again at the end of each answer.
+  // The tag is a button because a title does not show on a touch screen: it opens the same sentence under the header.
+  let taintOpen = $state(false);
+  const taintNote = $derived(
+    'This conversation read outside content (a page, a mail, a file from outside). ' +
+    (ladder.loaded && level.level >= ladder.top ? 'It runs at the last auto level, which does not ask before writing outside Clara.' : 'Anything that writes outside Clara asks first.'),
+  );
+  const tagOf = (bad: Outcome): string => (bad === 'asked' ? 'tag warn' : 'tag danger');
+
   let loads = 0; // the latest load: an older one that ends late draws nothing
 
   /** Leaving a conversation: the answer in it goes on without us, only the stream we read it from is dropped. */
@@ -206,6 +215,7 @@
     const mine = ++loads;
     leave();
     conversation = null;
+    taintOpen = false;
     drawing++; // the older exchanges of the conversation before are not drawn into this one
     messages = [];
     loadError = null;
@@ -799,7 +809,7 @@
       fresh.model = model;
       return;
     }
-    conversation = await api.patch(`/v1/conversations/${conversationId}`, { model });
+    conversation = { ...conversation, ...(await api.patch(`/v1/conversations/${conversationId}`, { model })) };
   }
 
   function pick(event: Event): void {
@@ -919,10 +929,13 @@
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
 
 {#snippet callDetail(call: Shown)}
+  {@const read = call.result === undefined ? null : withoutWarnings(call.result)}
   <div class="call-detail">
+    <!-- a reader's WARNING line is shown under the result, not in it: the result is clipped when it is long, and the warning must never be -->
     <div><div class="call-key">Given</div><pre>{JSON.stringify(call.arguments, null, 2)}</pre></div>
     <div><div class="call-key">Returned</div>
-      {#if call.result !== undefined}<pre>{call.result}</pre>{:else}<p class="small muted">{call.running ? 'Still running…' : 'Not kept.'}</p>{/if}</div>
+      {#if read}<pre>{read.text}</pre>{:else}<p class="small muted">{call.running ? 'Still running…' : 'Not kept.'}</p>{/if}</div>
+    {#each read?.warnings ?? [] as warning}<p class="call-warning" role="note"><Icon name="warn" size={14} /><span>{warning}</span></p>{/each}
   </div>
 {/snippet}
 
@@ -933,6 +946,7 @@
 {#snippet callLine(call: Shown)}
   {@const said = note(call)}
   <span class="run-summary"><b>{said.label}</b>{said.detail ? ` ${said.detail}` : ''}</span>
+  {#if said.outcome}<span class={tagOf(said.outcome)}>{OUTCOME_TAGS[said.outcome]}</span>{/if}
   {#if call.granted}<span class="tag warn" title="Allowed by Approve all next">auto-approved</span>{/if}
   {#if call.running}<span class="spin" aria-hidden="true"></span>{/if}
 {/snippet}
@@ -944,6 +958,10 @@
     {#if projectName}<a class="flag" href={'#/projects/' + projectId} title="Open the project"><Icon name="folder" size={16} />{projectName}</a>{/if}
     {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
     {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
+    {#if conversation?.tainted}
+      <button type="button" class="flag taint" aria-label="Outside content" aria-expanded={taintOpen} aria-controls={taintOpen ? 'taint-note' : undefined}
+        title={taintNote} onclick={() => (taintOpen = !taintOpen)}><Icon name="shield_warn" size={16} /><span>Outside<span class="more"> content</span></span></button>
+    {/if}
     {#if !conversationId}
       <label class="flag" title="No facts read or written; deleted 24 hours after its last message"><Checkbox bind:checked={fresh.incognito} />Incognito</label>
       <label class="flag" title="Local models only; nothing leaves your machines"><Checkbox bind:checked={fresh.local_only} />Local only</label>
@@ -967,6 +985,7 @@
       </button>
     {/if}
   </header>
+  {#if conversation?.tainted && taintOpen}<p class="taint-note" id="taint-note">{taintNote}</p>{/if}
 
   <div class="chat-body">
   <div class="chat-main" inert={showPanel && narrow.rail}>
@@ -1061,6 +1080,7 @@
                           {@render callLine(part.calls[0])}
                         {:else}
                           <span class="run-summary">{summary(part.calls)}</span>
+                          {#each problems(part.calls) as bad (bad.outcome)}<span class={tagOf(bad.outcome)}>{bad.count} {OUTCOME_TAGS[bad.outcome]}</span>{/each}
                           {#if part.calls.some((call) => call.running)}<span class="spin" aria-hidden="true"></span>{/if}
                         {/if}
                       </button>

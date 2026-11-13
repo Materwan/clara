@@ -91,7 +91,7 @@
   // reads it with care until you trust it. Trusting lasts as long as the content does.
   function origin(mark: any): string {
     return mark.kind === 'quarantine'
-      ? `Came from outside (${mark.source}). Clara reads it through a quarantined reader, and a conversation that reads it is tainted.`
+      ? `Came from outside (${mark.source}). A conversation that reads it is tainted.`
       : `Written by Clara after she read untrusted content (${mark.source}). A conversation that reads it is tainted.`;
   }
 
@@ -154,6 +154,9 @@
                 <button class="small" onclick={() => trust(open.path)}>Trust this file</button>
               {/if}
             </p>
+          {/if}
+          {#if open.mark && !open.mark.trusted && open.mark.kind === 'quarantine' && !open.binary}
+            <p class="muted small">This is the raw text of a file that came from outside. Clara reads it through a quarantined reader.</p>
           {/if}
           {#if draft !== null}
             <textarea class="editor" rows="24" aria-label={`Content of ${open.path}`} bind:value={draft}></textarea>

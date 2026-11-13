@@ -19,6 +19,21 @@ Every release has a section here, under its tag; the release workflow publishes 
 - **The threat model now says what a trash does.** It asks at auto level 3 and runs with no card from level 4, even after a mail
   was read (a trashed mail can be taken back from the Trash). That was already so; only the sentence was wrong. The gate is
   unchanged.
+- **The chat shows when a conversation read outside content:** an **Outside content** tag in the header (**Outside** on a phone), with
+  the sentence « Anything that writes outside Clara asks first » (a hover, or a tap on a phone). `GET /v1/conversations/{id}` has a new field,
+  `tainted`.
+- **A call that did not go as asked says so before it is opened:** a refused, failed, skipped or waiting tool call has a tag on its line
+  and no longer reads « Saved… »; a run counts them. A reader's `WARNING:` line is no longer cut off at the bottom of a long result.
+- **The mail tools have readable names** on the chat's tool lines.
+- **The alert badge goes away when the alert is resolved:** the web site now receives the `alert_resolved` event (it was for the
+  Discord bot only).
+- **The Rules page and the « Waiting for you » badge follow a card that a chat waits on at once**, not a minute later (the web
+  site is told of the request when the chat asks).
+- **An error toast no longer covers the box you write in on a phone** (it sits at the top of the screen).
+- **Connections:** a form that fails writes its error under it, tied to its field; a long account address is cut with an ellipsis;
+  after **Connect** on Moodle or Auriga the focus goes to the section's button; the Auriga card and its « connected » message say when the
+  sign-in lapses, when the server sends it.
+- **The Library says when it shows the raw text of a file that came from outside.**
 
 ## v1.5.1 — 04/11/2026
 

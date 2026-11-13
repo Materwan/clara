@@ -275,17 +275,17 @@ async def test_a_silent_bot_is_called_so(client, services, monkeypatch, bot):
 
 
 # ----------------------------------------------------------------------
-# The end of an alert: Discord is told, nobody else
+# The end of an alert: the web site and Discord are told, nobody else
 # ----------------------------------------------------------------------
 def ended(services) -> list[str]:
     return [event.payload["key"] for event in services.events.recent(50, ["alert_resolved"])][::-1]
 
 
-def test_clearing_an_active_alert_tells_discord_which_one_ended(services):
+def test_clearing_an_active_alert_tells_the_site_and_discord_which_one_ended(services):
     services.alerts.raise_("disk", "The disk is nearly full", "91% used.")
     services.alerts.clear("disk")
     [event] = services.events.recent(5, ["alert_resolved"])
-    assert event.payload == {"key": "disk"} and event.targets == ("discord",)
+    assert event.payload == {"key": "disk"} and event.targets == ("web", "discord")
     assert "disk" not in services.alerts.active
 
 
@@ -321,10 +321,14 @@ def test_clearing_does_not_change_the_cool_down(services):
     assert len(services.events.recent(10, ["alert"])) == 2
 
 
-async def test_only_the_bot_hears_that_an_alert_ended(client, services, token, bot):
+async def test_only_the_site_and_the_bot_hear_that_an_alert_ended(client, services, token, bot):
+    """The site drops its alert badge when it hears it (web/src/lib/live.ts); the terminal and the scripts are not sent it."""
     services.alerts.raise_("disk", "Disk", "full")
     services.alerts.clear("disk")
     told = await stream_as(client, services, bot)
     assert [(event["type"], event.get("channel")) for event in told] == [("alert", "alerts"), ("alert_resolved", None)]
     assert told[-1]["payload"] == {"key": "disk"}
-    assert [event["type"] for event in await stream_as(client, services, {"Authorization": f"Bearer {token}"})] == ["alert"]
+    site = {"Authorization": f"Bearer {services.tokens.create('site', 'web')[1]}", "X-Clara-Client": "web"}
+    assert [event["type"] for event in await stream_as(client, services, site)] == ["alert", "alert_resolved"]
+    for other in ({"Authorization": f"Bearer {token}"}, {"Authorization": f"Bearer {services.tokens.create('s', 'script')[1]}"}):
+        assert [event["type"] for event in await stream_as(client, services, other)] == ["alert"]

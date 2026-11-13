@@ -192,3 +192,27 @@ async def test_the_list_can_leave_out_the_clients_you_do_not_want_to_see(client,
     conversations.update(discord, pinned=True)  # a pinned one stays, as in the history
     assert await listed("discord,console") == {web, cli, discord}
     assert (await client.get("/v1/conversations", params={"hide": "Console!"})).status_code == 422
+
+
+async def test_a_conversation_says_whether_the_next_turn_starts_tainted(client, services, llm):
+    """The web chat's « Outside content » tag: a tool that reads outside content taints the conversation for good, and so does
+    a mark kept in `conversation_taint` (a marked file, a script that used the network)."""
+    from clara.tools.base import Tool, fixed
+
+    async def fetch(context, url: str) -> str:
+        return "page text"
+
+    services.toolbox.add(Tool("fake_fetch", "f", fetch, fixed("fetch_trusted", "read", "domain:x", "fetch"),
+                              {"url": {"type": "string"}}, ("url",), taints=True))
+    tainted = lambda id: client.get(f"/v1/conversations/{id}")  # noqa: E731
+    chat = (await client.post("/v1/conversations", json={})).json()["id"]
+    marked = (await client.post("/v1/conversations", json={})).json()["id"]
+    assert (await tainted(chat)).json()["tainted"] is False
+    llm.replies = ["Nothing outside here."]
+    await services.agent.answer(ChatRequest(message="hello", client="cli", conversation=chat, wait_for_approvals=False))
+    assert (await tainted(chat)).json()["tainted"] is False
+    llm.replies = [calls(("fake_fetch", {"url": "u"})), "Done."]
+    await services.agent.answer(ChatRequest(message="look at u", client="cli", conversation=chat, wait_for_approvals=False))
+    assert (await tainted(chat)).json()["tainted"] is True
+    services.conversations.taint(marked, "read notes/in.txt, a file from outside")
+    assert (await tainted(marked)).json()["tainted"] is True

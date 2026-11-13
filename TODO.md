@@ -41,11 +41,6 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
   dropped (`connectors/tools.py:136-138`, `connectors/mail_tools.py:340,426`, `workspace/tools.py:121`), so a wrong model and a passing
   429 look alike; the reader has no fallback model and no retry on a provider error (`reader.py:299-303`, `llm/router.py:101-112`);
   no alert on the Admin page. Ideas: « do not retry » in the text, keep the status, give the reader a fallback model, raise an alert.
-- **The chat does not show a failed read, a clipped warning, or the taint (low to medium; code and screenshots, not rerun in a browser).**
-  A failed tool call reads like a good one until opened (`web/src/pages/Chat.svelte:932-945`, `web/src/lib/tools.ts:78-90`); at 390 px
-  the last line of a reader report, the WARNING, is cut mid-sentence by `max-height: 18rem` (`web/src/app.css:695`); nothing in the chat
-  says that the conversation is tainted. Also the Rules page keeps « Nothing waits » while a chat holds a card, until a reload
-  (`gate/approvals.py:259-262`, `web/src/lib/live.ts`): not specific to the reader.
 - **The reader settings are loose (low).** `reader_model` accepts `"opencode-go:"`, `":model"`, `["a:b"]` (saved as `"['a:b']"`) and
   `null` (`runtime.py:27-31`), so a malformed model makes every read fail with no warning at save time; a value that is not JSON shows the
   browser's raw error (`web/src/pages/Admin.svelte:115-125`); a good save shows no message; the description of `reader_max_chars` gives
@@ -53,10 +48,8 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
 - **Small ones (low).** A text of more than 40,000 characters with no newline cannot be read past its first 40,000, and the report gives
   no line to resume from (`reader.py:366-367`). `parse_object` takes the first JSON object (`reader.py:257-267`): latent, the model never triggered it in 20
   runs. `mail_mark_read` runs with no card in a tainted hook run (documented,
-  `actions.py:61`). The Library shows the raw text of a marked file and does not say so, and a file you edit in the Library stays trusted
-  although the page says a change makes it untrusted (`api/workspace.py:51-56`, on purpose). Mail tools have no readable names on the
-  chat's tool lines (`web/src/lib/tools.ts`). A CSP « inline event handler » error appeared when a hostile `report.md` was opened in
-  the Library, with no script run: not explained (`web/src/lib/markdown.ts:22-26`).
+  `actions.py:61`). A file you edit in the Library stays trusted although the page says a change makes it untrusted
+  (`api/workspace.py:51-56`, on purpose).
 
 Not decided:
 
@@ -488,13 +481,6 @@ Auriga and Moodle come from the structure-only logs of the sub-agent, counts and
   - The 92-day limit and the unfiltered Moodle events (`school_tools.py:236-237, 260-266`); `totalPages` handling
     (`auriga.py:369-371`); backticks in the reconnect text (`moodle.py:232`).
 - **D12. Small ones in the web client (low).** Marked **not specific to the pack** where it applies.
-  - The alert badge stays after the alert is resolved: `ops/alerts.py:61` sends `alert_resolved` only to Discord and
-    `web/src/lib/live.ts:58` refreshes only on `alert` events (**not specific to the pack**).
-  - The error toast lasts 8 s (`web/src/lib/state.svelte.ts:47-50`) and covers the composer at 390 px (`web/src/app.css:927-934`)
-    (**not specific to the pack**); the Connections form shows the error without `aria-invalid`.
-  - A long account tag overflows (`web/src/app.css:295-297`, `.tag` is `nowrap`).
-  - After « Connect » the form is removed and the focus is lost (`web/src/pages/Connections.svelte:165-168, 184-187`).
-  - The tool line says « Saved… » even when the save was refused (`web/src/lib/tools.ts:75`: the label depends on the tool name only).
   - The approval card of `moodle_file_save` prints the path as given (`school_tools.py:165`, no cleaning) and does not name the
     document, where the mail and Drive cards show the subject and the file name.
 
@@ -538,7 +524,7 @@ Not decided:
 - Which language to keep from a `{mlang}` block.
 - For a quiz: keep only « opens » from the second source, or remove the duplicate by name and time.
 - Whether Clara warns the owner before the Auriga sign-in lapses.
-- Which of the small ones (D11, D12) are built, and which are left.
+- Which of the small ones of D11, and the card of `moodle_file_save` of D12, are built, and which are left.
 - Whether `remember` is limited after a school read (R1b), and whether the result carries a note on non-numeric marks (R1c).
 
 Not covered by the test (still to try):

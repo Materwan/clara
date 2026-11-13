@@ -490,6 +490,10 @@ class Agent:
         tool = self.s.toolbox.get(name) if name else None
         return tool is not None and tool.public
 
+    def starts_tainted(self, conversation_id: str) -> bool:
+        """What the next turn of the conversation starts with (the chat's « Outside content » tag): read or not."""
+        return self._read_untrusted(conversation_id)
+
     def _read_untrusted(self, conversation_id: str) -> bool:
         """Has any turn of the conversation read untrusted content? The prompt shows only its last turns and the results
         of a few of them, but the model's replies and its summary carry what it read on: the whole path counts."""

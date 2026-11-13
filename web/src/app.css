@@ -299,6 +299,8 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .tag.ok { background: var(--ok-soft); color: var(--ok); }
 .tag.danger { background: var(--danger-soft); color: var(--danger); }
 .tag.warn { background: var(--warn-soft); color: var(--warn); }
+/* a tag that holds an account or an address: as wide as its text, and no wider than its line (the full text is its title) */
+.tag.account { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 /* a count that wants your attention */
 .count {
   display: inline-grid; place-items: center; min-width: 1.25rem; height: 1.25rem; padding: 0 var(--sp-6); border-radius: var(--r-pill);
@@ -628,6 +630,10 @@ tr.off td { opacity: .5; }
 .chat-head .title { flex: 1; min-width: 0; }
 .chat-head .flag { display: inline-flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-xs); color: var(--muted); font-weight: 600; }
 .chat-head label.flag { cursor: pointer; }
+/* the conversation read outside content: an ochre tag. It is a button, so a touch screen can open its sentence (.taint-note) */
+.chat-head .flag.taint { flex: none; padding: var(--sp-2) var(--sp-8); border: 1px solid transparent; border-radius: var(--r-xs); background: var(--warn-soft); color: var(--warn); font-weight: 650; white-space: nowrap; }
+.chat-head .flag.taint:hover, .chat-head .flag.taint[aria-expanded='true'] { border-color: var(--warn); }
+.taint-note { flex: none; margin: 0; padding: var(--sp-8) var(--sp-24); background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line); font-size: var(--fs-sm); line-height: 1.4; }
 .context { display: inline-flex; align-items: center; gap: var(--sp-6); font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .ring { transform: rotate(-90deg); }
 .ring circle { fill: none; stroke-width: 4.5; }
@@ -692,6 +698,9 @@ details.setup > summary:hover { color: var(--text); }
   background: var(--code-bg); border: 1px solid var(--code-line); border-radius: var(--r-sm); color: var(--text-2);
 }
 .call-key { font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); }
+/* the reader's WARNING: outside the clipped result below, so that a long result never hides it */
+.call-warning { display: flex; gap: var(--sp-6); align-items: flex-start; margin: 0; padding: var(--sp-6) var(--sp-8); border-radius: var(--r-xs); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-xs); font-weight: 550; line-height: 1.45; overflow-wrap: anywhere; }
+.call-warning .icon { flex: none; margin-top: 1px; }
 .call-detail pre { border: none; padding: 0; background: none; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); line-height: 1.45; color: var(--text); max-height: 18rem; overflow: auto; }
 .thinking-text { white-space: pre-wrap; margin: var(--sp-4) 0 var(--sp-4) var(--sp-20); color: var(--text-2); font-size: var(--fs-sm); }
 .spin { flex: none; display: inline-block; width: .8em; height: .8em; border: 2px solid var(--line-strong); border-top-color: var(--accent-line); border-radius: 50%; animation: spin .8s linear infinite; }
@@ -941,6 +950,10 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
 .toast button:focus-visible { outline-color: currentColor; }
 .toast.error { background: var(--danger); color: var(--danger-ink); }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+/* on a phone the box you write in is at the bottom: a toast (an error stays 8 seconds) goes to the top, under the header, instead of covering it */
+@media (max-width: 600px) {
+  .toasts { bottom: auto; top: calc(var(--sp-64) + env(safe-area-inset-top, 0px)); }
+}
 
 /* ---- a dialog: a question that stops you until it is answered (Dialog.svelte; a native <dialog>, so the page behind is
    inert, Tab stays inside and Escape cancels) ---------------------------------------------------------------------- */
@@ -969,6 +982,7 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
   .side-head { padding-top: calc(var(--sp-12) + env(safe-area-inset-top, 0px)); }
   .page-head, .page-head.chat-head { padding: var(--sp-8) var(--sp-12); padding-top: calc(var(--sp-8) + env(safe-area-inset-top, 0px)); min-height: 54px; }
   .page-head .open-rail { display: inline-flex; }
+  .taint-note { padding-inline: var(--sp-12); }
   .settings-bar { padding: 0 var(--sp-4); } /* a tab's own padding brings its label to the page's 16px */
   .page { padding: var(--sp-20) var(--sp-16) var(--sp-48); }
   .grid-2, .split { grid-template-columns: minmax(0, 1fr); }
@@ -981,7 +995,7 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
   .composer { padding: var(--sp-4) var(--sp-10) calc(var(--sp-10) + var(--safe-b)); }
   .composer-hint { display: none; }
   .welcome { padding-top: 8vh; }
-  .context .label { display: none; }
+  .context .label, .flag.taint .more { display: none; }
   .panel { padding: var(--sp-16); }
   .wizard { --pad-x: var(--sp-16); }
   .step:not([aria-current='step']) .step-label { display: none; } /* five steps do not fit with their names: the open one keeps its own */
@@ -999,6 +1013,7 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
 @media (pointer: coarse) {
   button.icon-btn, .msg-actions button, .convo .actions button { min-width: 36px; min-height: 36px; }
   button.small, label.button.small, select.small { min-height: 36px; }
+  .chat-head .flag.taint { min-height: 36px; }
   .chip button { min-width: 32px; min-height: 32px; }
   .choice:not(.cards) .choice-option, .step { min-height: 36px; }
   .convo, .group-head button, .pages a { min-height: 44px; }

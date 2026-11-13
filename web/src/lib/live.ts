@@ -1,4 +1,4 @@
-// The live event stream: reminders, notifications, approvals, alerts and server states as they come. It reconnects
+// The live event stream: reminders, notifications, approvals, alerts (and their end) and server states as they come. It reconnects
 // by itself; the server keeps this browser's cursor, so nothing is missed while away.
 
 import { api, stream } from './api';
@@ -55,7 +55,7 @@ function handle(event: any): void {
     live.refresh++;
     return;
   }
-  if (event.type === 'alert') loadPending();
+  if (event.type === 'alert' || event.type === 'alert_resolved') loadPending(); // the badge counts the alerts that are still active
   const icon = SHOWN[event.type];
   if (icon) {
     // a scheduled run's question is long: the toast only says where to answer it (the run's conversation is in the list)

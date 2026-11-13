@@ -1,7 +1,8 @@
 """Approval requests: what happens when the gate says *ask*.
 
     asked        the action is frozen (tool and exact arguments) and stored as a pending request.
-                 In a chat, the turn shows it and waits for your answer (CLARA_APPROVAL_WAIT, 10 minutes).
+                 In a chat, the turn shows it and waits for your answer (CLARA_APPROVAL_WAIT, 10 minutes); the web site's
+                 other pages (Waiting list, badge) are told at once, by an `approval` event for the web site alone.
                  Unattended, the turn never waits: you are alerted and the run goes on without it.
     pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…);
                  not a local-only one: Discord is outside the machine, so it goes to the other clients only
@@ -259,6 +260,9 @@ class Approvals:
         assert approval is not None
         if context.turn.waits_for_approvals:
             self.hold(approval_id, context.turn.turn_id)
+            # the chat draws the card itself; the site's other pages (the Waiting list, the badge) hear of it now
+            if action.klass not in NOT_PUBLISHED:
+                self._publish("approval", "Clara needs your permission", approval.summary, approval, only=("web",))
         if situation.mode == "unattended":
             self.push(approval)
         return approval
@@ -305,15 +309,17 @@ class Approvals:
             return
         self._publish("approval", "Clara needs your permission", approval.summary, approval)
 
-    def _publish(self, kind: str, title: str, text: str, approval: Approval) -> None:
-        """An event about a request. A local-only request's goes to every client but Discord: its summary names the
-        private text of the call, and Discord's #approval would post it."""
+    def _publish(
+        self, kind: str, title: str, text: str, approval: Approval, only: tuple[str, ...] | None = None
+    ) -> None:
+        """An event about a request, for `only` those clients, else every client. A local-only request's goes to every
+        client but Discord: its summary names the private text of the call, and Discord's #approval would post it."""
         self.events.publish(
             kind,
             title,
             text,
             payload={"approval": approval.describe()},
-            targets=NOT_DISCORD if approval.local_only else None,
+            targets=only or (NOT_DISCORD if approval.local_only else None),
             conversation_id=approval.conversation_id,
         )
 

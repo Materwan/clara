@@ -62,6 +62,12 @@ const NOTES: Record<string, [string, string, string?]> = {
   deferred_book: ['calendar', 'Booked a call for later', 'tool'],
   deferred_list: ['calendar', 'Looked at the booked calls'],
   deferred_cancel: ['calendar', 'Cancelled a booked call'],
+  mail_search: ['mail', 'Searched your mail for', 'query'],
+  mail_read: ['mail', 'Read a mail'],
+  mail_attachment_read: ['clip', 'Read a mail attachment'],
+  mail_attachment_save: ['download', 'Saved a mail attachment', 'path'],
+  mail_draft: ['mail', 'Saved a mail draft', 'subject'],
+  mail_send: ['mail', 'Sent a mail', 'subject'],
   mail_labels: ['mail', 'Looked at your mail labels'],
   mail_label_create: ['mail', 'Made a mail label', 'name'],
   mail_label: ['mail', 'Labelled a mail'],
@@ -77,8 +83,26 @@ const NOTES: Record<string, [string, string, string?]> = {
 
 export type Call = { name: string; arguments: any; result?: string; running?: boolean; granted?: number }; // granted: the Approve all next that allowed it
 
-export function note(call: Call): { icon: string; label: string; detail: string } {
-  const [icon, label, key] = NOTES[call.name] ?? ['bolt', call.name.replaceAll('_', ' ')];
+/** How a call that is over did not go: read from the words of its result, which the server writes (tools/base.py, gate/approvals.py). */
+export type Outcome = 'failed' | 'refused' | 'asked' | 'skipped';
+export const OUTCOME_TAGS: Record<Outcome, string> = { failed: 'failed', refused: 'refused', asked: 'asked permission', skipped: 'not run' };
+
+export function outcome(call: Call): Outcome | undefined {
+  if (call.running || call.result === undefined) return undefined;
+  const text = call.result.trimStart();
+  if (/^(Refused: |The person refused this )/.test(text)) return 'refused';
+  if (text.startsWith('Waiting for permission')) return 'asked';
+  if (text.startsWith('[not run')) return 'skipped';
+  if (/^(Error: |Unknown tool: )/.test(text) || text.startsWith('{"error"')) return 'failed';
+  return undefined;
+}
+
+const words = (name: string): string => name.replaceAll('_', ' ');
+
+/** A call that did not go as asked is named by its tool, not by what it would have done: « Saved… » must not stand over a refusal. */
+export function note(call: Call): { icon: string; label: string; detail: string; outcome?: Outcome } {
+  const [icon, label, key] = NOTES[call.name] ?? ['bolt', words(call.name)];
+  const bad = outcome(call);
   let args = call.arguments;
   if (typeof args === 'string') {
     try {
@@ -88,13 +112,33 @@ export function note(call: Call): { icon: string; label: string; detail: string 
     }
   }
   const raw = key && args && typeof args[key] === 'string' ? args[key].trim() : '';
-  return { icon, label, detail: raw.length > 80 ? raw.slice(0, 79) + '…' : raw };
+  return { icon, label: bad ? words(call.name) : label, detail: raw.length > 80 ? raw.slice(0, 79) + '…' : raw, outcome: bad };
 }
 
-/** "Searched the web ×2, read a page · 3 actions" */
+/** The result without its closing WARNING: lines (the reader's report ends with its warning): the page shows them apart, never clipped.
+ *  A WARNING: line anywhere else is the text's own and stays in the result. */
+export function withoutWarnings(result: string): { text: string; warnings: string[] } {
+  const lines = result.split('\n');
+  const warnings: string[] = [];
+  while (lines.length && lines[lines.length - 1].startsWith('WARNING:')) warnings.unshift(lines.pop() as string);
+  return { text: lines.join('\n'), warnings };
+}
+
+/** What did not go as asked in a run of calls, for the tags beside its summary: « 1 failed », « 2 refused ». */
+export function problems(calls: Call[]): { outcome: Outcome; count: number }[] {
+  const found = new Map<Outcome, number>();
+  for (const call of calls) {
+    const bad = outcome(call);
+    if (bad) found.set(bad, (found.get(bad) ?? 0) + 1);
+  }
+  return [...found].map(([bad, count]) => ({ outcome: bad, count }));
+}
+
+/** "Searched the web ×2, read a page · 3 actions" (the calls that did not go as asked are left out of the kinds: they have tags) */
 export function summary(calls: Call[]): string {
   const counts = new Map<string, number>();
   for (const call of calls) {
+    if (outcome(call)) continue;
     const kind = note(call).label.replace(/ (for|about|to)$/, '');
     counts.set(kind, (counts.get(kind) ?? 0) + 1);
   }
@@ -102,5 +146,6 @@ export function summary(calls: Call[]): string {
     const text = index ? kind.charAt(0).toLowerCase() + kind.slice(1) : kind;
     return n > 1 ? `${text} ×${n}` : text;
   });
-  return `${kinds.length > 3 ? [...kinds.slice(0, 3), '…'].join(', ') : kinds.join(', ')} · ${calls.length} actions`;
+  const shown = kinds.length > 3 ? [...kinds.slice(0, 3), '…'].join(', ') : kinds.join(', ');
+  return `${shown ? shown + ' · ' : ''}${calls.length} actions`;
 }

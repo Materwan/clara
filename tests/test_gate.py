@@ -206,6 +206,30 @@ async def test_a_call_that_was_asked_about_is_announced_once(services, llm):
     assert events.count("tool_start") == events.count("tool") == 2
 
 
+async def test_a_request_a_chat_holds_is_told_to_the_site_at_once_and_to_no_other_client(services, llm):
+    """The site's Waiting list and badge follow a card a chat waits on; the other clients hear of it only at the sweep."""
+    _counting_tool(services)
+    tester = services.tokens.create("tester", "cli")[0]
+    llm.replies = [calls(("fake_send", {"text": "a"})), "Sent."]
+    async with contextlib.aclosing(services.agent.turn(ChatRequest(message="send it", client="web"))) as stream:
+        async for event in stream:
+            if event["type"] == "approval":
+                [told] = services.events.recent(5, ["approval"])
+                assert told.targets == ("web",) and told.payload["approval"]["id"] == event["approval"]["id"]
+                await services.approvals.decide(event["approval"]["id"], "allow_once", tester)
+    assert len(services.events.recent(5, ["approval"])) == 1  # answered before the sweep: nobody else was told
+
+
+async def test_a_held_request_that_is_not_published_is_not_told_to_the_site(services):
+    from clara.tools.base import ToolContext, TurnState
+
+    context = ToolContext(services, TurnState("t9", "", "web", mode="interactive", timezone="Europe/Paris"))
+    context.turn.waits_for_approvals = True
+    sensitive = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
+    services.approvals.create(sensitive, Situation("interactive"), context, {"path": ".env"}, services.gate.decide(sensitive, CHAT))
+    assert services.events.recent(5, ["approval"]) == []
+
+
 async def test_a_turn_that_ends_before_the_answer_leaves_it_to_decide(services, llm):
     ran = _counting_tool(services)
     tester = services.tokens.create("tester", "cli")[0]

@@ -104,6 +104,7 @@ def get(conversation_id: str, request: Request) -> dict:
         **conversation.describe(),
         "context": s.agent.context_info(conversation_id),
         "answering": s.agent.answering(conversation_id),
+        "tainted": s.agent.starts_tainted(conversation_id),
         "files": [item.describe() for item in s.conversation_files.of(conversation_id)],
         "approvals": [item.describe() for item in s.approvals.waiting(conversation_id)],
     }
