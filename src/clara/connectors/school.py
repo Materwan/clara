@@ -40,6 +40,15 @@ class Event:
     flags: tuple[str, ...] = ()  # exam, overdue
 
 
+class Noted(list):
+    """A list that also says what was left out of it (a line that did not fit, pages not read): the tool prints these notes
+    before the lines, so that a partial list never looks complete."""
+
+    def __init__(self, items=(), notes=()):
+        super().__init__(items)
+        self.notes: list[str] = list(notes)
+
+
 def school_year(today: date) -> str:
     """The school year `today` is in, written as Auriga's component codes begin: 2627 from August 2026 to July 2027."""
     first = today.year if today.month >= 8 else today.year - 1

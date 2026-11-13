@@ -35,6 +35,31 @@ Every release has a section here, under its tag; the release workflow publishes 
   sign-in lapses, when the server sends it.
 - **The Library says when it shows the raw text of a file that came from outside.**
 
+**Moodle and Auriga, after the first real use (2026-11-11).** No new tool, route, setting or migration; `POST /v1/connections/auriga/finish`
+answers one more field, `lapses`.
+
+- **Synthèse grades are shown.** Every line used to read « (no average yet) »: the value was read from the wrong cell. A line shows the
+  final average; when there is none yet, the average before the RATT retake, with a label that says so; when both are empty, « (no average
+  yet) ». A mark that is not a number (AB) is quoted, and the result of `school_grades` says it must not be interpreted.
+- **The Auriga sign-in says when it lapses.** It ends on a fixed date about a day after you sign in, and using it does not push that back.
+  `clara auriga connect`, `/school` and the Connections answer now say « lapses on <date> » (read from the token); « until it has been idle
+  for a month » was wrong. Nothing warns you before the date. Signing in again alone, with the school password, is still to come.
+- **Teachers, titles and exams in the calendar.** The teachers of a class are shown; an entry with no pedagogical unit has a title (no more
+  « (untitled) »); an exam is recognised by its activity type, so the `[exam]` mark appears; the kind is the long caption (« Travaux dirigés »).
+- **A quiz close is shown once.** Moodle's Timeline already carries it: the list of quizzes now adds only the opening.
+- **Moodle text is clean.** Names and grade cells no longer show `{mlang}` blocks, `&amp;` or links: every language of a block is kept, joined
+  with « / », tags are dropped and entities are read.
+- **The course list is honest.** « 0% done » is shown only for a course that tracks its progress, and the result says how many courses are
+  hidden from Moodle's overview (they are in none of the in-progress, past and future lists; `all` marks them).
+- **A strange answer is no longer read as « nothing ».** A site answer that is not the shape expected is an error, not « no courses » or an
+  empty calendar; what was left out (a line, a row, a planning entry that could not be read, pages not read) is counted in a note before the
+  lines; one odd planning entry no longer blanks the whole Auriga calendar; a missing page count no longer stops the grades after one page.
+- **Smaller fixes:** a pasted Auriga address that cannot be read gives a message, not a server error; a parameter can no longer replace the
+  Moodle function that was checked; a call that worked no longer clears the alert of a sign-in marked as lapsed; the school year takes ASCII
+  digits only; `moodle_file_save` takes its file id as text and its error notes no longer end with two periods; the request to save a Moodle
+  document names the document, as a mail's and a Drive file's do, and shows the path as it will be written; the reconnect text has no backticks;
+  Moodle entries outside the period asked for are not shown.
+
 ## v1.5.1 — 04/11/2026
 
 **Booked calls reach the runs of automations.** The **Booked calls** pack (`deferred_book`, `deferred_list`, `deferred_cancel`)
@@ -72,8 +97,8 @@ hook's allow-list. No existing automation is given the pack.
 **Clara reaches your school, hands files over, and Discord stays tidy.** Moodle and Auriga (EPITA) can be read by Clara, read
 only. A new tool, `present`, hands a file over as a card under her answer. The Discord channels no longer keep what stopped being
 true: settled requests, ended alerts and lines whose thread is gone are deleted. GitHub becomes a pack, as Mail is. A run of an
-automation shows Discord only where it came from. **The Moodle/Auriga pack has never been tried against the real sites** (see
-below).
+automation shows Discord only where it came from. **The Moodle/Auriga pack had not been tried against the real sites when this version
+came out** (see below); it was on 2026-11-11, and what that found is fixed under « Unreleased ».
 
 **Moodle and Auriga, read only.**
 
@@ -95,7 +120,7 @@ below).
   raised, and the tools say how to sign in again.
 - **Reading these sites does not taint the turn** (your choice, unlike Mail, GitHub and Drive): their text reaches the
   conversation as written, with no quarantined reader.
-- **Not tried live:** the tests run against stand-ins built from what was read of the two sites on 1 and 2 November. The shapes
+- **Not tried live when it came out (tried on 2026-11-11, see « Unreleased »):** the tests ran against stand-ins built from what was read of the two sites on 1 and 2 November. The shapes
   Auriga's planning and grades answers have are the likeliest to differ; a line that does not fit is left out, so a wrong guess
   shows as missing lines, not as a crash. The first real use is the check; [TODO.md](TODO.md) lists what to look at.
 

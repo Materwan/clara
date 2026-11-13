@@ -33,7 +33,7 @@ import httpx
 
 from .. import __version__
 from ..auth import APPROVALS, CLIENTS, TokenError, Tokens
-from ..connectors.auriga import authorize_url
+from ..connectors.auriga import authorize_url, lapse_phrase
 from ..connectors.auriga import sign_in as auriga_sign_in
 from ..connectors.drive import pkce
 from ..connectors.moodle import launch_url
@@ -165,12 +165,17 @@ def school(args: argparse.Namespace) -> int:
                 f"{authorize_url(state, challenge)}\n\nYou land on a blank page of auriga.epita.fr (a 404 is normal). "
                 "Copy the whole address of that page and paste it here."
             )
-            secret, account, kept = asyncio.run(auriga_sign_in(_pasted("Address (hidden): "), state, verifier))
-            note = (
-                "Auriga keeps this sign-in until it has been idle for a month."
-                if kept
-                else "Auriga gave a session token only: it ends with Auriga's session, so you will sign in again often."
-            )
+            secret, account, kept, ends = asyncio.run(auriga_sign_in(_pasted("Address (hidden): "), state, verifier))
+            phrase = lapse_phrase(ends, settings.zone())
+            if not kept:
+                note = (
+                    "Auriga gave a session token only: it ends with Auriga's session, so you will sign in again often."
+                )
+                note += f" This sign-in {phrase}." if phrase else ""
+            elif phrase:  # the date is Keycloak's and absolute: using the sign-in does not extend it
+                note = f"This sign-in {phrase}, and using it does not extend it: sign in again then."
+            else:
+                note = "Auriga's token does not say when it ends."
     except SchoolError as error:
         print(error, file=sys.stderr)
         return 1

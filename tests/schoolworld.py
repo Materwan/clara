@@ -65,12 +65,16 @@ class World:
         self.moodle_calls: list[str] = []  # each web-service function asked for
         self.moodle_hosts: list[str] = []  # each host a request went to
         self.moodle_params: list[dict] = []
+        # As the real site answers: most courses have no progress (`hasprogress` false and a progress of 0), a name may hold
+        # `{mlang}` blocks and entities, and a course the owner hid from the overview is in none of the Timeline classes
         self.courses = [
-            {"id": 11, "fullname": "Algorithmique avancée", "shortname": "ALGO", "startdate": stamp(-60), "enddate": stamp(100), "progress": 40},
-            {"id": 12, "fullname": "Systèmes et réseaux", "shortname": "SYS", "startdate": stamp(-60), "enddate": stamp(100), "progress": 0},
-            {"id": 13, "fullname": "Algèbre", "shortname": "ALG1", "startdate": stamp(-400), "enddate": stamp(-200), "progress": 100},
+            {"id": 11, "fullname": "Algorithmique avancée", "shortname": "ALGO", "startdate": stamp(-60), "enddate": stamp(100), "progress": 40, "hasprogress": True, "hidden": False},
+            {"id": 12, "fullname": "{mlang en}Systems &amp; networks{mlang}{mlang fr}Systèmes &amp; réseaux{mlang}", "shortname": "SYS", "startdate": stamp(-60), "enddate": stamp(100), "progress": 0, "hasprogress": False, "hidden": False},
+            {"id": 13, "fullname": "Algèbre", "shortname": "ALG1", "startdate": stamp(-400), "enddate": stamp(-200), "progress": 0, "hasprogress": False, "hidden": False},
+            {"id": 15, "fullname": "Ancien cours", "shortname": "OLD", "startdate": stamp(-900), "enddate": stamp(-700), "progress": 0, "hasprogress": False, "hidden": True},
         ]
         self.past = {13}
+        self.raw: dict[str, object] = {}  # a Moodle function, or an Auriga path, -> what to answer instead (JSON value, or bytes)
         self.events: list[dict] = []
         self.quizzes: list[dict] = []
         self.contents: dict[int, list[dict]] = {}
@@ -80,6 +84,7 @@ class World:
         self.file_redirect = ""  # answer a download with a redirect to this address
         # Auriga and Keycloak
         self.refresh_n = 0
+        self.refresh_exp = stamp(hours=24)  # the end of the sign-in: absolute, a rotation does not extend it
         self.rotate = False  # each refresh gives a new refresh token
         self.offline = True  # the refresh token is an offline one
         self.keycloak_dead = False  # invalid_grant for a refresh
@@ -93,11 +98,12 @@ class World:
         self.evals: list[list] = []
         self.posted: list[dict] = []  # the bodies posted to searchResult
         self.broken_filter = False  # the saved synthèse query has no condition on the year any more
+        self.no_total_pages = False  # a result with no `totalPages` (the real site always sends it)
 
     @property
     def refresh(self) -> str:
         """The refresh token Keycloak accepts now: a JWT that says whether it is an offline one."""
-        return jwt(typ="Offline" if self.offline else "Refresh", n=self.refresh_n)
+        return jwt(typ="Offline" if self.offline else "Refresh", n=self.refresh_n, exp=self.refresh_exp)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -134,6 +140,8 @@ class World:
         self.moodle_params.append(form)
         if form.get("wstoken") != self.token or self.moodle_dead:
             return httpx.Response(200, json={"exception": "webservice_access_exception", "errorcode": "invalidtoken", "message": "Invalid token - token not found"})
+        if function in self.raw:
+            return self.answer(self.raw[function])
         match function:
             case "core_webservice_get_site_info":
                 return httpx.Response(200, json={"userid": 7, "fullname": "Ada Student", "username": "ada", "userprivateaccesskey": "PRIVATE-KEY"})
@@ -141,7 +149,7 @@ class World:
                 return httpx.Response(200, json=self.courses)
             case "core_course_get_enrolled_courses_by_timeline_classification":
                 wanted = form["classification"]
-                rows = [c for c in self.courses if (c["id"] in self.past) == (wanted == "past")] if wanted != "future" else []
+                rows = [c for c in self.courses if not c["hidden"] and (c["id"] in self.past) == (wanted == "past")] if wanted != "future" else []
                 return httpx.Response(200, json={"courses": rows, "nextoffset": len(rows)})
             case "core_calendar_get_action_events_by_timesort":
                 low, high = int(form["timesortfrom"]), int(form["timesortto"])
@@ -156,6 +164,10 @@ class World:
                 items = self.grade_items.get(int(form["courseid"]), [])
                 return httpx.Response(200, json={"usergrades": [{"courseid": int(form["courseid"]), "userid": 7, "gradeitems": items}], "warnings": []})
         return httpx.Response(200, json={"exception": "webservice_access_exception", "errorcode": "accessexception", "message": f"{function} is not allowed"})
+
+    @staticmethod
+    def answer(value: object) -> httpx.Response:
+        return httpx.Response(200, content=value) if isinstance(value, bytes) else httpx.Response(200, json=value)
 
     # ------------------------------------------------------------------
     # Keycloak
@@ -182,7 +194,7 @@ class World:
         return {
             "access_token": f"access-{self.access}",
             "expires_in": 60,
-            "refresh_expires_in": 0 if self.offline else 3600,
+            "refresh_expires_in": max(0, self.refresh_exp - stamp()),
             "refresh_token": self.refresh,
             "id_token": jwt(email="ada@epita.fr"),
             "token_type": "Bearer",
@@ -201,6 +213,8 @@ class World:
             return httpx.Response(401)
         if request.headers.get("authorization") != f"Bearer access-{self.access}":
             return httpx.Response(401)
+        if path in self.raw:
+            return self.answer(self.raw[path])
         if path == "/api/me":
             return httpx.Response(200, json={"id": 1})
         if path == "/api/plannings/me":
@@ -218,20 +232,39 @@ class World:
             lines = self.synthese if "1144" in path else self.evals
             size, page = int(request.url.params["size"]), int(request.url.params["page"])
             chunk = lines[(page - 1) * size : page * size]
-            return httpx.Response(200, json={"currentPage": page, "pageSize": size, "numberOfElements": len(chunk), "totalPages": max(1, -(-len(lines) // size)), "totalElements": len(lines), "content": {"columns": [], "lines": chunk}, "dataviz": None})
+            answer = {"currentPage": page, "pageSize": size, "numberOfElements": len(chunk), "totalPages": max(1, -(-len(lines) // size)), "totalElements": len(lines), "content": {"columns": [], "lines": chunk}, "dataviz": None}
+            if self.no_total_pages:
+                del answer["totalPages"]
+            return httpx.Response(200, json=answer)
         return httpx.Response(404)
 
 
-def intervention(start: str, end: str, caption: str, kind: str = "CM", room: str = "B101", exam: bool = False) -> dict:
+ACTIVITY_TYPES = {"CM": "Cours magistral", "TD": "Travaux dirigés", "TP": "Travaux pratiques", "EX": "Examen"}
+
+
+def intervention(start: str, end: str, caption: str | None, kind: str = "CM", room: str = "B101", exam: bool = False,
+                 teacher: tuple[str, str] | None = ("Grace", "Hopper"), activity: str = "") -> dict:
+    """A planning entry as the real site gives it: the activity type is an object (its code and its long caption), `isExam` is
+    false even for an `EX` activity, a teacher is a `person` with a current first and last name, and an entry may have no
+    pedagogical unit at all (`caption` None): its words are then in the activity."""
+    units = [{"pedagogicalUnit": {"code": "2627_I_INF_X", "caption": {"fr": caption, "en": caption}}}] if caption else []
     return {
         "startDateTime": start,
         "endDateTime": end,
-        "activityType": kind,
+        "activityType": {"code": kind, "caption": {"fr": ACTIVITY_TYPES.get(kind, kind), "en": kind}},
+        "activity": {"caption": {"fr": activity}} if activity else None,
         "isExam": exam,
-        "interventionPedagogicalUnits": [{"pedagogicalUnit": {"code": "2627_I_INF_X", "caption": {"fr": caption, "en": caption}}}],
+        "interventionPedagogicalUnits": units,
         "interventionResources": [{"resource": {"caption": room}}],
-        "interventionInstructors": [{"instructor": {"firstName": "Grace", "lastName": "Hopper"}}],
+        "interventionInstructors": [{"person": {"currentFirstName": teacher[0], "currentLastName": teacher[1]}}] if teacher else [],
     }
+
+
+def synthese(n: int, final: str | None = "12.5", pre: str | None = None, year: str = "2627", title: object = None) -> list:
+    """A line of "Mes notes (synthèse)" as the real site gives it, five cells whatever the columns are: the internal id, the
+    average before the RATT retake (a string, null on most lines), the component code, its title, and the final average (a
+    string, null on a line with none yet). The query's `content.columns` has four entries: the code and the title are one column."""
+    return [n, pre, f"{year}_I_INF_{n:03d}", title or {"fr": f"Matière {n}", "en": f"Course {n}"}, final]
 
 
 def connect_school(services, world: World, sites=("moodle", "auriga")) -> None:

@@ -122,9 +122,10 @@ end), or from the machine with `clara moodle connect` and `clara auriga connect`
    Clara keeps the token only if Moodle accepts it. Moodle cannot renew a token: when it lapses, the `moodle` alert and the card say so, and
    you repeat this.
 2. **Auriga:** open the address the card gives and sign in with Microsoft. You land on a blank page of `auriga.epita.fr` (a 404 is
-   normal): copy its whole address and paste it. Clara swaps the code in it for tokens and renews the sign-in herself. The card says if Auriga
-   gave a session token only (it then ends with Auriga's session, and you sign in again often) instead of one kept for a month of inactivity.
-3. `/school` (console) shows who is connected and whether a sign-in lapsed; `/school disconnect moodle|auriga`, or **Disconnect**, forgets a
+   normal): copy its whole address and paste it. Clara swaps the code in it for tokens and renews the sign-in herself. Auriga ends the sign-in on
+   a fixed date about a day after you made it, and using it does not push that back: `clara auriga connect` and `/school` say « lapses on … ».
+   The card says if Auriga gave a session token only (it then ends with Auriga's session, and you sign in again often).
+3. `/school` (console) shows who is connected, whether a sign-in lapsed and when the Auriga one lapses; `/school disconnect moodle|auriga`, or **Disconnect**, forgets a
    token (it stays valid on the site until it expires: Moodle has no page to revoke it).
 4. The token Moodle gives has all your rights there, and Moodle cannot make a read-only one: Clara calls only seven read functions. Reading
    these sites does not taint a conversation; a document saved with `moodle_file_save` is an ordinary workspace file.

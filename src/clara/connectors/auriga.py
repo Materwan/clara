@@ -6,8 +6,9 @@ The page is an Angular app over `https://auriga.epita.fr/api/`; a call carries `
 authorization code with PKCE, redirected to `https://auriga.epita.fr/clara-callback` (a plain 404 page of the site, where the
 code stays visible in the address bar). The owner signs in once in a browser and pastes that address back
 (`code_from_address`); Clara swaps the code for tokens and keeps the **refresh token** in the secrets store
-(`auriga_refresh_token`). The scope asks for `offline_access`, so that the refresh token outlives the Keycloak session
-(until it has been idle for a month, Keycloak's default). Each refresh may give a new refresh token: it is kept.
+(`auriga_refresh_token`). The scope asks for `offline_access`, so that the refresh token outlives the Keycloak session, but
+its `exp` is an absolute date (seen on the real site: about 24 hours after the sign-in) that a rotation does not extend:
+`lapses` reads it, so that the owner is told when the sign-in ends. Each refresh may give a new refresh token: it is kept.
 
 When Keycloak refuses the refresh token (`invalid_grant`), nothing but a new sign-in helps: the error says `reconnect`.
 
@@ -23,13 +24,13 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
-from .school import Event, SchoolError, line
+from .school import Event, Noted, SchoolError, line
 
 SITE = "https://auriga.epita.fr"
 API = f"{SITE}/api"
@@ -71,7 +72,10 @@ def code_from_address(text: str, state: str) -> str:
     """The code in the address the owner pasted (the page they land on after signing in), checked against the sign-in
     that was started."""
     found = str(text or "").strip().strip("<>\"' ")
-    parts = urlsplit(found)
+    try:
+        parts = urlsplit(found)
+    except ValueError:  # an address that cannot be read at all, such as an unclosed [
+        parts = urlsplit("")
     site = urlsplit(SITE)
     if parts.scheme != site.scheme or parts.hostname != site.hostname:
         raise AurigaError(
@@ -106,9 +110,30 @@ def account_of(tokens: dict) -> str:
 
 
 def lasting(refresh_token: str) -> bool:
-    """True for an offline token (kept until it has been idle for a month), not a session one (an hour, ended with the
-    Keycloak session)."""
+    """True for an offline token, not a session one (an hour, ended with the Keycloak session). An offline token still ends
+    on the date `lapses` reads."""
     return str(claims(refresh_token).get("typ", "")).lower() == "offline"
+
+
+def lapses(refresh_token: str) -> datetime | None:
+    """When the sign-in ends: the `exp` of the refresh token. The date is absolute: a rotation gives a new token with the same
+    end, so the sign-in lapses about a day after it was made, whatever is done meanwhile. None when the token is not a JWT
+    or says no date."""
+    found = claims(refresh_token).get("exp")
+    if isinstance(found, bool) or not isinstance(found, int | float):
+        return None
+    try:
+        return datetime.fromtimestamp(found, UTC) if found > 0 else None
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def lapse_phrase(ends: datetime | None, tz: tzinfo) -> str:
+    """`lapses on 2026-11-14 at 17:35`, in the owner's zone ('' when the token says no date)."""
+    if ends is None:
+        return ""
+    verb = "lapses" if ends > datetime.now(UTC) else "lapsed"
+    return f"{verb} on {ends.astimezone(tz):%Y-%m-%d at %H:%M}"
 
 
 class AurigaAuth:
@@ -126,7 +151,7 @@ class AurigaAuth:
             raise AurigaError(f"Auriga's sign-in service could not be reached: {error}") from None
         try:
             found = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             found = {}
         found = found if isinstance(found, dict) else {}
         if response.is_error:
@@ -134,7 +159,7 @@ class AurigaAuth:
                 if lapses:
                     raise AurigaError(
                         "Auriga no longer accepts the sign-in (it ended or was revoked): sign in again on the "
-                        "Connections page, or with `clara auriga connect`.",
+                        "Connections page, or with clara auriga connect.",
                         True,
                     )
                 raise AurigaError(
@@ -162,7 +187,7 @@ class Grade:
     title: str
     value: str  # the average or the mark, as Auriga writes it ("" when there is none yet)
     coef: str = ""
-    kind: str = ""
+    kind: str = ""  # an éval line: its type; a synthèse line: "before RATT" when the value is not the final average
 
 
 @dataclass(frozen=True)
@@ -183,14 +208,30 @@ def caption(value: Any) -> str:
 
 
 def label_of(value: Any) -> str:
-    """The name of a thing Auriga describes as an object (a room, a teacher, a kind of activity)."""
+    """The name of a thing Auriga describes as an object (a room, a teacher, a kind of activity). A teacher is a `person`
+    inside the entry, with a current first and last name."""
     if isinstance(value, dict):
+        if isinstance(value.get("person"), dict):
+            value = value["person"]
+        first = caption(value.get("currentFirstName") or value.get("firstName"))
+        last = caption(value.get("currentLastName") or value.get("lastName"))
+        if first or last:
+            return f"{first} {last}".strip()
         for key in ("caption", "name", "fullName", "label", "code"):
             if value.get(key):
                 return caption(value[key])
-        first, last = caption(value.get("firstName")), caption(value.get("lastName"))
-        return f"{first} {last}".strip()
+        return ""
     return line(value, 120)
+
+
+def is_exam(activity_type: Any) -> bool:
+    """An activity of type `EX` is an exam, whatever `isExam` says (it is false on the real site even for those)."""
+    found = activity_type.values() if isinstance(activity_type, dict) else [activity_type]
+    return any(isinstance(text, str) and text.strip().upper() == "EX" for text in found)
+
+
+def rows(value: Any) -> list[dict]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def moment(value: Any) -> datetime | None:
@@ -199,10 +240,6 @@ def moment(value: Any) -> datetime | None:
     except ValueError:
         return None
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
-
-
-def rows(value: Any) -> list[dict]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 class Auriga:
@@ -275,7 +312,7 @@ class Auriga:
             )
         try:
             return response.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             raise AurigaError("Auriga did not answer with data (the site may be down for maintenance).") from None
 
     async def me(self) -> None:
@@ -285,46 +322,67 @@ class Auriga:
     # ------------------------------------------------------------------
     # The planning
     # ------------------------------------------------------------------
-    async def planning(self, first: date, last: date) -> list[Event]:
-        """The classes and exams between two dates, inclusive."""
+    async def planning(self, first: date, last: date) -> Noted:
+        """The classes and exams between two dates, inclusive. An entry that cannot be read is left out and counted in the
+        notes; an answer with no list of entries, or none readable, is a failure, not an empty calendar."""
         params = [("days", str(day)) for day in range(1, 8)]
         params += [("startDate", first.isoformat()), ("endDate", last.isoformat())]
         found = await self.request("GET", "/plannings/me", params=params)
-        events: list[Event] = []
-        for item in rows(found.get("interventions") if isinstance(found, dict) else None):
-            start, end = moment(item.get("startDateTime")), moment(item.get("endDateTime"))
-            if start is None:
-                continue
-            units = [
-                caption((unit.get("pedagogicalUnit") or {}).get("caption"))
-                for unit in rows(item.get("interventionPedagogicalUnits"))
-            ]
-            rooms = [label_of(entry.get("resource")) for entry in rows(item.get("interventionResources"))]
-            teachers = [
-                label_of(entry.get("instructor") or entry) for entry in rows(item.get("interventionInstructors"))
-            ]
-            title = " / ".join(dict.fromkeys(unit for unit in units if unit)) or line(item.get("name") or "(untitled)")
-            details = tuple(
-                part
-                for part in (
-                    ", ".join(dict.fromkeys(room for room in rooms if room)),
-                    ", ".join(dict.fromkeys(name for name in teachers[:3] if name)),
-                )
-                if part
+        items = found.get("interventions") if isinstance(found, dict) else None
+        if not isinstance(items, list):
+            raise AurigaError(
+                "Auriga's planning is not what Clara expects (no list of entries): the page may have changed."
             )
-            exam = bool(item.get("isExam"))
-            events.append(
-                Event(
-                    start,
-                    end,
-                    "auriga",
-                    label_of(item.get("activityType")) or "class",
-                    title,
-                    details,
-                    ("exam",) if exam else (),
-                )
+        events = Noted()
+        for item in items:
+            try:
+                event = self._event(item)
+            except (AttributeError, KeyError, TypeError, ValueError):  # one odd entry must not blank the calendar
+                event = None
+            if event is not None:
+                events.append(event)
+        if items and not events:
+            raise AurigaError(
+                "Auriga's planning could not be read (its entries are not what Clara expects): the page may have changed."
+            )
+        if len(events) < len(items):
+            events.notes.append(
+                f"{len(items) - len(events)} of the {len(items)} entries Auriga sent could not be read and are left out: "
+                "the calendar may be missing some."
             )
         return events
+
+    @staticmethod
+    def _event(item: Any) -> Event | None:
+        if not isinstance(item, dict):
+            return None
+        start, end = moment(item.get("startDateTime")), moment(item.get("endDateTime"))
+        if start is None:
+            return None
+        units = [
+            caption((unit.get("pedagogicalUnit") or {}).get("caption"))
+            for unit in rows(item.get("interventionPedagogicalUnits"))
+        ]
+        rooms = [label_of(entry.get("resource")) for entry in rows(item.get("interventionResources"))]
+        teachers = [label_of(entry) for entry in rows(item.get("interventionInstructors"))]
+        kind = label_of(item.get("activityType")) or "class"
+        # an entry with no pedagogical unit has no title of its own: it is named by its activity
+        title = (
+            " / ".join(dict.fromkeys(unit for unit in units if unit))
+            or label_of(item.get("activity"))
+            or line(item.get("name"))
+            or kind
+        )
+        details = tuple(
+            part
+            for part in (
+                ", ".join(dict.fromkeys(room for room in rooms if room)),
+                ", ".join(dict.fromkeys(name for name in teachers[:3] if name)),
+            )
+            if part
+        )
+        exam = is_exam(item.get("activityType")) or item.get("isExam") is True
+        return Event(start, end, "auriga", kind, title, details, ("exam",) if exam else ())
 
     # ------------------------------------------------------------------
     # The grades
@@ -335,6 +393,7 @@ class Auriga:
         entry, query = SYNTHESE if kind == "synthese" else EVAL
         notes: list[str] = []
         grades: list[Grade] = []
+        dropped = 0
         async with self._open() as http:
             found = await self.request("GET", f"/menuEntries/{entry}/query/{query}", http)
             definition = found.get("queryDefinition") if isinstance(found, dict) else None
@@ -360,14 +419,31 @@ class Auriga:
                     params={"size": PAGE, "page": number, "sort": "id", "disableWarnings": "true"},
                     json=body,
                 )
-                page = page if isinstance(page, dict) else {}
-                content = page.get("content")
-                for cells in (content.get("lines") if isinstance(content, dict) else None) or []:
+                content = page.get("content") if isinstance(page, dict) else None
+                lines = content.get("lines") if isinstance(content, dict) else None
+                if (
+                    not isinstance(page, dict)
+                    or not (content is None or isinstance(content, dict))
+                    or not (lines is None or isinstance(lines, list))
+                ):  # a wrong type is a changed page; null or absent is an empty page
+                    raise AurigaError(
+                        f"Auriga's answer to the grades query (menu entry {entry}) has no list of lines: the page may have "
+                        "changed."
+                    )
+                if lines is None:
+                    notes.append("Auriga's answer had no lines (an empty page).")
+                    lines = []
+                for cells in lines:
                     grade = self._grade(kind, cells)
-                    if grade is not None and grade.code.startswith(year):
+                    if grade is None:
+                        dropped += 1
+                    elif grade.code.startswith(year):
                         grades.append(grade)
                 total = page.get("totalPages")
-                if number >= (total if isinstance(total, int) else 1):
+                if isinstance(total, int) and not isinstance(total, bool):
+                    if number >= total:
+                        break
+                elif len(lines) < PAGE:  # no page count: a page that is not full is the last
                     break
             else:  # the last page allowed was read and Auriga has more
                 every = page.get("totalElements")
@@ -376,12 +452,17 @@ class Auriga:
                     + (f" of {every}" if isinstance(every, int) and every > MAX_PAGES * PAGE else "")
                     + " Auriga sent were read: lines may be missing."
                 )
+        if dropped:
+            notes.append(
+                f"{dropped} lines Auriga sent do not have the expected shape and are left out: lines may be missing."
+            )
         return Grades(sorted(grades, key=lambda grade: (grade.code, grade.title)), tuple(notes))
 
     @staticmethod
     def _grade(kind: str, cells: Any) -> Grade | None:
-        """A line of a result: `[id, average, code, title, "Moy. (finale)"]` or `[id, mark, coef, code, type]`. The places
-        were read from one account's types and counts: a line that does not fit is left out."""
+        """A line of a result: `[id, average before RATT, code, title, final average]` (five cells: the query has four columns,
+        the code and the title are one) or `[id, mark, coef, code, type]`. Read from the real site on 2026-11-11: a line that
+        does not fit is left out, and counted by the caller."""
         if not isinstance(cells, list) or len(cells) < 5:
             return None
 
@@ -389,17 +470,27 @@ class Auriga:
             return "" if value is None else caption(value) if isinstance(value, dict) else line(value, 60)
 
         if kind == "synthese":
-            return Grade(text(cells[2]), caption(cells[3]), text(cells[1]), "", text(cells[4]))
-        return Grade(text(cells[3]), "", text(cells[1]), text(cells[2]), text(cells[4]))
+            code, final, before = text(cells[2]), text(cells[4]), text(cells[1])
+            if not code:
+                return None
+            # the final average, else the one before the RATT retake (labelled), else none yet
+            return Grade(code, caption(cells[3]), final or before, "", "" if final or not before else "before RATT")
+        code = text(cells[3])
+        return Grade(code, "", text(cells[1]), text(cells[2]), text(cells[4])) if code else None
 
 
-async def sign_in(address: str, state: str, verifier: str) -> tuple[str, str, bool]:
+async def sign_in(address: str, state: str, verifier: str) -> tuple[str, str, bool, datetime | None]:
     """What the owner pasted, proved: the code in the address is swapped for tokens and the API must answer with them. Returns
-    the refresh token to keep, the account, and whether the token is an offline one (`lasting`)."""
+    the refresh token to keep, the account, whether the token is an offline one (`lasting`) and when it ends (`lapses`)."""
     tokens = await AurigaAuth().exchange(code_from_address(address, state), verifier)
     refresh = str(tokens.get("refresh_token") or "")
     if not refresh:
         raise AurigaError("Auriga gave no refresh token.")
     client = Auriga(refresh)  # a refresh may give a newer refresh token: the client keeps the latest
     await client.me()
-    return client.refresh_token, account_of(tokens) or "Auriga", lasting(client.refresh_token)
+    return (
+        client.refresh_token,
+        account_of(tokens) or "Auriga",
+        lasting(client.refresh_token),
+        lapses(client.refresh_token),
+    )

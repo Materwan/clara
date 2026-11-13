@@ -432,35 +432,12 @@ What I corrected or added to the owner's plan:
 To fix, most serious first (all checked by the orchestrator by reading the code and by rerunning the stand-in; the facts about the real
 Auriga and Moodle come from the structure-only logs of the sub-agent, counts and types, no personal content):
 
-- **D1. Every synthèse grade reads « (no average yet) » (medium to high).** 234 of 234 lines for the year 2526 show it, and 171 of them
-  have a final average. Cause: `connectors/auriga.py:392` takes `cells[1]` as the value, and on the real site `cells[1]` is always
-  null; the value is in `cells[4]`, which the code keeps as `kind` and never prints. `school_tools.py:330` then writes the placeholder.
-  Idea: read the value from the cell that holds it, and when the final average is empty show the pre-RATT one, or say which is shown
-  (not decided). `tests/schoolworld.py` has the old layout, so the tests pass.
-- **D2. The Auriga sign-in lapses about 24 hours after it is made (high).** The token is an offline one, but `refresh_expires_in` is an
-  absolute date and the rotation does not extend it: the remaining time kept falling with the clock across rotations, from about
-  24 hours. The owner's session made on 2026-11-11 should end by itself around 17:35 on 2026-11-12 (from the countdown, not checked
-  on a Keycloak page; it was not revoked at Keycloak). Causes: `auriga.py:108-111` (`lasting()` looks only at the type, not at `exp`), `auriga.py:232-235`
-  (the new refresh token is stored with no new date). The decided password re-login is the fix; meanwhile `lasting` should read `exp`
-  so that the sign-in message and `/school` say « lapses on … », and « idle for a month » leaves `FEATURES.md` and the decisions.
-- **D3. The teachers are never shown (medium).** On the real site the names are in `interventionInstructors[].person.currentFirstName`
-  and `currentLastName`; `label_of` (`auriga.py:185-193`) reads the entry itself, finds none of its keys and returns an empty string.
-  Idea: read `person` first.
-- **D4. An entry without a unit has no title, and the exam mark never shows (medium).** The title comes from the pedagogical unit
-  and falls back to `name` (`auriga.py:306`), which the real site does not give: such an entry reads « (untitled) ». `isExam`
-  (`auriga.py:315`) is false even for `EX` activities, so the `exam` tag never appears, and the kind is the long caption of the
-  activity type. Idea: take the exam flag from the activity type `EX` (keeping `isExam` as a second signal), and the title of an
-  entry without a unit from the activity.
-- **D5. A quiz close is shown twice (medium).** The Moodle Timeline already carries the close of a quiz, and `quizzes()`
-  (`connectors/moodle.py:343-363`) adds it again from `mod_quiz_get_quizzes_by_courses`. The sentence « the calendar of Moodle has no
-  quiz event on this site » (`moodle.py:344` and the decision row) is wrong. Idea: keep only « opens » from the second source, or
-  remove an event that has the same name and time (not decided).
-- **D6. Raw markup in Moodle text (medium).** Names and grade cells show `{mlang}` blocks, `&amp;` and `&ndash;` entities
-  (`moodle.py:259, 329-337, 361, 394`) and HTML anchors in `gradeformatted` and `rangeformatted` (`moodle.py:419-420`). Idea: one
-  cleaner for all Moodle text: decode entities, drop tags, and choose one `{mlang}` language (which one is not decided).
-- **D7. The course list is misleading (medium).** `0% done` is printed on 20 of 22 courses where Moodle sets `hasprogress` false
-  (`moodle.py:255-263`, `school_tools.py:207`); 27 hidden courses are in none of the Timeline classes. Idea: print the progress only
-  when `hasprogress` is true, and say how many courses are hidden.
+- **D2. The Auriga sign-in lapses about 24 hours after it is made (high). Only the password re-login remains.** The token is an offline
+  one, but `refresh_expires_in` is an absolute date and the rotation does not extend it: the remaining time kept falling with the clock
+  across rotations, from about 24 hours (seen on the real site on 2026-11-11, not checked on a Keycloak page). Done (`fix/school-reads`):
+  `lapses()` reads the `exp` of the token, so that the sign-in message, `/school` and the Connections answer say « lapses on … », and
+  « idle for a month » is gone from `FEATURES.md` and the decisions; no warning is sent before the date (the owner's choice). What is
+  left is the decided password re-login (« What the owner decided » above), which will remove the lapse.
 - **D8. A document can forge a « sign in again » state (medium).** `moodle.py:477-482` reads the bytes of a downloaded file as an error
   when they are JSON with `invalidtoken`, so a course document whose content is that JSON makes Clara think the token lapsed
   (`setup.py:180-188` then raises the `moodle` alert). Idea: check the content type and the size before parsing, and only treat a
@@ -468,21 +445,9 @@ Auriga and Moodle come from the structure-only logs of the sub-agent, counts and
 - **D9. No limits on memory, pages or time (medium).** A 28 KB docx that expands to a 29 MB XML made the reading process reach 753 MB;
   a PDF of 20,000 pages took 6 s; a download that trickles has no total deadline (`moodle.py:460-472`). Idea: a cap on the
   uncompressed size, on the pages read and on the whole download time, with a clear refusal.
-- **D10. A wrong-shape answer reads as « nothing » (medium).** A site answer of the wrong shape gives « no courses » or an empty
-  calendar instead of a failure; a partial list looks complete; a line that does not fit is dropped with no count; one odd planning
-  item blanks the whole Auriga calendar (`auriga.py:296-330`; `moodle.py:218-219` catches only `ValueError` on `response.json()`).
-  Idea: count the dropped lines and say so, and treat an unreadable answer as a failure, not as an empty list.
 - **D11. Small ones in the pack (low).**
-  - `school_worked` clears the alert even when the connection needs a reconnect (`connectors/setup.py:180-188`).
-  - `**encode(params)` after `wsfunction` lets a parameter override the function (`moodle.py:206`).
-  - A malformed Auriga address gives a 500 (`auriga.py:74`, `urlsplit`).
-  - `year` is checked with `isdigit()` and no `isascii()`, so non-ASCII digits pass (`school_tools.py:319`).
-  - `str(file)` is used for an error (`school_tools.py:444`), and an error note ends with two periods (`school_tools.py:474-500`).
-  - The 92-day limit and the unfiltered Moodle events (`school_tools.py:236-237, 260-266`); `totalPages` handling
-    (`auriga.py:369-371`); backticks in the reconnect text (`moodle.py:232`).
-- **D12. Small ones in the web client (low).** Marked **not specific to the pack** where it applies.
-  - The approval card of `moodle_file_save` prints the path as given (`school_tools.py:165`, no cleaning) and does not name the
-    document, where the mail and Drive cards show the subject and the file name.
+  - The 92-day limit (`school_tools.py`, `_window`): it is not clear what the defect is. The limit counts `end - start`, as the default of
+    7 days does, so it was left as it is.
 
 From the real-model run (R1, ideas, not decisions):
 
@@ -492,9 +457,6 @@ From the real-model run (R1, ideas, not decisions):
   later prompt, and `remember` runs without a card because reading these sites does not taint the turn (the owner's choice). A planted
   order to remember a rule was refused 6 of 6. Idea: not decided (see below); for example a card for `remember` after a school read,
   or a rule in the prompt not to store text quoted from these sites.
-- **R1c. A non-numeric mark is read in different ways (low).** The same synthèse and éval data with the mark « AB » was read as
-  « absent » in 4 runs and as « assez bien » in 1 (2 more did not say), because the tool result has no legend. Idea: say in the result that a non-numeric
-  mark is not a number and is not to be interpreted; the real list of such marks on the site is not known.
 - **R1d. Timing (information).** 17.7 s a run on average and 168 s at most; one « planning for the whole year » run passed the 120 s
   silence limit of the model (`ModelTimeout`) and succeeded on the second try. The model recovers from the 92-day limit by asking in
   pieces.
@@ -520,12 +482,7 @@ Not decided:
 - Whether the Keycloak login form accepts the owner's account at all (checked first, see above).
 - How many password sign-ins per lapse (my proposal: one), and what happens when the owner changes the school password.
 - Where the password is stored (presumably the encrypted secrets, as the token is) and how it is removed.
-- Which value a synthèse line shows when the final average and the pre-RATT one are both empty.
-- Which language to keep from a `{mlang}` block.
-- For a quiz: keep only « opens » from the second source, or remove the duplicate by name and time.
-- Whether Clara warns the owner before the Auriga sign-in lapses.
-- Which of the small ones of D11, and the card of `moodle_file_save` of D12, are built, and which are left.
-- Whether `remember` is limited after a school read (R1b), and whether the result carries a note on non-numeric marks (R1c).
+- Whether `remember` is limited after a school read (R1b). (Decided 2026-11-13: a rule in the prompt, not a card; slice S2.)
 
 Not covered by the test (still to try):
 
@@ -538,9 +495,9 @@ Not covered by the test (still to try):
   interventions, entries near midnight.
 - Nothing else of the real sites: the real-site run read the structure (counts and types), not the content.
 
-Tests worth adding (the owner decides): update `tests/schoolworld.py` to the real shapes (it hides D1, D3 and D4 today); a file whose
-bytes are an `invalidtoken` answer must not raise the lapse; a download deadline and a size cap; wrong-shape answers; a web test of the
-alert badge after a resolved alert.
+Tests worth adding (the owner decides): a file whose bytes are an `invalidtoken` answer must not raise the lapse; a download deadline and a
+size cap; a web test of the alert badge after a resolved alert. (`tests/schoolworld.py` is on the real shapes and the wrong-shape answers are
+tested: `fix/school-reads`.)
 
 What the current design already sets:
 

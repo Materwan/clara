@@ -183,7 +183,9 @@ class Connectors:
             self.s.alerts.raise_(site, f"{SCHOOL_LABELS[site]} refused the sign-in", str(error))
 
     def school_worked(self, site: str) -> None:
-        if site in self.s.alerts.active:
+        """A call worked: the alert is over, unless the sign-in is marked lapsed (another call, in flight at the same time, was
+        refused: only signing in again, or a secret replaced, ends that)."""
+        if site in self.s.alerts.active and self.school_state(site) != "needs_reconnect":
             self.s.alerts.clear(site)
 
     def school_unusable(self) -> str:

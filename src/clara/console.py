@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .auth import APPROVALS, CLIENTS, TokenError, TokenInfo
+from .connectors.auriga import lapse_phrase, lapses
 from .connectors.school import LABELS as SCHOOL_LABELS
 from .connectors.school import SECRETS as SCHOOL_SECRETS
 from .connectors.school import SITES as SCHOOL_SITES
@@ -222,9 +223,13 @@ def _school(s: Services, args: list[str], token: TokenInfo) -> str:
     for site in SCHOOL_SITES:
         state = s.connectors.school_state(site)
         found = s.connections.get(site) or {}
+        ends = ""
+        if site == "auriga" and state == "ok":  # Auriga's sign-in ends on a fixed date, which the token itself says
+            phrase = lapse_phrase(lapses(s.secrets.get("auriga_refresh_token") or ""), s.settings.zone())
+            ends = f", sign-in {phrase}" if phrase else ""
         lines.append(
             f"{SCHOOL_LABELS[site]:<8} "
-            + {"ok": f"connected as {found.get('account') or '?'}", "off": "not connected"}.get(
+            + {"ok": f"connected as {found.get('account') or '?'}{ends}", "off": "not connected"}.get(
                 state, f"must be signed in again (was {found.get('account') or '?'})"
             )
         )

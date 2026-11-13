@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import html
 import json
 import re
 import secrets
@@ -31,7 +32,7 @@ from urllib.parse import unquote, urlencode, urlsplit
 import httpx
 
 from .mail import html_to_text, human
-from .school import Event, SchoolError, line
+from .school import Event, Noted, SchoolError, line
 
 BASE = "https://moodle.epita.fr"
 ENDPOINT = "/webservice/rest/server.php"
@@ -41,6 +42,8 @@ TIMEOUT = httpx.Timeout(20.0, read=60.0)
 MAX_DOWNLOAD = 60_000_000  # a document bigger than this is not downloaded
 CHUNK = 64 * 1024
 PAGE = 50  # courses and events per call (Moodle's own limit for events)
+MAX_COURSE_PAGES = 10
+MAX_EVENT_PAGES = 8
 ENROLLED_FOR = 600.0  # seconds the list of every course of the owner is kept (it changes once a term)
 TOKEN = re.compile(r"^[A-Za-z0-9]{16,128}$")
 
@@ -109,7 +112,8 @@ class Course:
     shortname: str
     start: int
     end: int
-    progress: float | None
+    progress: float | None  # None unless Moodle tracks the progress of this course (`hasprogress`)
+    hidden: bool = False  # hidden from the course overview by the owner: in none of the Timeline classes
 
 
 @dataclass(frozen=True)
@@ -150,6 +154,65 @@ class GradeItem:
     percentage: str
     feedback: str
     graded: int
+
+
+# Moodle's own text: a name may hold `{mlang en}…{mlang}{mlang fr}…{mlang}` blocks (every language is kept, joined with " / "),
+# entities (`&amp;`, `&ndash;`) and tags (an anchor round a grade). The raw text is cut first: a hostile run of openers with no
+# closer would make the block search quadratic.
+_MLANG_OPEN = re.compile(r"\{mlang[ \t]+[^{}]{0,40}\}", re.IGNORECASE)
+_MLANG_CLOSE = re.compile(r"\{mlang\}", re.IGNORECASE)
+_MLANG_STRAY = re.compile(r"\{mlang[^{}]{0,40}\}", re.IGNORECASE)
+_BREAKS = re.compile(r"<\s*/?\s*(?:br|p|div|li|ul|ol|tr|td|th|table|h[1-6])\b[^<>]*>", re.IGNORECASE)
+_TAG = re.compile(r"<(?:/?[A-Za-z][^<>]*|!--.*?--)>", re.DOTALL)
+MAX_RAW_TEXT = 4000
+
+
+def languages(text: str) -> str:
+    """Each run of `{mlang}` blocks as the text of every language, joined with " / " (the same text twice is kept once).
+    One pass with no backtracking: the cost is linear whatever the text holds."""
+    out: list[str] = []
+    pos = 0
+    while True:
+        first = _MLANG_OPEN.search(text, pos)
+        if first is None:
+            break
+        parts: list[str] = []
+        opened: re.Match | None = first
+        stop = first.start()
+        while opened is not None:
+            closed = _MLANG_CLOSE.search(text, opened.end())
+            if closed is None:
+                break
+            parts.append(text[opened.end() : closed.start()].strip())
+            stop = closed.end()
+            skip = stop
+            while skip < len(text) and text[skip].isspace():
+                skip += 1
+            opened = _MLANG_OPEN.match(text, skip)
+        if not parts:  # an opener with no closer: none follows either
+            break
+        out += [text[pos : first.start()], " / ".join(dict.fromkeys(part for part in parts if part)), " "]
+        pos = stop
+    out.append(text[pos:])
+    return _MLANG_STRAY.sub(" ", "".join(out))
+
+
+def moodle_text(value: Any, limit: int = 160) -> str:
+    """One cleaned line of what Moodle writes (a name, a grade cell): `{mlang}` blocks joined, tags dropped, entities read."""
+    text = languages(str(value if value is not None else "")[:MAX_RAW_TEXT])
+    text = _TAG.sub("", _BREAKS.sub(" ", text))
+    return line(
+        _TAG.sub("", html.unescape(text)), limit
+    )  # an escaped tag (`&lt;b&gt;`) is dropped too, not shown as one
+
+
+def records(found: Any, what: str) -> list:
+    """The list an answer must be. Anything else is a failure to say, not an empty list (`what` says what was asked)."""
+    if not isinstance(found, list):
+        raise MoodleError(
+            f"Moodle's answer about {what} is not what Clara expects (a list): the site may have changed."
+        )
+    return found
 
 
 def number(value: Any) -> int:
@@ -203,7 +266,8 @@ class Moodle:
     async def call(self, function: str, params: dict | None = None, http: httpx.AsyncClient | None = None) -> Any:
         if function not in READ_FUNCTIONS:
             raise MoodleError(f"{function} is not one of the read functions Clara may call on Moodle.")
-        data = {"wstoken": self.token, "wsfunction": function, "moodlewsrestformat": "json", **encode(params or {})}
+        # the fixed fields come last: a parameter named wsfunction must not replace the function that was checked above
+        data = {**encode(params or {}), "wstoken": self.token, "wsfunction": function, "moodlewsrestformat": "json"}
         try:
             if http is None:
                 async with self._open() as own:
@@ -216,7 +280,7 @@ class Moodle:
             raise MoodleError(f"Moodle answered HTTP {response.status_code}.")
         try:
             found = response.json()
-        except ValueError:
+        except (ValueError, RecursionError):  # not JSON, or nested so deep that the parser gives up
             raise MoodleError("Moodle did not answer with data (the site may be down for maintenance).") from None
         self._check(found)
         return found
@@ -230,7 +294,7 @@ class Moodle:
         if code == "invalidtoken":
             raise MoodleError(
                 "Moodle no longer accepts the token (it expired or was deleted): sign in again on the Connections "
-                "page, or with `clara moodle connect`.",
+                "page, or with clara moodle connect.",
                 True,
             )
         raise MoodleError(f"Moodle refused: {line(found.get('message') or code or 'an error', 200)}")
@@ -254,35 +318,55 @@ class Moodle:
     @staticmethod
     def _course(row: dict) -> Course:
         progress = row.get("progress")
+        # most courses track no progress and say 0: only a course that tracks it shows one
+        tracked = row.get("hasprogress")
+        if tracked is None:  # the list of every course has no such field: its progress is null when nothing is tracked
+            tracked = isinstance(progress, int | float) and not isinstance(progress, bool)
         return Course(
             number(row.get("id")),
-            line(row.get("fullname") or row.get("displayname"), 200),
-            line(row.get("shortname"), 80),
+            moodle_text(row.get("fullname") or row.get("displayname"), 200),
+            moodle_text(row.get("shortname"), 80),
             seconds(row.get("startdate")),
             seconds(row.get("enddate")),
-            float(progress) if isinstance(progress, (int, float)) else None,
+            float(progress) if tracked is True and isinstance(progress, int | float) else None,
+            row.get("hidden") is True,
         )
 
-    async def courses(self, classification: str = "inprogress") -> list[Course]:
-        """The courses of the owner: `inprogress`, `past`, `future`, or `all` (every year)."""
+    @classmethod
+    def _courses(cls, raw: list) -> Noted:
+        found = Noted(cls._course(row) for row in raw if isinstance(row, dict))
+        if len(found) < len(raw):
+            found.notes.append(
+                f"{len(raw) - len(found)} of the courses Moodle sent could not be read and are left out."
+            )
+        return found
+
+    async def courses(self, classification: str = "inprogress") -> Noted:
+        """The courses of the owner: `inprogress`, `past`, `future`, or `all` (every year, the hidden ones too)."""
         if classification == "all":
             rows = await self.call("core_enrol_get_users_courses", {"userid": await self.userid()})
-            return [self._course(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-        found: list[Course] = []
+            return self._courses(records(rows, "your courses"))
+        found = Noted()
         offset = 0
         async with self._open() as http:
-            for _ in range(10):
+            for _ in range(MAX_COURSE_PAGES):
                 page = await self.call(
                     "core_course_get_enrolled_courses_by_timeline_classification",
                     {"classification": classification, "limit": PAGE, "offset": offset, "sort": "fullname"},
                     http,
                 )
-                rows = page.get("courses") if isinstance(page, dict) else None
-                rows = [row for row in rows or [] if isinstance(row, dict)]
-                found += [self._course(row) for row in rows]
-                if len(rows) < PAGE:
+                raw = records(page.get("courses") if isinstance(page, dict) else None, "your courses")
+                batch = self._courses(raw)
+                found += batch
+                found.notes += batch.notes
+                if len(raw) < PAGE:
                     break
-                offset = number(page.get("nextoffset")) or offset + PAGE
+                following = number(page.get("nextoffset"))
+                offset = following if following > offset else offset + PAGE
+            else:
+                found.notes.append(
+                    f"Only the first {MAX_COURSE_PAGES * PAGE} courses Moodle sent were read: courses may be missing."
+                )
         return found
 
     async def enrolled(self, max_age: float = ENROLLED_FOR) -> list[Course]:
@@ -298,32 +382,45 @@ class Moodle:
     # ------------------------------------------------------------------
     # Dates
     # ------------------------------------------------------------------
-    async def events(self, start: datetime, end: datetime) -> list[Event]:
-        """What is to do between two moments (the Timeline of Moodle): assignments to hand in, activities to complete."""
-        found: list[Event] = []
+    async def events(self, start: datetime, end: datetime) -> Noted:
+        """What is to do between two moments (the Timeline of Moodle): assignments to hand in, activities to complete, and the
+        close of a quiz (the Timeline carries it: `quizzes` adds only the opening)."""
+        found = Noted()
         after = 0
         async with self._open() as http:
-            for _ in range(8):
+            for _ in range(MAX_EVENT_PAGES):
                 params = {"timesortfrom": int(start.timestamp()), "timesortto": int(end.timestamp()), "limitnum": PAGE}
                 if after:
                     params["aftereventid"] = after
                 page = await self.call("core_calendar_get_action_events_by_timesort", params, http)
-                rows = page.get("events") if isinstance(page, dict) else None
-                rows = [row for row in rows or [] if isinstance(row, dict)]
-                found += self._events(rows)
-                if len(rows) < PAGE:
+                raw = records(page.get("events") if isinstance(page, dict) else None, "your calendar")
+                rows = [row for row in raw if isinstance(row, dict)]
+                events, dropped = self._events(rows)
+                found += events
+                if dropped + len(raw) - len(rows):
+                    found.notes.append(
+                        f"{dropped + len(raw) - len(rows)} Moodle entries had no usable date or shape and are left out."
+                    )
+                if len(raw) < PAGE:
                     break
-                after = number(page.get("lastid") or rows[-1].get("id"))
+                after = number(page.get("lastid") or (rows[-1].get("id") if rows else 0))
                 if not after:
                     break
+            else:
+                found.notes.append(
+                    f"Only the first {MAX_EVENT_PAGES * PAGE} Moodle entries of the period were read: some may be missing."
+                )
         return found
 
     @staticmethod
-    def _events(rows: list[dict]) -> list[Event]:
+    def _events(rows: list[dict]) -> tuple[list[Event], int]:
+        """The events of a page, and how many rows had no date a calendar can hold."""
         found: list[Event] = []
+        dropped = 0
         for row in rows:
             stamp = seconds(row.get("timesort") or row.get("timestart"))
             if not stamp:
+                dropped += 1
                 continue
             course = row.get("course") if isinstance(row.get("course"), dict) else {}
             kind = " ".join(part for part in (line(row.get("modulename"), 30), line(row.get("eventtype"), 30)) if part)
@@ -333,48 +430,57 @@ class Moodle:
                     None,
                     "moodle",
                     kind or "event",
-                    line(row.get("name"), 200),
-                    (line(course.get("fullname") or course.get("shortname"), 120),) if course else (),
+                    moodle_text(row.get("name"), 200),
+                    (moodle_text(course.get("fullname") or course.get("shortname"), 120),) if course else (),
                     ("overdue",) if row.get("overdue") else (),
                 )
             )
-        return found
+        return found, dropped
 
-    async def quizzes(self, courses: list[Course], start: datetime, end: datetime) -> list[Event]:
-        """When the quizzes of these courses open and close (the calendar of Moodle has no quiz event on this site)."""
+    async def quizzes(self, courses: list[Course], start: datetime, end: datetime) -> Noted:
+        """When the quizzes of these courses open. Only that: the Timeline (`events`) already carries the close of a quiz, and
+        adding it from here showed it twice."""
+        found = Noted()
         if not courses:
-            return []
+            return found
         names = {course.id: course.fullname for course in courses}
         page = await self.call("mod_quiz_get_quizzes_by_courses", {"courseids": [course.id for course in courses]})
-        rows = page.get("quizzes") if isinstance(page, dict) else None
-        found: list[Event] = []
-        for quiz in rows or []:
+        raw = records(page.get("quizzes") if isinstance(page, dict) else None, "your quizzes")
+        for quiz in raw:
             if not isinstance(quiz, dict):
                 continue
             where = (names.get(number(quiz.get("course")), ""),)
             limit = number(quiz.get("timelimit"))
             more = (f"time limit {limit // 60} min",) if limit else ()
-            for key, kind in (("timeopen", "opens"), ("timeclose", "closes")):
-                stamp = seconds(quiz.get(key))
-                if stamp and start <= when(stamp) < end:
-                    found.append(
-                        Event(when(stamp), None, "moodle", f"quiz {kind}", line(quiz.get("name"), 200), (*where, *more))
+            stamp = seconds(quiz.get("timeopen"))
+            if stamp and start <= when(stamp) < end:
+                found.append(
+                    Event(
+                        when(stamp), None, "moodle", "quiz opens", moodle_text(quiz.get("name"), 200), (*where, *more)
                     )
+                )
+        if sum(isinstance(quiz, dict) for quiz in raw) < len(raw):
+            found.notes.append("Some quizzes Moodle sent could not be read and are left out.")
         return found
 
     # ------------------------------------------------------------------
     # Contents and grades
     # ------------------------------------------------------------------
-    async def contents(self, course_id: int) -> list[Section]:
-        rows = await self.call("core_course_get_contents", {"courseid": course_id})
-        sections: list[Section] = []
-        for position, row in enumerate(rows if isinstance(rows, list) else []):
+    async def contents(self, course_id: int) -> Noted:
+        rows = records(await self.call("core_course_get_contents", {"courseid": course_id}), "this course")
+        sections = Noted()
+        dropped = 0
+        for position, row in enumerate(rows):
             if not isinstance(row, dict):
+                dropped += 1
                 continue
             modules: list[Module] = []
             for module in row.get("modules") or []:
                 if not isinstance(module, dict):
+                    dropped += 1
                     continue
+                contents = module.get("contents")
+                contents = contents if isinstance(contents, list) else []
                 items = tuple(
                     Item(
                         place,
@@ -384,46 +490,55 @@ class Moodle:
                         seconds(item.get("timemodified")),
                         str(item.get("fileurl") or ""),
                     )
-                    for place, item in enumerate(module.get("contents") or [], 1)
+                    for place, item in enumerate(contents, 1)
                     if isinstance(item, dict)
                 )
+                dropped += len(contents) - len(items)
                 modules.append(
                     Module(
                         number(module.get("id")),
                         line(module.get("modname"), 30),
-                        line(module.get("name"), 200),
+                        moodle_text(module.get("name"), 200),
                         module.get("uservisible") is not False,
                         items,
                     )
                 )
-            sections.append(Section(number(row.get("section", position)), line(row.get("name"), 200), tuple(modules)))
+            sections.append(
+                Section(number(row.get("section", position)), moodle_text(row.get("name"), 200), tuple(modules))
+            )
+        if dropped:
+            sections.notes.append(f"{dropped} entries of this course could not be read and are left out.")
         return sections
 
-    async def grades(self, course_id: int) -> list[GradeItem]:
+    async def grades(self, course_id: int) -> Noted:
         page = await self.call(
             "gradereport_user_get_grade_items", {"courseid": course_id, "userid": await self.userid()}
         )
-        reports = page.get("usergrades") if isinstance(page, dict) else None
-        items = [
+        reports = records(page.get("usergrades") if isinstance(page, dict) else None, "the grades of this course")
+        raw = [
             item
-            for report in reports or []
+            for report in reports
             if isinstance(report, dict)
-            for item in report.get("gradeitems") or []
-            if isinstance(item, dict)
+            for item in (report.get("gradeitems") if isinstance(report.get("gradeitems"), list) else [])
         ]
-        return [
+        items = [item for item in raw if isinstance(item, dict)]
+        found = Noted(
             GradeItem(
-                line(item.get("itemname"), 200),
+                moodle_text(item.get("itemname"), 200),
                 line(item.get("itemtype"), 20),
                 line(item.get("itemmodule"), 30),
-                line(item.get("gradeformatted"), 40),
-                line(item.get("rangeformatted"), 40),
-                line(item.get("percentageformatted"), 20),
-                line(html_to_text(str(item.get("feedback") or "")), 300),  # one line: a teacher's text adds none
+                moodle_text(item.get("gradeformatted"), 40),
+                moodle_text(item.get("rangeformatted"), 40),
+                moodle_text(item.get("percentageformatted"), 20),
+                # one line: a teacher's text adds none
+                line(html_to_text(languages(str(item.get("feedback") or "")[:MAX_RAW_TEXT])), 300),
                 seconds(item.get("gradedategraded")),
             )
             for item in items
-        ]
+        )
+        if len(items) < len(raw):
+            found.notes.append(f"{len(raw) - len(items)} grade items Moodle sent could not be read and are left out.")
+        return found
 
     # ------------------------------------------------------------------
     # Documents

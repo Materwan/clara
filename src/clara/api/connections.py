@@ -452,12 +452,12 @@ async def auriga_finish(body: AurigaAddress, request: Request) -> dict:
     except ValueError as error:
         raise ApiError(409, str(error)) from None
     try:
-        refresh, account, kept = await auriga_sign_in(body.address, body.state, flow.verifier)
+        refresh, account, kept, ends = await auriga_sign_in(body.address, body.state, flow.verifier)
     except AurigaError as error:
         raise ApiError(422, str(error)) from None
     connectors.flows.pop(body.state, None)
     connectors.school_connect("auriga", refresh, account)
-    return {"account": account, "lasting": kept}
+    return {"account": account, "lasting": kept, "lapses": ends.isoformat() if ends else None}
 
 
 @router.delete("/auriga")

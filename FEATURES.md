@@ -124,7 +124,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/upkeep [<ref> \| none]` | The model of titles and summaries |
 | `/tokens [list] \| create \| revoke \| approvals` | Client tokens (revoking works at once) |
 | `/secrets [list] \| set <name> <value> \| unset <name>` | The encrypted secrets store |
-| `/school [status] \| disconnect <moodle\|auriga>` | Moodle and Auriga: who is connected and whether a sign-in lapsed, or forget a site's token (signing in is the Connections page or `clara moodle connect`, `clara auriga connect`) |
+| `/school [status] \| disconnect <moodle\|auriga>` | Moodle and Auriga: who is connected, whether a sign-in lapsed and when the Auriga one lapses, or forget a site's token (signing in is the Connections page or `clara moodle connect`, `clara auriga connect`) |
 | `/rules [list] \| add \| del \| on \| off \| test` | The rule gate |
 | `/triggers [list] \| show \| add \| edit \| on \| off \| del \| test \| runs \| events` | Hooks: what Clara does when something happens (a mail arrives) |
 | `/tainted [on\|off]` | The tainted-turn rule |
@@ -731,15 +731,21 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   is not followed). **Auriga** is signed in as its own page does, with Keycloak (client `np-front`, authorization code with PKCE,
   scope `openid profile email offline_access`, redirect `https://auriga.epita.fr/clara-callback`, a blank page of the site whose address you
   paste back): Clara keeps the refresh token (`auriga_refresh_token`), renews the 60-second access token herself, and keeps each new refresh
-  token Keycloak gives. With `offline_access` the token lasts until it has been idle for a month; if Keycloak gives a session token only, the
-  sign-in says so and ends with the Keycloak session. A site whose sign-in is refused is marked « sign in again » on the Connections page, raises
+  token Keycloak gives. With `offline_access` the token is an offline one, but Auriga ends it on a fixed date about a day after the sign-in, which
+  using it does not push back: the sign-in message, `/school` and the answer of `POST /v1/connections/auriga/finish` say « lapses on <date> » (read
+  from the token, no warning is sent before), and you sign in again then; if Keycloak gives a session token only, the sign-in says so and ends with
+  the Keycloak session. A site whose sign-in is refused is marked « sign in again » on the Connections page, raises
   its alert (`moodle` or `auriga`), is not asked again, and the tools say how to sign in again; the alert is over when the site works again.
   **Reading these sites does not taint the turn** (the owner's choice, unlike Mail, GitHub and Drive): their text is data in the answers, with no
   quarantined reader, so a course page or a document that carries sentences meant for an AI is read as it is. The school calendar is Auriga's
-  planning (classes, tutorials, exams, with room and teacher) and Moodle's dates (assignments and activities to complete, from the Timeline; quizzes
-  opening and closing, from the quizzes of the courses in progress, since this Moodle's calendar has no quiz event), for a period of 92 days at most
+  planning (classes, tutorials, exams, with room and teacher; an exam is known by its activity type) and Moodle's dates (assignments and activities to
+  complete, and the close of a quiz, from the Timeline; a quiz's opening, from the quizzes of the courses in progress), for a period of 92 days at most
   (7 by default); the grades are Auriga's two saved queries of the page (« Mes notes (synthèse) » and « Mes notes (éval) », fetched and posted back,
-  for a school year such as `2627`) or Moodle's grade items of one course; a Moodle document is saved to the workspace, never over an existing
+  for a school year such as `2627`; a synthèse line shows the final average, else the one before the RATT retake with a label saying so, else none
+  yet) or Moodle's grade items of one course; a mark that is not a number (AB) is quoted, never interpreted, and the result says so. Moodle's names
+  and grade cells are shown without markup: `{mlang}` blocks keep every language joined with « / », tags are dropped and entities read. The courses
+  show a progress only where Moodle tracks one, and say how many courses are hidden from Moodle's overview. A line, row or entry a site sent that
+  cannot be read is left out and counted in a note before the lines, and an answer that is not the shape expected is an error, not an empty list; a Moodle document is saved to the workspace, never over an existing
   file, with a text copy beside it for a PDF or a Word file (`<name>.pdf.txt`, which `ws_read` reads), at most `CLARA_WORKSPACE_MAX_FILE` or 60 MB,
   and counted as it arrives. Nothing is written to either site: no submission, no message, no calendar entry. A local-only conversation is never
   offered these tools.
@@ -759,7 +765,8 @@ The summary of a request about a **mail** (`mail_read`, `mail_attachment_read`, 
 the file name come last, in quotes, with the id at the end; they are made one line with no quote, bracket or invisible character, cut
 (80 and 60 characters) and never change the words before them. They are what the conversation was shown by `mail_search`, `mail_read`,
 `drive_list` or `drive_search` (kept in the server's memory, per conversation, 2,000 at most, forgotten at a restart), or the name of a Drive file Clara
-created. An id never shown keeps the plain wording (`... (not emptied): 19a3f0c2d4e5`). The request cards of the web site, the Windows island and the phone show
+created. The request to save a Moodle document (`moodle_file_save`) names it the same way, from `moodle_files`: `Save to moodle/a.pdf the Moodle
+document "a.pdf" [501.1]`. An id never shown keeps the plain wording (`... (not emptied): 19a3f0c2d4e5`). The request cards of the web site, the Windows island and the phone show
 it whole; Clara's own prompt (the « waiting » and « ended » lines, the list of booked calls) gets the plain wording, since a subject reaches the
 conversation only through the quarantined reader. A booked call is compared by its plain wording when it is due.
 
@@ -1489,7 +1496,7 @@ keep-alive every 15 s.
 | `PUT /v1/connections/moodle` | Paste the `moodlemobile://token=…` link: the token is kept only if Moodle accepts it; returns the account |
 | `DELETE /v1/connections/moodle` | Forget the Moodle token |
 | `POST /v1/connections/auriga/start` | Start the Auriga sign-in (web session only): the Keycloak address and the `state` to finish with |
-| `POST /v1/connections/auriga/finish` | Paste the address of the page after the sign-in: swaps the code, proves the API answers, keeps the refresh token; returns the account and whether the token is an offline one |
+| `POST /v1/connections/auriga/finish` | Paste the address of the page after the sign-in: swaps the code, proves the API answers, keeps the refresh token; returns the account, whether the token is an offline one and when the sign-in lapses (`lapses`) |
 | `DELETE /v1/connections/auriga` | Forget the Auriga token |
 | `GET /v1/vault` | Vault status |
 | `GET /v1/vault/notes` | The notes |
