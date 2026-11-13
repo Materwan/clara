@@ -40,6 +40,8 @@ LAUNCH = "/admin/tool/mobile/launch.php"
 FILES = "/webservice/pluginfile.php/"
 TIMEOUT = httpx.Timeout(20.0, read=60.0)
 MAX_DOWNLOAD = 60_000_000  # a document bigger than this is not downloaded
+DOWNLOAD_SECONDS = 120.0  # a whole download: the timeouts above are per read, so a body that trickles would never end
+MAX_ERROR_ANSWER = 4096  # an error Moodle answers to a download is a few hundred bytes of JSON; more is the document
 CHUNK = 64 * 1024
 PAGE = 50  # courses and events per call (Moodle's own limit for events)
 MAX_COURSE_PAGES = 10
@@ -566,13 +568,15 @@ class Moodle:
         return parts.geturl() + ("&" if parts.query else "?") + urlencode({"token": self.token})
 
     async def download(self, url: str, limit: int = MAX_DOWNLOAD) -> bytes:
-        """A document's bytes. The size in the listing is not trusted: the bytes are counted as they come. A redirect is
-        not followed (the token would go where it points)."""
+        """A document's bytes. The size in the listing is not trusted: the bytes are counted as they come. The whole
+        download has a deadline. A redirect is not followed (the token would go where it points). Only a small JSON answer
+        is read as Moodle talking (an error); a document whose bytes look like one is still a document."""
         address = self.file_url(url)
         chunks: list[bytes] = []
         total = 0
         try:
             async with (
+                asyncio.timeout(DOWNLOAD_SECONDS),
                 httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as http,
                 http.stream("GET", address) as response,
             ):
@@ -586,13 +590,17 @@ class Moodle:
                         raise MoodleError(f"That file is bigger than {human(limit)}: it is not downloaded.")
                     chunks.append(chunk)
                 kind = response.headers.get("content-type", "")
+        except TimeoutError:
+            raise MoodleError(
+                f"The download took longer than {DOWNLOAD_SECONDS:.0f} s: it was stopped and nothing was saved."
+            ) from None
         except httpx.HTTPError as error:
             raise MoodleError(f"Moodle could not be reached: {error}") from None
         data = b"".join(chunks)
-        if "json" in kind and data[:1] == b"{":  # an error, answered as data
+        if "json" in kind and len(data) <= MAX_ERROR_ANSWER and data[:1] == b"{":  # an error, answered as data
             try:
                 found = json.loads(data)
-            except ValueError:  # a JSON document, not an error
+            except (ValueError, RecursionError):  # a JSON document (or one nested too deep to read), not an error
                 found = None
             self._check(found)
         return data

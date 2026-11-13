@@ -5,6 +5,18 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 ## Unreleased
 
+- **A Moodle document can no longer pass for a lapsed sign-in.** Only a small JSON answer to a download (4 KB at most, typed as JSON) is
+  read as Moodle's error. A file whose bytes are the `invalidtoken` answer is saved as a document: it no longer marks the sign-in as lapsed
+  or raises the `moodle` alert.
+- **A document has limits on time, memory and pages.** A download takes 120 seconds at most (past that nothing is saved); the text part of
+  a Word file may unpack to 10 MB at most (it was 30 MB, and a 29 MB one took 750 MB of memory); a PDF is read up to 500 pages. A Word file
+  or a PDF over its limit is saved without its text copy, and the answer says which limit it met. The Word and PDF limits apply to every
+  file Clara reads (attachments, project files, mail and Drive files, fetched pages), so a PDF of more than 500 pages is refused there too.
+- **Clara is told not to store text quoted from the school sites with `remember`** (a course name, an assignment title, a file name, a
+  grade comment, a teacher name): she writes the fact in her own words. It is a rule of the prompt while the Moodle/Auriga pack is on,
+  not a gate.
+- **The threat model has a row for the school sites** (Moodle and Auriga): what a hostile course text or document can do, and what
+  holds.
 - **The reader no longer quotes a hostile text.** When the quarantined reader says that a text is addressed to an AI, any run of
   about 30 characters that its answer or its facts copied from the text is removed. A question such as « the lines that contain
   X » can no longer make it print a hostile line or the address an order asks to write. A report that does not flag the text is

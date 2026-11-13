@@ -19,6 +19,10 @@ from xml.etree import ElementTree
 MAX_FILE_CHARS = 1_000_000  # characters of text one file may give (a bigger one is not worth a prompt)
 MAX_RAW_BYTES = 30_000_000  # a file in an archive bigger than this is not even read
 MAX_UNPACKED_BYTES = 600_000_000  # what one archive may unpack to, in all (a zip bomb stops here)
+# What a Word file's text part may unpack to. The XML is parsed into a tree that takes about 12 times its size in allocations (a
+# 29 MB part of tiny elements took 750 MB), so this is lower than MAX_RAW_BYTES: 10 MB holds the 1,000,000 characters a file may give.
+MAX_DOCX_XML = 10_000_000
+MAX_PDF_PAGES = 500  # pages a PDF may have to be read: each costs time, and the count is written by the file's maker
 MAX_PATH = 300
 READ_CHUNK = 1_000_000  # what is decompressed at a time: a bomb never takes more than this much memory beyond the cap
 
@@ -300,6 +304,8 @@ def pdf_text(data: bytes) -> tuple[str, int]:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted and not reader.decrypt(""):
             raise IngestError("This PDF is protected by a password.")
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise IngestError(f"This PDF has {len(reader.pages):,} pages: at most {MAX_PDF_PAGES} are read.")
         pages = [(page.extract_text() or "").strip() for page in reader.pages]
     except IngestError:
         raise
@@ -346,11 +352,13 @@ def docx_text(data: bytes) -> str:
     """The text of a Word document: its paragraphs, and its tables as rows of cells separated by `|`."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            xml = read_capped(archive, "word/document.xml", MAX_RAW_BYTES)  # a bomb would unpack in memory
+            xml = read_capped(archive, "word/document.xml", MAX_DOCX_XML)  # a bomb would unpack in memory
     except (zipfile.BadZipFile, KeyError, OSError):
         raise IngestError("This file could not be read as a Word document (.docx).") from None
     if xml is None:
-        raise IngestError("This Word document is too big to read.")
+        raise IngestError(
+            f"This Word document is too big to read: its text unpacks to more than {MAX_DOCX_XML // 1_000_000} MB."
+        )
     try:
         # document.xml is size-capped above; expat (>= 2.4) caps entity amplification, and ElementTree never
         # fetches external entities

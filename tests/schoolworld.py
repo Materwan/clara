@@ -7,8 +7,11 @@ called (never a write one), and the hosts a token was sent to.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import io
 import json
+import zipfile
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
@@ -27,13 +30,17 @@ def jwt(**claims) -> str:
     return f"{part({'alg': 'none'})}.{part(claims)}.sig"
 
 
-def make_pdf(text: str) -> bytes:
-    """A one-page PDF whose text is `text` (no parentheses in it), small enough to write by hand and real enough for pypdf."""
+def make_pdf(text: str, pages: int = 1) -> bytes:
+    """A PDF whose pages all say `text` (no parentheses in it), small enough to write by hand and real enough for pypdf."""
     stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode() if text else b""
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        f"<< /Type /Pages /Kids [{' '.join(f'{3 + n} 0 R' for n in range(pages))}] /Count {pages} >>".encode(),
+        *(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {3 + pages} 0 R "
+            f"/Resources << /Font << /F1 {4 + pages} 0 R >> >> >>".encode()
+            for _ in range(pages)
+        ),
         b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
@@ -45,6 +52,15 @@ def make_pdf(text: str) -> bytes:
     return out + f"xref\n0 {len(objects) + 1}\n".encode() + b"0000000000 65535 f \n" + table + (
         f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{len(out)}\n%%EOF\n".encode()
     )
+
+
+def make_docx(body: bytes) -> bytes:
+    """A Word file whose text part is `body` (the content of `<w:body>`, for example b"<w:p><w:r><w:t>Hello</w:t></w:r></w:p>")."""
+    xml = b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + body + b"</w:body></w:document>"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", xml)
+    return buffer.getvalue()
 
 
 def link(token: str = TOKEN, site: str = "0" * 32, private: str = "") -> str:
@@ -80,6 +96,8 @@ class World:
         self.contents: dict[int, list[dict]] = {}
         self.grade_items: dict[int, list[dict]] = {}
         self.files: dict[str, bytes] = {}  # the path after /webservice/pluginfile.php/ -> bytes
+        self.file_types: dict[str, str] = {}  # the same paths -> the Content-Type to answer (none: no header, as a bare body)
+        self.trickle = 0.0  # seconds between two bytes of a document: a body that never seems to end
         self.files_dead = False  # the documents answer invalidtoken (the token lapsed meanwhile)
         self.file_redirect = ""  # answer a download with a redirect to this address
         # Auriga and Keycloak
@@ -131,8 +149,14 @@ class World:
                 return httpx.Response(200, json={"exception": "webservice_access_exception", "errorcode": "invalidtoken", "message": "Invalid token"})
             if self.file_redirect:
                 return httpx.Response(302, headers={"location": self.file_redirect})
-            data = self.files.get(request.url.path.removeprefix("/webservice/pluginfile.php/"))
-            return httpx.Response(200, content=data, headers={"content-length": str(len(data))}) if data is not None else httpx.Response(404)
+            path = request.url.path.removeprefix("/webservice/pluginfile.php/")
+            data = self.files.get(path)
+            if data is None:
+                return httpx.Response(404)
+            headers = {"content-type": self.file_types[path]} if path in self.file_types else {}
+            if self.trickle:
+                return httpx.Response(200, content=self.slowly(data), headers=headers)
+            return httpx.Response(200, content=data, headers={"content-length": str(len(data)), **headers})
         assert request.url.path == "/webservice/rest/server.php", request.url.path
         form = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
         function = form["wsfunction"]
@@ -164,6 +188,11 @@ class World:
                 items = self.grade_items.get(int(form["courseid"]), [])
                 return httpx.Response(200, json={"usergrades": [{"courseid": int(form["courseid"]), "userid": 7, "gradeitems": items}], "warnings": []})
         return httpx.Response(200, json={"exception": "webservice_access_exception", "errorcode": "accessexception", "message": f"{function} is not allowed"})
+
+    async def slowly(self, data: bytes):
+        for at in range(len(data)):
+            await asyncio.sleep(self.trickle)
+            yield data[at : at + 1]
 
     @staticmethod
     def answer(value: object) -> httpx.Response:

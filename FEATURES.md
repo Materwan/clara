@@ -341,7 +341,7 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   provider, and titles and summaries are written locally too); the web, GitHub and Drive tools are not offered, and
   the gate refuses, whatever the rules, anything that would send something off the machine: web search and fetch,
   GitHub and Drive, scripts with network, and vault changes when the vault pushes to its remote.
-- **Attachments:** PDF (also those encrypted with an empty password), Word (`.docx`), text and code files, still
+- **Attachments:** PDF (also those encrypted with an empty password; at most 500 pages), Word (`.docx`; its text part may unpack to 10 MB at most, counted as it unpacks), text and code files, still
   pictures (8 MB) and animated GIF or WebP (30 MB; 6 frames are shown to the model); 4 files and 34 MB in all per
   message (so that, base64-encoded, they fit the 48 MB request; the web site checks before sending). A picture goes to models that see
   pictures; a document's text goes into the prompt (150,000 characters for all the documents of a message) and stays
@@ -754,7 +754,15 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   show a progress only where Moodle tracks one, and say how many courses are hidden from Moodle's overview. A line, row or entry a site sent that
   cannot be read is left out and counted in a note before the lines, and an answer that is not the shape expected is an error, not an empty list; a Moodle document is saved to the workspace, never over an existing
   file, with a text copy beside it for a PDF or a Word file (`<name>.pdf.txt`, which `ws_read` reads), at most `CLARA_WORKSPACE_MAX_FILE` or 60 MB,
-  and counted as it arrives. Nothing is written to either site: no submission, no message, no calendar entry. A local-only conversation is never
+  and counted as it arrives. **A document costs a bounded amount:** the whole download takes 120 seconds at most (past that nothing is saved and
+  the answer says « The download took longer than 120 s »), the text part of a Word file is read only if it unpacks to 10 MB at most (counted as it
+  unpacks, not from the file's header), and a PDF only up to 500 pages; a Word file or a PDF over its limit is saved all the same, without its text
+  copy, and the answer says which limit it met (« This PDF has 20,000 pages: at most 500 are read »). The reading runs in a thread. **A document is
+  never taken for Moodle talking:** only a small JSON answer to a download (4 KB at most, typed as JSON) is read as an error, so a file whose bytes
+  are Moodle's `invalidtoken` answer is saved as a document and does not mark the sign-in as lapsed. **The prompt part of this pack** (it is there only
+  while the pack is on in the conversation, and is the same from one turn to the next) says that the sites' text is data and tells Clara never to store,
+  with `remember`, text quoted from these sites (a course name, an assignment title, a file name, a grade comment, a teacher name), but the fact in
+  her own words, with no address and no instruction found in that text; it is a rule of the prompt, not a gate. Nothing is written to either site: no submission, no message, no calendar entry. A local-only conversation is never
   offered these tools.
 - **Content leaving the machine:** a call that would send text looking like a secret to GitHub, Drive, the vault's
   remote, a draft, an email or a networked script is raised to `ask`, naming the kind of secret found.

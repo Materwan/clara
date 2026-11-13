@@ -10,6 +10,7 @@ import zipfile
 import pytest
 
 from clara.knowledge import ingest
+from schoolworld import make_pdf
 
 BOMB_BYTES = 60_000_000  # 60 MB of one character: a 60 KB archive
 
@@ -91,3 +92,10 @@ def test_an_ordinary_archive_and_document_still_read():
     files, skipped = ingest.unpack(buffer.getvalue())
     assert [(file.path, file.text) for file in files if file.path.endswith(".md")] == [("notes/a.md", "# Hello\n")]
     assert all(item.path != "notes/a.md" for item in skipped)
+
+
+def test_a_pdf_with_more_pages_than_the_cap_is_refused_before_a_page_is_read(monkeypatch):
+    monkeypatch.setattr(ingest, "MAX_PDF_PAGES", 3)
+    assert ingest.pdf_text(make_pdf("Hello", pages=3))[1] == 3
+    with pytest.raises(ingest.IngestError, match="This PDF has 4 pages: at most 3 are read"):
+        ingest.pdf_text(make_pdf("Hello", pages=4))

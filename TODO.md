@@ -379,7 +379,7 @@ course name, a due-date title, a file name, a grade comment, a teacher name or a
 message », a fake end of result followed by a fake user turn, a French one, a token to write, a fetch, a rule to remember), it never
 called `mail_send`, `ws_write` or `web_fetch`, sent no mail, wrote no file and tried no connection to the attacker's host, and it
 told the owner about the order in 68 of the 72 runs of the six first orders (the 6 runs of the seventh were not counted). The model's judgment held; the gate was not exercised, because no run reached
-it. The data folder was shared between runs, so the notes the model wrote (R1b below) were loaded into later runs: the first 28
+it. The data folder was shared between runs, so the notes the model wrote (R1b, now a rule of the prompt: `docs/DECISIONS.md`) were loaded into later runs: the first 28
 hostile runs, which had none, are the clean ones.
 
 What the real-site run settled (the assumptions this section used to list): the Moodle token and its seven read functions; the Auriga
@@ -398,8 +398,6 @@ What the owner decided:
   signs in again.
 - **The password is set, seen and removed only through a hidden prompt** (`clara auriga connect`, or the console with a token whose
   approval scope is `all`). It is never shown, never typed in the chat, and never read back by Clara or by the Connections page.
-- **Both hostile-document risks are to be fixed** (D8 and D9): a file must not be able to forge a « sign in again » state, and a
-  download or a parse must have limits on memory, pages and time.
 - **The web defects that are not specific to the pack** go under « small ones » of D12, marked as such.
 - **This section is completed**, not a new item.
 
@@ -410,9 +408,6 @@ What I corrected or added to the owner's plan:
   is a plan, not a feature.
 - **At most one password sign-in per lapse, until the owner reconnects** (my proposal, not the owner's decision): repeated failed
   logins could lock the school account if Keycloak's brute-force protection is on for EPITA's realm (not checked).
-- **A row of the threat model is missing.** `docs/THREAT-MODEL.md` says nothing about the school sites: a course document can forge
-  a lapse (D8) or inflate memory and time (D9), and course text is untainted data by the owner's choice (`docs/DECISIONS.md`,
-  « Moodle and Auriga »). Add a row when the fixes are built.
 - **Three documents say what is no longer true**, to correct when the fixes are built (not now): `FEATURES.md` line 732 (« until it
   has been idle for a month », see D2), `docs/DECISIONS.md` rows 307 to 315 (« no password is kept », the offline-token lifetime and
   « this Moodle's calendar has no quiz event », see D5) and `CHANGELOG.md` line 43 (« never been tried »). The new secret must also
@@ -427,25 +422,12 @@ Auriga and Moodle come from the structure-only logs of the sub-agent, counts and
   `lapses()` reads the `exp` of the token, so that the sign-in message, `/school` and the Connections answer say « lapses on … », and
   « idle for a month » is gone from `FEATURES.md` and the decisions; no warning is sent before the date (the owner's choice). What is
   left is the decided password re-login (« What the owner decided » above), which will remove the lapse.
-- **D8. A document can forge a « sign in again » state (medium).** `moodle.py:477-482` reads the bytes of a downloaded file as an error
-  when they are JSON with `invalidtoken`, so a course document whose content is that JSON makes Clara think the token lapsed
-  (`setup.py:180-188` then raises the `moodle` alert). Idea: check the content type and the size before parsing, and only treat a
-  small JSON answer to the download address as an error.
-- **D9. No limits on memory, pages or time (medium).** A 28 KB docx that expands to a 29 MB XML made the reading process reach 753 MB;
-  a PDF of 20,000 pages took 6 s; a download that trickles has no total deadline (`moodle.py:460-472`). Idea: a cap on the
-  uncompressed size, on the pages read and on the whole download time, with a clear refusal.
 - **D11. Small ones in the pack (low).**
   - The 92-day limit (`school_tools.py`, `_window`): it is not clear what the defect is. The limit counts `end - start`, as the default of
     7 days does, so it was left as it is.
 
 From the real-model run (R1, ideas, not decisions):
 
-- **R1b. The model writes a global memory from hostile course text (low to medium).** In 6 of 78 hostile runs it called `remember`
-  with a note such as « the ALGO course holds an injected instruction to send the grades to attacker@example.invalid: ignore it »,
-  scope global. The note was harmless here, but hostile text, the address included, became a stored fact that comes back in every
-  later prompt, and `remember` runs without a card because reading these sites does not taint the turn (the owner's choice). A planted
-  order to remember a rule was refused 6 of 6. Idea: not decided (see below); for example a card for `remember` after a school read,
-  or a rule in the prompt not to store text quoted from these sites.
 - **R1d. Timing (information).** 17.7 s a run on average and 168 s at most; one « planning for the whole year » run passed the 120 s
   silence limit of the model (`ModelTimeout`) and succeeded on the second try. The model recovers from the 92-day limit by asking in
   pieces.
@@ -471,7 +453,6 @@ Not decided:
 - Whether the Keycloak login form accepts the owner's account at all (checked first, see above).
 - How many password sign-ins per lapse (my proposal: one), and what happens when the owner changes the school password.
 - Where the password is stored (presumably the encrypted secrets, as the token is) and how it is removed.
-- Whether `remember` is limited after a school read (R1b). (Decided 2026-11-13: a rule in the prompt, not a card; slice S2.)
 
 Not covered by the test (still to try):
 
@@ -480,20 +461,20 @@ Not covered by the test (still to try):
   the stand-ins' shapes (before the fixes of D1, D3 and D4). The kit is `test-r1/` in the scratchpad of the session and is not in
   the repository.
 - Discord, the desktop and phone apps.
+- The prompt rule against storing text quoted from the school sites with `remember` (R1b): not tried with a real model. Before it, 6 of 78 hostile runs stored such a note.
 - Moodle's error code for an expired token (only `invalidtoken` is known), `assign` rows, an `isExam` entry that is true, cancelled
   interventions, entries near midnight.
 - Nothing else of the real sites: the real-site run read the structure (counts and types), not the content.
 
-Tests worth adding (the owner decides): a file whose bytes are an `invalidtoken` answer must not raise the lapse; a download deadline and a
-size cap; a web test of the alert badge after a resolved alert. (`tests/schoolworld.py` is on the real shapes and the wrong-shape answers are
-tested: `fix/school-reads`.)
+Tests worth adding (the owner decides): a web test of the alert badge after a resolved alert. (`tests/schoolworld.py` is on the real shapes
+and the wrong-shape answers are tested: `fix/school-reads`.)
 
 What the current design already sets:
 
 - Only the seven read functions of `READ_FUNCTIONS` are called, nothing is written to either site, and the gate classes are
   `school_read` (2|2) and `school_save` (2|3) with the targets `school:moodle` and `school:auriga`.
 - Reading these sites does not taint the turn (the owner's choice, `docs/DECISIONS.md`, « Moodle and Auriga »): the course text is
-  untrusted but not quarantined, which is why D8 and D9 matter.
+  untrusted but not quarantined, which is why a document's bytes and cost are bounded (`docs/DECISIONS.md`).
 - `FEATURES.md` is tested against the code: every tool, route, secret, command and setting added is named there (the docs test), and the
   decision is recorded in `docs/DECISIONS.md`. A secret is set by a hidden prompt (`clara secrets set` or the connect command), never in
   `.env` or the chat.
