@@ -156,11 +156,17 @@ class Label:
 # ----------------------------------------------------------------------
 # Untrusted text
 # ----------------------------------------------------------------------
-# Invisible to a reader, fully visible to a model: zero-width characters, direction overrides, the soft hyphen, the byte
-# order mark, and the Unicode "tag" block (which can spell ASCII text that no screen shows). ZWNJ and ZWJ are kept: scripts
-# and emoji sequences need them.
-_INVISIBLE = re.compile("[­​‎‏‪-‮⁠-⁤⁦-⁩﻿\U000e0000-\U000e007f]")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Invisible to a reader, fully visible to a model: control characters (C0 and C1), zero-width characters, direction marks and
+# overrides, the Arabic letter mark, the fillers that draw as blanks (Hangul, Khmer inherent vowels), the Mongolian variation
+# selectors, the soft hyphen, the invisible operators and deprecated format characters, the variation selectors (a channel to hide
+# bytes in; FE0F stays, emoji need it), the byte order mark and the Unicode "tag" block, which can spell ASCII text that no screen
+# shows. The variation selectors of plane 14 go too: they only pick a glyph (an ideographic variant), the base character stays.
+# ZWNJ, ZWJ and CGJ are kept: scripts and emoji sequences need them.
+_INVISIBLE = re.compile(
+    r"[\u00ad\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b\u200e\u200f\u202a-\u202e\u2060-\u206f\u3164"
+    r"\ufe00-\ufe0e\ufeff\uffa0\ufff0-\ufff8\U000e0000-\U000e0fff]"
+)
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _BLANKS = re.compile(r"\n{3,}")
 _HIDDEN_STYLE = re.compile(
     r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|%)?\s*(?:;|$)|"

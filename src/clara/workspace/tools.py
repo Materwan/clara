@@ -146,18 +146,18 @@ async def _ws_search(context: ToolContext, query: str, path: str = "", regex: An
         return "\n".join(found)
     reader = context.services.reader
     shown = []
-    hidden: dict[str, int] = {}
+    hidden: set[str] = set()
     for index, line in enumerate(found):
         mark = untrusted.get(index)
         if mark is not None and mark.kind == "quarantine" and reader.on:
-            hidden[mark.path] = hidden.get(mark.path, 0) + 1  # the lines of a file that came from outside are not shown
+            hidden.add(mark.path)  # no line and no count: a count is one answer per query about text nobody may read
         else:
             shown.append(line)
     context.taint("searched files " + ", ".join(sorted({mark.path for mark in untrusted.values()})))
     notes = [
-        f"{file}: {count} match{'es' if count != 1 else ''}, not shown: the file came from outside; ws_read gives a "
-        "quarantined reader's report of it"
-        for file, count in sorted(hidden.items())
+        f"{file}: marked as coming from outside, so its matches are neither shown nor counted; ws_read gives a quarantined "
+        "reader's report of it"
+        for file in sorted(hidden)
     ]
     return "\n".join([*shown, *notes])
 

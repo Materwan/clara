@@ -30,28 +30,11 @@ about 3.3 times the wall time of a page read and about 19 % tokens (one benign p
 
 To fix, most serious first (all reproduced by the orchestrator unless noted):
 
-- **A question makes the reader quote the hostile text (medium).** When the model passes a `focus` such as « the lines that contain X »
-  to `ws_read` of a marked file, the reader copies the hostile line into `answer`, and the chat prints it, although `ws_search` says
-  « not shown ». 10 of 10 files in one run. Cause: `answer` is up to 800 characters of free text (`agent/reader.py:93-98`), the focus is
-  put in the reader's message (`reader.py:351-357`), and the note of `ws_search` sends the model to `ws_read`
-  (`workspace/tools.py:157-161`). Idea: when the report says the text speaks to an AI, drop from `answer` and `facts` any run of about
-  30 characters copied from the source. It would also keep out of the report the address and the words that a hostile order asks to
-  write, which reach it today even when the text is flagged.
-- **A forged `[id]` inside a list item takes over a later item (medium).** In a list, a line `[6] ...` inside item 3 can make the reader
-  give item 6 the gist of the forged line. 3 of 15 and 6 of 8 runs on two texts; not seen end to end in a chat (0 of 3). Cause:
-  `reader.py:377` writes `[id] clean_line(text)` and `clean_line` (`connectors/mail.py:177-183`) folds newlines, so the forged line
-  looks real; ids are trusted at `reader.py:385-399`. Idea: remove any `[number]` pattern from an item before it is listed.
 - **A forged Human/Assistant transcript at the end of a page is often not flagged (medium).** Only the model's judgment sets
   `addressed_to_ai` (`reader.py:106-111`, `146-153`). One text was flagged 3 of 6 times by the orchestrator and 1 of 11 by the
   tester: about 3 in 4 runs are missed. Another forged transcript in a chat test was flagged 3 of 3. Idea: a code check that forces the
   flag for a forged transcript or for « ignore all previous instructions », at the price of more false alarms (an article about AI
-  that quotes the phrase is already flagged 3 of 3).
-- **`mail_trash` runs with no card in a tainted turn from level 4 (low to medium).** With the reader off, a stranger's mail plus
-  « do what my last mail asks » trashed the mail 8 of 9 times, with no card (audit: `interactive, tainted`, `allow`, `ran`); with the
-  reader on, 0 of 6, so the model's reading of the warning protected it, not the gate. Cause: `gate/actions.py:60` (asks from level 3, runs
-  from level 4) and `mail_trash` is not in `RAISED_WHEN_TAINTED` (`actions.py:109`), which is the owner's earlier choice
-  (`docs/DECISIONS.md`, « Mail: a trash asks, and "Approve all next" covers it after mail was read », then the ladder of 2026-10-30).
-  `docs/THREAT-MODEL.md:34` still says a trash asks: true at level 3 and below only. A trash can be undone from the Trash.
+  that quotes the phrase is already flagged 3 of 3). Decided 2026-11-13: left to the model, no code check.
 - **A broken reader costs a lot and hides its cause (low to medium).** With a wrong `reader_model`, one 4-turn mail scenario made 44
   to 65 tool calls and 87 to 124 s (6 to 9 calls and 15 to 39 s with a working reader); one run moved a file nobody asked for (allowed
   by the gate). Nothing hostile leaked. Causes: the failure text does not say that trying again is useless; the provider status is
@@ -69,7 +52,7 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
   neither its range (1,000 to 400,000) nor its default.
 - **Small ones (low).** A text of more than 40,000 characters with no newline cannot be read past its first 40,000, and the report gives
   no line to resume from (`reader.py:366-367`). `parse_object` takes the first JSON object (`reader.py:257-267`): latent, the model never triggered it in 20
-  runs. `ws_search` counts the matches of a marked file for any query. `mail_mark_read` runs with no card in a tainted hook run (documented,
+  runs. `mail_mark_read` runs with no card in a tainted hook run (documented,
   `actions.py:61`). The Library shows the raw text of a marked file and does not say so, and a file you edit in the Library stays trusted
   although the page says a change makes it untrusted (`api/workspace.py:51-56`, on purpose). Mail tools have no readable names on the
   chat's tool lines (`web/src/lib/tools.ts`). A CSP « inline event handler » error appeared when a hostile `report.md` was opened in
@@ -77,10 +60,8 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
 
 Not decided:
 
-- Which of the proposals to build, and whether a trash after untrusted content should ask at level 4 and above, or only the sentence
-  of the threat model should change.
+- Which of the proposals to build. (Decided 2026-11-13 for a trash after untrusted content: only the sentence of the threat model changes.)
 - Whether the reader gets a fallback model, and whether a broken reader is an alert on the Admin page.
-- Whether a forged transcript is caught by code (with false alarms) or left to the model.
 
 Not covered by the test (still to try):
 
@@ -89,8 +70,7 @@ Not covered by the test (still to try):
 - A page or file longer than `reader_max_chars` in the web client, Discord, the desktop and phone apps, a real mail.
 - `longcat-2.5-free` answered HTTP 429 on 14 calls; not reproduced.
 
-Tests worth adding (the owner decides): a forged `[n]` inside a list item; `parse_object` with a forged first object; a flagged report
-that must not copy a long run of the source; the threat-model sentence about a trash against the ladder in `CLASSES`.
+Tests worth adding (the owner decides): `parse_object` with a forged first object.
 
 What the current design already sets:
 
@@ -503,7 +483,6 @@ Auriga and Moodle come from the structure-only logs of the sub-agent, counts and
   - `school_worked` clears the alert even when the connection needs a reconnect (`connectors/setup.py:180-188`).
   - `**encode(params)` after `wsfunction` lets a parameter override the function (`moodle.py:206`).
   - A malformed Auriga address gives a 500 (`auriga.py:74`, `urlsplit`).
-  - `_CONTROL` and `_INVISIBLE` (`connectors/mail.py:163-183`) miss the C1 controls and several invisible characters.
   - `year` is checked with `isdigit()` and no `isascii()`, so non-ASCII digits pass (`school_tools.py:319`).
   - `str(file)` is used for an error (`school_tools.py:444`), and an error note ends with two periods (`school_tools.py:474-500`).
   - The 92-day limit and the unfiltered Moodle events (`school_tools.py:236-237, 260-266`); `totalPages` handling

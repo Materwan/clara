@@ -641,7 +641,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   after the conversation read untrusted content is marked `tainted`. The marks are in the database (never in the workspace),
   follow the file when it is moved (`ws_move`: the new path gets them, the old path keeps them) and are kept when it is deleted (`ws_delete`, `DELETE /v1/workspace/file`): an undo of a move or a delete brings the file back marked as it was, and what you had trusted is still trusted if the bytes are the same. A move over a marked file keeps the stricter kind and drops the trust. The mark of a path with no file is not listed. Reading a marked file (`ws_read`, a match of `ws_search`) taints the
   conversation, even a new one, and its later turns; a `quarantine` file is read by the quarantined reader (section 8), a
-  `tainted` one as it is, and the matching lines of a `quarantine` file are not shown by `ws_search`. You trust a file on the
+  `tainted` one as it is, and `ws_search` gives neither the matching lines of a `quarantine` file nor how many there are (it says the file is marked and sends you to `ws_read`). You trust a file on the
   Library page (**Trust this file**), with `/trust <path>` or `POST /v1/workspace/trust` (a folder trusts every marked file in it), and take it
   back the same way; the digest of what you trusted is kept, so a file whose content changes is untrusted again. A file you write
   or replace yourself (`PUT /v1/workspace/file`, `POST /v1/workspace/upload`) is trusted. Only a token that may answer every request trusts a file;
@@ -674,7 +674,9 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   one JSON object of a fixed shape, which is checked field by field (unknown keys dropped, texts cut, choices checked), and only
   the checked report reaches the conversation: a summary and an answer to the model's `focus` (1,200 and 800 characters, in
   reported speech), up to 10 facts, and for a mail a kind of message, what the sender asks for and the dates it names. A text
-  addressed to an AI sets `addressed_to_ai` and the report carries a warning. A mail's headers are shown as addresses only (the one in angle brackets for the sender; To, Cc and Reply-To), with the date and the ids: the sender's name and the subject are not, and an attachment is a kind of file and a media type; the reader's report carries the subject in its own words. In a list the preview is replaced by a gist of 160 characters. A long text is read in parts: `start_line` goes on from a line, and a report of a cut text says which. If the reader cannot answer
+  addressed to an AI sets `addressed_to_ai` and the report carries a warning, and then every run of about 30 characters that its `answer` or its
+  `facts` copied from the text (case and spaces do not count) is taken out of them, so that a `focus` such as « the lines that contain… » cannot make it quote a hostile line
+  (a report left with no summary and no answer is refused, as before). A mail's headers are shown as addresses only (the one in angle brackets for the sender; To, Cc and Reply-To), with the date and the ids: the sender's name and the subject are not, and an attachment is a kind of file and a media type; the reader's report carries the subject in its own words. In a list the preview is replaced by a gist of 160 characters, and no item can hold the start of another: a `[number]` or the `[id]` of an item is taken out of the text of every item before the list is given to the reader. A long text is read in parts: `start_line` goes on from a line, and a report of a cut text says which. If the reader cannot answer
   (no model, an error, two answers that are not usable), a document is **not** given to the conversation (the tool says so) and a list is shown
   without its gists. The reader is a model call: it costs tokens (one call for a page, a mail or an attachment, one for a list) at the price of
   the model that runs it, `reader_model`, else the model of titles and summaries; it must be local when the conversation is local
@@ -702,8 +704,8 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   `gmail.modify` does not allow. A label is named from your own labels only, so INBOX is refused; the mark read touches
   UNREAD and nothing else. A connection made before this version asks you to connect Gmail once more, for `gmail.modify`. The Gmail API itself says
   whose mailbox it is, which also proves the API is on in your Google Cloud project, before anything is stored.
-- **Mail:** one Gmail mailbox at most. What a message says is untrusted: hidden characters (zero-width,
-  direction controls, Unicode tag characters) are removed and HTML is read without text that CSS hides, the result is
+- **Mail:** one Gmail mailbox at most. What a message says is untrusted: hidden characters (control characters, zero-width
+  and direction characters, fillers that draw as blanks, variation selectors but the emoji one, Unicode tag characters) are removed and HTML is read without text that CSS hides, the result is
   handed over as data, and the turn is tainted. An email goes only to the addresses given in the call (no address is
   found for her), at most 20, text up to 6,000 characters (all of it is shown in the approval request), at most 5
   attachments from the workspace (Gmail 7 MB in all), at most 5 emails per answer.
@@ -940,7 +942,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `folder_read` | Read a text file of that folder, numbered, 40,000 characters from a line; it counts against the folder's budget; a hidden or ignored file, or one no listing named yet, asks (untrusted) | folder_read / read; folder_sensitive / read |
 | `ws_list` | The workspace tree with sizes | read |
 | `ws_read` | Read a workspace file, with line numbers (in parts); a file that came from outside is read by the quarantined reader (`focus` says what to look for) and taints the conversation | read |
-| `ws_search` | Search the workspace (the lines of a file that came from outside are not shown) | read |
+| `ws_search` | Search the workspace (the lines of a file that came from outside are neither shown nor counted) | read |
 | `ws_log` | The git history of the workspace or of a path | read |
 | `ws_write` | Create a file, or replace one (`overwrite`) | ws_write / write; ws_destroy / destructive when it overwrites |
 | `ws_edit` | Replace an exact passage of a file | ws_write / write |

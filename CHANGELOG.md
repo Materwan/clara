@@ -3,6 +3,23 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## Unreleased
+
+- **The reader no longer quotes a hostile text.** When the quarantined reader says that a text is addressed to an AI, any run of
+  about 30 characters that its answer or its facts copied from the text is removed. A question such as « the lines that contain
+  X » can no longer make it print a hostile line or the address an order asks to write. A report that does not flag the text is
+  left as it is.
+- **An item of a list cannot forge another.** A `[number]`, or the id of an item, written inside the text of a search result, a
+  mail or a hook event is removed before the list reaches the reader, so it cannot take the place of the next item's id.
+- **`ws_search` gives no number of matches for a file that came from outside.** It says the file is marked and sends you to
+  `ws_read` (the reader's report); it shows no line and no count, so the hidden text cannot be probed one query at a time.
+- **The text cleaner removes more hidden characters:** the C1 controls (U+0080 to U+009F), the Arabic letter mark, the Hangul,
+  Khmer and Mongolian fillers and selectors, the rest of the invisible format characters, the variation selectors (not the emoji
+  one, U+FE0F) and the whole Unicode tag block. French accents, CJK, Arabic, Hebrew, Devanagari and emoji sequences are unchanged.
+- **The threat model now says what a trash does.** It asks at auto level 3 and runs with no card from level 4, even after a mail
+  was read (a trashed mail can be taken back from the Trash). That was already so; only the sentence was wrong. The gate is
+  unchanged.
+
 ## v1.5.1 — 04/11/2026
 
 **Booked calls reach the runs of automations.** The **Booked calls** pack (`deferred_book`, `deferred_list`, `deferred_cancel`)
