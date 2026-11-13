@@ -74,6 +74,8 @@ answers one more field, `lapses`.
 - **A very long line can be read to its end.** A text with a line longer than the reader's window (a minified file, one huge
   paragraph) is numbered in pieces, so `start_line` goes on inside it; the report says so. A cut that has no line to go on from
   says that too.
+- **A setting typed as invalid JSON keeps the dialog open with a message.** The dialog used to close on its own and save nothing, so
+  the « Not saved. That is not JSON » line never showed. The dialog now stays open on what was typed.
 
 ## v1.5.1 — 04/11/2026
 

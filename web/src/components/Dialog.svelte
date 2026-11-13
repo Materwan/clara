@@ -25,6 +25,12 @@
     if (dialog.current) settle(dialog.current.kind === 'confirm' ? false : null);
   }
 
+  // A close we asked for (box.close() in the effect) fires its event later, when a new question may already be open and shown:
+  // only a close that left the dialog shut (Escape) is a cancel.
+  function closed(): void {
+    if (!box?.open) cancel();
+  }
+
   function submit(event: SubmitEvent): void {
     event.preventDefault();
     if (dialog.current) settle(dialog.current.kind === 'confirm' ? true : value);
@@ -33,7 +39,7 @@
 
 <!-- Escape closes a modal dialog by itself, and fires close: that is a cancel -->
 <dialog bind:this={box} class="dialog frame" role={request?.kind === 'confirm' ? 'alertdialog' : undefined} aria-labelledby="dialog-title"
-  aria-describedby="dialog-message" data-danger={request?.danger ? '' : undefined} onclose={cancel}>
+  aria-describedby="dialog-message" data-danger={request?.danger ? '' : undefined} onclose={closed}>
   {#if request}
     <form onsubmit={submit}>
       <h2 id="dialog-title">{request.title || (request.kind === 'confirm' ? 'Please confirm' : 'Enter a value')}</h2>
