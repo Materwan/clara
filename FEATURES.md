@@ -121,7 +121,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/upkeep [<ref> \| none]` | The model of titles and summaries |
 | `/tokens [list] \| create \| revoke \| approvals` | Client tokens (revoking works at once) |
 | `/secrets [list] \| set <name> <value> \| unset <name>` | The encrypted secrets store |
-| `/school [status] \| disconnect <moodle\|auriga>` | Moodle and Auriga: who is connected, whether a sign-in lapsed and when the Auriga one lapses, or forget a site's token (signing in is the Connections page or `clara moodle connect`, `clara auriga connect`) |
+| `/school [status] \| disconnect <moodle\|auriga> \| forget-password` | Moodle and Auriga: who is connected, whether a sign-in lapsed, when the Auriga one lapses and whether a school password is kept (yes or no, never what it is), forget a site's token (Auriga's also forgets the password), or `forget-password`, which only a token that may answer every request can do. Signing in, and keeping the password, is the Connections page or `clara moodle connect`, `clara auriga connect` (the console never sets or shows the password) |
 | `/automations [list] \| show \| add \| edit \| on \| off \| run \| del \| test \| runs \| events` | Automations: what Clara does when a trigger holds (a mail arrives, a time comes); `add <name> '<json>'` takes `when`, the trigger tree, and the other fields |
 | `/trust [list] \| <path> \| untrust <path>` | Workspace files that came from outside or were written after untrusted content: list them, trust one (Clara reads it as your own) or take it back; scope `all` only |
 | `/mode [list] \| show <name\|default> \| conversation\|project\|automation <id> [<name>\|follow] \| new <name> [<pack,pack>] \| packs <name> <pack,pack> \| delete <name> [<conversations> <automation conversations> <automations> <projects>] \| verdict <name> <approve\|ask\|refuse> [tool=…] [class=…] [target=…] [tainted=<verdict>] \| unverdict <name> [tool=…] [class=…] [target=…] \| test <tool> <json> [mode=<name>] [tainted] \| import-legacy` | The modes: list them, show one (the default mode too), set the mode of a conversation, project or automation (or `follow`), make one, set its packs, delete one (the first call says how many conversations, automation conversations, automations and projects use it and the line to confirm with those numbers), set or remove a verdict line, test a call, or print a `default-mode.toml` made from the old levels and rules (`import-legacy`, see Operations); everything but `list`, `show` and `test` needs a token that may answer every request (scope `all`) |
@@ -779,9 +779,24 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   paste back): Clara keeps the refresh token (`auriga_refresh_token`), renews the 60-second access token herself, and keeps each new refresh
   token Keycloak gives. With `offline_access` the token is an offline one, but Auriga ends it on a fixed date about a day after the sign-in, which
   using it does not push back: the sign-in message, `/school` and the answer of `POST /v1/connections/auriga/finish` say « lapses on <date> » (read
-  from the token, no warning is sent before), and you sign in again then; if Keycloak gives a session token only, the sign-in says so and ends with
-  the Keycloak session. A site whose sign-in is refused is marked « sign in again » on the Connections page, raises
-  its alert (`moodle` or `auriga`), is not asked again, and the tools say how to sign in again; the alert is over when the site works again.
+  from the token, no warning is sent before); if Keycloak gives a session token only, the sign-in says so and ends with
+  the Keycloak session. **Keeping your school password:** after a good sign-in, `clara auriga connect` asks « Keep your school email and password
+  so Clara can sign in again by herself? » and, if you say yes, takes the email (typed in the open) and the password (hidden) and keeps them
+  encrypted (`auriga_email`, `auriga_password`). When Keycloak then refuses the refresh token, Clara signs in again alone, as the student app
+  Chrysalide does: the same authorization request as your sign-in, Keycloak's login form (`kc-form-login`) posted once with the email, the password
+  and the cookies it set, the `code` read from the redirect to the callback (checked for the `state` sent and **not followed**), then swapped as
+  usual; the call that asked goes on and the new token is kept. The whole attempt takes 30 seconds at most, never follows a redirect to any
+  host but Keycloak's, and takes no address from the page but the form's action (https, on Keycloak's host). **Once per lapse:** if it fails
+  (the form is not there, the password is refused, Keycloak asks for a new password, a code or terms, an HTTP error, a timeout), there is no other
+  fallback and no second attempt: the connection is marked « sign in again », the alert `auriga` says why in fixed words (never the page's text),
+  and Auriga stays off until you sign in yourself, on the Connections page or with `clara auriga connect`, which also allows the next lapse its
+  attempt. **The password is set only at that hidden prompt**; it is removed by `clara auriga forget-password`, by `clara auriga disconnect` or
+  **Disconnect** (which forget the sign-in too), or by `/school forget-password`. Nothing shows it or the email back: not the Connections page
+  or `GET /v1/connections`, not the Admin page's Secrets tab or `clara secrets list` (a name and « set »), not `/school` (« school password kept »
+  or « not kept »), not a log, an alert, an error, an audit line or a prompt; `PUT /v1/admin/secrets/{name}`, `/secrets set` and `clara secrets set`
+  refuse these two names, and the model has no tool that reaches them. A site whose sign-in is refused is marked « sign in again » on the
+  Connections page, raises its alert (`moodle` or `auriga`), is not asked again, and the tools say how to sign in again; the alert is over when
+  the site works again.
   **Reading these sites does not taint the turn** (the owner's choice, unlike Mail, GitHub and Drive): their text is data in the answers, with no
   quarantined reader, so a course page or a document that carries sentences meant for an AI is read as it is. The school calendar is Auriga's
   planning (classes, tutorials, exams, with room and teacher; an exam is known by its activity type) and Moodle's dates (assignments and activities to
@@ -1243,7 +1258,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `automation:<id>` | An automation has more than 500 runs waiting for events: the newest events were recorded but not run |
   | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
   | `moodle` | Moodle refused the token (sign in to Moodle again); over once Moodle accepts a call |
-  | `auriga` | Auriga's sign-in service refused the refresh token (sign in to Auriga again); over once Auriga accepts a call |
+  | `auriga` | Auriga's sign-in service refused the refresh token and no school password is kept, or signing in again with it failed (the text says why, in fixed words): sign in to Auriga again; over once Auriga accepts a call |
   | `reader` | The quarantined reader's model could not be used (a wrong model, a refused key, a limit, no answer): pages, mail and files from outside are not given to the chat until it works; check `reader_model` (the text says which status); over with the next good read |
   | `update` | An update was not installed, or was rolled back |
   | `funnel` | Funnel was found on and turned off |
@@ -1430,6 +1445,8 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `gmail_refresh_token` | Gmail refresh token (set by connecting Gmail, never by hand) |
 | `moodle_token` | Moodle token (set by the Moodle sign-in on the Connections page or `clara moodle connect`, not by hand) |
 | `auriga_refresh_token` | Auriga refresh token (set by the Auriga sign-in on the Connections page or `clara auriga connect`, not by hand) |
+| `auriga_email` | The school email to sign in to Auriga again (kept only by the hidden prompt of `clara auriga connect`; never shown) |
+| `auriga_password` | The school password to sign in to Auriga again (kept only by the hidden prompt of `clara auriga connect`; never shown or read back; removed by `clara auriga forget-password`) |
 | `google_picker_api_key` | Google API key for the Drive Picker |
 | `vault_git_token` | Token to push the vault over HTTPS |
 | `restic_password` | Password of the restic repository |
@@ -1604,7 +1621,7 @@ keep-alive every 15 s.
 | `DELETE /v1/connections/moodle` | Forget the Moodle token |
 | `POST /v1/connections/auriga/start` | Start the Auriga sign-in (web session only): the Keycloak address and the `state` to finish with |
 | `POST /v1/connections/auriga/finish` | Paste the address of the page after the sign-in: swaps the code, proves the API answers, keeps the refresh token; returns the account, whether the token is an offline one and when the sign-in lapses (`lapses`) |
-| `DELETE /v1/connections/auriga` | Forget the Auriga token |
+| `DELETE /v1/connections/auriga` | Forget the Auriga token and the school password, if one is kept |
 | `GET /v1/vault` | Vault status |
 | `GET /v1/vault/notes` | The notes |
 | `GET /v1/vault/search` | Search |

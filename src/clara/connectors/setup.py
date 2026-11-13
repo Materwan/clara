@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets as random
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..secrets import LOGIN_SECRETS
 from ..tools.base import TurnState
-from .auriga import Auriga
+from .auriga import LAPSED, Auriga, AurigaAuth, AurigaError
 from .drive import Drive, DriveError, GoogleAuth
 from .github import GitHub, GitHubError
 from .github_watch import GitHubWatch
@@ -61,6 +63,7 @@ class Connectors:
         self._moodle: Moodle | None = None
         self._moodle_key = ""
         self._auriga: Auriga | None = None
+        self._relogin = asyncio.Lock()  # one sign-in with the kept password at a time
         self.watch = MailWatch(s)
         self.github_watch = GitHubWatch(s)
         self.seen = Seen()  # the subjects and names a conversation was shown, for its requests (connectors/seen.py)
@@ -151,8 +154,36 @@ class Connectors:
         if not refresh:
             return None
         if self._auriga is None or self._auriga.refresh_token != refresh:
-            self._auriga = Auriga(refresh, on_refresh=self._auriga_renewed)
+            self._auriga = Auriga(refresh, on_refresh=self._auriga_renewed, relogin=self.auriga_relogin)
         return self._auriga
+
+    def school_password_kept(self) -> bool:
+        """Whether the school email and password are kept (never what they are: nothing reads them back but the sign-in)."""
+        return all(self.s.secrets.has(name) for name in LOGIN_SECRETS)
+
+    def school_password_forget(self) -> bool:
+        return any([self.s.secrets.unset(name) for name in LOGIN_SECRETS])
+
+    async def auriga_relogin(self) -> dict:
+        """Keycloak refused the refresh token: sign in again alone with the kept school email and password, ONCE per lapse.
+        The mark `needs_reconnect` is the record of that attempt. It is set before the attempt starts, so a timeout, a
+        cancelled turn or a crash counts as the attempt too, and only a sign-in of the owner (`school_connect`) or this
+        sign-in working puts it back to `ok`: a school password that was changed is tried once, never again and again."""
+        async with self._relogin:
+            email, password = (self.s.secrets.get(name) for name in LOGIN_SECRETS)
+            if not (email and password) or self.school_state("auriga") != "ok":
+                raise AurigaError(LAPSED, True)
+            self.s.connections.mark("auriga", "needs_reconnect")
+            try:
+                tokens = await AurigaAuth().login(email, password)
+            except AurigaError as error:  # its text is fixed words: the alert and the tools show it as it is
+                raise AurigaError(
+                    f"Clara could not sign in to Auriga again with the kept school password ({error}): sign in again "
+                    "on the Connections page, or with clara auriga connect.",
+                    True,
+                ) from None
+            self.s.connections.mark("auriga", "ok")
+            return tokens
 
     def _auriga_renewed(self, refresh: str) -> None:
         """Keycloak gave a new refresh token with the access token: the old one may stop working, so it is kept."""
@@ -173,6 +204,8 @@ class Connectors:
 
     def school_disconnect(self, site: str) -> bool:
         removed = self.s.secrets.unset(SCHOOL_SECRETS[site])
+        if site == "auriga":
+            removed = self.school_password_forget() or removed
         removed = self.s.connections.remove(site) or removed
         self.s.alerts.clear(site)
         return removed

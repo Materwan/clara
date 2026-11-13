@@ -20,7 +20,7 @@ from .gate import ANSWERS, AlreadyAnswered, ApprovalError, Line, ModeError
 from .gate.modes import NeedsConfirmation
 from .llm import NoModel, ProviderError, split_ref
 from .memory.conversations import ConversationError
-from .secrets import KNOWN_SECRETS, SecretError
+from .secrets import KNOWN_SECRETS, LOGIN_SECRETS, SecretError
 
 if TYPE_CHECKING:
     from .services import Services
@@ -205,6 +205,8 @@ def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
     if args[0] == "set" and len(args) == 3:
         if args[1] not in KNOWN_SECRETS:
             return f"Unknown secret {args[1]}: {', '.join(KNOWN_SECRETS)}"
+        if args[1] in LOGIN_SECRETS:  # a value typed on this line would be seen: only `clara auriga connect` keeps them
+            return f"{args[1]} is kept only by `clara auriga connect` (a hidden prompt), never typed here."
         try:
             s.secrets.set(args[1], args[2])
         except SecretError as error:
@@ -220,21 +222,34 @@ def _school(s: Services, args: list[str], token: TokenInfo) -> str:
     if args and args[0] == "disconnect" and len(args) == 2 and args[1] in SCHOOL_SITES:
         forgotten = s.connectors.school_disconnect(args[1])
         return f"{SCHOOL_LABELS[args[1]]}: {'disconnected, its token forgotten' if forgotten else 'was not connected'}"
+    if args == ["forget-password"]:  # the console only removes the school password: never sets it, never shows it
+        if token.approvals != "all":  # it takes away what Clara does alone: as for a trusted file, only scope `all`
+            return "Error: this token may not remove the school password."
+        return "School password: " + ("forgotten" if s.connectors.school_password_forget() else "none was kept")
     if args and args[0] != "status":
         sites = "|".join(SCHOOL_SITES)
-        return f"Usage: /school [status] | disconnect <{sites}>   (sign in on the Connections page, or `clara <{sites}> connect`)"
+        return (
+            f"Usage: /school [status] | disconnect <{sites}> | forget-password   "
+            f"(sign in on the Connections page, or `clara <{sites}> connect`)"
+        )
     lines = []
     for site in SCHOOL_SITES:
         state = s.connectors.school_state(site)
         found = s.connections.get(site) or {}
-        ends = ""
+        ends = note = ""
+        if site == "auriga" and state != "off":  # whether a school password is kept, never what it is
+            kept = s.connectors.school_password_kept()
+            if state == "ok":
+                note = f", school password {'kept' if kept else 'not kept'}"
+            elif kept:
+                note = ", the kept school password was tried once and did not work"
         if site == "auriga" and state == "ok":  # Auriga's sign-in ends on a fixed date, which the token itself says
             phrase = lapse_phrase(lapses(s.secrets.get("auriga_refresh_token") or ""), s.settings.zone())
             ends = f", sign-in {phrase}" if phrase else ""
         lines.append(
             f"{SCHOOL_LABELS[site]:<8} "
-            + {"ok": f"connected as {found.get('account') or '?'}{ends}", "off": "not connected"}.get(
-                state, f"must be signed in again (was {found.get('account') or '?'})"
+            + {"ok": f"connected as {found.get('account') or '?'}{ends}{note}", "off": "not connected"}.get(
+                state, f"must be signed in again (was {found.get('account') or '?'}){note}"
             )
         )
     return "\n".join(lines)
@@ -638,8 +653,8 @@ COMMANDS: list[Command] = [
     Command("secrets", "/secrets [list] | set <name> <value> | unset <name>", "The encrypted secrets store.", _secrets),
     Command(
         "school",
-        "/school [status] | disconnect <moodle|auriga>",
-        "Moodle and Auriga: who is connected, or forget a site's token.",
+        "/school [status] | disconnect <moodle|auriga> | forget-password",
+        "Moodle and Auriga: who is connected, forget a site's token, or forget the school password Clara keeps for Auriga.",
         _school,
     ),
     Command(

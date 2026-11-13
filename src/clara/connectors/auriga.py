@@ -10,7 +10,10 @@ code stays visible in the address bar). The owner signs in once in a browser and
 its `exp` is an absolute date (seen on the real site: about 24 hours after the sign-in) that a rotation does not extend:
 `lapses` reads it, so that the owner is told when the sign-in ends. Each refresh may give a new refresh token: it is kept.
 
-When Keycloak refuses the refresh token (`invalid_grant`), nothing but a new sign-in helps: the error says `reconnect`.
+When Keycloak refuses the refresh token (`invalid_grant`), the error says `reconnect`. If the owner kept their school email and
+password (`clara auriga connect` asks, and stores them encrypted), the client first signs in again alone, the way the student app
+Chrysalide does (`AurigaAuth.login`: Keycloak's own login form, posted once, its redirect read and not followed). That is tried
+once per lapse by `Connectors.auriga_relogin`; when it fails, or no password is kept, only a new sign-in by the owner helps.
 
 This client only reads: the planning, and the two saved queries that the page uses for the grades. It sends no write.
 """
@@ -21,16 +24,22 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, tzinfo
+from html.parser import HTMLParser
+from secrets import token_urlsafe
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import httpx
 
+from .drive import pkce
 from .school import Event, Noted, SchoolError, line
+
+log = logging.getLogger(__name__)
 
 SITE = "https://auriga.epita.fr"
 API = f"{SITE}/api"
@@ -45,6 +54,18 @@ SYNTHESE = (1144, 1198)  # "Mes notes (synthèse)": the menu entry and its saved
 EVAL = (1036, 945)  # "Mes notes (éval)"
 PAGE = 100
 MAX_PAGES = 12
+LOGIN_SECONDS = 30  # the whole of one sign-in with the kept password
+MAX_FORM_PAGE = 1_000_000  # a sign-in page bigger than this is not Keycloak's
+MAX_HOPS = 3  # redirects followed to reach the form, and only on Keycloak's own address
+LAPSED = (
+    "Auriga no longer accepts the sign-in (it ended or was revoked): sign in again on the Connections page, or with "
+    "clara auriga connect."
+)
+# Why a sign-in with the kept password failed, in fixed words: what Keycloak's page says is never repeated
+NO_FORM = "Keycloak did not show its sign-in form"
+REFUSED = "Keycloak did not accept the email and password"
+ANOTHER_STEP = "Keycloak asked for another step (a new password, a code or terms) that Clara cannot do"
+UNEXPECTED = "Keycloak answered in a way Clara did not expect"
 
 
 class AurigaError(SchoolError):
@@ -136,8 +157,61 @@ def lapse_phrase(ends: datetime | None, tz: tzinfo) -> str:
     return f"{verb} on {ends.astimezone(tz):%Y-%m-%d at %H:%M}"
 
 
+class LoginForm(HTMLParser):
+    """The form `kc-form-login` of Keycloak's sign-in page: where it posts (`action`, None when the page has no such form) and
+    its fields as (type, name, value)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.action: str | None = None
+        self.fields: list[tuple[str, str, str]] = []
+        self._inside = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        found = dict(attrs)
+        if tag == "form" and self.action is None and found.get("id") == "kc-form-login":
+            self.action, self._inside = found.get("action") or "", True
+        elif tag == "input" and self._inside and found.get("name"):
+            self.fields.append(((found.get("type") or "text").lower(), str(found["name"]), found.get("value") or ""))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form":
+            self._inside = False
+
+
+def page_form(response: httpx.Response) -> LoginForm:
+    form = LoginForm()
+    if len(response.content) <= MAX_FORM_PAGE:
+        form.feed(response.text)
+        form.close()
+    return form
+
+
+def _on_keycloak(url: str) -> str:
+    """The address, when it is https on Keycloak's own host: the sign-in with the password talks to nothing else, and the one
+    address it takes from a page (the form's action) is checked here."""
+    parts, realm = urlsplit(url), urlsplit(REALM)
+    if parts.scheme != "https" or parts.hostname != realm.hostname or parts.port not in (None, 443):
+        raise AurigaError(UNEXPECTED)
+    return url
+
+
+def _code_in_redirect(location: str, state: str) -> str:
+    """The code Keycloak put in the redirect to the callback, which is checked and not followed: it must be the callback
+    itself, carry the `state` that was sent, and give a code."""
+    found, target = urlsplit(location), urlsplit(REDIRECT)
+    if (found.scheme, found.hostname, found.path) != (target.scheme, target.hostname, target.path):
+        raise AurigaError(ANOTHER_STEP if found.hostname == urlsplit(REALM).hostname else UNEXPECTED)
+    values = parse_qs(found.query)
+    code = values.get("code", [""])[0]
+    if values.get("state", [""])[0] != state or values.get("error") or not code:
+        raise AurigaError(UNEXPECTED)
+    return code
+
+
 class AurigaAuth:
-    """Keycloak's token endpoint (like GoogleAuth for Google): the code swap at the end of a sign-in, and the renewal."""
+    """Keycloak's token endpoint (like GoogleAuth for Google): the code swap at the end of a sign-in, the renewal, and the
+    sign-in again with the kept school password (`login`)."""
 
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None):
         self._transport = transport
@@ -157,11 +231,7 @@ class AurigaAuth:
         if response.is_error:
             if found.get("error") == "invalid_grant":
                 if lapses:
-                    raise AurigaError(
-                        "Auriga no longer accepts the sign-in (it ended or was revoked): sign in again on the "
-                        "Connections page, or with clara auriga connect.",
-                        True,
-                    )
+                    raise AurigaError(LAPSED, True)
                 raise AurigaError(
                     "Auriga refused this sign-in code (used already, or too old): start the sign-in again."
                 )
@@ -176,6 +246,63 @@ class AurigaAuth:
 
     async def renew(self, refresh_token: str) -> dict:
         return await self.token({"grant_type": "refresh_token", "refresh_token": refresh_token}, lapses=True)
+
+    async def login(self, email: str, password: str) -> dict:
+        """The tokens of a sign-in made alone with the owner's school email and password: the same authorization request as the
+        paste-back sign-in, Keycloak's login form (`kc-form-login`) posted once with the cookies it set, the `code` read from the
+        redirect (never followed: it is a 404 page of the school site) and swapped as usual. The whole attempt has a deadline and
+        never leaves Keycloak's address. A failure says its cause in fixed words: neither the page's text, nor the email, nor the
+        password is in any error or log line."""
+        verifier, challenge = pkce()
+        state = token_urlsafe(24)
+        try:
+            async with asyncio.timeout(LOGIN_SECONDS):
+                code = await self._form_code(email, password, state, challenge)
+                try:
+                    return await self.exchange(code, verifier)
+                except AurigaError:
+                    raise AurigaError("Keycloak gave a code but refused to swap it for tokens") from None
+        except AurigaError:
+            raise
+        except TimeoutError:
+            raise AurigaError(f"the sign-in took longer than {LOGIN_SECONDS} seconds") from None
+        except httpx.HTTPError:
+            raise AurigaError("Keycloak could not be reached") from None
+        except Exception as error:  # what nobody foresaw must not carry the password in its text
+            log.warning("Auriga's sign-in with the kept password failed unexpectedly (%s)", type(error).__name__)
+            raise AurigaError("the sign-in failed in a way Clara did not expect") from None
+
+    async def _form_code(self, email: str, password: str, state: str, challenge: str) -> str:
+        # a client of its own: its cookies are this attempt's, and a redirect is never followed by itself
+        async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport, follow_redirects=False) as http:
+            url = authorize_url(state, challenge)
+            for _ in range(MAX_HOPS + 1):
+                page = await http.get(_on_keycloak(url))
+                if not page.is_redirect:
+                    break
+                url = urljoin(str(page.url), page.headers["location"])
+            else:
+                raise AurigaError(UNEXPECTED)
+            if page.status_code != 200:
+                raise AurigaError(f"Keycloak answered HTTP {page.status_code}")
+            form = page_form(page)
+            data: dict[str, str] = {}
+            has_user = has_password = False
+            for kind, name, value in form.fields:  # the names come from the form; a checkbox or a button is left out
+                if kind == "password":
+                    data[name], has_password = password, True
+                elif kind in ("text", "email") and not has_user:
+                    data[name], has_user = email, True
+                elif kind == "hidden":
+                    data[name] = value
+            if form.action is None or not (has_user and has_password):
+                raise AurigaError(NO_FORM)
+            sent = await http.post(_on_keycloak(urljoin(str(page.url), form.action)), data=data)
+        if sent.is_redirect:
+            return _code_in_redirect(sent.headers["location"], state)
+        if sent.status_code == 200:
+            raise AurigaError(REFUSED if page_form(sent).action is not None else ANOTHER_STEP)
+        raise AurigaError(f"Keycloak answered HTTP {sent.status_code}")
 
 
 # ----------------------------------------------------------------------
@@ -248,9 +375,11 @@ class Auriga:
         refresh_token: str,
         on_refresh: Callable[[str], None] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        relogin: Callable[[], Awaitable[dict]] | None = None,
     ):
         self.refresh_token = refresh_token
         self.on_refresh = on_refresh  # told each new refresh token, to keep it
+        self.relogin = relogin  # asked for new tokens when Keycloak refuses the refresh token (it may refuse too)
         self._transport = transport
         self._access = ""
         self._expires = 0.0
@@ -260,7 +389,12 @@ class Auriga:
         async with self._lock:
             if self._access and self._expires > time.monotonic() + 10:
                 return self._access
-            found = await AurigaAuth(transport=self._transport).renew(self.refresh_token)
+            try:
+                found = await AurigaAuth(transport=self._transport).renew(self.refresh_token)
+            except AurigaError as error:
+                if not error.reconnect or self.relogin is None:
+                    raise
+                found = await self.relogin()
             if not found.get("access_token"):
                 raise AurigaError("Auriga's sign-in service gave no access token.")
             self._access = str(found["access_token"])

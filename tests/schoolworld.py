@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import zipfile
@@ -20,6 +21,8 @@ import httpx
 MOODLE = "moodle.epita.fr"
 AURIGA = "auriga.epita.fr"
 KEYCLOAK = "ionisepita-auth.np-auriga.nfrance.net"
+REALM = f"https://{KEYCLOAK}/auth/realms/npionisepita"
+PAGE_TEXT = "PAGE-TEXT-THAT-MUST-NEVER-BE-REPEATED"  # what Keycloak's error and step pages say
 TOKEN = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
 
@@ -117,6 +120,19 @@ class World:
         self.posted: list[dict] = []  # the bodies posted to searchResult
         self.broken_filter = False  # the saved synthèse query has no condition on the year any more
         self.no_total_pages = False  # a result with no `totalPages` (the real site always sends it)
+        # Keycloak's login form, for the sign-in again with the kept school email and password: one fake account
+        self.login_email, self.login_password = "ada.login@epita.fr", "correct horse"
+        self.login = "ok"  # what the form does: ok, no_form, redirect_form, redirect_away, bad_action, http500, step_redirect,
+        #                    step_page, elsewhere, bad_state, no_code, slow
+        self.login_calls: list[str] = []  # each request of the form flow, "GET /auth/…"
+        self.login_posts: list[dict] = []  # the fields posted to the form
+        self.login_delay = 0.0  # seconds the sign-in page takes to come (login = "slow")
+        self.sessions: dict[str, dict] = {}  # AUTH_SESSION_ID -> the state and the PKCE challenge it was started with
+        self.challenges: dict[str, str] = {}  # a code the form issued -> the PKCE challenge it must be swapped with
+        self.logins = 0
+        self.pending: dict = {}
+        self.swap_dead = False  # the code swap is refused (invalid_grant), whatever the code
+        self.down = False  # Keycloak's sign-in pages cannot be reached (its token endpoint answers)
 
     @property
     def refresh(self) -> str:
@@ -133,6 +149,8 @@ class World:
             self.moodle_hosts.append(host)
             return self.moodle(request)
         if host == KEYCLOAK:
+            if self.down and not request.url.path.endswith("/openid-connect/token"):  # the sign-in pages are down, not the tokens
+                raise httpx.ConnectError(f"cannot reach {request.url} {PAGE_TEXT}")
             return self.keycloak(request)
         if host == AURIGA:
             return self.auriga(request)
@@ -202,13 +220,23 @@ class World:
     # Keycloak
     # ------------------------------------------------------------------
     def keycloak(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith(("/protocol/openid-connect/auth", "/login-actions/restart", "/login-actions/required-action")):
+            return self.login_page(request)
+        if path.endswith("/login-actions/authenticate"):
+            return self.login_post(request)
         form = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
         self.keycloak_calls.append(form)
         assert form["client_id"] == "np-front"
         if form["grant_type"] == "authorization_code":
-            if form["code"] not in self.codes or not form.get("code_verifier"):
+            if self.swap_dead or form["code"] not in self.codes or not form.get("code_verifier"):
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Code not valid"})
             self.codes.discard(form["code"])
+            wanted = self.challenges.pop(form["code"], None)  # a code the form issued is bound to the PKCE challenge it was asked with
+            if wanted is not None:
+                proof = base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest()).decode().rstrip("=")
+                if proof != wanted or form.get("redirect_uri") != "https://auriga.epita.fr/clara-callback":
+                    return httpx.Response(400, json={"error": "invalid_grant", "error_description": "PKCE verification failed"})
             return httpx.Response(200, json=self.tokens())
         if form["grant_type"] == "refresh_token":
             if self.keycloak_dead or form["refresh_token"] != self.refresh:
@@ -217,6 +245,78 @@ class World:
                 self.refresh_n += 1
             return httpx.Response(200, json=self.tokens())
         return httpx.Response(400, json={"error": "unsupported_grant_type"})
+
+    # ------------------------------------------------------------------
+    # Keycloak's login form
+    # ------------------------------------------------------------------
+    def login_page(self, request: httpx.Request) -> httpx.Response:
+        self.login_calls.append(f"{request.method} {request.url.path}")
+        path = request.url.path
+        if path.endswith("/required-action"):
+            return httpx.Response(200, text=f"<html><body><h1>Update your password</h1><p>{PAGE_TEXT}</p></body></html>")
+        query = dict(request.url.params)
+        if path.endswith("/auth"):
+            assert query["client_id"] == "np-front" and query["redirect_uri"] == "https://auriga.epita.fr/clara-callback"
+            assert query["response_type"] == "code" and query["code_challenge_method"] == "S256"
+            assert "offline_access" in query["scope"].split()
+            self.pending = {"state": query["state"], "challenge": query["code_challenge"]}  # what the page about to be shown belongs to
+            if self.login == "redirect_away":
+                return httpx.Response(302, headers={"location": "https://evil.example/login"})
+            if self.login == "redirect_form":
+                return httpx.Response(302, headers={"location": f"{REALM}/login-actions/restart?client_id=np-front"})
+        self.logins += 1
+        session = f"session-{self.logins}"
+        self.sessions[session] = self.pending
+        cookies = [("set-cookie", f"AUTH_SESSION_ID={session}; Path=/auth/realms/npionisepita/; Secure; HttpOnly"),
+                   ("set-cookie", "KC_RESTART=restart-token; Path=/auth/realms/npionisepita/; Secure; HttpOnly")]
+        if self.login == "no_form":
+            return httpx.Response(200, text=f"<html><body>Down for maintenance. {PAGE_TEXT}</body></html>", headers=cookies)
+        return httpx.Response(200, content=self.form_page(), headers=cookies)
+
+    def form_page(self, error: str = ""):
+        action = "https://evil.example/steal" if self.login == "bad_action" else (
+            f"{REALM}/login-actions/authenticate?session_code=sc&amp;execution=ex&amp;client_id=np-front&amp;tab_id=tab")
+        body = (f'<html><body><h1>Sign in</h1><span class="kc-error">{error}</span>'
+                f'<form id="kc-form-login" onsubmit="login.disabled = true; return true;" action="{action}" method="post">'
+                '<input id="username" name="username" type="text" autofocus autocomplete="off"/>'
+                '<input id="password" name="password" type="password" autocomplete="off"/>'
+                '<input name="credentialId" type="hidden" value="cred-1"/><input name="rememberMe" type="checkbox" value="on"/>'
+                '<input name="login" id="kc-login" type="submit" value="Sign In"/></form></body></html>').encode()
+        if self.login != "slow":
+            return body
+        return self.late(body)
+
+    async def late(self, body: bytes):
+        await asyncio.sleep(self.login_delay)
+        yield body
+
+    def login_post(self, request: httpx.Request) -> httpx.Response:
+        self.login_calls.append(f"POST {request.url.path}")
+        fields = {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
+        self.login_posts.append(fields)
+        cookies = dict(part.split("=", 1) for part in request.headers.get("cookie", "").split("; ") if "=" in part)
+        session = self.sessions.get(cookies.get("AUTH_SESSION_ID", ""))
+        if session is None or cookies.get("KC_RESTART") != "restart-token" or request.url.params.get("session_code") != "sc":
+            return httpx.Response(400, text=f"Cookie not found. {PAGE_TEXT}")
+        if self.login == "http500":
+            return httpx.Response(500, text=PAGE_TEXT)
+        if self.login == "step_redirect":
+            return httpx.Response(302, headers={"location": f"{REALM}/login-actions/required-action?execution=UPDATE_PASSWORD"})
+        if self.login == "step_page":
+            return httpx.Response(200, text=f"<html><body><h1>Terms and conditions</h1><p>{PAGE_TEXT}</p></body></html>")
+        if fields.get("username") != self.login_email or fields.get("password") != self.login_password:
+            return httpx.Response(200, content=self.form_page(f"Invalid username or password. {PAGE_TEXT}"))
+        self.logins += 1
+        code = f"form-code-{self.logins}"
+        self.codes.add(code)
+        self.challenges[code] = session["challenge"]
+        state, host = session["state"], "auriga.epita.fr"
+        if self.login == "elsewhere":
+            host = "evil.example"
+        if self.login == "bad_state":
+            state = "another-state"
+        address = f"https://{host}/clara-callback?state={state}&session_state=ss" + ("" if self.login == "no_code" else f"&code={code}")
+        return httpx.Response(302, headers={"location": address})
 
     def tokens(self) -> dict:
         self.access += 1
@@ -294,6 +394,17 @@ def synthese(n: int, final: str | None = "12.5", pre: str | None = None, year: s
     average before the RATT retake (a string, null on most lines), the component code, its title, and the final average (a
     string, null on a line with none yet). The query's `content.columns` has four entries: the code and the title are one column."""
     return [n, pre, f"{year}_I_INF_{n:03d}", title or {"fr": f"Matière {n}", "en": f"Course {n}"}, final]
+
+
+def keep_password(services, world: World) -> None:
+    """The school email and password as `clara auriga connect` keeps them (the fake account of the stand-in)."""
+    services.secrets.set("auriga_email", world.login_email)
+    services.secrets.set("auriga_password", world.login_password)
+
+
+def lapse(world: World) -> None:
+    """Keycloak no longer knows the refresh token the server holds: the next renewal is refused (`invalid_grant`)."""
+    world.refresh_n += 1
 
 
 def connect_school(services, world: World, sites=("moodle", "auriga")) -> None:

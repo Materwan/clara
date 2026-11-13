@@ -7,6 +7,7 @@ clara secrets list | set <name> | unset <name>
 clara secrets rotate --new-key-file <path>  re-encrypt every secret under a new key
 clara moodle connect | disconnect           sign in to Moodle (paste back the link of the mobile sign-in), or forget the token
 clara auriga connect | disconnect           sign in to Auriga (paste back the address of the page you land on), or forget it
+clara auriga forget-password                forget the school email and password kept to sign in to Auriga again
 clara doctor [--pull]                       check what Clara needs (rootless Podman, Tailscale, providers…)
 clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
 clara restore --verify <file>               open a backup, check it, count its rows
@@ -44,7 +45,7 @@ from ..connectors.store import Connections
 from ..db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, backup_database, migrate
 from ..ops.backups import verify
 from ..ops.private import check_private
-from ..secrets import KNOWN_SECRETS, KeyMaterial, SecretError, SecretsStore, load_key_material
+from ..secrets import KNOWN_SECRETS, LOGIN_SECRETS, KeyMaterial, SecretError, SecretsStore, load_key_material
 from ..secrets.store import new_raw_key
 from ..settings import Settings, SettingsError, load_settings
 
@@ -115,6 +116,12 @@ def secrets(args: argparse.Namespace) -> int:
         if args.name not in KNOWN_SECRETS:
             print(f"Unknown secret {args.name}: {', '.join(KNOWN_SECRETS)}", file=sys.stderr)
             return 1
+        if args.name in LOGIN_SECRETS:
+            print(
+                f"{args.name} is kept only by `clara auriga connect` (a hidden prompt for the password).",
+                file=sys.stderr,
+            )
+            return 1
         value = (
             sys.stdin.read().strip() if not sys.stdin.isatty() else getpass.getpass(f"{args.name} (hidden): ").strip()
         )
@@ -152,14 +159,55 @@ def _pasted(prompt: str) -> str:
     return getpass.getpass(prompt).strip() if sys.stdin.isatty() else sys.stdin.readline().strip()
 
 
+def _asked(prompt: str, hidden: bool = False) -> str:
+    """One answer of the owner, as typed (a password keeps its spaces): in the open, or hidden at a terminal, a line of the input
+    otherwise."""
+    if hidden and sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    try:
+        return input(prompt)
+    except EOFError:
+        return ""
+
+
+def _keep_login(store: SecretsStore) -> str:
+    """After a sign-in to Auriga: offers to keep the school email and password, so that Clara can sign in again by herself. The
+    password goes only into the encrypted store: it is typed hidden, never printed, never read back (only the sign-in reads it)."""
+    kept = all(store.has(name) for name in LOGIN_SECRETS)
+    asked = _asked(
+        "Replace the school email and password Clara keeps? [y/N] "
+        if kept
+        else "Keep your school email and password so Clara can sign in again by herself? "
+        "(the password is stored encrypted and never shown again) [y/N] "
+    )
+    if asked.strip().lower() not in ("y", "yes"):
+        return "School password: kept as it was." if kept else "School password: not kept."
+    email, password = _asked("School email: ").strip(), _asked("School password (hidden): ", hidden=True)
+    if not (email and password):
+        return "School password: no email or no password was entered, nothing changed."
+    for name, value in zip(LOGIN_SECRETS, (email, password), strict=True):
+        store.set(name, value)
+    return (
+        "School password: kept, encrypted. When the Auriga sign-in lapses Clara signs in again by herself, once; "
+        "if that fails she raises the alert and waits for you."
+    )
+
+
 def school(args: argparse.Namespace) -> int:
     """Sign in to Moodle or Auriga from this machine (the same sign-in as the Connections page), or forget the token."""
     site = args.command
     settings = _settings()
     db = _database(settings)
     store, connections = _store(settings, db), Connections(db)
+    if args.action == "forget-password":
+        print(
+            f"Auriga: school password {'forgotten' if any([store.unset(name) for name in LOGIN_SECRETS]) else 'none was kept'}"
+        )
+        return 0
     if args.action == "disconnect":
         removed = store.unset(SECRETS[site])
+        if site == "auriga":
+            removed = any([store.unset(name) for name in LOGIN_SECRETS]) or removed
         removed = connections.remove(site) or removed
         print(f"{LABELS[site]}: {'disconnected, its token forgotten' if removed else 'was not connected'}")
         return 0
@@ -197,6 +245,8 @@ def school(args: argparse.Namespace) -> int:
     store.set(SECRETS[site], secret)
     connections.set(site, account)
     print(f"{LABELS[site]}: connected as {account}. {note}")
+    if site == "auriga":
+        print(_keep_login(store))
     return 0
 
 
@@ -434,7 +484,9 @@ def main(argv: list[str] | None = None) -> int:
     keys.set_defaults(run=secrets)
     for site in ("moodle", "auriga"):
         sign_in = commands.add_parser(site)
-        sign_in.add_argument("action", choices=("connect", "disconnect"))
+        sign_in.add_argument(
+            "action", choices=("connect", "disconnect", *(("forget-password",) if site == "auriga" else ()))
+        )
         sign_in.set_defaults(run=school)
     check = commands.add_parser("doctor")
     check.add_argument("--pull", action="store_true", help="pull the sandbox image first")

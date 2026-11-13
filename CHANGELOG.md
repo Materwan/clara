@@ -88,6 +88,17 @@ Every release has a section here, under its tag; the release workflow publishes 
   sign-in lapses, when the server sends it.
 - **The Library says when it shows the raw text of a file that came from outside.**
 
+- **Clara can sign in to Auriga again by herself, if you keep your school password.** After a good `clara auriga connect`, it asks « Keep your
+  school email and password so Clara can sign in again by herself? » (email in the open, password hidden; both encrypted in the secrets
+  `auriga_email` and `auriga_password`, never shown again). When Keycloak refuses the refresh token, Clara signs in again alone, the way the
+  student app Chrysalide does (Keycloak's own login form, posted once; the redirect is read, not followed; it takes 30 seconds at most and
+  talks only to Keycloak), and the call that asked goes on. **Once per lapse:** if that fails (a changed password, an extra step, an error),
+  there is no other fallback and no second try: the `auriga` alert says why and Auriga stays off until you sign in yourself. The password is
+  set only at that hidden prompt, and removed by `clara auriga forget-password`, `clara auriga disconnect`, **Disconnect**, or
+  `/school forget-password` (a token that may answer every request). Nothing shows it back: `/school` says only « school password kept » or
+  « not kept ». The threat model has a row for it (it is a bigger secret than a token). Tested against stand-ins only: the real Keycloak
+  was not asked by this code. No migration.
+
 **Moodle and Auriga, after the first real use (2026-11-11).** No new tool, route, setting or migration; `POST /v1/connections/auriga/finish`
 answers one more field, `lapses`.
 
@@ -96,7 +107,7 @@ answers one more field, `lapses`.
   yet) ». A mark that is not a number (AB) is quoted, and the result of `school_grades` says it must not be interpreted.
 - **The Auriga sign-in says when it lapses.** It ends on a fixed date about a day after you sign in, and using it does not push that back.
   `clara auriga connect`, `/school` and the Connections answer now say « lapses on <date> » (read from the token); « until it has been idle
-  for a month » was wrong. Nothing warns you before the date. Signing in again alone, with the school password, is still to come.
+  for a month » was wrong. Nothing warns you before the date. Clara can now sign in again alone, if you keep your school password (above).
 - **Teachers, titles and exams in the calendar.** The teachers of a class are shown; an entry with no pedagogical unit has a title (no more
   « (untitled) »); an exam is recognised by its activity type, so the `[exam]` mark appears; the kind is the long caption (« Travaux dirigés »).
 - **A quiz close is shown once.** Moodle's Timeline already carries it: the list of quizzes now adds only the opening.

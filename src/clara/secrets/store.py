@@ -55,13 +55,21 @@ KNOWN_SECRETS: dict[str, str] = {
     "gmail_refresh_token": "Gmail refresh token (set by the Gmail connection, not by hand)",
     "moodle_token": "Moodle token (set by the Moodle sign-in, not by hand)",
     "auriga_refresh_token": "Auriga refresh token (set by the Auriga sign-in, not by hand)",
+    "auriga_email": "School email to sign in to Auriga again (kept by `clara auriga connect`, never set by hand)",
+    "auriga_password": "School password to sign in to Auriga again (kept by `clara auriga connect`, never shown)",
     "vault_git_token": "Token to push the Obsidian vault over HTTPS",
     "restic_password": "Password of the restic repository for remote backups",
     "release_token": "Optional GitHub token for release downloads (public repositories need none)",
 }
 
+# The school login Clara keeps to sign in to Auriga again: set only by a hidden prompt of `clara auriga connect`, never by the
+# Admin page, the console or `clara secrets set` (a value typed there would be seen), and read only by the Auriga sign-in
+LOGIN_SECRETS = ("auriga_email", "auriga_password")
+
 # Set by a connection flow after you confirm the account, never by hand (an unconfirmed account must not be attachable)
-CONNECTION_TOKENS = frozenset({"google_refresh_token", "gmail_refresh_token", "moodle_token", "auriga_refresh_token"})
+CONNECTION_TOKENS = frozenset(
+    {"google_refresh_token", "gmail_refresh_token", "moodle_token", "auriga_refresh_token", *LOGIN_SECRETS}
+)
 
 _GITHUB_TOKENS = ("GitHub", "Create a fine-grained token", "https://github.com/settings/personal-access-tokens/new")
 _GOOGLE_CREDENTIALS = ("Google", "Google Cloud credentials", "https://console.cloud.google.com/apis/credentials")
@@ -86,6 +94,8 @@ SECRET_SOURCES: dict[str, tuple[str, str, str]] = {
     "gmail_refresh_token": _CONNECTIONS,
     "moodle_token": _SCHOOL,
     "auriga_refresh_token": _SCHOOL,
+    "auriga_email": _SCHOOL,
+    "auriga_password": _SCHOOL,
     "vault_git_token": ("Vault and backups", "Create a fine-grained token on GitHub", _GITHUB_TOKENS[2]),
     "restic_password": (
         "Vault and backups",

@@ -7,6 +7,8 @@ import asyncio
 import importlib
 import io
 import json
+import logging
+import traceback
 from base64 import b64encode
 from datetime import UTC, date, datetime, time, timedelta
 from time import monotonic
@@ -19,7 +21,19 @@ import pytest
 from clara.agent.turn import ChatRequest
 from clara.app import create_app
 from clara.cli import ops
-from clara.connectors.auriga import Auriga, AurigaAuth, AurigaError, code_from_address, lapse_phrase, lapses, lasting
+from clara.connectors.auriga import (
+    MAX_FORM_PAGE,
+    Auriga,
+    AurigaAuth,
+    AurigaError,
+    _code_in_redirect,
+    _on_keycloak,
+    code_from_address,
+    lapse_phrase,
+    lapses,
+    lasting,
+    page_form,
+)
 from clara.connectors.moodle import READ_FUNCTIONS, Moodle, MoodleError, moodle_text, token_from_link
 from clara.connectors.school import school_year
 from clara.connectors.school_tools import MARKS
@@ -28,7 +42,22 @@ from clara.settings import load_settings
 from clara.tools.base import ToolContext, TurnState
 from fakes import calls
 from modeset import at_level, default, line
-from schoolworld import TOKEN, World, connect_school, intervention, jwt, link, make_docx, make_pdf, stamp, synthese
+from schoolworld import (
+    PAGE_TEXT,
+    REALM,
+    TOKEN,
+    World,
+    connect_school,
+    intervention,
+    jwt,
+    keep_password,
+    lapse,
+    link,
+    make_docx,
+    make_pdf,
+    stamp,
+    synthese,
+)
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -1172,7 +1201,7 @@ async def test_the_school_command_says_when_the_auriga_sign_in_lapses(services, 
     services.secrets.set("auriga_refresh_token", connected.refresh)
     assert "sign-in lapsed on" in await console.run(services, "/school", token)
     services.secrets.set("auriga_refresh_token", "opaque-token")  # not a JWT: no date to give, and no failure
-    assert (await console.run(services, "/school", token)).splitlines()[1] == "Auriga   connected as ada@epita.fr"
+    assert (await console.run(services, "/school", token)).splitlines()[1] == "Auriga   connected as ada@epita.fr, school password not kept"
 
 
 async def test_the_reconnect_texts_have_no_backticks_for_the_alerts_that_show_them_as_plain_text(services, connected):
@@ -1209,3 +1238,372 @@ def test_migration_30_keeps_every_repository_and_drive_file_and_allows_the_two_s
         new.execute("INSERT INTO connections (kind, account, created_at, updated_at) VALUES ('yahoo', 'x', 't', 't')")
     new.execute("DELETE FROM connections WHERE kind = 'github'")  # the cascade still reaches its repository, and only that
     assert [r["kind"] for r in new.execute("SELECT kind FROM resources")] == ["drive_folder"]
+
+
+# ----------------------------------------------------------------------
+# Signing in again alone, with the school email and password the owner chose to keep
+# ----------------------------------------------------------------------
+AUTH = "/auth/realms/npionisepita"
+FORM_FLOW = [f"GET {AUTH}/protocol/openid-connect/auth", f"POST {AUTH}/login-actions/authenticate"]
+AGAIN = "Clara could not sign in to Auriga again with the kept school password"
+
+
+def swallowed(services, world: World, caplog, *texts: str) -> None:
+    """None of these words is in the log, in an alert, or in what Keycloak was asked to show again (the page's own text, the
+    email, the password)."""
+    shown = caplog.text + json.dumps(services.alerts.active)
+    for text in (world.login_password, world.login_email, PAGE_TEXT, *texts):
+        assert text not in shown, text
+
+
+async def test_the_form_gives_the_tokens_the_paste_back_gives_with_the_cookies_the_form_set(school):
+    tokens = await AurigaAuth().login(school.login_email, school.login_password)
+    assert tokens["refresh_token"] == school.refresh and tokens["access_token"] == "access-1"
+    assert school.login_calls == FORM_FLOW
+    # the names come from the form: the hidden field is sent back, the checkbox and the button are not
+    assert school.login_posts == [{"username": school.login_email, "password": school.login_password, "credentialId": "cred-1"}]
+    swap = school.keycloak_calls[-1]  # swapped as the paste-back does, with the PKCE verifier (the stand-in checked it)
+    assert swap["grant_type"] == "authorization_code" and swap["redirect_uri"] == "https://auriga.epita.fr/clara-callback"
+    assert swap["code"].startswith("form-code-") and school.moodle_hosts == []
+
+
+async def test_a_password_with_characters_a_form_must_encode_is_posted_as_it_was_typed(school):
+    school.login_password = " p&ss=w%rd+é\u00a0 "
+    assert (await AurigaAuth().login(school.login_email, school.login_password))["refresh_token"] == school.refresh
+    assert school.login_posts[0]["password"] == school.login_password
+
+
+async def test_a_form_reached_through_a_redirect_on_keycloaks_own_address_still_works(school):
+    school.login = "redirect_form"
+    assert (await AurigaAuth().login(school.login_email, school.login_password))["refresh_token"] == school.refresh
+    assert school.login_calls == [f"GET {AUTH}/protocol/openid-connect/auth", f"GET {AUTH}/login-actions/restart", FORM_FLOW[1]]
+
+
+def test_the_form_is_read_by_its_id_and_its_field_names_whatever_they_are():
+    page = httpx.Response(200, text=(
+        '<form id="other" action="/no"><input name="username" type="text"></form>'
+        '<form class="x" id="kc-form-login" action="/yes?a=1&amp;b=2" method="post">'
+        '<input name="mail" type="email"><input name="secret" type="password"><input name="step" type="hidden" value="7">'
+        '<input name="remember" type="checkbox"><input type="submit" name="go" value="Go"></form>'))
+    form = page_form(page)
+    assert form.action == "/yes?a=1&b=2" and form.fields == [
+        ("email", "mail", ""), ("password", "secret", ""), ("hidden", "step", "7"), ("checkbox", "remember", ""), ("submit", "go", "Go")]
+    assert page_form(httpx.Response(200, text="<html>No form here</html>")).action is None
+    assert page_form(httpx.Response(200, text="x" * (MAX_FORM_PAGE + 1))).action is None  # not Keycloak's page: not read
+
+
+def test_the_redirect_must_be_the_callback_with_the_state_that_was_sent_and_a_code():
+    callback = "https://auriga.epita.fr/clara-callback"
+    assert _code_in_redirect(f"{callback}?state=s1&session_state=x&code=the-code", "s1") == "the-code"
+    for bad in (f"{callback}?state=other&code=c", f"{callback}?code=c", f"{callback}?state=s1", f"{callback}?state=s1&code=",
+                f"{callback}?state=s1&code=c&error=access_denied", "https://evil.example/clara-callback?state=s1&code=c",
+                "https://auriga.epita.fr.evil.example/clara-callback?state=s1&code=c", "http://auriga.epita.fr/clara-callback?state=s1&code=c",
+                "https://auriga.epita.fr@evil.example/clara-callback?state=s1&code=c", "https://auriga.epita.fr/elsewhere?state=s1&code=c",
+                "/clara-callback?state=s1&code=c", "", "https://[broken"):
+        with pytest.raises((AurigaError, ValueError)):
+            _code_in_redirect(bad, "s1")
+    with pytest.raises(AurigaError, match="another step"):  # still on Keycloak's host: it wants something else of the person
+        _code_in_redirect(f"{REALM}/login-actions/required-action?execution=UPDATE_PASSWORD", "s1")
+
+
+def test_only_keycloaks_own_https_address_is_ever_asked():
+    assert _on_keycloak(f"{REALM}/login-actions/authenticate?x=1") == f"{REALM}/login-actions/authenticate?x=1"
+    for bad in ("http://ionisepita-auth.np-auriga.nfrance.net/auth", "https://evil.example/auth", "https://auriga.epita.fr/api",
+                "https://ionisepita-auth.np-auriga.nfrance.net:8443/auth", "https://ionisepita-auth.np-auriga.nfrance.net@evil.example/x",
+                "https://ionisepita-auth.np-auriga.nfrance.net.evil.example/x", "/relative", ""):
+        with pytest.raises(AurigaError):
+            _on_keycloak(bad)
+
+
+async def test_a_refused_refresh_token_is_replaced_by_a_sign_in_with_the_kept_password_and_the_call_that_asked_works(services, connected):
+    keep_password(services, connected)
+    old = services.secrets.get("auriga_refresh_token")
+    services.alerts.raise_("auriga", "Auriga refused the sign-in", "an older alert")
+    lapse(connected)
+    result = await run_tool(services, "school_grades", {})
+    assert result.ran and "refused" not in result.text and "lapsed" not in result.text
+    assert services.secrets.get("auriga_refresh_token") == connected.refresh != old  # the new token is kept, as a renewal keeps it
+    assert services.connections.get("auriga")["status"] == "ok" and "auriga" not in services.alerts.active
+    assert connected.login_calls == FORM_FLOW and connected.keycloak_calls[0]["grant_type"] == "refresh_token"
+    assert (await run_tool(services, "school_grades", {})).ran and connected.login_calls == FORM_FLOW  # not asked again: the token is good
+    token = services.secrets.get("auriga_refresh_token")
+    assert lasting(token) and lapses(token) == datetime.fromtimestamp(connected.refresh_exp, UTC)  # an offline token, with its end
+    lapse(connected)  # the next lapse gets its own attempt
+    services.connectors.auriga_client()._access = ""
+    assert (await run_tool(services, "school_grades", {})).ran and len(connected.login_posts) == 2
+    assert len({call for call in connected.sessions}) == 2  # a fresh page, and its cookies, each time
+
+
+async def test_two_calls_at_the_same_time_make_one_sign_in(services, connected):
+    keep_password(services, connected)
+    lapse(connected)
+    first, second = await asyncio.gather(run_tool(services, "school_grades", {}), run_tool(services, "school_calendar", {"source": "auriga"}))
+    assert first.ran and second.ran and len(connected.login_posts) == 1
+
+
+async def test_without_a_kept_password_nothing_is_tried_and_the_sign_in_is_marked_as_lapsed(services, connected):
+    lapse(connected)
+    result = await run_tool(services, "school_grades", {})
+    assert "sign in again" in result.text and AGAIN not in result.text
+    assert connected.login_calls == [] and services.connections.get("auriga")["status"] == "needs_reconnect"
+    keep_password(services, connected)  # kept now, but the mark stands: only a sign-in of the owner lifts it
+    assert "lapsed" in (await run_tool(services, "school_grades", {})).text and connected.login_calls == []
+    services.connectors._auriga = None
+
+
+async def test_a_refusal_raises_the_alert_and_is_never_tried_again_until_the_owner_signs_in(services, connected, caplog):
+    caplog.set_level(logging.DEBUG)
+    keep_password(services, connected)
+    connected.login_password = "a changed password"  # the school password was changed: the kept one is refused
+    lapse(connected)
+    result = await run_tool(services, "school_grades", {})
+    assert AGAIN in result.text and "did not accept the email and password" in result.text and "sign in again" in result.text
+    assert services.connections.get("auriga")["status"] == "needs_reconnect" and AGAIN in services.alerts.active["auriga"]
+    assert "`" not in services.alerts.active["auriga"] and len(connected.login_posts) == 1
+    seen = len(connected.keycloak_calls)
+    for _ in range(3):
+        assert "lapsed" in (await run_tool(services, "school_grades", {})).text
+    services.connectors._auriga = None  # a restart: the mark is in the database, not in memory
+    assert "lapsed" in (await run_tool(services, "school_calendar", {})).text
+    assert len(connected.login_posts) == 1 and len(connected.keycloak_calls) == seen
+    assert services.connectors.school_password_kept()  # kept: the owner may only have mistyped, or changed it later
+    # the owner signs in by hand (what the Connections page and `clara auriga connect` do): the mark is lifted
+    connected.login_password = "correct horse"
+    services.connectors.school_connect("auriga", connected.refresh, "ada@epita.fr")
+    assert services.connections.get("auriga")["status"] == "ok" and "auriga" not in services.alerts.active
+    lapse(connected)  # and the next lapse has its attempt
+    assert (await run_tool(services, "school_grades", {})).ran and len(connected.login_posts) == 2
+    swallowed(services, connected, caplog)
+
+
+async def test_two_calls_at_the_same_time_make_one_failed_attempt(services, connected):
+    keep_password(services, connected)
+    connected.login_password = "a changed password"
+    lapse(connected)
+    results = await asyncio.gather(run_tool(services, "school_grades", {}), run_tool(services, "school_calendar", {"source": "auriga"}))
+    assert all(AGAIN in r.text or "lapsed" in r.text for r in results) and len(connected.login_posts) == 1
+
+
+@pytest.mark.parametrize("mode, cause, posted", [
+    ("no_form", "did not show its sign-in form", 0),
+    ("bad_action", "did not expect", 0),  # the form posts to another host: nothing is sent there
+    ("redirect_away", "did not expect", 0),
+    ("http500", "answered HTTP 500", 1),
+    ("step_redirect", "asked for another step", 1),
+    ("step_page", "asked for another step", 1),
+    ("elsewhere", "did not expect", 1),  # the redirect goes to another host: it is not followed
+    ("bad_state", "did not expect", 1),
+    ("no_code", "did not expect", 1),
+    ("wrong", "did not accept the email and password", 1),
+    ("swap", "refused to swap it for tokens", 1),
+    ("down", "could not be reached", 0),
+    ("slow", "took longer than", 0),
+])
+async def test_every_way_the_sign_in_can_fail_is_one_attempt_in_fixed_words_and_leaks_nothing(
+        services, connected, caplog, monkeypatch, mode, cause, posted):
+    caplog.set_level(logging.DEBUG)
+    keep_password(services, connected)
+    lapse(connected)
+    kept = connected.login_password  # what is kept; the stand-in may come to accept another one
+    if mode == "wrong":
+        connected.login_password = "the new school password"
+    elif mode == "swap":
+        connected.swap_dead = True
+    elif mode == "down":
+        connected.down = True
+    elif mode == "slow":
+        monkeypatch.setattr("clara.connectors.auriga.LOGIN_SECONDS", 0.3)
+        connected.login, connected.login_delay = "slow", 5
+    else:
+        connected.login = mode
+    started = monotonic()
+    result = await run_tool(services, "school_grades", {})
+    assert monotonic() - started < 3 and result.text.startswith("Error")
+    assert AGAIN in result.text and cause in result.text, result.text
+    assert len(connected.login_posts) == posted and connected.moodle_hosts == []  # nothing went anywhere but Keycloak
+    assert services.connections.get("auriga")["status"] == "needs_reconnect" and AGAIN in services.alerts.active["auriga"]
+    for text in (result.text, services.alerts.active["auriga"]):
+        for word in (kept, connected.login_password, connected.login_email, PAGE_TEXT, "evil.example"):
+            assert word not in text, (word, text)
+    swallowed(services, connected, caplog, "evil.example")
+    again = len(connected.login_calls)
+    assert "lapsed" in (await run_tool(services, "school_grades", {})).text and len(connected.login_calls) == again
+
+
+async def test_an_error_of_the_sign_in_says_neither_the_password_nor_the_page_not_even_in_its_traceback(school, caplog, monkeypatch):
+    caplog.set_level(logging.DEBUG)
+    kept = school.login_password
+
+    def shown(error: BaseException) -> str:
+        return "".join(traceback.format_exception(error)) + repr(error) + caplog.text
+
+    for how in ("wrong", "down", "http500", "swap", "elsewhere"):
+        school.down, school.swap_dead = how == "down", how == "swap"
+        school.login = how if how in ("http500", "elsewhere") else "ok"
+        school.login_password = "the password of someone else" if how == "wrong" else kept
+        with pytest.raises(AurigaError) as raised:
+            await AurigaAuth().login(school.login_email, kept)
+        for word in (kept, school.login_email, PAGE_TEXT, "evil.example"):
+            assert word not in shown(raised.value), (how, word)
+
+    async def broken(self, code, verifier):  # an error nobody foresaw: fixed words too, and the log says only its type
+        raise KeyError(kept)
+
+    monkeypatch.setattr(AurigaAuth, "exchange", broken)
+    school.down, school.swap_dead, school.login, school.login_password = False, False, "ok", kept
+    with pytest.raises(AurigaError, match="did not expect") as raised:
+        await AurigaAuth().login(school.login_email, kept)
+    assert kept not in shown(raised.value) and "KeyError" in caplog.text and raised.value.__cause__ is None
+
+
+async def test_a_sign_in_that_is_cancelled_still_counts_as_the_attempt(services, connected, monkeypatch):
+    keep_password(services, connected)
+    lapse(connected)
+    connected.login, connected.login_delay = "slow", 5
+    task = asyncio.ensure_future(run_tool(services, "school_grades", {}))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert services.connections.get("auriga")["status"] == "needs_reconnect"  # recorded before it began
+    connected.login = "ok"
+    assert "lapsed" in (await run_tool(services, "school_grades", {})).text and connected.login_posts == []
+
+
+# ----------------------------------------------------------------------
+# Where the school login is set, shown and removed
+# ----------------------------------------------------------------------
+KEEP = ("Keep your school email and password so Clara can sign in again by herself? "
+        "(the password is stored encrypted and never shown again) [y/N]")
+
+
+def test_clara_auriga_connect_keeps_the_school_login_only_if_asked_and_only_through_the_prompts(terminal, school, capsys):
+    settings, paste = terminal
+    address = "https://auriga.epita.fr/clara-callback?state=" + "s" * 24 + "&code="
+    paste("\n".join([address + "code-1", "n"]))
+    assert ops.main(["auriga", "connect"]) == 0
+    said = capsys.readouterr().out
+    assert KEEP in said and "School password: not kept." in said
+    assert stored(settings, "auriga_password") is None and stored(settings, "auriga_email") is None
+    school.codes.add("code-2")
+    paste("\n".join([address + "code-2", "y", school.login_email, school.login_password]))  # the answers a person types
+    assert ops.main(["auriga", "connect"]) == 0
+    said = capsys.readouterr().out
+    assert "School password: kept, encrypted" in said and school.login_password not in said and school.login_email not in said
+    assert stored(settings, "auriga_email") == school.login_email and stored(settings, "auriga_password") == school.login_password
+    assert ops.main(["secrets", "list"]) == 0  # the name and whether it is set: never the value
+    listing = capsys.readouterr().out
+    assert any(row.startswith("auriga_password") and " set " in row for row in listing.splitlines())
+    assert school.login_password not in listing and school.login_email not in listing
+    school.codes.add("code-3")  # already kept: the question is about replacing it, and no leaves it as it is
+    paste("\n".join([address + "code-3", "n"]))
+    assert ops.main(["auriga", "connect"]) == 0
+    assert "Replace the school email and password Clara keeps? [y/N]" in capsys.readouterr().out
+    assert stored(settings, "auriga_password") == school.login_password
+    school.codes.add("code-4")
+    paste("\n".join([address + "code-4", "y", "new.login@epita.fr", ""]))  # no password typed: nothing changes
+    assert ops.main(["auriga", "connect"]) == 0
+    assert "nothing changed" in capsys.readouterr().out and stored(settings, "auriga_email") == school.login_email
+    school.codes.add("code-5")
+    paste("\n".join([address + "code-5", "yes", "  new.login@epita.fr ", " a new password "]))  # spaces: the email is trimmed, a password is not
+    assert ops.main(["auriga", "connect"]) == 0
+    assert stored(settings, "auriga_email") == "new.login@epita.fr" and stored(settings, "auriga_password") == " a new password "
+    assert "a new password" not in capsys.readouterr().out
+
+
+def test_the_school_login_cannot_be_set_by_clara_secrets_set(terminal, capsys):
+    settings, paste = terminal
+    for name in ("auriga_password", "auriga_email"):
+        paste("a value piped in")
+        assert ops.main(["secrets", "set", name]) == 1 and "clara auriga connect" in capsys.readouterr().err
+        assert stored(settings, name) is None
+
+
+def test_the_school_login_is_forgotten_by_forget_password_and_by_disconnect(terminal, school, capsys):
+    settings, paste = terminal
+    address = "https://auriga.epita.fr/clara-callback?state=" + "s" * 24 + "&code="
+    for code in ("code-1", "code-2"):
+        school.codes.add(code)
+        paste("\n".join([address + code, "y", school.login_email, school.login_password]))
+        assert ops.main(["auriga", "connect"]) == 0
+        capsys.readouterr()
+        assert stored(settings, "auriga_password") == school.login_password
+        if code == "code-1":
+            assert ops.main(["auriga", "forget-password"]) == 0
+            assert "forgotten" in capsys.readouterr().out
+            assert stored(settings, "auriga_password") is None and stored(settings, "auriga_email") is None
+            assert stored(settings, "auriga_refresh_token")  # the sign-in itself stays
+            assert ops.main(["auriga", "forget-password"]) == 0 and "none was kept" in capsys.readouterr().out
+    assert ops.main(["auriga", "disconnect"]) == 0  # forgetting the sign-in forgets the password too
+    assert stored(settings, "auriga_password") is None and stored(settings, "auriga_email") is None and stored(settings, "auriga_refresh_token") is None
+    with pytest.raises(SystemExit):
+        ops.main(["moodle", "forget-password"])
+
+
+async def test_the_console_says_only_whether_a_password_is_kept_never_sets_it_and_removes_it_for_a_token_that_may_answer_all(services, connected):
+    from clara import console
+
+    admin = services.tokens.create("admin", "cli")[0]  # may answer every request
+    script = services.tokens.create("a-script", "script")[0]  # may answer none
+    assert "Auriga   connected as ada@epita.fr, sign-in lapses on" in await console.run(services, "/school", admin)
+    assert "school password not kept" in await console.run(services, "/school", admin)
+    keep_password(services, connected)
+    said = await console.run(services, "/school status", admin)
+    assert "school password kept" in said and connected.login_password not in said and connected.login_email not in said
+    typed = await console.run(services, '/secrets set auriga_password "correct horse"', admin)  # a typed value would be seen
+    assert "never typed here" in typed and services.secrets.get("auriga_password") == "correct horse"
+    services.secrets.set("auriga_password", "kept as it was")
+    await console.run(services, '/secrets set auriga_email "x@y.z"', admin)
+    assert services.secrets.get("auriga_email") == connected.login_email and services.secrets.get("auriga_password") == "kept as it was"
+    listing = await console.run(services, "/secrets", admin)
+    assert any(row.startswith("auriga_password") and " set " in row for row in listing.splitlines())
+    assert "kept as it was" not in listing and connected.login_email not in listing
+    assert "may not remove" in await console.run(services, "/school forget-password", script) and services.connectors.school_password_kept()
+    assert "forget-password" in await console.run(services, "/school nonsense", admin)
+    services.connections.mark("auriga", "needs_reconnect")
+    assert "tried once and did not work" in await console.run(services, "/school", admin)
+    assert "School password: forgotten" == await console.run(services, "/school forget-password", admin)
+    assert not services.connectors.school_password_kept() and not services.secrets.has("auriga_email")
+    assert "none was kept" in await console.run(services, "/school forget-password", admin)
+    assert "tried once" not in await console.run(services, "/school", admin)
+    keep_password(services, connected)
+    assert "disconnected" in await console.run(services, "/school disconnect auriga", admin)  # the sign-in and the login go together
+    assert not services.connectors.school_password_kept() and not services.secrets.has("auriga_refresh_token")
+
+
+async def test_no_route_gives_the_school_login_back_and_the_admin_page_cannot_set_it(services, connected, client, browser):
+    keep_password(services, connected)
+    status = await client.get("/v1/connections")
+    assert status.json()["auriga"] == {"connected": True, "account": "ada@epita.fr", "status": "ok"}
+    listed = await client.get("/v1/admin/secrets")
+    entries = {item["name"]: item for item in listed.json()["secrets"]}
+    for name in ("auriga_email", "auriga_password"):  # a name, a state and a date: the Secrets tab shows nothing else
+        assert entries[name]["set"] and not entries[name]["settable"] and entries[name]["group"] == "Moodle and Auriga"
+        assert set(entries[name]) == {"name", "purpose", "set", "updated_at", "group", "link", "settable"}
+        assert (await client.put(f"/v1/admin/secrets/{name}", json={"value": "typed on the admin page"})).status_code == 404
+    for response in (status, listed):
+        assert connected.login_password not in response.text and connected.login_email not in response.text
+    assert services.secrets.get("auriga_password") == connected.login_password
+    assert (await browser.delete("/v1/connections/auriga")).json() == {"connected": False}
+    assert not services.connectors.school_password_kept()
+
+
+async def test_the_model_never_sees_the_school_login_and_has_no_tool_that_reaches_it(services, connected, llm):
+    keep_password(services, connected)
+    await ask(services, llm, packs=["web", "school"])
+    request = json.dumps(llm.seen[-1])  # the whole request: every message and every tool
+    for word in (connected.login_password, connected.login_email, "auriga_password", "auriga_email"):
+        assert word not in request
+    schemas = json.dumps(services.toolbox.schemas(set(services.toolbox.names)))
+    assert "auriga_password" not in schemas and "auriga_email" not in schemas
+    assert not [name for name in services.toolbox.names if any(word in name for word in ("password", "secret", "login", "console"))]
+    connected.login_password = "a changed password"  # a sign-in that fails: the model reads fixed words
+    lapse(connected)
+    cid = services.conversations.create("web", title="School", packs=["web", "school"]).id
+    llm.replies = [calls(("school_grades", {})), "I could not read them."]
+    await services.agent.answer(ChatRequest(message="mes notes ?", client="web", conversation=cid))
+    everything = json.dumps(llm.seen)
+    assert AGAIN in everything and "a changed password" not in everything and "correct horse" not in everything
+    assert connected.login_email not in everything
+    again = await ask(services, llm, packs=["web", "school"])  # and the next prompt says the sign-in lapsed, nothing more
+    assert "Auriga's sign-in lapsed" in again and "correct horse" not in again and connected.login_email not in again

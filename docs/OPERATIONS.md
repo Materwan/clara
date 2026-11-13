@@ -133,7 +133,7 @@ a token of its own.
 ### Moodle and Auriga (EPITA)
 
 Two school sites, read only, as the **Moodle/Auriga** pack (switched on in the "+" menu). Nothing to set in `clara.env`. Each site is
-signed in once, in a browser, and what it gives is pasted back; no password is kept. Do it on the Connections page (the two cards at the
+signed in once, in a browser, and what it gives is pasted back; Auriga may also keep your school password (below). Do it on the Connections page (the two cards at the
 end), or from the machine with `clara moodle connect` and `clara auriga connect` (hidden prompt; `uv run clara …` in a checkout).
 
 1. **Moodle:** the card (or the command) gives the address of Moodle's mobile sign-in page. Open it signed in to Moodle: it shows a link
@@ -144,7 +144,13 @@ end), or from the machine with `clara moodle connect` and `clara auriga connect`
    normal): copy its whole address and paste it. Clara swaps the code in it for tokens and renews the sign-in herself. Auriga ends the sign-in on
    a fixed date about a day after you made it, and using it does not push that back: `clara auriga connect` and `/school` say « lapses on … ».
    The card says if Auriga gave a session token only (it then ends with Auriga's session, and you sign in again often).
-3. `/school` (console) shows who is connected, whether a sign-in lapsed and when the Auriga one lapses; `/school disconnect moodle|auriga`, or **Disconnect**, forgets a
+   **To stop signing in every day,** `clara auriga connect` then asks « Keep your school email and password so Clara can sign in again by
+   herself? ». Say `y`, type the email, then the password (hidden): both are kept encrypted (`auriga_email`, `auriga_password`) and nothing shows
+   them again. When the sign-in lapses Clara signs in again alone through Keycloak's login form, **once**: if it fails (you changed the school
+   password, Keycloak asks for a new one or a code), the `auriga` alert says so and Auriga stays off until you run `clara auriga connect`
+   again. The password gives access to your whole school account, not only Auriga: keep it only if you accept that (`docs/THREAT-MODEL.md`).
+   `clara auriga forget-password` (or `/school forget-password`, or `clara auriga disconnect`) removes it.
+3. `/school` (console) shows who is connected, whether a sign-in lapsed, when the Auriga one lapses and whether a school password is kept; `/school disconnect moodle|auriga`, or **Disconnect**, forgets a
    token (it stays valid on the site until it expires: Moodle has no page to revoke it).
 4. The token Moodle gives has all your rights there, and Moodle cannot make a read-only one: Clara calls only seven read functions. Reading
    these sites does not taint a conversation; a document saved with `moodle_file_save` is an ordinary workspace file.

@@ -272,37 +272,12 @@ or the teachers (D3).
 
 What the owner decided:
 
-- **Keep the school password and sign in to Auriga again alone.** When the refresh token fails, Clara signs in again with the owner's
-  school email and password (the way the student app Chrysalide does, see the old note below), and the owner reconnects by hand
-  only when that fails. This replaces « Later: keep the owner's email and password ». If the Keycloak form does not accept the
-  account, or the password changed, there is **no other fallback**: the `auriga` alert is raised and Auriga stays off until the owner
-  signs in again.
-- **The password is set, seen and removed only through a hidden prompt** (`clara auriga connect`, or the console with a token whose
-  approval scope is `all`). It is never shown, never typed in the chat, and never read back by Clara or by the Connections page.
 - **The web defects that are not specific to the pack** go under « small ones » of D12, marked as such.
 - **This section is completed**, not a new item.
-
-What I corrected or added to the owner's plan:
-
-- **Check first that the login form accepts the owner's account.** The owner signs in with Microsoft through Keycloak, so a script
-  against `kc-form-login` may be refused outright (the old note already said so). Until that is checked the decision on the password
-  is a plan, not a feature.
-- **At most one password sign-in per lapse, until the owner reconnects** (my proposal, not the owner's decision): repeated failed
-  logins could lock the school account if Keycloak's brute-force protection is on for EPITA's realm (not checked).
-- **Three documents say what is no longer true**, to correct when the fixes are built (not now): `FEATURES.md` line 732 (« until it
-  has been idle for a month », see D2), `docs/DECISIONS.md` rows 307 to 315 (« no password is kept », the offline-token lifetime and
-  « this Moodle's calendar has no quiz event », see D5) and `CHANGELOG.md` line 43 (« never been tried »). The new secret must also
-  be named in `FEATURES.md` (the docs test).
 
 To fix, most serious first (all checked by the orchestrator by reading the code and by rerunning the stand-in; the facts about the real
 Auriga and Moodle come from the structure-only logs of the sub-agent, counts and types, no personal content):
 
-- **D2. The Auriga sign-in lapses about 24 hours after it is made (high). Only the password re-login remains.** The token is an offline
-  one, but `refresh_expires_in` is an absolute date and the rotation does not extend it: the remaining time kept falling with the clock
-  across rotations, from about 24 hours (seen on the real site on 2026-11-11, not checked on a Keycloak page). Done (`fix/school-reads`):
-  `lapses()` reads the `exp` of the token, so that the sign-in message, `/school` and the Connections answer say « lapses on … », and
-  « idle for a month » is gone from `FEATURES.md` and the decisions; no warning is sent before the date (the owner's choice). What is
-  left is the decided password re-login (« What the owner decided » above), which will remove the lapse.
 - **D11. Small ones in the pack (low).**
   - The 92-day limit (`school_tools.py`, `_window`): it is not clear what the defect is. The limit counts `end - start`, as the default of
     7 days does, so it was left as it is.
@@ -320,20 +295,10 @@ Still open from before:
   `main` the three are in order. What remains is the dev database (`.dev/data`): it was at schema 28 with this migration applied under
   its old number and holds no `pre-migration-v27` backup, so under the new chain it would run 0029 and 0030 and skip
   `0028_shown_question` (the `messages.shown` column). Start the dev server from a fresh copy of the data or add that column by hand.
-- **The old note on the password.** The student app Chrysalide (`gitlab.com/epimac-asso/projects/chrysalide/ChrysalideApp`, read on
-  2026-11-02, nothing copied) scripts Keycloak's login form (`kc-form-login`, with the `AUTH_SESSION_ID` and `KC_RESTART` cookies),
-  takes `code` from the redirect and swaps it. This is now the owner's decision (see above); the cost stays: the school password sits
-  in Clara's secrets, a bigger secret than a token.
 - **Not built:** Moodle's iCal export as a lighter source for the calendar (its link carries a key and does not lapse until it is
   reset); Moodle's `mod_assign_get_assignments` (assignment cut-off dates, texts); the text of Moodle `page`, `book` and `hvp`
   activities (it is not in `core_course_get_contents`; a `page` module lists a 0-byte `index.html` file, which may be how its text can
   be read, not tried); any write to either site.
-
-Not decided:
-
-- Whether the Keycloak login form accepts the owner's account at all (checked first, see above).
-- How many password sign-ins per lapse (my proposal: one), and what happens when the owner changes the school password.
-- Where the password is stored (presumably the encrypted secrets, as the token is) and how it is removed.
 
 Not covered by the test (still to try):
 
