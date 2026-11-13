@@ -5,7 +5,7 @@
   import Checkbox from '../components/Checkbox.svelte';
   import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
-  import LevelSelect from '../components/LevelSelect.svelte';
+  import ModeSelect from '../components/ModeSelect.svelte';
   import Mark from '../components/Mark.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import PresentCard from '../components/PresentCard.svelte';
@@ -13,9 +13,8 @@
   import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
-  import { grants, stop as stopGrants } from '../lib/grants.svelte';
-  import { ladder } from '../lib/levels.svelte';
-  import { markdown } from '../lib/markdown';
+  import { load as loadGrants } from '../lib/grants.svelte';
+    import { markdown } from '../lib/markdown';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
@@ -94,10 +93,10 @@
   let dragging = $state(false);
   let controller: AbortController | null = null;
   let models = $state<any>({ models: [], default: '' });
-  let fresh = $state({ incognito: false, local_only: false, model: '', packs: ['web'] as string[], level: null as number | null });
-  /** The auto level of the conversation on screen: its own (null: it follows), the one it runs at, and what it follows. */
-  let level = $state<{ own: number | null; level: number; source: string }>({ own: null, level: 3, source: 'default' });
-  let projectLevel = $state<number | null>(null);
+  let fresh = $state({ incognito: false, local_only: false, model: '', packs: ['web'] as string[], mode: null as string | null });
+  /** The mode of the conversation on screen: its own (null: it follows), the one it runs in, and where that comes from. */
+  let mode = $state<{ own: string | null; mode: string; source: string }>({ own: null, mode: 'default', source: 'default' });
+  let projectMode = $state<string | null>(null);
   /** The special tools you can switch on in a chat (the "+" menu), and the projects to choose from. */
   let packList = $state<any[]>([]);
   let projectList = $state<any[]>([]);
@@ -136,7 +135,7 @@
   $effect(() => {
     const id = projectId;
     projectName = '';
-    projectLevel = null;
+    projectMode = null;
     const fresher = untrack(() => !conversationId);
     if (!id) {
       if (fresher) fresh.packs = ['web'];
@@ -145,34 +144,35 @@
     api.get(`/v1/projects/${id}`).then((project) => {
       if (projectId !== id) return;
       projectName = project.name;
-      projectLevel = project.auto_level;
+      projectMode = project.mode;
       if (!conversationId) fresh.packs = project.packs;
     }).catch(() => {});
   });
 
-  // The auto level of the conversation on screen. A conversation not started yet has the one you pick for it, else its project's, else the default.
+  // The mode of the conversation on screen. A conversation not started yet has the one you pick for it, else its project's, else the default.
   $effect(() => {
     const id = conversationId;
     void live.refresh;
     if (!id) {
-      level = fresh.level !== null ? { own: fresh.level, level: fresh.level, source: 'own' }
-        : projectLevel !== null ? { own: null, level: projectLevel, source: 'project' } : { own: null, level: ladder.defaults.chat, source: 'default' };
+      mode = fresh.mode !== null ? { own: fresh.mode, mode: fresh.mode, source: 'own' }
+        : projectMode !== null ? { own: null, mode: projectMode, source: 'project' } : { own: null, mode: 'default', source: 'default' };
       return;
     }
-    api.get(`/v1/conversations/${id}/level`).then((found) => {
-      if (conversationId === id) level = found;
+    api.get(`/v1/conversations/${id}/mode`).then((found) => {
+      if (conversationId === id) mode = found;
     }).catch(() => {});
   });
-  const followed = $derived(level.source === 'project' ? 'the project' : level.source === 'automation' ? 'its schedule or hook' : 'the default');
+  const followed = $derived(mode.source === 'project' ? 'the project' : mode.source === 'automation' ? 'its schedule or hook' : 'the default');
 
-  async function setLevel(value: number | null): Promise<void> {
+  async function setMode(value: string | null): Promise<void> {
     if (loadError) return;
     if (!conversationId) {
-      fresh.level = value;
+      fresh.mode = value;
       return;
     }
     try {
-      level = await api.put(`/v1/conversations/${conversationId}/level`, { level: value });
+      mode = await api.put(`/v1/conversations/${conversationId}/mode`, { mode: value });
+      conversation = await api.get(`/v1/conversations/${conversationId}`); // the packs of the mode are on now
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -182,8 +182,8 @@
   // The tag is a button because a title does not show on a touch screen: it opens the same sentence under the header.
   let taintOpen = $state(false);
   const taintNote = $derived(
-    'This conversation read outside content (a page, a mail, a file from outside). ' +
-    (ladder.loaded && level.level >= ladder.top ? 'It runs at the last auto level, which does not ask before writing outside Clara.' : 'Anything that writes outside Clara asks first.'),
+    'This conversation read outside content (a page, a mail, a file from outside). Its mode gives each tool the verdict « if tainted »: ' +
+    'a tool the mode lets run may still ask or be refused.',
   );
   const tagOf = (bad: Outcome): string => (bad === 'asked' ? 'tag warn' : 'tag danger');
 
@@ -679,10 +679,10 @@
     const granted = folder;
     try {
       if (!id) {
-        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, auto_level: fresh.level ?? undefined });
+        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, mode: fresh.mode ?? undefined });
         id = made.id as string;
         skipReload = id;
-        fresh.level = null; // the next new chat starts at its own level again: the last level is not carried over
+        fresh.mode = null; // the next new chat starts without a mode of its own again
         go('/chat/' + id);
         conversation = made;
       }
@@ -918,11 +918,11 @@
     if (showPanel && narrow.rail) tick().then(() => document.querySelector<HTMLElement>('.side-panel .side-head button')?.focus());
   });
 
-  // Approve all next belongs to the conversation on screen and to this page: leaving either ends it
+  // Approve all next belongs to the conversation on screen: the server keeps it for 30 minutes, so it is read again when one opens
   $effect(() => {
-    if (grants.conversation && grants.conversation !== conversationId) stopGrants();
+    void live.refresh;
+    loadGrants(conversationId ?? null);
   });
-  $effect(() => stopGrants);
 </script>
 
 <!-- Escape closes the panel when it is a drawer over the page (a phone) and the keys are in it -->
@@ -1183,7 +1183,7 @@
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} disabled={!!loadError} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
           <input type="file" multiple hidden bind:this={picker} onchange={pick} />
-          <LevelSelect value={level.own} effective={level.level} follows={followed} onchange={setLevel} small disabled={!!loadError} />
+          <ModeSelect value={mode.own} effective={mode.mode} follows={followed} label="Mode" onchange={setMode} small disabled={!!loadError} />
           <select class="model-select" aria-label="Model" disabled={!!loadError} value={conversationId ? conversation?.model ?? '' : fresh.model}
             onchange={(event) => setModel((event.target as HTMLSelectElement).value)}>
             <option value="">Default model ({models.default || 'none'})</option>

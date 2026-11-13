@@ -1,12 +1,14 @@
-"""Two things the quarantined reader's defects (2026-11-13) leave to pin: what the shared text cleaner removes, and the
-auto levels a trash depends on (a sentence of THREAT-MODEL.md)."""
+"""Two things the quarantined reader's defects (2026-11-13) leave to pin: what the shared text cleaner removes, and what the modes
+say about a trash (a sentence of THREAT-MODEL.md)."""
 
 from __future__ import annotations
 
 import pytest
 
 from clara.connectors.mail import clean_line, clean_text
-from clara.gate.actions import CLASSES, LEVEL_KEYS, RAISED_WHEN_TAINTED
+from clara.gate import Action, Situation
+from clara.gate.actions import RAISED_WHEN_TAINTED
+from clara.gate.modes import builtin_default
 
 # what the cleaner has always removed
 OLD = ["\x00", "\x1f", "\x7f", "­", "​", "‎", "‏", "‪", "‮", "⁠", "⁤", "⁦",
@@ -47,11 +49,16 @@ def test_a_variant_of_a_character_loses_its_selector_and_keeps_the_character():
     assert clean_text("葛\U000e0100城") == "葛城"
 
 
-# docs/THREAT-MODEL.md says that a trash (`mail_trash`) asks at level 3, runs with no card from level 4 even in a turn that read
-# untrusted content, and is not raised by one (the owner's choice: a trash can be undone from the Trash). If the ladder or the
-# raises change and this fails, revise the sentences about a trash in the rows « Content Clara reads » and « An email » of that
-# document (and the entry in docs/DECISIONS.md), then these numbers.
-def test_a_trash_asks_from_level_3_and_runs_from_level_4_and_a_tainted_turn_does_not_raise_it():
-    asks, runs, _ = CLASSES["mail_trash"]
-    assert (LEVEL_KEYS.index(asks), LEVEL_KEYS.index(runs)) == (3, 4)
+# docs/THREAT-MODEL.md says that a trash (`mail_trash`) asks in the default mode, that a mode may approve it, and that it is not raised
+# by a turn that read untrusted content (the owner's choice: a trash can be undone from the Trash): a mode that approves it keeps
+# approving it then, unless its own `(if tainted)` verdict says otherwise. If the modes or the raises change and this fails, revise
+# the sentences about a trash in the rows « Content Clara reads » and « An email » of that document (and the entry in
+# docs/DECISIONS.md), then these checks.
+def test_a_trash_asks_in_the_default_mode_and_a_tainted_turn_does_not_raise_it(services):
+    trash = Action("mail_trash", "destructive", "mail_trash", ("mail:gmail",), "trash")
+    [line] = [each for each in builtin_default().lines if each.klass == "mail_trash"]
+    assert (line.verdict, line.tainted) == ("ask", "ask")
     assert "mail_trash" not in RAISED_WHEN_TAINTED
+    services.modes.create("Sorting", (), [type(line)("approve", "mail_trash")])
+    for tainted in (False, True):  # no card, even in a turn that read mail
+        assert services.gate.decide(trash, Situation("interactive", tainted=tainted, mode_name="Sorting")).effect == "allow"

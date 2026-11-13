@@ -1,7 +1,7 @@
 """The server: build everything, check everything, then serve on 127.0.0.1 only.
 
     clara-server              run (systemd starts it through clara-launcher)
-    clara-server --check      the start-up checks only (settings, permissions, database, key), then exit
+    clara-server --check      the start-up checks only (settings, permissions, database, key, default mode), then exit
 
 Start-up, in order: settings (refused when wrong) → file permissions (refused when others can read .env, the data
 folder or the key) → the instance lock (one server per data folder) → schema migration (a backup first; a database
@@ -38,9 +38,9 @@ from .api import discord as discord_api
 from .api import events as events_api
 from .api import forms as forms_api
 from .api import gate as gate_api
-from .api import levels as levels_api
 from .api import memory as memory_api
 from .api import models as models_api
+from .api import modes as modes_api
 from .api import packs as packs_api
 from .api import projects as projects_api
 from .api import retention as retention_api
@@ -54,16 +54,21 @@ from .api.middleware import AuthMiddleware, BodyLimitMiddleware, SecurityHeaders
 from .auth import FailureLimiter, Tokens, WebSessions
 from .connectors import setup as connectors_setup
 from .connectors.asks import Questions
+from .connectors.mail_tools import mail_tools
 from .connectors.quizzes import Quizzes
+from .connectors.school_tools import school_tools
+from .connectors.tools import drive_tools, github_tools, web_tools
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
 from .events import Events, delivery
-from .gate import Approvals, Audit, Gate, Grants, Levels, Rules
+from .gate import Approvals, Audit, DefaultModeError, Gate, Grants, Modes
 from .gate.allowances import Allowances
 from .gate.approvals import BOOKED_TURN
+from .gate.modes import load_default
 from .knowledge import vault as vault_setup
 from .knowledge.conversation_files import ConversationFiles
 from .knowledge.github_snapshot import GitHub as GitHubSnapshots
 from .knowledge.projects import Projects
+from .knowledge.vault.tools import vault_tools
 from .llm import Catalog, NoModel, Providers, Router
 from .llm.retry import retryable
 from .memory.conversations import Conversations
@@ -81,7 +86,10 @@ from .ops.traffic import TrafficLog
 from .ops.upkeep import Upkeep, late_alert
 from .ops.usage import UsageLog
 from .packs import install as packs_install
+from .packs.automations import automation_tools
 from .packs.daily_note import seed as seed_daily_note
+from .packs.deferred import deferred_tools
+from .packs.tools import pack_tools
 from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
@@ -91,7 +99,7 @@ from .timekeeping.clara_jobs import ClaraJobs
 from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
 from .timekeeping.schedules import Run, Schedule, instructions_of, message_of, shown_of
 from .timeutil import parse_iso, zone
-from .tools.base import Toolbox, ToolContext, TurnState
+from .tools.base import Tool, Toolbox, ToolContext, TurnState
 from .tools.discord_tools import can_say, discord_tools
 from .tools.folder_tools import FolderGrants, folder_tools
 from .tools.knowledge_tools import knowledge_tools
@@ -99,6 +107,7 @@ from .tools.memory_tools import memory_tools
 from .tools.time_tools import time_tools
 from .triggers.setup import install as triggers_install
 from .workspace import setup as workspace_setup
+from .workspace.tools import workspace_tools
 
 log = logging.getLogger("clara")
 
@@ -126,6 +135,28 @@ def open_database(settings: Settings) -> Database:
     return db
 
 
+def static_tools() -> list[Tool]:
+    """Every tool the server can have, whatever is set up (the vault's are only added with a vault): the names a mode's lines
+    may use, and what `clara mode import-legacy` reads the action classes of."""
+    return [
+        *memory_tools(),
+        *time_tools(),
+        *knowledge_tools(),
+        *discord_tools(),
+        *folder_tools(),
+        *workspace_tools(),
+        *web_tools(),
+        *github_tools(),
+        *drive_tools(),
+        *mail_tools(),
+        *school_tools(),
+        *vault_tools(),
+        *pack_tools(True),
+        *automation_tools(),
+        *deferred_tools(),
+    ]
+
+
 def build_services(settings: Settings, db: Database, *, provider_factory=None) -> Services:
     runtime = RuntimeSettings(db)
     try:
@@ -141,9 +172,19 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     traffic.sink = logs.traffic
     providers = Providers(settings, secrets, runtime, provider_factory)
     catalog = Catalog(db, providers)
-    rules = Rules(db)
-    levels = Levels(db, runtime)
     audit = Audit(db)
+    static = frozenset(tool.name for tool in static_tools())
+    try:
+        default, note, from_file = load_default(settings.default_mode_file, static)
+    except DefaultModeError as error:
+        raise StartError(str(error)) from None
+    if (
+        not from_file
+    ):  # like the vault's alert at start: it is cleared with `/alerts clear default_mode_file` once the file is there
+        alerts.raise_("default_mode_file", "The default mode file is missing", note)
+    elif note:
+        log.warning("%s", note)
+    modes = Modes(db, default, lambda: s.toolbox.names | static)
     home = settings.timezone
     s = Services(
         settings=settings,
@@ -173,11 +214,10 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
         schedules=Schedules(db, events, home),
         deferred=DeferredCalls(db, events, home),
-        rules=rules,
-        gate=Gate(db, rules, runtime, levels, vault_push=settings.vault_push),
-        levels=levels,
+        gate=Gate(modes, vault_push=settings.vault_push),
+        modes=modes,
         audit=audit,
-        approvals=Approvals(db, events, rules, audit, alerts, expire_after=settings.approval_expire),
+        approvals=Approvals(db, events, audit, alerts, expire_after=settings.approval_expire),
         grants=Grants(runtime, audit),
         questions=Questions(),
         quizzes=Quizzes(db),
@@ -192,7 +232,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     )
     s.github_snapshots = GitHubSnapshots()
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
-    s.levels.audit = audit
+    s.modes.audit = audit
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.toolbox.approvals = s.approvals
     s.toolbox.grants = s.grants
@@ -462,7 +502,7 @@ def create_app(s: Services) -> FastAPI:
         events_api.router,
         projects_api.router,
         gate_api.router,
-        levels_api.router,
+        modes_api.router,
         models_api.router,
         admin_api.router,
     ):
@@ -584,12 +624,20 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(settings.debug)
     try:
         db, lock = prepare(settings)
-        services = build_services(settings, db)
     except StartError as error:
         log.error("%s", error)
         return 3
+    try:
+        services = build_services(settings, db)
+    except StartError as error:
+        log.error("%s", error)
+        db.close()
+        lock.release()
+        return 3
     if args.check:
-        print(f"Clara {__version__}: settings, permissions, database and secrets key are fine.")
+        print(f"Clara {__version__}: settings, permissions, database, secrets key and default mode are fine.")
+        if "default_mode_file" in services.alerts.active:  # a missing file is not a failure: the built-in copy is used
+            print(f"Warning: {services.alerts.active['default_mode_file']}")
         lock.release()
         return 0
     extend(services)

@@ -6,7 +6,7 @@ function: DMs are ignored.
   (yours), in **one** channel (#general) and in commands, and ignores every other user and channel.
 * What you write in #general goes to Clara in the current conversation (`/new` starts another), with its files (PDF,
   Word, text, pictures); Clara's answer, and notes she writes in `notes/`, come back there.
-* Approval requests go to #approval with buttons: allow once, allow always, refuse once, refuse always (#general
+* Approval requests go to #approval with buttons: allow once and refuse once (#general
   says where to answer). The bot's token may answer every level but *destructive* (deletions, overwrites, merges):
   those say to answer on the web or with clara-admin. The server enforces it, whatever the bot shows.
 * Alerts go to #alerts; reminders, notifications, task reminders, schedule summaries and update news go to
@@ -76,9 +76,7 @@ EXIT_SETTINGS = 2
 EXIT_RUNNING = 3
 ANSWERS = (
     ("allow_once", "Allow once", discord.ButtonStyle.success),
-    ("allow_always", "Allow always", discord.ButtonStyle.primary),
     ("refuse_once", "Refuse once", discord.ButtonStyle.secondary),
-    ("refuse_always", "Refuse always", discord.ButtonStyle.danger),
 )
 THREADS_KEPT = 30
 ALERTS_KEPT = 100  # alert keys whose messages are remembered (an alert never cleared would otherwise stay forever)
@@ -137,7 +135,7 @@ def split_message(text: str, limit: int = LIMIT) -> list[str]:
 
 class ApprovalButton(
     discord.ui.DynamicItem[discord.ui.Button],
-    template=r"clara:approval:(?P<id>[0-9]+):(?P<answer>allow_once|allow_always|refuse_once|refuse_always)",
+    template=r"clara:approval:(?P<id>[0-9]+):(?P<answer>allow_once|refuse_once)",
 ):
     def __init__(self, approval_id: int, answer: str):
         label, style = next((label, style) for key, label, style in ANSWERS if key == answer)
@@ -618,27 +616,6 @@ class ClaraBot(discord.Client):
         ]
         return "\n".join(lines) + note + "\n`/tools pack:<id> state:on|off` switches one."
 
-    async def level_text(self, value: str | None, current: str | None = None) -> str:
-        """The auto level of the current conversation, after setting it if asked (`follow`: none of its own)."""
-        current = current or self.conversation()
-        ladder = await self.clara.call("GET", "/v1/levels")
-        names = ", ".join(f"`{level['position']}` {level['name']}" for level in ladder["levels"])
-        if value:
-            wanted = value.strip().lower()
-            if wanted != "follow" and not (wanted.isdecimal() and int(wanted) <= ladder["top"]):
-                return f"A level is {names}, or `follow`."
-            if not current:
-                return "Use it inside a conversation: the level belongs to one conversation."
-            await self.clara.call(
-                "PUT", f"/v1/conversations/{current}/level", json={"level": None if wanted == "follow" else int(wanted)}
-            )
-        if not current:
-            return (
-                f"No conversation here. The default for a chat is level {ladder['defaults']['chat']}. Levels: {names}."
-            )
-        found = await self.clara.call("GET", f"/v1/conversations/{current}/level")
-        return f"Level `{found['level']}` ({found['name']}), from {found['source']}.\nLevels: {names}. `/level level:<n|follow>` changes it."
-
     async def show_approval(self, approval: dict) -> bool:
         """Post a request in #approval, once. True when it was posted now."""
         if approval["id"] in self.asked or approval.get("status", "pending") != "pending":
@@ -1098,20 +1075,6 @@ class ClaraBot(discord.Client):
             try:
                 current = self.mirror.conversation_of(interaction.channel_id)  # a thread: its conversation
                 await interaction.response.send_message(await self.tools_text(pack, state, current), ephemeral=True)
-            except ClaraError as error:
-                await interaction.response.send_message(f"⚠️ {error}")
-
-        @tree.command(name="level", description="How much Clara may do without asking in this conversation")
-        @app_commands.describe(
-            level="A level number, or follow (the project's level, else the default); empty: show it"
-        )
-        @here
-        async def level(interaction: discord.Interaction, level: str | None = None) -> None:
-            if not await only_you(interaction):
-                return
-            try:
-                current = self.mirror.conversation_of(interaction.channel_id)  # a thread: its conversation
-                await interaction.response.send_message(await self.level_text(level, current), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
 

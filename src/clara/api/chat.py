@@ -20,7 +20,6 @@ from pydantic import BaseModel, Field
 
 from ..agent.runs import AlreadyRunning, Run
 from ..agent.turn import ChatRequest
-from ..gate import LevelError
 from ..knowledge import ingest
 from ..knowledge.attachments import MAX_ATTACHMENTS, Attached, FileError, prepare
 from ..knowledge.ingest import IngestError
@@ -36,7 +35,7 @@ from .common import (
     sse,
     with_keepalive,
 )
-from .levels import may_set
+from .modes import settable
 
 router = APIRouter(prefix="/v1", tags=["chat"])
 
@@ -74,8 +73,8 @@ class ChatBody(BaseModel):
     instructions: str = Field(default="", max_length=20_000)
     incognito: bool = False
     local_only: bool = False
-    auto_level: int | None = Field(
-        default=None, ge=0, le=9, description="The auto level of a new conversation (null: it follows its project)"
+    mode: str | None = Field(
+        default=None, max_length=30, description="The mode's name of a new conversation (null: it follows its project)"
     )
     ref: str = Field(default="", max_length=40, description="The message's id on Discord, when the bot sends it")
     mirror_thread: str = Field(
@@ -111,14 +110,7 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         raise ApiError(422, str(error)) from None
     if body.project is not None and services(request).projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
-    try:
-        auto_level = services(request).levels.check_level(body.auto_level)
-    except LevelError as error:
-        raise ApiError(422, str(error)) from None
-    if auto_level is not None and not body.conversation:
-        may_set(
-            request, None, auto_level
-        )  # a token that may not answer everything cannot start a conversation above the default
+    conversation_mode = None if body.conversation else settable(request, body.mode)  # only for a new conversation
     if body.conversation and services(request).mirror.is_archived(body.conversation):
         raise ApiError(409, "This conversation is archived: unarchive it to write in it.")
     return ChatRequest(
@@ -136,7 +128,7 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         fork_of=body.fork_of,
         incognito=body.incognito,
         local_only=body.local_only,
-        auto_level=auto_level,
+        conversation_mode=conversation_mode,
         wait_for_approvals=wait,
         ref=body.ref,
         mirror_thread=body.mirror_thread,

@@ -20,6 +20,7 @@ from clara.triggers.message import INSTRUCTIONS, INSTRUCTIONS_TALKING
 from clara.triggers.message import instructions_of as hook_instructions
 from fakes import calls
 from mailworld import connect_mailbox, gmail_message
+from modeset import default, line
 from test_schedule_runs import Clock, build, plan, run_due, runs
 from test_triggers import chat_calls, event, make, work
 
@@ -235,8 +236,8 @@ def test_what_is_said_in_general_may_be_longer_than_a_notification(s):
 # ----------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def everything_runs(s):
-    """discord_say runs without asking at the last level."""
-    s.runtime.set("auto_level_default", 5)
+    """discord_say runs without asking."""
+    default(s, line("approve", klass="discord"))
 
 
 def connect_bot(s) -> None:

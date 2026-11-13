@@ -235,7 +235,7 @@
 {/snippet}
 
 <div class="page stack">
-  <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your rules; by default
+  <p class="intro">Clara reaches only what is listed here. Every change she makes goes through your modes; by default
     each GitHub and Drive change asks you first, and an email is sent only after you have read it in an approval request.</p>
   {#if info}
     <section class="panel stack">

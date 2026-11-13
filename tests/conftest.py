@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from clara.app import build_services, create_app, extend, open_database
+from clara.gate.modes import builtin_default, to_toml
 from clara.services import Services
 from clara.settings import load_settings
 from fakes import FakeLLM
@@ -17,7 +18,9 @@ KEY = "ab" * 32
 
 @pytest.fixture
 def environ(tmp_path) -> dict[str, str]:
+    (tmp_path / "default-mode.toml").write_text(to_toml(builtin_default()), encoding="utf-8")  # as installed by deploy/install.sh
     return {
+        "CLARA_DEFAULT_MODE_FILE": str(tmp_path / "default-mode.toml"),
         "CLARA_DATA_DIR": str(tmp_path / "data"),
         "CLARA_SECRET_KEY": KEY,
         "CLARA_TIMEZONE": "Europe/Paris",

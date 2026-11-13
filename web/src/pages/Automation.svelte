@@ -5,14 +5,13 @@
   import Facts from '../components/Facts.svelte';
   import Hint from '../components/Hint.svelte';
   import Icon from '../components/Icon.svelte';
-  import LevelSelect from '../components/LevelSelect.svelte';
+  import ModeSelect from '../components/ModeSelect.svelte';
   import ModelField from '../components/ModelField.svelte';
   import Wizard from '../components/Wizard.svelte';
   import { api, fileToBase64, when, zone } from '../lib/api';
   import { ATTEMPTS, RETRY_HELP, excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
-  import { ladder } from '../lib/levels.svelte';
-  import { keptNote } from '../lib/memory';
+    import { keptNote } from '../lib/memory';
   import { conversations, live, toast } from '../lib/state.svelte';
 
   // What Clara does without being asked, in one list and one form. An item is a schedule (`on` is TIME: she runs at a time) or a hook
@@ -126,7 +125,7 @@
       event: 'A name to find it by, and whether Clara is run or you are only told.',
     },
     tools: {
-      time: 'The special tools you tick are the only extra ones a run has. An action your rules say to ask about is held and pushed to you, and the run goes on without it.',
+      time: 'The special tools you tick are the only extra ones a run has. An action its mode says to ask about is held and pushed to you, and the run goes on without it.',
       event: 'What arrives was written by someone else, so a run starts untrusted and has only the tools you give it. Anything it would change outside (send a mail, write to GitHub or Drive) asks you first.',
     },
     runs: {
@@ -385,7 +384,7 @@
     step = 'trigger';
     checked = false;
     tried = [];
-    if (!toolNames.length) toolNames = (await api.get('/v1/rules')).tools;
+    if (!toolNames.length) toolNames = (await api.get('/v1/modes')).tools.map((tool: { name: string }) => tool.name);
     await tick();
     (document.querySelector('#automation-form .step-head h3') as HTMLElement | null)?.focus();
   }
@@ -558,10 +557,10 @@
     }
   }
 
-  /** The auto level of a schedule's or a hook's runs (null: its project's, else the default of the runs nobody watches). */
-  async function setLevel(item: any, value: number | null): Promise<void> {
+  /** The mode of a schedule's or a hook's runs (null: its project's, else the default mode). */
+  async function setMode(item: any, value: string | null): Promise<void> {
     try {
-      await api.put(`${pathOf(item)}/level`, { level: value });
+      await api.put(`${pathOf(item)}/mode`, { mode: value });
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -638,7 +637,7 @@
   <div class="row start">
     <p class="intro grow">Clara does things by herself, unattended: at a time you set, or when something happens outside, a new mail
       in a mailbox you connected, or a pull request or a push in a GitHub repository you added. A run that would change something
-      outside (send a mail, write to GitHub or Drive) asks you first, and an action your rules say to ask about is held and pushed to
+      outside (send a mail, write to GitHub or Drive) asks you first, and an action its mode says to ask about is held and pushed to
       you. A run has only the tools you give it.</p>
     <button class="primary" aria-expanded={open} aria-controls="automation-form" bind:this={newButton}
       onclick={() => (open ? closeForm() : openForm())}><Icon name="plus" size={18} />New automation</button>
@@ -980,8 +979,8 @@
               {#if item.action === 'run'}<br /><span class="muted small">Tools: {item.effective_tools.join(', ')}</span>{/if}
             {/if}
             {#if timed || item.action === 'run'}
-              <br /><LevelSelect small label={`Auto level of ${item.name}`} value={item.auto_level} effective={item.auto_level ?? ladder.defaults.unattended}
-                follows={item.project ? 'its project or the default' : 'the default'} onchange={(value) => setLevel(item, value)} />
+              <br /><ModeSelect small label={`Mode of ${item.name}`} value={item.mode} effective={item.mode ?? 'default'}
+                follows={item.project ? 'its project or the default' : 'the default'} onchange={(value) => setMode(item, value)} />
             {/if}
           </td>
           <td class="small">{#if item.last}<span class:danger={timed ? item.last.status !== 'ok' : item.last.status === 'failed'}>{item.last.status}</span> {when(item.last.finished_at)}<br /><span class="muted">{item.last.summary || item.last.note}</span>{:else}—{/if}</td>

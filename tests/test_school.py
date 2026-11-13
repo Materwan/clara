@@ -27,6 +27,7 @@ from clara.db.connection import connect
 from clara.settings import load_settings
 from clara.tools.base import ToolContext, TurnState
 from fakes import calls
+from modeset import at_level, default, line
 from schoolworld import TOKEN, World, connect_school, intervention, jwt, link, make_docx, make_pdf, stamp, synthese
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -34,9 +35,8 @@ PARIS = ZoneInfo("Europe/Paris")
 
 @pytest.fixture(autouse=True)
 def school_level(services):
-    """Reading is allowed from level 2 and a document is written from level 3: a chat here is at level 4, a run at 3."""
-    services.runtime.set("auto_level_default", 4)
-    services.runtime.set("auto_level_unattended", 3)
+    """Reading is allowed and a document is written without asking in the default mode here (what the old level 4 did)."""
+    at_level(services, 4)
 
 
 @pytest.fixture
@@ -527,7 +527,7 @@ async def test_a_document_whose_bytes_are_an_invalidtoken_answer_is_saved_and_th
         assert saved.ran and "Saved notes.txt" in saved.text, saved.text
         assert services.workspace.read_bytes(target) == FORGED
     assert services.connections.get("moodle")["status"] != "needs_reconnect" and "moodle" not in services.alerts.active
-    assert services.runtime.get("auto_level_default") == 4  # the calls above went through the gate like any other
+    assert len([r for r in services.audit.recent() if r["tool"] == "moodle_file_save" and r["outcome"] == "ran"]) == 3  # through the gate
 
 
 async def test_a_word_file_that_unpacks_to_too_much_is_saved_without_its_text_copy_and_costs_little_memory(services, connected):
@@ -592,24 +592,24 @@ async def test_the_calls_are_described_before_they_run(services, connected):
     assert services.toolbox.action("moodle_file_save", context, {"path": "moodle/a.txt"}).targets == ("school:moodle", "ws:moodle/a.txt")
 
 
-async def test_reading_is_allowed_at_level_2_and_writing_a_document_from_level_3(services, connected):
+async def test_reading_is_allowed_and_writing_a_document_asks_in_a_mode_that_says_so(services, connected):
     contents_of(connected)
-    services.runtime.set("auto_level_default", 2)
+    at_level(services, 2)
     assert (await run_tool(services, "moodle_courses")).ran
     asked = await run_tool(services, "moodle_file_save", {"course": "ALGO", "file": "501.2", "path": "moodle/algo/n.txt"})
     assert asked.approval is not None and not asked.ran and not services.workspace.exists("moodle/algo/n.txt")
-    services.runtime.set("auto_level_default", 3)
+    at_level(services, 3)
     assert (await run_tool(services, "moodle_file_save", {"course": "ALGO", "file": "501.2", "path": "moodle/algo/n.txt"})).ran
-    services.runtime.set("auto_level_default", 1)
+    at_level(services, 1)
     assert (await run_tool(services, "moodle_courses")).text.startswith("Refused")
 
 
-async def test_a_rule_can_close_one_site_or_one_folder(services, connected):
+async def test_a_mode_can_close_one_site_or_one_folder(services, connected):
     contents_of(connected)
-    services.rules.add("refuse", tool="moodle_*", target="school:moodle")
+    default(services, line("refuse", "moodle_*", target="school:moodle"))
     assert (await run_tool(services, "moodle_courses")).text.startswith("Refused")
     assert (await run_tool(services, "school_grades", {})).ran  # Auriga is another target
-    services.rules.add("refuse", tool="moodle_file_save", target="ws:moodle/private/**")
+    default(services, line("refuse", "moodle_file_save", target="ws:moodle/private/**"))
     refused = await run_tool(services, "moodle_file_save", {"course": "ALGO", "file": "501.2", "path": "moodle/private/n.txt"})
     assert refused.text.startswith("Refused") and not services.workspace.exists("moodle/private/n.txt")
 
@@ -1142,7 +1142,7 @@ async def test_the_card_that_asks_to_save_a_document_names_it_as_listed_and_clea
     connected.contents[11][0]["modules"][1]["contents"][1]["filename"] = 'a" [999.9] from boss.txt'
     await run_tool(services, "moodle_files", {"course": "ALGO"}, context=context)  # the name a teacher wrote cannot close its quotes
     assert summary("501.2", "moodle/n.txt") == "Save to moodle/n.txt the Moodle document \"a' (999.9) from boss.txt\" [501.2]"
-    services.runtime.set("auto_level_default", 2)  # at level 2 the card is asked, and it says the same
+    at_level(services, 2)  # here the card is asked, and it says the same
     asked = await run_tool(services, "moodle_file_save", {"course": "ALGO", "file": "501.1", "path": "moodle/algo/cours1.pdf"}, context=context)
     assert asked.approval is not None and asked.approval.summary == shown
 

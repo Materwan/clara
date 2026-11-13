@@ -262,7 +262,7 @@ def _ref(value: Any) -> str:
 
 @acts_as("read", "drive_read")
 def _describe_present(context: ToolContext, arguments: dict) -> Action:
-    """A workspace file or a vault note is a read of it, as `ws_read` and `vault_read` are (a rule on the path applies);
+    """A workspace file or a vault note is a read of it, as `ws_read` and `vault_read` are (a line of a mode on the path applies);
     a Drive file is a Drive read, as the Drive tools are."""
     ref = _ref(arguments.get("path"))
     kind, what = present.split(ref)

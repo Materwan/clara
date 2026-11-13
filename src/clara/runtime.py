@@ -78,7 +78,6 @@ KNOBS: dict[str, Knob] = {
     "upkeep_model": Knob("", _ref_or_empty, "The model for titles and summaries ('': the default model)."),
     "fallbacks": Knob([], _refs, "Models asked in turn when the one answering is busy or unreachable."),
     "providers_enabled": Knob(None, _names, "Providers that may be used (local Ollama hosts are enabled at first)."),
-    "tainted_rule": Knob(True, _bool, "After untrusted content, raise outside-world writes and networked runs to ask."),
     "reader": Knob(
         True,
         _bool,
@@ -97,21 +96,8 @@ KNOBS: dict[str, Knob] = {
         "Characters of a page, mail or file the quarantined reader reads, from 1,000 to 400,000, 40,000 unless you "
         "change it (the rest is cut and the report says so).",
     ),
-    "auto_level_default": Knob(
-        3,
-        _whole(0, 9),
-        "The auto level of a chat that has none of its own and none from its project (0 refuses every tool).",
-    ),
-    "auto_level_unattended": Knob(
-        3,
-        _whole(0, 9),
-        "The auto level of a schedule, reminder or hook run that has none of its own and none from its project.",
-    ),
     "approve_all_minutes": Knob(
         30, _whole(1, 1440), "Minutes an Approve all next button stays on after it is pressed (at most 1,440)."
-    ),
-    "approve_all_calls": Knob(
-        50, _whole(1, 1000), "Calls an Approve all next button lets through without asking (at most 1,000)."
     ),
     "folder_budget": Knob(
         1_000_000,

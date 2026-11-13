@@ -14,6 +14,7 @@ from clara.timekeeping import ScheduleError
 from clara.timeutil import iso, utcnow
 from clara.tools.base import ToolContext, TurnState
 from clara.triggers import TriggerError
+from modeset import at_level
 
 LATER = "2099-01-05T09:00"
 
@@ -403,7 +404,7 @@ async def call(services, name: str, arguments: dict):
 
 @pytest.fixture
 def level_four(services):
-    services.runtime.set("auto_level_default", 4)
+    at_level(services, 4)
 
 
 async def test_the_request_says_how_many_conversations_a_change_deletes(services, level_four):

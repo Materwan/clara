@@ -4,7 +4,7 @@ Clara is a personal AI agent for **one person**, running on **one Linux machine*
 person's own devices over Tailscale**. She chats from a web site, a terminal, an admin console, a Discord server of
 your own, a small Windows island, an Android app (the last two are a separate, private project) or your own scripts; she remembers what matters, keeps your reminders, tasks and scheduled jobs, reads and
 writes files in her own workspace, runs scripts in isolated containers, and works with GitHub, Google Drive, your
-Gmail, your Obsidian vault and the web. Every action she takes goes through rules you set: allowed, asked, or refused.
+Gmail, your Obsidian vault and the web. Every action she takes goes through modes you set: allowed, asked, or refused.
 
 There are no accounts, no users, no credits and no public exposure: Clara 1.0 is a rewrite from zero of an earlier,
 broader server, following [the rebuild plan](clara-rebuild-plan.md) and answering
@@ -37,7 +37,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
   |  token check -> agent (prompt, memory, compaction) ----> model providers     |
   |                    |                                     Ollama (local, PC), |
   |                    v                                     Ollama cloud,       |
-  |        RULE GATE: allow / ask / refuse every tool call   Gemini, DeepSeek,   |
+  |        GATE: allow / ask / refuse every tool call        Gemini, DeepSeek,   |
   |        (approvals, audit log, tainted turns)             Mistral             |
   |                    |                                                         |
   |                    v                                                         |
@@ -52,7 +52,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
 ```
 
 A message arrives with a client token. Clara builds the prompt (her fixed persona, your facts, the conversation, the
-project), calls the model and streams the answer. Each tool call is checked by the rule gate: it runs, waits for your
+project), calls the model and streams the answer. Each tool call is checked by the gate, by the verdict of its conversation's mode: it runs, waits for your
 answer (in the chat, on another client, or as Discord buttons), or is refused. Reminders and schedules start turns
 from inside the server, through the same gate, as "unattended".
 
@@ -97,11 +97,11 @@ The full procedure, with SearXNG, Drive, GitHub, the vault, Discord and backups,
 clara-chat --save-token                  # paste the terminal token once (kept 0600 in ~/.config/clara/token)
 clara-chat                               # chat; /help lists the commands
 clara-chat "what is on my list today?"   # one question, then exit
-clara-admin --save-token                 # the console token; then /status, /models, /rules, /approvals…
+clara-admin --save-token                 # the console token; then /status, /models, /mode, /approvals…
 ```
 
-On the web site, under **Settings**: choose your default model on **Models**, look at **Rules & approvals** to see
-what Clara may do alone, connect GitHub, Drive and Gmail on **Connections** if you want them.
+On the web site, under **Settings**: choose your default model on **Models**, look at **Modes** to see
+what Clara may do alone (the default mode is the file `/etc/clara/default-mode.toml`), connect GitHub, Drive and Gmail on **Connections** if you want them.
 
 ## Development
 

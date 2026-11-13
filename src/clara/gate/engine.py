@@ -1,19 +1,16 @@
-"""The rule gate: every tool call resolves to allow, ask or refuse, in this order.
+"""The gate: every tool call resolves to allow, ask or refuse, in this order.
 
-1. **The floor** refuses, and no rule can change it: touching `.git` in the workspace (scripts and tools never see
-   it), and any target the tools could not have produced. Writing outside the workspace, reading the database or the
-   secrets, and running a script with the server's environment are impossible by construction (path resolution, the
-   container runner); the floor is the last check behind them.
-2. **The level** of the conversation (levels.py): where its table refuses the tool, it is refused and no rule can
-   change that (level 0 refuses every tool).
-3. **The rules** you wrote: the most specific matching one decides.
-4. **The level again**, when no rule matches: its table says allow or ask.
-5. **Raises**, which only ever make it stricter: in a *tainted* turn (it read a web page, a fetched file, an issue…),
-   outside-world writes, networked scripts and the fetch of an address nobody gave become at least `ask` (runtime setting
-   `tainted_rule`); content that
-   looks like a secret, or repeats private text the conversation read (a search query: egress.py), leaving the machine
-   becomes at least `ask`, always. The last level of a chat suspends both
-   (DECISIONS.md, « Auto levels »); a run nobody watches never does.
+1. **The floor** refuses, and nothing changes it: touching `.git` in the workspace (scripts and tools never see it), and
+   any target the tools could not have produced. Writing outside the workspace, reading the database or the secrets, and
+   running a script with the server's environment are impossible by construction (path resolution, the container
+   runner); the floor is the last check behind them.
+2. **Local only**: a conversation that must not send anything off the machine refuses what would.
+3. **Chat only**: what reads your computer through an open web chat is refused to a run nobody watches.
+4. **The verdict of the conversation's mode** (modes.py) for this tool, class and target: approve, ask or refuse. A turn
+   that read untrusted content (a web page, a fetched file, an issue…) gets the line's `(if tainted)` verdict. A call the
+   mode has no line for takes the default mode's. A refusal is final.
+5. **The secret check**, which only ever makes it stricter: content that looks like a secret, or repeats private text the
+   conversation read (a search query: egress.py), leaving the machine becomes at least `ask`, always, in every mode.
 
 The model has no tool to read, edit or approve any of this.
 """
@@ -24,21 +21,18 @@ import hashlib
 import json
 
 from ..db import Database
-from ..runtime import RuntimeSettings
 from ..timeutil import now_iso
 from .actions import (
     CHAT_ONLY,
     CLASSES,
     LEAVES_MACHINE,
     OUTSIDE,
-    RAISED_WHEN_TAINTED,
     STRICTNESS,
     Action,
     Decision,
     Situation,
 )
-from .levels import Levels
-from .rules import Rules
+from .modes import DEFAULT, VERDICT_EFFECT, Modes
 
 
 def args_digest(arguments: dict) -> str:
@@ -63,23 +57,16 @@ def stricter(effect: str, other: str) -> str:
 
 
 class Gate:
-    def __init__(
-        self, db: Database, rules: Rules, runtime: RuntimeSettings, levels: Levels, *, vault_push: bool = True
-    ):
-        self.db = db
-        self.rules = rules
-        self.runtime = runtime
-        self.levels = levels
+    def __init__(self, modes: Modes, *, vault_push: bool = True):
+        self.modes = modes
         self.local_refused = LEAVES_MACHINE if vault_push else LEAVES_MACHINE - {"vault_write", "vault_destroy"}
 
-    def decide(
-        self, action: Action, situation: Situation, *, count_hit: bool = True, approved: bool = False
-    ) -> Decision:
-        """`approved`: you already answered a request for this very call, so the level has nothing more to say (only the floor,
-        the local-only rule and a rule that refuses can still stop it).
+    def decide(self, action: Action, situation: Situation, *, approved: bool = False) -> Decision:
+        """`approved`: you already answered a request for this very call, so a mode that approves or asks has nothing more to say
+        (the floor, the local-only rule and a mode that refuses can still stop it).
 
-        A call of the model must come with `situation.level` set to its conversation's level (Toolbox.call does it at every
-        call); without one the default level of the mode is used, which only suits a question asked on no conversation's behalf."""
+        A call of the model must come with `situation.mode_name` set to its conversation's mode (Toolbox.call does it at every
+        call); without one the default mode decides, which only suits a question asked on no conversation's behalf."""
         why = floor(action)
         if why:
             return Decision("refuse", why, floor=True)
@@ -89,70 +76,40 @@ class Gate:
             return Decision(
                 "refuse", "this reads your computer through an open web chat: a run nobody watches cannot", floor=True
             )
-        level = self.level_of(situation)
-        table = "allow" if approved else self.levels.effect(action.tool, action.klass, level)
-        if table == "refuse":
-            return Decision("refuse", self.levels.reason(action.tool, action.klass, level, table), by_level=True)
-        rule = self.rules.best(action, situation)
-        if rule is not None:
-            effect, reason = rule.effect, f"rule #{rule.id}"
-            if count_hit:
-                self.rules.hit(rule.id)
-        else:
-            effect, reason = table, self.levels.reason(action.tool, action.klass, level, table)
+        mode, line, verdict = self.modes.verdict(action, situation)
+        reason = self.modes.reason(mode, line, verdict, action.tool, situation.tainted)
+        if verdict == "refuse":
+            return Decision("refuse", reason, by_mode=True)
+        effect = "allow" if approved else VERDICT_EFFECT[verdict]
         raised: list[str] = []
-        if not approved:
-            if self.tainted_raise(action, situation):
-                if effect == "allow":
-                    raised.append("this turn read untrusted content")
-                effect = stricter(effect, "ask")
-            if self.secret_raise(action, situation):
-                if effect == "allow":
-                    raised.append(
-                        f"the content looks like a secret or repeats private text ({', '.join(action.secret_kinds)})"
-                    )
-                effect = stricter(effect, "ask")
-        return Decision(effect, reason, rule.id if rule else None, raised=tuple(raised))
+        if not approved and self.secret_raise(action):
+            if effect == "allow":
+                raised.append(
+                    f"the content looks like a secret or repeats private text ({', '.join(action.secret_kinds)})"
+                )
+            effect = stricter(effect, "ask")
+        return Decision(effect, reason, raised=tuple(raised))
 
-    def level_of(self, situation: Situation) -> int:
-        """The level a situation runs at: the one it carries, else the default of its mode."""
-        if situation.level is None:
-            return self.levels.default_level(situation.mode)
-        return max(0, min(situation.level, self.levels.top))
-
-    def raises_suspended(self, situation: Situation) -> bool:
-        """The last level of a chat suspends the raises. A run nobody watches never does: a hook starts tainted."""
-        return situation.mode == "interactive" and self.level_of(situation) >= self.levels.top
-
-    def tainted_raise(self, action: Action, situation: Situation) -> bool:
-        """Does the tainted-turn rule apply to this action, whatever the effect would be otherwise?"""
-        return (
-            situation.tainted
-            and action.klass in RAISED_WHEN_TAINTED
-            and bool(self.runtime.get("tainted_rule"))
-            and not self.raises_suspended(situation)
-        )
-
-    def secret_raise(self, action: Action, situation: Situation) -> bool:
+    @staticmethod
+    def secret_raise(action: Action) -> bool:
         """Does this action carry content that looks like a secret, or repeats private text, out of the machine?"""
-        return bool(action.secret_kinds) and action.klass in OUTSIDE and not self.raises_suspended(situation)
+        return bool(action.secret_kinds) and action.klass in OUTSIDE
 
     def explain(self, action: Action, situation: Situation) -> dict:
-        """For the rule tester: what would decide this action, without counting a hit."""
-        decision = self.decide(action, situation, count_hit=False)
-        matching = [rule.describe() for rule in self.rules.list() if rule.matches(action, situation)]
-        level = self.level_of(situation)
-        ask, approve = self.levels.thresholds(action.tool, action.klass)
+        """For the mode tester: what would decide this action, which line, and the verdicts that line gives."""
+        decision = self.decide(action, situation)
+        mode, line, _ = self.modes.verdict(action, situation)
         return {
             "effect": decision.effect,
             "reason": decision.reason,
-            "rule": decision.rule_id,
             "floor": decision.floor,
-            "by_level": decision.by_level,
+            "by_mode": decision.by_mode,
             "raised": list(decision.raised),
-            "matching": matching,
-            "level": {"position": level, "name": self.levels.name(level), "ask_from": ask, "approve_from": approve},
-            "default": {"description": CLASSES[action.klass][2], "ask_from": ask, "approve_from": approve},
+            "mode": mode.name,
+            "from_default": mode is self.modes.default and (situation.mode_name or DEFAULT).lower() != DEFAULT,
+            "line": line.describe() if line else None,
+            "verdicts": {"normal": line.verdict, "tainted": line.tainted} if line else None,
+            "class": {"name": action.klass, "description": CLASSES[action.klass][2]},
         }
 
 
@@ -187,7 +144,7 @@ class Audit:
                 action.level,
                 situation.describe(),
                 digest,
-                decision.rule_id,
+                None,
                 decision.effect,
                 outcome,
                 approval_id,

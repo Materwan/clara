@@ -88,6 +88,40 @@ answers one more field, `lapses`.
   says that too.
 - **A setting typed as invalid JSON keeps the dialog open with a message.** The dialog used to close on its own and save nothing, so
   the « Not saved. That is not JSON » line never showed. The dialog now stays open on what was typed.
+- **Modes replace the auto levels, the rules and the tainted-turn rule** (migration 0031, which takes the automatic backup first).
+  A mode is a name, a list of tool packs and, for each tool, class and target, a verdict (`approve`, `ask`, `refuse`) for a normal
+  turn and another `(if tainted)`, never more permissive. A conversation's mode is its own, its schedule's or hook's, its project's,
+  or the default mode. A call is decided by the floor, the local-only and chat-only limits, then the mode's verdict, then the secret
+  check, which asks in every mode and which no level suspends any more. A refusal by a mode is final. The levels 0 to 5, `/level`,
+  the rules and `/rules`, the `tainted_rule` switch and `/tainted off`, `auto_level_default` and `auto_level_unattended` are gone.
+  Every level of its own on a conversation, a project, a schedule or a hook becomes « follow ». Routes: `/v1/modes` (and
+  `/v1/modes/test`, the old rule tester) replace `/v1/levels` and `/v1/rules*`; `PUT /v1/…/{id}/mode` replaces the `…/level` routes;
+  `mode` replaces `auto_level` on conversations, projects, schedules and hooks and in the body that starts a conversation or a chat.
+  Only a token with the approval scope `all` makes or sets a mode: the Discord bot loses `/level` and has no command for modes.
+  Deleting a mode takes the numbers of what uses it; all of it then follows the default mode. The web pages still speak of levels and
+  rules until the next step.
+- **The default mode is a file the server reads at start**, `CLARA_DEFAULT_MODE_FILE` (new setting, default
+  `/etc/clara/default-mode.toml`, owned by root, so nothing the server runs can change it). `deploy/default-mode.toml` is what the old
+  default level 3 did, and `install.sh` puts it there when none is. A missing file means the built-in copy and the new alert
+  `default_mode_file`; an invalid one stops the server and names the line; `clara-server --check` reports both.
+- **`clara mode import-legacy`** (and `/mode import-legacy`) prints a default mode made from your old levels, thresholds and
+  rules, which migration 0031 keeps in the tables `legacy_auto_levels`, `legacy_tool_levels`, `legacy_rules` and `legacy_settings`.
+  It writes nothing: read it, then install it (docs/OPERATIONS.md).
+- **« Allow always » and « Refuse always » are removed** from the approval cards, `clara-chat`, `/approvals`, the Discord buttons and
+  `POST /v1/approvals/{id}/decide`: no answer writes a rule any more.
+- **The web site has one page for modes, « Modes »,** in place of **Auto mode** and **Rules & approvals** (the old addresses lead to it). Four tabs:
+  Modes, Waiting (the requests waiting and recent ones, with their count in the rail), Test and Audit log. The Modes tab lists the default mode
+  (locked: it is a file) and yours; a mode opens to its packs and a table of every tool, with « Normal turn » and « If tainted » set to
+  approve, ask or refuse, and exceptions per target. Deleting a mode shows how many conversations, automations and projects use it.
+- **A mode selector replaces the auto level selector** in the chat, on a project's page, and on a schedule's or a hook's card.
+- **The approval cards have Allow once, Approve all next and Refuse once** (and, for a hidden file of your computer, Allow for this
+  conversation). Approve all next says it is for this conversation, for 30 minutes, and its banner shows the time left, not a count of calls.
+- **Approve all next covers any tool it is pressed on**, for 30 minutes (`approve_all_minutes`), with no limit of calls
+  (`approve_all_calls` is gone) and no beat of the page (`PUT /v1/conversations/{id}/grants` is now `GET`, and the press takes no body).
+  It answers a mode's `ask` and nothing else: not a refusal, not the secret check, and in a tainted turn only a tool whose
+  `(if tainted)` verdict is `ask`.
+- **A booked call is no longer asked again at the due time by a mode's `ask`;** a mode that now refuses it, the floor and the
+  local-only rule still stop it.
 
 ## v1.5.1 — 04/11/2026
 

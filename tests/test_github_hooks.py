@@ -12,6 +12,8 @@ from clara.settings import SettingsError, load_settings
 from clara.timeutil import iso, utcnow
 from fakes import calls
 from githubworld import REPO, GitHubWorld
+from modeset import line
+from modeset import make as make_mode
 from test_triggers import chat_calls, notifications, runs, work
 
 
@@ -354,12 +356,13 @@ async def test_a_notify_hook_on_github_needs_no_model_and_has_a_text_of_its_own_
     ]
 
 
-async def test_a_hook_run_cannot_change_github_without_asking_even_when_a_rule_allows_it(services, llm, github):
-    """The owner opened every GitHub tool to unattended runs with a rule. A hook's run is untrusted, so each change still asks."""
+async def test_a_hook_run_cannot_change_github_without_asking_even_when_its_mode_approves_it(services, llm, github):
+    """The owner opened every GitHub tool to the hook with a mode. A hook's run is untrusted (it starts tainted), so the mode's
+    `(if tainted)` verdict decides: each change asks."""
     connect_github(services)
-    services.runtime.set("auto_level_unattended", 4)  # the changes ask from level 4: below it no rule can open them
-    services.rules.add("allow", tool="github_*", situation="unattended")
     trigger = hook(services, tools=["github_read", "github_write", "github_branch", "github_pr", "github_issue"])
+    make_mode(services, "Hooks", line("approve", "github_*", tainted="ask"))
+    services.modes.set_stored("triggers", trigger.id, "Hooks")
     await poll(services)
     github.open_pr(5, "Please fix it")
     changes = calls(
@@ -382,7 +385,7 @@ async def test_a_hook_run_cannot_change_github_without_asking_even_when_a_rule_a
     assert github.writes == []  # nothing left the machine
     pending = services.approvals.list("pending")
     assert len(pending) == 12 and {a.action_class for a in pending} == {"github_write"}
-    assert all("untrusted content" in a.reason for a in pending)  # why it asked, whatever the rule said
+    assert all("untrusted content" in a.reason for a in pending)  # why it asked, whatever the mode approves
     assert services.triggers.runs(trigger.id)[0]["status"] == "ok"
     # and one answer lets through that one change, nothing else
     tester = services.tokens.create("tester", "cli")[0]

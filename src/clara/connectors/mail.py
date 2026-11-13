@@ -334,7 +334,7 @@ _ID = re.compile(r"^[A-Za-z0-9_=+/-]{1,600}$")
 
 def parse_address(text: Any) -> str:
     """One plain email address, lower case (`Name <a@b.c>` is read as `a@b.c`). Anything else is refused: an address is
-    what a rule matches and what you read in the approval, so it must be exactly one."""
+    what a mode's line matches and what you read in the approval, so it must be exactly one."""
     value = str(text or "").strip()
     if "<" in value and value.endswith(">"):
         value = value[value.rindex("<") + 1 : -1].strip()

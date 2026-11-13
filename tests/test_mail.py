@@ -27,17 +27,20 @@ from clara.settings import SettingsError, load_settings
 from clara.tools.base import ToolContext, TurnState
 from fakes import calls
 from mailworld import connect_mailbox, gmail_message, parse_sent
+from modeset import at_level, default, level_mode, line
 
 NOW = 1_760_000_000_000  # ms
-CHAT = Situation("interactive")
-ALONE = Situation("unattended")
+CHAT = Situation("interactive", mode_name="Chat")
+ALONE = Situation("unattended", mode_name="Run")
 
 
 @pytest.fixture(autouse=True)
 def mail_level(services):
-    """Mail is written from level 4 and sent (after asking) from level 4: a chat here is at level 4, a run at level 3."""
-    services.runtime.set("auto_level_default", 4)
-    services.runtime.set("auto_level_unattended", 3)
+    """Mail is written and trashed without asking and sent after asking in the default mode here (what the old level 4 did):
+    the mode « Chat » is that, the mode « Run » is what a run nobody watched had (the old level 3)."""
+    at_level(services, 4)
+    level_mode(services, "Chat", 4)
+    level_mode(services, "Run", 3)
 
 
 @pytest.fixture
@@ -270,25 +273,26 @@ async def test_the_discord_token_cannot_approve_an_email(services, world):
     assert not world.gmail_sent
 
 
-async def test_sending_is_refused_unattended_and_a_rule_opens_it_for_one_domain_only(services, world):
+async def test_sending_is_refused_unattended_and_a_mode_opens_it_for_one_domain_only(services, world):
     connect_mailbox(services)
     body = {"to": ["bob@example.com"], "subject": "Hi", "body": "x"}
-    assert (await run_tool(services, "mail_send", body, mode="unattended")).text.startswith("Refused")  # level 3
-    services.runtime.set("auto_level_unattended", 4)  # a send asks from level 4: below it nothing, not even a rule, opens it
+    at_level(services, 3)  # the default mode of a run that was nobody's: a send is refused
+    assert (await run_tool(services, "mail_send", body, mode="unattended")).text.startswith("Refused")
+    default(services, line("ask", klass="mail_send"))  # a send asks
     assert (await run_tool(services, "mail_send", body, mode="unattended")).approval is not None
-    services.rules.add("allow", tool="mail_send", target="mail:to:*@example.com", situation="unattended")
+    default(services, line("approve", "mail_send", target="mail:to:*@example.com", tainted="ask"))
     assert (await run_tool(services, "mail_send", body, mode="unattended")).ran
     outside = {"to": ["bob@example.com", "eve@other.org"], "subject": "Hi", "body": "x"}
     assert (await run_tool(services, "mail_send", outside, mode="unattended")).approval is not None  # every address must match
     assert len(world.gmail_sent) == 1
-    # a rule never opens it after untrusted content: the tainted-turn rule asks whatever the rules say
+    # a mode never opens it after untrusted content unless its tainted verdict says so: here it asks
     tainted = await run_tool(services, "mail_send", body, mode="unattended", tainted=True)
     assert tainted.approval is not None and len(world.gmail_sent) == 1
 
 
 async def test_a_secret_in_an_email_is_called_out_in_the_request(services, world):
     connect_mailbox(services)
-    services.rules.add("allow", tool="mail_send")
+    default(services, line("approve", "mail_send"))
     leaking = await run_tool(services, "mail_send", {"to": ["bob@example.com"], "subject": "k",
                                                      "body": "my key is AKIAABCDEFGHIJKLMNOP"})
     assert leaking.approval is not None and "AWS access key" in leaking.approval.reason and not world.gmail_sent
@@ -321,7 +325,7 @@ def test_labels_and_the_trash_have_their_own_defaults(services):
         "allow",
         "ask",
     )
-    tainted = decide("mail_trash", Situation("interactive", tainted=True, level=3), "destructive")
+    tainted = decide("mail_trash", Situation("interactive", tainted=True, mode_name="Run"), "destructive")
     assert tainted.effect == "ask" and tainted.raised == ()  # a trash after mail was read asks, but is not raised
     local = Situation("interactive", local_only=True)
     assert decide("mail_label", local, "write").effect == decide("mail_trash", local, "destructive").effect == "refuse"
@@ -354,7 +358,7 @@ async def test_a_label_is_made_and_put_on_a_message_and_only_your_own_labels_are
 
 
 async def test_a_trash_asks_moves_the_message_and_never_deletes_it(services, world):
-    services.runtime.set("auto_level_default", 3)  # a trash runs from level 4 and asks at 3
+    at_level(services, 3)  # a trash asks here
     connect_mailbox(services)
     tester = services.tokens.create("someone", "web")[0]
     world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
@@ -368,6 +372,7 @@ async def test_a_trash_asks_moves_the_message_and_never_deletes_it(services, wor
 
 async def test_unattended_labels_and_the_trash_wait_for_the_person(services, world):
     connect_mailbox(services)
+    at_level(services, 3)  # the default mode of a run nobody watches: they ask
     world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
     made = await run_tool(services, "mail_label_create", {"name": "Later"}, mode="unattended")
     trashed = await run_tool(services, "mail_trash", {"message": "m1"}, mode="unattended")
@@ -497,7 +502,7 @@ async def test_workspace_files_go_out_as_attachments_and_the_request_names_them(
     request = {"to": ["alice@example.com"], "reply_to": "m1", "body": "Here.", "attachments": ["notes/report.txt"]}
     asked = await run_tool(services, "mail_send", request)
     assert "Attachments: report.txt (7 B)" in asked.approval.summary and "(the same as the message answered)" in asked.approval.summary
-    services.rules.add("allow", tool="mail_send")
+    default(services, line("approve", "mail_send"))
     assert (await run_tool(services, "mail_send", request)).ran
     sent = parse_sent(world.gmail_sent[0])
     assert str(sent["Subject"]) == "Re: Report?" and [p.get_filename() for p in sent.iter_attachments()] == ["report.txt"]
@@ -853,7 +858,7 @@ async def listed(services, world, cid: str, *messages: tuple[str, str, str]) -> 
 
 
 async def test_a_listed_message_is_named_in_the_request_that_trashes_it(services, world):
-    services.runtime.set("auto_level_default", 3)  # a trash asks at level 3
+    at_level(services, 3)  # a trash asks
     tester = services.tokens.create("someone", "web")[0]
     cid = new_conversation(services)
     await listed(services, world, cid, ("m1", "Alice Billing <billing@acme.com>", "Invoice March"))
@@ -942,7 +947,7 @@ async def test_a_long_list_of_labels_is_cut_before_the_words_are(services, world
 
 
 async def test_clara_is_told_of_a_request_without_the_subject_the_owner_reads(services, world):
-    services.runtime.set("auto_level_default", 3)
+    at_level(services, 3)
     tester = services.tokens.create("someone", "web")[0]
     cid = new_conversation(services)
     await listed(services, world, cid, ("m1", "Alice Billing <billing@acme.com>", "Invoice March"))
@@ -996,13 +1001,13 @@ async def test_a_drive_file_is_named_in_the_request_that_replaces_trashes_or_rea
     assert said(services, "drive_delete", {"file": "f7"}, cid) == "Trash Drive file f7"
     assert said(services, "read_created_file", {"ref": "drive:f7"}, cid) == "Read the Drive file drive:f7"
     assert said(services, "drive_delete", {"file": "f1"}, other) == "Trash Drive file f1"
-    # the target, the class and the level are what rules match on, and are as they were
+    # the target, the class and the level are what a mode's lines match on, and are as they were
     action = services.toolbox.action("drive_delete", chat(services, cid), {"file": "f1"})
     assert (action.targets, action.klass, action.level) == (("drive:f1",), "drive_write", "destructive")
 
 
 async def test_a_file_clara_made_is_named_even_in_another_conversation_or_after_a_restart(services, drive):
-    services.runtime.set("auto_level_default", 5)  # a Drive write runs at the last level
+    at_level(services, 5)  # a Drive write runs
     cid, other = new_conversation(services), new_conversation(services)
     made = await run_tool(services, "drive_create", {"name": "Notes", "content": "x", "folder": "f0"}, context=chat(services, cid))
     assert made.ran

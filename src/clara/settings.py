@@ -4,7 +4,7 @@ Settings come from the process environment and from one `.env` file (`CLARA_ENV_
 directory); a value already in the environment wins. The file holds **non-secret settings only**: provider keys and
 tokens live in the encrypted secrets store (secrets/), and the key that opens it comes from a systemd credential.
 
-Things you change while Clara runs (the default model, fallbacks, the tainted-turn rule, the debug switch) are not
+Things you change while Clara runs (the default model, fallbacks, the debug switch) are not
 settings: they live in the database's `settings` table and are changed from the console or the Admin page.
 
 Every problem found is reported at once (`SettingsError` lists them all), and the server refuses to start.
@@ -54,6 +54,7 @@ class Settings:
     port: int = 8765
     timezone: str = "UTC"
     persona_file: Path | None = None
+    default_mode_file: Path = Path("/etc/clara/default-mode.toml")  # the default mode, read at start (gate/modes.py)
     env_file: Path | None = None
     debug: bool = False
     secret_key_file: Path | None = None
@@ -402,6 +403,8 @@ def load_settings(
         port=r.integer("CLARA_PORT", 8765, 1, 65_535),
         timezone=timezone,
         persona_file=r.path("CLARA_PERSONA_FILE"),
+        default_mode_file=r.path("CLARA_DEFAULT_MODE_FILE", Path("/etc/clara/default-mode.toml"))
+        or Path("/etc/clara/default-mode.toml"),
         env_file=env_file if env_file.exists() else None,
         debug=r.flag("CLARA_DEBUG", False),
         secret_key_file=r.path("CLARA_SECRET_KEY_FILE") or _credential("clara-secret-key", environ),

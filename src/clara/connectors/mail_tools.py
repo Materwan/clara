@@ -14,10 +14,10 @@
                                   destructive; target mail:gmail (its messages stay)
 
 What a message says is written by someone else: it comes back as data, and the turn that read it is tainted, so a send
-in it asks you whatever the rules say. The text of a message or an attachment is read by a quarantined reader
+in it asks you whatever the mode approves in a normal turn. The text of a message or an attachment is read by a quarantined reader
 (agent/reader.py), not by the conversation: the conversation gets the headers and the reader's report. A list of messages
 shows the sender, the subject and a gist instead of the preview. A message is sent only to the addresses given in the call, and the approval
-request shows all of them and the whole text. Reading, drafting and sending are three gate classes, so a rule can allow
+request shows all of them and the whole text. Reading, drafting and sending are three gate classes, so a mode can approve
 one and refuse another (`refuse mail_send`, `allow mail_send mail:to:*@your-company.com`). Labels, the read mark and the
 Trash are their own classes too: a label or a read mark is allowed in a chat, a trash and a label deletion ask. Nothing
 here archives or empties the Trash.

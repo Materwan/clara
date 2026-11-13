@@ -13,6 +13,7 @@ from clara.db.connection import connect
 from clara.memory.facts import MAX_SCOPED_FACTS, MAX_WAITING_FACTS, FactError
 from clara.tools.base import Tool, fixed
 from fakes import calls
+from modeset import default, line
 from test_triggers import event, work
 
 REMEMBER_TOOLS = ["remember", "recall_facts", "forget"]
@@ -347,8 +348,7 @@ async def test_a_conversation_that_read_a_page_still_asks_for_outside_writes_aft
 
     services.toolbox.add(Tool("fake_push", "p", push, fixed("github_write", "write", "github:me/r", "push"),
                               {"text": {"type": "string"}}, ("text",)))
-    services.rules.add("allow", tool="fake_push")  # no rule opens it on a tainted turn
-    services.runtime.set("auto_level_default", 4)  # github_write asks from level 4, so that the rule can open it
+    default(services, line("approve", "fake_push", tainted="ask"))  # runs, but not on a tainted turn
     tainting(services)
     conversation = services.conversations.create("cli", title="Reading")
     llm.replies = [calls(("fake_fetch", {"url": "u"})), "Read it.", "Hello.", "A talk about reading.",

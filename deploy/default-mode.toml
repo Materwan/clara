@@ -1,0 +1,172 @@
+# Clara's default mode: what happens to every tool call that the conversation's own mode does not decide.
+#
+# The server reads this file when it starts, so a change needs a restart. Keep it owned by root (mode 0644): then
+# neither the server nor a script it runs can change it, and no token can. If it is missing, the server uses its
+# built-in copy of this file and raises the alert `default_mode_file`; if it is invalid, the server does not start and
+# says which line is wrong (`clara-server --check` tells you without starting).
+#
+# packs: tool packs switched on in every conversation that has no mode of its own (and added to the ones a mode lists).
+#
+# Each [[verdict]] is a line. `tool` is a tool name or a glob (github_*), `class` an action class, `target` a glob
+# (ws:scratch/**, mail:to:*@example.com, domain:*.wikipedia.org); at least one of the three. `verdict` is approve (it
+# runs), ask (a card asks you) or refuse. `tainted` is the verdict once the conversation read untrusted content (a web
+# page, a mail, an issue); it is never more permissive than `verdict`, and left out it is the same.
+# The most specific line wins: more of tool, class and target set, then the longer literal target, then the longer
+# literal tool; on a tie the stricter verdict. A class with no line here takes the built-in one.
+# What no mode changes: the floor (the workspace's .git, a path that leaves the workspace), the local-only and chat-only
+# limits, and content that looks like a secret leaving the machine (it always asks).
+
+packs = []
+
+# Read the workspace, projects, the vault, memory, files sent
+[[verdict]]
+class = "read"
+verdict = "approve"
+
+# Clara's own records: facts, reminders, tasks, notifications, forms
+[[verdict]]
+class = "memory"
+verdict = "approve"
+
+# Create or edit workspace files (git history)
+[[verdict]]
+class = "ws_write"
+verdict = "approve"
+
+# Delete or overwrite workspace files
+[[verdict]]
+class = "ws_destroy"
+verdict = "approve"
+
+# Run a script, no network
+[[verdict]]
+class = "run"
+verdict = "approve"
+
+# Run a script with network
+[[verdict]]
+class = "run_network"
+verdict = "refuse"
+
+# GitHub read
+[[verdict]]
+class = "github_read"
+verdict = "approve"
+
+# GitHub issue, branch, pull request, commit
+[[verdict]]
+class = "github_write"
+verdict = "refuse"
+
+# Drive read (files Clara created or you opened to her)
+[[verdict]]
+class = "drive_read"
+verdict = "approve"
+
+# Drive create, update, delete
+[[verdict]]
+class = "drive_write"
+verdict = "refuse"
+
+# Mail read: search, read a message or an attachment (Gmail)
+[[verdict]]
+class = "mail_read"
+verdict = "approve"
+
+# Mail draft: save a draft in your mailbox (nothing is sent)
+[[verdict]]
+class = "mail_draft"
+verdict = "ask"
+
+# Mail send: an email leaves your mailbox
+[[verdict]]
+class = "mail_send"
+verdict = "refuse"
+
+# Mail label: add or remove your labels on a message, or make one (nothing is archived)
+[[verdict]]
+class = "mail_label"
+verdict = "ask"
+
+# Mail trash: move a message to the Trash (never emptied)
+[[verdict]]
+class = "mail_trash"
+verdict = "ask"
+
+# Mail mark: take the unread mark off a message (nothing else changes)
+[[verdict]]
+class = "mail_mark"
+verdict = "ask"
+
+# Mail label delete: delete one of your labels (its messages stay)
+[[verdict]]
+class = "mail_label_delete"
+verdict = "refuse"
+
+# Moodle and Auriga read: your courses, calendar, grades and the files of a course
+[[verdict]]
+class = "school_read"
+verdict = "approve"
+
+# Moodle save: a course document written to the workspace (with a text copy)
+[[verdict]]
+class = "school_save"
+verdict = "approve"
+
+# Create or edit vault notes (git history)
+[[verdict]]
+class = "vault_write"
+verdict = "approve"
+tainted = "ask"
+
+# Delete or move vault notes
+[[verdict]]
+class = "vault_destroy"
+verdict = "approve"
+tainted = "ask"
+
+# Web search
+[[verdict]]
+class = "web_search"
+verdict = "approve"
+
+# Fetch a URL you wrote or a search returned
+[[verdict]]
+class = "fetch_trusted"
+verdict = "approve"
+
+# Fetch any other URL
+[[verdict]]
+class = "fetch_other"
+verdict = "approve"
+tainted = "ask"
+
+# Open, write in or remove a Discord thread
+[[verdict]]
+class = "discord"
+verdict = "refuse"
+
+# Create, change or delete an automation: a schedule or a hook
+[[verdict]]
+class = "automation"
+verdict = "refuse"
+
+# Book a tool call to run later: the request shows the whole call and its date, and the call is run then, not asked again
+[[verdict]]
+class = "deferred"
+verdict = "ask"
+
+# Delete a conversation, a project or an automation because its Discord thread or forum was deleted
+[[verdict]]
+class = "discord_forget"
+verdict = "refuse"
+
+# Read a folder on your computer (a web chat): list, find, search, or read a file that is not hidden or ignored
+[[verdict]]
+class = "folder_read"
+verdict = "approve"
+
+# Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat
+[[verdict]]
+class = "folder_sensitive"
+verdict = "ask"

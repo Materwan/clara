@@ -31,7 +31,7 @@ from .common import DEFAULT_URL, Api, ClientError, read_token, save_token, token
 
 CLIENT = "cli"
 REPEATS = ("daily", "weekly", "monthly")
-ANSWERS = {"o": "allow_once", "a": "allow_always", "r": "refuse_once", "n": "refuse_always"}
+ANSWERS = {"o": "allow_once", "r": "refuse_once"}
 
 HELP = """\
 /new [incognito] [local]   start a new conversation
@@ -49,8 +49,8 @@ HELP = """\
 /notify [@clients] <text>  send yourself a notification
 /model [provider:model | default]   this conversation's model
 /tools [<pack> [on|off]]   the special tools of this conversation (listed; or switch one)
-/level [<n>|follow]        the auto level of this conversation: how much Clara may do without asking
-/approvals                 requests waiting      /allow|/always|/refuse|/never <id>  answer one
+/mode [<name>|follow]      the mode of this conversation: what Clara may use, and what she does without asking
+/approvals                 requests waiting      /allow|/refuse <id>  answer one
 /undo                      revert Clara's last workspace change
 /quit                      leave"""
 
@@ -262,10 +262,7 @@ def describe_event(event: dict) -> str | None:
         return f"\a⚠ {event.get('title')}: {event['text']}"
     if kind == "approval":
         approval = event["payload"]["approval"]
-        return (
-            f"\a🔐 Clara asks: {approval['summary']} [{approval['level']}] — /allow {approval['id']}, "
-            f"/always {approval['id']}, /refuse {approval['id']} or /never {approval['id']}"
-        )
+        return f"\a🔐 Clara asks: {approval['summary']} [{approval['level']}] — /allow {approval['id']} or /refuse {approval['id']}"
     return None
 
 
@@ -352,7 +349,7 @@ class Chat:
 
     def answer_inline(self, approval: dict) -> None:
         print(f"\n  🔐 {approval['summary']} [{approval['level']}; {approval['reason']}]")
-        choice = input("  Allow? [o]nce, [a]lways, [r]efuse, [n]ever, Enter: decide later > ").strip().lower()
+        choice = input("  Allow? [o]nce, [r]efuse, Enter: decide later > ").strip().lower()
         if choice[:1] in ANSWERS:
             try:
                 settled = self.api.post(f"/v1/approvals/{approval['id']}/decide", {"answer": ANSWERS[choice[:1]]})
@@ -480,18 +477,13 @@ def command(chat: Chat, line: str) -> bool:
             print(f"Default: {models['default']}\n" + "\n".join(f"  {m['ref']}" for m in models["models"]))
     elif name == "/tools":
         print(tools_text(chat, argument))
-    elif name == "/level":
-        print(level_text(chat, argument))
+    elif name == "/mode":
+        print(mode_text(chat, argument))
     elif name == "/approvals":
         found = api.get("/v1/approvals", status="pending")["approvals"]
         print("\n".join(f"#{a['id']} [{a['level']}] {a['summary']}" for a in found) or "Nothing waits.")
-    elif name in ("/allow", "/always", "/refuse", "/never") and argument.isdigit():
-        answer = {
-            "/allow": "allow_once",
-            "/always": "allow_always",
-            "/refuse": "refuse_once",
-            "/never": "refuse_always",
-        }[name]
+    elif name in ("/allow", "/refuse") and argument.isdigit():
+        answer = {"/allow": "allow_once", "/refuse": "refuse_once"}[name]
         print(f"#{argument}: {api.post(f'/v1/approvals/{argument}/decide', {'answer': answer})['status']}")
     elif name == "/undo":
         print(api.post("/v1/workspace/undo", {}).get("message", "Done."))
@@ -500,30 +492,29 @@ def command(chat: Chat, line: str) -> bool:
     return True
 
 
-def level_text(chat: Chat, argument: str) -> str:
-    """The auto level of this conversation, after setting it if asked (`follow`: it has none of its own again). A conversation
-    not started yet is started at that level."""
+def mode_text(chat: Chat, argument: str) -> str:
+    """The mode of this conversation, after setting it if asked (`follow`: it has none of its own again). A conversation
+    not started yet is started in that mode."""
     api = chat.api
-    ladder = api.get("/v1/levels")
-    wanted: int | None = None
+    listing = api.get("/v1/modes")
+    names = [item["name"] for item in listing["modes"]]
+    wanted: str | None = None
     if argument:
-        if argument.lower() != "follow" and not (argument.isdecimal() and int(argument) <= ladder["top"]):
-            names = ", ".join(f"{level['position']} {level['name']}" for level in ladder["levels"])
-            return f"A level is {names}, or follow."
-        wanted = None if argument.lower() == "follow" else int(argument)
+        match = next((name for name in names if name.lower() == argument.lower()), None)
+        if argument.lower() != "follow" and match is None:
+            return f"A mode is {', '.join(names)}, or follow."
+        wanted = None if argument.lower() == "follow" else match
         if chat.conversation:
-            api.put(f"/v1/conversations/{chat.conversation}/level", {"level": wanted})
+            api.put(f"/v1/conversations/{chat.conversation}/mode", {"mode": wanted})
         elif wanted is not None:  # « follow » on a conversation not started yet: nothing to change, nothing to start
             chat.conversation = api.post(
                 "/v1/conversations",
-                {"incognito": chat.incognito, "local_only": chat.local_only, "auto_level": wanted},
+                {"incognito": chat.incognito, "local_only": chat.local_only, "mode": wanted},
             )["id"]
     if not chat.conversation:
-        names = {level["position"]: level["name"] for level in ladder["levels"]}
-        default = ladder["defaults"]["chat"]
-        return f"Not started: it will run at the default, level {default} ({names[default]}). /level <n> starts it at another."
-    found = api.get(f"/v1/conversations/{chat.conversation}/level")
-    return f"Level {found['level']} ({found['name']}), from {found['source']}. /level <n> or /level follow changes it."
+        return "Not started: it will run in the default mode. /mode <name> starts it in another."
+    found = api.get(f"/v1/conversations/{chat.conversation}/mode")
+    return f"Mode {found['mode']}, from {found['source']}. /mode <name> or /mode follow changes it. Modes: {', '.join(names)}."
 
 
 def tools_text(chat: Chat, argument: str) -> str:

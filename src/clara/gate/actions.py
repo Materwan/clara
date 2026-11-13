@@ -1,11 +1,11 @@
 """What the gate decides about: an *action*, which every tool call is described as before it runs.
 
-An action has a tool, a level (read, write, destructive), an action class (which gives the default when no rule
-matches), its targets, and a one-line summary you read in an approval request.
+An action has a tool, a level (read, write, destructive), an action class (which modes give a verdict to), its
+targets, and a one-line summary you read in an approval request.
 
 Targets name what is touched, with a prefix:
 
-    ws:<path>          a workspace path            (a rule may leave the prefix out: `scratch/**`)
+    ws:<path>          a workspace path            (a line of a mode may leave the prefix out: `scratch/**`)
     github:<owner/repo>                            drive:<file id>          vault:<note path>
     mail:gmail             a mailbox (read, draft)   mail:to:<address>   one recipient of a message to send
     school:moodle          Moodle or Auriga (read)   school:auriga
@@ -16,8 +16,9 @@ Targets name what is touched, with a prefix:
     discord            a thread of your Discord server
     deferred           the calls Clara booked to run later
 
-What happens to a class of action when no rule matches is the level of the conversation (gate/levels.py): each tool is
-refused, asked or run according to it, and CLASSES says where the tools of a class start (the owner may change any tool).
+What happens to an action is the verdict of its conversation's mode (gate/modes.py): each tool is approved, asked or
+refused according to it. CLASSES lists the classes; their thresholds are what the default level 3 did, and the built-in
+default mode (gate/modes.py) is made from them.
 """
 
 from __future__ import annotations
@@ -30,14 +31,13 @@ LEVELS = ("read", "write", "destructive")
 EFFECTS = ("allow", "ask", "refuse")
 STRICTNESS = {"allow": 0, "ask": 1, "refuse": 2}
 MODES = ("interactive", "unattended")
-SITUATIONS = ("interactive", "unattended", "tainted")
 
-# The five built-in levels of the ladder between « no tool » and « everything » (gate/levels.py keeps the ladder itself, which the
-# owner may extend); a class is tied to them by key so that its default follows a level that was renamed or moved
+# The five built-in levels of the ladder the modes replaced (2026-11-13): « no tool » to « everything ». A class is tied to them by
+# key; the built-in default mode and `clara mode import-legacy` read the thresholds of CLASSES at these levels
 LEVEL_KEYS = ("none", "trusted_read", "any_read", "files_vault", "mail", "all")
 
-# class -> (the level key a tool of the class starts to ask at, the level key it starts to run at, what it is). Below the first it is
-# refused; the owner changes the thresholds of any tool on the Auto mode page.
+# class -> (the level key a tool of the class started to ask at, the level key it started to run at, what it is). Below the first it was
+# refused. Only the built-in default mode and the legacy import read the first two; a mode gives verdicts to classes directly.
 CLASSES: dict[str, tuple[str, str, str]] = {
     "read": ("trusted_read", "trusted_read", "Read the workspace, projects, the vault, memory, files sent"),
     "memory": ("any_read", "files_vault", "Clara's own records: facts, reminders, tasks, notifications, forms"),
@@ -98,14 +98,15 @@ CLASSES: dict[str, tuple[str, str, str]] = {
         "Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat",
     ),
 }
-# Classes of a web chat only: a run nobody watches has no browser to answer them, so no level and no rule opens them
+# Classes of a web chat only: a run nobody watches has no browser to answer them, so no mode opens them
 CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
 # Classes an approval card may allow for the rest of its conversation ("Allow for this conversation")
 FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
 # Classes whose requests are not published as events: their summary names a file of the person's computer, which must
 # not reach Discord's #approval or another client; the web chat shows them on its turn
 NOT_PUBLISHED = frozenset({"folder_sensitive"})
-# Classes raised to at least `ask` in a tainted turn (one that read untrusted content), when the rule is on
+# Classes the tainted-turn rule raised to at least `ask` (a turn that read untrusted content): the built-in default mode gives
+# them an `(if tainted)` verdict of at least `ask`
 RAISED_WHEN_TAINTED = frozenset(
     {
         "github_write",
@@ -198,10 +199,9 @@ class Situation:
     mode: str  # interactive (a chat) or unattended (a schedule, a reminder, a follow-up)
     tainted: bool = False  # the turn read untrusted content (a web page, a fetched file, an issue…)
     local_only: bool = False  # a local-only conversation: nothing may leave the person's machines
-    # The auto level of the conversation (gate/levels.py). Toolbox.call fills it from the conversation at every call; a Situation
-    # built by hand (the rule tester without a level, a record in the audit log) leaves None, which Gate.level_of reads as the
-    # default level of the mode, not as the level of any conversation.
-    level: int | None = None
+    # The name of the conversation's mode (gate/modes.py). Toolbox.call fills it from the conversation at every call; a Situation
+    # built by hand (the mode tester without one, a record in the audit log) leaves None: the default mode decides.
+    mode_name: str | None = None
 
     def describe(self) -> str:
         return f"{self.mode}{', tainted' if self.tainted else ''}{', local only' if self.local_only else ''}"
@@ -258,7 +258,6 @@ def literal_length(pattern: str) -> int:
 class Decision:
     effect: str
     reason: str
-    rule_id: int | None = None
     floor: bool = False
-    raised: tuple[str, ...] = field(default=())  # why it was raised to ask (tainted turn, secret-looking content)
-    by_level: bool = False  # the level of the conversation refused it: no rule can change that
+    raised: tuple[str, ...] = field(default=())  # why it was raised to ask (secret-looking content)
+    by_mode: bool = False  # the mode of the conversation refused it: nothing opens it but another mode

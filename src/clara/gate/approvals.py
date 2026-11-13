@@ -6,9 +6,10 @@
                  Unattended, the turn never waits: you are alerted and the run goes on without it.
     pushed       a request still waiting after a minute is pushed to your other clients (Discord's #approval, with buttons…);
                  not a local-only one: Discord is outside the machine, so it goes to the other clients only
-    answered     allow once / allow always / refuse once / refuse always, and allow for this conversation (a hidden or
-                 ignored file of a folder on your computer). The two "always" answers write a rule, so the rule list only
-                 grows through your decisions. An allowed action runs exactly as it was frozen.
+    answered     allow once / refuse once, and allow for this conversation (a hidden or ignored file of a folder on your
+                 computer); the web site's « Approve all next » (grants.py) allows once and the next calls of that tool.
+                 No answer writes a rule: what runs without a card is the conversation's mode (modes.py), which only a
+                 token that may answer everything changes. An allowed action runs exactly as it was frozen.
                  If no turn is waiting for it any more, a short follow-up turn tells Clara how it ended (not for a booked
                  call: its answer starts no turn and Clara is not told).
     expired      after 24 hours nobody answered: it is not done, and Clara is told at her next turn there.
@@ -35,9 +36,7 @@ from ..events import TARGETS, Events
 from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .actions import FOR_A_CONVERSATION, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
-from .grants import GRANTABLE
 from .outside import plain
-from .rules import RuleError, Rules, check_fields
 
 if TYPE_CHECKING:
     from ..ops.alerts import Alerts
@@ -46,7 +45,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-ANSWERS = ("allow_once", "allow_always", "refuse_once", "refuse_always", "allow_conversation")
+ANSWERS = ("allow_once", "refuse_once", "allow_conversation")
 PUSH_AFTER = 60  # seconds a request from a chat waits before it is pushed to your other clients
 KEEP_DAYS = 30  # finished requests are kept this long (the audit log keeps the decisions longer)
 FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
@@ -78,10 +77,6 @@ class ApprovalError(ValueError):
 
 class AlreadyAnswered(ApprovalError):
     pass
-
-
-class NoRuleError(ApprovalError):
-    """An "always" answer whose rule cannot be written: the request stays pending, to be answered once."""
 
 
 @dataclass(frozen=True)
@@ -130,10 +125,8 @@ class Approval:
 
     @property
     def grantable(self) -> bool:
-        """Can « Approve all next » be pressed on this request? (a chat's workspace or vault change)"""
-        return (
-            bool(self.conversation_id) and self.action_class in GRANTABLE and self.situation.startswith("interactive")
-        )
+        """Can « Approve all next » be pressed on this request? (any request of a chat)"""
+        return bool(self.conversation_id) and self.situation.startswith("interactive")
 
     @property
     def local_only(self) -> bool:
@@ -202,7 +195,6 @@ class Approvals:
         self,
         db: Database,
         events: Events,
-        rules: Rules,
         audit: Audit,
         alerts: Alerts | None = None,
         *,
@@ -211,7 +203,6 @@ class Approvals:
     ):
         self.db = db
         self.events = events
-        self.rules = rules
         self.audit = audit
         self.alerts = alerts
         self.expire_after = expire_after
@@ -386,21 +377,10 @@ class Approvals:
                 f"The token {token.name} may not answer {approval.level} requests: answer it from the web or the console."
             )
         allow = answer.startswith("allow")
-        effect = "allow" if allow else "refuse"
         if answer == "allow_conversation" and (
             approval.action_class not in FOR_A_CONVERSATION or self.allowances is None or not approval.conversation_id
         ):
             raise ApprovalError("This request cannot be allowed for the conversation: allow it once instead.")
-        if answer == "allow_always" and approval.action_class in FOR_A_CONVERSATION:
-            # a rule for `folder:.env` would let every folder opened later read its own `.env`: one conversation at most
-            raise ApprovalError("This request cannot be allowed for good: allow it once, or for the conversation.")
-        if answer.endswith("_always"):  # before the answer is committed: a rule that cannot be made leaves it pending
-            try:
-                check_fields(effect, approval.tool.strip(), approval.target.strip(), "", approval.level.strip())
-            except RuleError as error:
-                raise NoRuleError(
-                    f"Request #{approval_id} cannot be remembered as a rule: {error} Answer allow_once or refuse_once."
-                ) from None
         changed = self.db.execute(
             "UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, answer = ? WHERE id = ? AND status = 'pending'",
             ("approved" if allow else "denied", now_iso(), token.name, answer, approval_id),
@@ -409,21 +389,6 @@ class Approvals:
             raise AlreadyAnswered(f"Request #{approval_id} was answered a moment ago.")
         if answer == "allow_conversation" and self.allowances is not None:
             self.allowances.add(approval.conversation_id, approval.tool, approval.target, approval_id)
-        if answer.endswith("_always"):
-            try:
-                rule = self.rules.add(
-                    effect,
-                    tool=approval.tool,
-                    target=approval.target,
-                    level=approval.level,
-                    origin="approval",
-                    note=f"from request #{approval_id}",
-                )
-                self.db.execute("UPDATE approvals SET rule_id = ? WHERE id = ?", (rule.id, approval_id))
-            except Exception:  # the answer is already given: it is carried out, and the rule is the only thing lost
-                log.exception(
-                    "request #%s: the rule could not be written; the answer applies to this request only", approval_id
-                )
         waiter = self._waiters.get(approval_id)
         if waiter is not None and not waiter.done():
             waiter.set_result(answer)  # the chat that asked runs it (or not) and tells the model itself
@@ -477,7 +442,7 @@ class Approvals:
         )
         approval = self.get(approval_id)
         if approval is not None:
-            row = self.db.one("SELECT args_digest, rule_id FROM approvals WHERE id = ?", (approval_id,))
+            row = self.db.one("SELECT args_digest FROM approvals WHERE id = ?", (approval_id,))
             action = Action(
                 approval.tool,
                 approval.level,
@@ -494,7 +459,7 @@ class Approvals:
                 action,
                 situation,
                 row["args_digest"],
-                Decision("ask", approval.answer or status, row["rule_id"]),
+                Decision("ask", approval.answer or status),
                 status,
                 conversation_id=approval.conversation_id,
                 turn_id=approval.turn_id,

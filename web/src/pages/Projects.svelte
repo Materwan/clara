@@ -3,14 +3,13 @@
   import Choice from '../components/Choice.svelte';
   import Facts from '../components/Facts.svelte';
   import Icon from '../components/Icon.svelte';
-  import LevelSelect from '../components/LevelSelect.svelte';
+  import ModeSelect from '../components/ModeSelect.svelte';
   import PackCards from '../components/PackCards.svelte';
   import Wizard from '../components/Wizard.svelte';
   import { api, fileToBase64, size, when } from '../lib/api';
   import { excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
-  import { ladder } from '../lib/levels.svelte';
-  import { keptNote } from '../lib/memory';
+    import { keptNote } from '../lib/memory';
   import { conversations as history, go, route, toast } from '../lib/state.svelte';
 
   // A project is made in steps, as an automation is: what it is, where its files come from, and the special tools its new conversations
@@ -19,7 +18,7 @@
   const STEPS = [
     { id: 'basics', label: 'Basics', title: 'What the project is', lead: 'A name to find it by, a line on what it is for, and what Clara should always keep in mind in its conversations.' },
     { id: 'content', label: 'Content', title: 'Where its files come from', lead: 'Files given once. They go whole in the prompt when they fit, else Clara searches and reads them. More can be added on the project page at any time.' },
-    { id: 'tools', label: 'Tools', title: 'Special tools of its conversations', lead: 'A new conversation in this project starts with the tools you switch on here. The “+” menu of a conversation can still change them, and the rules still decide each call.' },
+    { id: 'tools', label: 'Tools', title: 'Special tools of its conversations', lead: 'A new conversation in this project starts with the tools you switch on here. The “+” menu of a conversation can still change them, and the mode still decides each call.' },
     { id: 'review', label: 'Review', title: 'Review', lead: '' },
   ];
   const SOURCES = [
@@ -174,12 +173,12 @@
     toast('Saved.', 'ok');
   }
 
-  /** The auto level its conversations follow (null: the default). */
-  async function setLevel(value: number | null): Promise<void> {
+  /** The mode its conversations follow (null: the default). */
+  async function setMode(value: string | null): Promise<void> {
     try {
-      await api.put(`/v1/projects/${id}/level`, { level: value });
-      project.auto_level = value;
-      toast('Saved: the conversations of this project that follow it now run at this level.', 'ok');
+      await api.put(`/v1/projects/${id}/mode`, { mode: value });
+      project.mode = value;
+      toast('Saved: the conversations of this project that follow it now run in this mode.', 'ok');
     } catch (error) {
       toast((error as Error).message, 'error');
     }
@@ -392,8 +391,8 @@
     </div>
     <div class="panel stack">
       <div class="row">
-        <span class="grow"><strong>Auto level</strong><br /><span class="muted small">How much Clara may do without asking in the conversations of this project that have no level of their own (the Auto mode page sets what each level allows).</span></span>
-        <LevelSelect value={project.auto_level} effective={ladder.defaults.chat} follows="the default" label="Auto level of this project" onchange={setLevel} />
+        <span class="grow"><strong>Mode</strong><br /><span class="muted small">What Clara may do without asking, and the special tools switched on, in the conversations of this project that have no mode of their own (the <a href="#/modes">Modes</a> page sets what each mode allows).</span></span>
+        <ModeSelect value={project.mode} effective={project.mode ?? 'default'} follows="the default" label="Mode of this project" onchange={setMode} />
       </div>
     </div>
     <div class="panel stack">

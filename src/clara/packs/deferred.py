@@ -6,14 +6,14 @@ deferred_cancel                        memory, write, target deferred
 
 The request to book shows the whole call (what the tool says it would do, its arguments) and its date, and is frozen
 with these arguments: you allow that exact call once. At the due time the server runs it by itself with the saved
-arguments, no model turn and no conversation open (timekeeping/deferred.py). The rules are asked again then (a refusing
-rule, the floor and the local-only rule still stop it; a rule that asks makes it an ordinary request), and a call that
-now says something else than what you read is not run (`Toolbox.call_booked`).
+arguments, no model turn and no conversation open (timekeeping/deferred.py). Your answer stands for the mode's approve and
+ask then: a mode that now refuses the call, the floor and the local-only rule still stop it, and a call that now says
+something else than what you read is not run (`Toolbox.call_booked`).
 
 The pack is for chats and for the runs of automations (registry.py): a schedule lists it among its packs, a hook gets it
 when its allow-list names one of the tools. A run does not wait for the answer: its request is held for you like any
 other, and the call is booked when you allow it. A run that read untrusted content (a mail, a page) is a tainted turn,
-so its booking asks you whatever a rule says. A booked call itself never books another one (`BOOKED_NEVER`): it is run
+so its booking asks you whatever its mode says. A booked call itself never books another one (`BOOKED_NEVER`): it is run
 by the server with no model turn.
 """
 
@@ -78,7 +78,7 @@ def _arguments(value: Any) -> dict:
 
 def _booking(context: ToolContext, given: dict, *, tainted: bool) -> Booking:
     """The call as it would be booked, checked, or ToolError: the same checks before you are asked and when it is booked.
-    `tainted`: the turn that asks read untrusted content (a rule scoped to tainted turns sees the call as that turn did)."""
+    `tainted`: the turn that asks read untrusted content (the mode gives the call the verdict that turn would have had)."""
     s = context.services
     name = str(given.get("tool") or "").strip()
     if not name:
@@ -115,21 +115,22 @@ def _booking(context: ToolContext, given: dict, *, tainted: bool) -> Booking:
     # what the gate will say at the due time (nobody there, you have allowed it): said now, not after you allowed it
     later = s.gate.decide(
         action,
-        Situation("unattended", tainted=tainted, local_only=context.turn.local_only),
-        count_hit=False,
+        Situation(
+            "unattended",
+            tainted=tainted,
+            local_only=context.turn.local_only,
+            mode_name=s.modes.resolve(context.turn.conversation_id),
+        ),
         approved=True,
     )
     if later.effect == "refuse":
         raise ToolError(f"This call would be refused when it is due ({later.reason}), so it is not booked.")
     when = local_text(due, zone(zone_name))
     lines = [
-        f"Run the tool {name} on {when} ({zone_name}), by itself: no conversation is open then, and nothing asks you "
-        + ("again." if later.effect == "allow" else "again, except the rule that asks about it (see below).")
+        f"Run the tool {name} on {when} ({zone_name}), by itself: no conversation is open then, and nothing asks you again."
     ]
     lines.append(f"What it would do: {action.summary}")
     lines.append(f"Arguments: {json.dumps(arguments, ensure_ascii=False, sort_keys=True)}")
-    if later.effect == "ask":
-        lines.append(f"A rule of yours asks about this call ({later.reason}): you will be asked again when it is due.")
     text = "\n".join(lines)
     # the request shows the whole call or it is not booked: a request the approval would cut short is not made
     if len(text) > SUMMARY_FULL["deferred"]:

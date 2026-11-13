@@ -5,7 +5,7 @@
   import { live, session, toast } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
 
-  // allowGrant: only the chat that shows the request can offer « Approve all next » (it keeps its banner and its beat)
+  // allowGrant: only the chat that shows the request can offer « Approve all next » (it keeps its banner)
   let { approval, allowGrant = false }: { approval: any; allowGrant?: boolean } = $props();
   let answered = $state<string | null>(null);
   // What the server says about it now: this card is drawn once, but the request may be answered from another client
@@ -13,7 +13,7 @@
   const verdict = $derived(live.settled[approval.id] ?? approval);
   const status = $derived(answered ?? verdict.status ?? 'pending');
   const elsewhere = $derived(answered === null && status !== 'pending' && verdict.decided_by ? verdict : null);
-  const WORDS: Record<string, string> = { allow_once: 'Allowed', allow_always: 'Always allowed', allow_conversation: 'Allowed for this conversation', refuse_once: 'Refused', refuse_always: 'Always refused' };
+  const WORDS: Record<string, string> = { allow_once: 'Allowed', allow_conversation: 'Allowed for this conversation', refuse_once: 'Refused' };
   let busy = $state(false);
 
   async function answer(choice: string): Promise<void> {
@@ -59,12 +59,10 @@
       <div class="row">
         <button class="primary small" disabled={busy} onclick={() => answer('allow_once')}>Allow once</button>
         {#if grantable}<button class="small" disabled={busy} onclick={approveAll}
-          title="Allow this and the next {approval.tool} requests of this conversation without asking, until you leave this page, press Stop, or a limit set in Admin > Settings is reached">Approve all next</button>{/if}
+          title="Allow this, and the next times {approval.tool} asks: this conversation only, for 30 minutes (or until you press Stop)">Approve all next</button>{/if}
         {#if approval.class === 'folder_sensitive'}<button class="small" disabled={busy} onclick={() => answer('allow_conversation')}
           title="Allow Clara to read this file again for the rest of this conversation (other files are asked for again)">Allow for this conversation</button>{/if}
-        {#if approval.class !== 'folder_sensitive'}<button class="small" disabled={busy} onclick={() => answer('allow_always')}>Allow always</button>{/if}
         <button class="small" disabled={busy} onclick={() => answer('refuse_once')}>Refuse once</button>
-        <button class="small danger" disabled={busy} onclick={() => answer('refuse_always')}>Refuse always</button>
       </div>
     {:else}
       <p class="muted small">This token may not answer {approval.level} requests.</p>

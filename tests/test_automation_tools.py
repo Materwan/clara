@@ -11,6 +11,7 @@ from clara.packs import PACKS
 from clara.packs.automations import automation_tools
 from clara.tools.base import ToolContext, TurnState
 from fakes import calls
+from modeset import at_level, default, line
 
 NAMES = {"automation_list", "automation_create", "automation_update", "automation_delete"}
 LATER = "2099-01-05T09:00"
@@ -21,8 +22,8 @@ HOOK = {"kind": "hook", "name": "Invoices", "on": "mail.received", "prompt": "Ad
 
 @pytest.fixture(autouse=True)
 def level_four(services):
-    """The automation tools ask from level 4 (and run from 5): a chat here is at level 4."""
-    services.runtime.set("auto_level_default", 4)
+    """The automation tools ask in the default mode here (what the old level 4 did)."""
+    at_level(services, 4)
 
 
 def context(services, **turn) -> ToolContext:
@@ -34,8 +35,9 @@ async def call(services, name: str, arguments: dict, **turn):
 
 
 def allow(services, *tools: str) -> None:
+    """A mode that approves these tools, but asks about them in a tainted turn."""
     for tool in tools:
-        services.rules.add("allow", tool=tool)
+        default(services, line("approve", tool, tainted="ask"))
 
 
 def asked(services) -> list:
@@ -97,14 +99,12 @@ async def test_a_creation_asks_and_makes_nothing_until_you_allow_it(services):
     assert [(item.name, item.repeat, item.packs, item.enabled) for item in made] == [("Weekly review", "weekly", ("web",), True)]
 
 
-async def test_allow_always_writes_a_rule_that_makes_the_next_one_silent(services):
+async def test_an_answer_makes_no_rule_so_the_next_one_asks_again(services):
     first = await call(services, "automation_create", SCHEDULE)
     tester = services.tokens.create("tester", "cli")[0]
-    await services.approvals.decide(first.approval.id, "allow_always", tester)
-    rule = services.rules.list()[0]
-    assert (rule.effect, rule.tool, rule.target) == ("allow", "automation_create", "automations")
+    await services.approvals.decide(first.approval.id, "allow_once", tester)
     second = await call(services, "automation_create", {**SCHEDULE, "name": "Another"})
-    assert second.ran and len(services.schedules.listing()) == 2
+    assert second.approval is not None and not second.ran and len(services.schedules.listing()) == 1
 
 
 async def test_the_request_shows_the_whole_prompt(services):
@@ -114,12 +114,13 @@ async def test_the_request_shows_the_whole_prompt(services):
 
 
 async def test_unattended_it_is_refused_and_asks_nothing(services):
+    at_level(services, 3)  # the default mode: an automation is not made by a run
     result = await call(services, "automation_create", SCHEDULE, mode="unattended")
     assert result.text.startswith("Refused") and result.approval is None
     assert services.schedules.listing() == [] and asked(services) == []
 
 
-async def test_a_rule_can_allow_it_but_a_tainted_turn_asks_whatever_the_rule_says(services):
+async def test_a_mode_can_approve_it_but_a_tainted_turn_asks_when_the_mode_says_so(services):
     allow(services, "automation_create")
     clean = await call(services, "automation_create", SCHEDULE)
     assert clean.ran and clean.text.startswith("Created. schedule ") and len(services.schedules.listing()) == 1

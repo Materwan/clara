@@ -71,6 +71,8 @@ const MOVED = new Map([
   ['schedules', '/automation'],
   ['workspace', '/library'],
   ['vault', '/library?view=vault'],
+  ['rules', '/modes'],
+  ['auto-mode', '/modes'],
 ]);
 
 /** The hash of an old address as the page that replaced it is addressed now. */

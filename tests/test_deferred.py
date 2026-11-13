@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from clara.agent.turn import ChatRequest
+from clara.gate import Decision, Situation
 from clara.gate.actions import Action
 from clara.packs import PACKS
 from clara.packs.deferred import deferred_tools
@@ -16,6 +17,7 @@ from clara.timekeeping.deferred import KEEP_DAYS, MAX_PENDING
 from clara.timeutil import iso
 from clara.tools.base import Tool, ToolContext, ToolError, TurnState
 from fakes import calls
+from modeset import at_level, default, line
 
 NAMES = {"deferred_book", "deferred_list", "deferred_cancel"}
 SOON = "2026-11-02T09:00"  # 08:00 UTC: Paris is back on winter time
@@ -32,11 +34,24 @@ class Clock:
 
 @pytest.fixture(autouse=True)
 def clock(services):
-    """The booked calls' own clock, and a chat at level 4 (booking asks from level 2 and runs at the last level)."""
+    """The booked calls' own clock, and a default mode where booking asks (what the old level 4 did) and the probe runs."""
     clock = Clock("2026-10-31T12:00")
     services.deferred._clock = clock
-    services.runtime.set("auto_level_default", 4)
+    at_level(services, 4)
     return clock
+
+
+def held_when_due(services) -> None:
+    """The runner of a call booked before the modes, whose rule asked at the due time: it hands back an ordinary request. (A mode's
+    ask no longer asks again: the booking was the answer.)"""
+
+    async def runner(booked):
+        ctx = ToolContext(services, TurnState(f"deferred-{booked.id}", booked.conversation_id or "", "server", mode="unattended", timezone=booked.timezone))
+        action = services.toolbox.action(booked.tool, ctx, booked.arguments)
+        request = services.approvals.create(action, Situation("unattended"), ctx, booked.arguments, Decision("ask", "a rule asked"))
+        return "held", f"A rule asks about this call: request #{request.id} waits for your answer.", request.id
+
+    services.deferred.runner = runner
 
 
 class Probe:
@@ -154,8 +169,8 @@ async def test_a_run_books_a_call_and_it_waits_for_you_like_any_request(services
     assert (booked.tool, booked.arguments, booked.status) == ("probe", {"x": 1}, "pending")
 
 
-async def test_a_run_that_read_untrusted_content_is_asked_whatever_a_rule_says(services, probe):
-    services.rules.add("allow", tool="deferred_book")
+async def test_a_run_that_read_untrusted_content_is_asked_whatever_the_mode_says_when_tainted(services, probe):
+    default(services, line("approve", "deferred_book", tainted="ask"))
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON}, mode="unattended", tainted=True)
     assert result.approval is not None and result.approval.status == "pending"
 
@@ -212,8 +227,9 @@ async def test_a_call_too_long_for_the_request_is_not_booked(services):
     assert services.deferred.listing() == []
 
 
-async def test_a_rule_for_tainted_turns_refuses_a_booking_made_in_one(services, probe):
-    services.rules.add("refuse", tool="probe", situation="tainted")
+async def test_a_mode_that_refuses_when_tainted_refuses_a_booking_made_in_one(services, probe):
+    default(services, line("approve", "probe", tainted="refuse"))
+    assert (await call(services, "deferred_book", {"tool": "probe", "at": SOON})).approval is not None  # not tainted: it can be booked
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON}, tainted=True)
     assert result.approval is None and "would be refused when it is due" in result.text
 
@@ -268,8 +284,8 @@ async def test_a_tool_the_chat_is_not_offered_cannot_be_booked(services):
     assert result.approval is None and "not offered in this conversation" in result.text
 
 
-async def test_a_call_a_rule_refuses_is_not_booked(services, probe):
-    services.rules.add("refuse", tool="probe")
+async def test_a_call_a_mode_refuses_is_not_booked(services, probe):
+    default(services, line("refuse", "probe"))
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON})
     assert result.approval is None and "would be refused when it is due" in result.text
 
@@ -284,10 +300,15 @@ async def test_in_a_local_only_chat_a_call_that_leaves_the_machine_is_not_booked
     assert result.approval is None and "refused when it is due" in result.text
 
 
-async def test_a_rule_that_asks_is_said_in_the_request(services, probe):
-    services.rules.add("ask", tool="probe")
+async def test_a_mode_that_asks_about_the_call_does_not_ask_again_when_it_is_due(services, clock, probe):
+    """The request is the approval: the mode's ask, approve and (if tainted) ask have nothing more to say at the due time."""
+    default(services, line("ask", "probe", tainted="ask"))
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON})
-    assert "you will be asked again when it is due" in result.approval.summary
+    assert "asked again" not in result.approval.summary and "asks you" not in result.approval.summary.replace("nothing asks you again", "")
+    await services.approvals.decide(result.approval.id, "allow_once", owner(services))
+    clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
+    await fire(services)
+    assert len(probe.ran) == 1 and services.approvals.list("pending") == []
 
 
 async def test_a_request_that_changed_before_you_allowed_it_books_nothing(services, probe):
@@ -309,24 +330,25 @@ async def test_allowing_after_the_date_has_passed_books_nothing(services, clock,
 # ----------------------------------------------------------------------
 # What asks, and what does not
 # ----------------------------------------------------------------------
-async def test_an_allow_rule_books_without_asking_but_a_tainted_turn_asks_anyway(services, probe):
-    services.rules.add("allow", tool="deferred_book")
+async def test_a_mode_that_approves_books_without_asking_but_a_tainted_turn_asks_when_it_says_so(services, probe):
+    default(services, line("approve", "deferred_book", tainted="ask"))
     quiet = await call(services, "deferred_book", {"tool": "probe", "at": SOON})
     assert quiet.ran and quiet.approval is None and len(services.deferred.listing()) == 1
     tainted = await call(services, "deferred_book", {"tool": "probe", "at": SOON}, tainted=True)
     assert tainted.approval is not None and len(services.deferred.listing()) == 1
 
 
-async def test_the_last_level_books_without_asking(services, probe):
-    services.runtime.set("auto_level_default", 5)
+async def test_a_mode_that_approves_everything_books_without_asking(services, probe):
+    at_level(services, 5)
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON})
     assert result.ran and result.approval is None
     [booked] = services.deferred.listing()
     assert booked.approval_id is None
 
 
-async def test_below_the_first_asking_level_it_is_refused(services, probe):
-    services.runtime.set("auto_level_default", 1)
+async def test_a_mode_that_refuses_booking_refuses_it(services, probe):
+    at_level(services, 1)
+    default(services, line("approve", "probe"))  # the call itself is allowed: it is the booking that the mode refuses
     result = await call(services, "deferred_book", {"tool": "probe", "at": SOON})
     assert result.text.startswith("Refused") and services.deferred.listing() == []
 
@@ -406,27 +428,32 @@ async def test_a_call_that_now_says_something_else_is_not_run(services, clock, p
     assert notice.title == "Booked call not run"
 
 
-async def test_a_rule_that_refuses_stops_it_when_it_is_due(services, clock, probe):
+async def test_a_mode_that_refuses_stops_it_when_it_is_due(services, clock, probe):
     booked = await book(services)
-    services.rules.add("refuse", tool="probe")
+    default(services, line("refuse", "probe"))
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     stopped = services.deferred.get(booked.id)
-    assert stopped.status == "refused" and "your rules refuse this" in stopped.result and probe.ran == []
+    assert stopped.status == "refused" and "mode default refuses probe" in stopped.result and probe.ran == []
 
 
-async def test_the_level_and_a_tainted_turn_do_not_stop_what_you_allowed(services, clock, probe):
-    """The request is the approval: a level that would refuse or ask the tool now has nothing to say."""
-    await book(services, "probe", tainted=False)
-    services.runtime.set("auto_level_unattended", 1)
+async def test_a_mode_that_now_asks_does_not_stop_what_you_allowed_but_one_that_refuses_does(services, clock, probe):
+    """The request is the approval: a mode that would ask about the tool now has nothing to say. A refusal is final."""
+    first = await book(services, "probe", tainted=False)
+    default(services, line("ask", "probe", tainted="refuse"))
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
-    assert len(probe.ran) == 1
+    assert len(probe.ran) == 1 and services.deferred.get(first.id).status == "done"
+    later = await book(services, "probe", at="2026-11-04T09:00", tainted=False)
+    default(services, line("refuse", "probe"))
+    clock.now = datetime(2026, 11, 4, 8, 1, tzinfo=UTC)
+    await fire(services)
+    assert len(probe.ran) == 1 and services.deferred.get(later.id).status == "refused"
 
 
-async def test_a_rule_that_asks_makes_it_an_ordinary_request(services, clock, probe):
+async def test_a_held_call_waits_on_an_ordinary_request(services, clock, probe):
     booked = await book(services)
-    services.rules.add("ask", tool="probe")
+    held_when_due(services)
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     held = services.deferred.get(booked.id)
@@ -444,7 +471,7 @@ async def test_a_rule_that_asks_makes_it_an_ordinary_request(services, clock, pr
 
 async def test_refusing_the_request_ends_it_refused(services, clock, probe):
     booked = await book(services)
-    services.rules.add("ask", tool="probe")
+    held_when_due(services)
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     request_id = services.deferred.get(booked.id).request_id
@@ -456,7 +483,7 @@ async def test_refusing_the_request_ends_it_refused(services, clock, probe):
 
 async def test_an_unanswered_request_expires_the_call(services, clock, probe):
     booked = await book(services)
-    services.rules.add("ask", tool="probe")
+    held_when_due(services)
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     request_id = services.deferred.get(booked.id).request_id
@@ -474,7 +501,7 @@ async def test_a_held_call_answered_later_starts_no_turn_and_is_not_told(service
     booking = await services.toolbox.call("deferred_book", chat, {"tool": "probe", "at": SOON}, services.toolbox.names)
     await services.approvals.decide(booking.approval.id, "allow_once", owner(services))
     booked = max(services.deferred.listing(), key=lambda item: item.id)
-    services.rules.add("ask", tool="probe")
+    held_when_due(services)
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     request_id = services.deferred.get(booked.id).request_id
@@ -655,7 +682,7 @@ async def test_the_api_has_no_way_to_book(client):
 
 async def test_the_api_says_where_a_held_call_is_answered(services, client, clock, probe):
     booked = await book(services)
-    services.rules.add("ask", tool="probe")
+    held_when_due(services)
     clock.now = datetime(2026, 11, 2, 8, 1, tzinfo=UTC)
     await fire(services)
     refused = await client.delete(f"/v1/deferred/{booked.id}")

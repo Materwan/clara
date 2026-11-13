@@ -16,9 +16,10 @@ from .connectors.auriga import lapse_phrase, lapses
 from .connectors.school import LABELS as SCHOOL_LABELS
 from .connectors.school import SECRETS as SCHOOL_SECRETS
 from .connectors.school import SITES as SCHOOL_SITES
-from .gate import ANSWERS, AlreadyAnswered, ApprovalError, LevelError, RuleError
-from .gate.levels import WHOLE
+from .gate import ANSWERS, AlreadyAnswered, ApprovalError, Line, ModeError
+from .gate.modes import NeedsConfirmation
 from .llm import NoModel, ProviderError, split_ref
+from .memory.conversations import ConversationError
 from .secrets import KNOWN_SECRETS, SecretError
 
 if TYPE_CHECKING:
@@ -239,41 +240,6 @@ def _school(s: Services, args: list[str], token: TokenInfo) -> str:
     return "\n".join(lines)
 
 
-def _rules(s: Services, args: list[str], token: TokenInfo) -> str:
-    if not args or args[0] == "list":
-        lines = [rule.line() for rule in s.rules.list()] or ["(no rules: the defaults of each action class apply)"]
-        lines.append(f"Tainted-turn rule: {'on' if s.runtime.get('tainted_rule') else 'off'}")
-        return "\n".join(lines)
-    action, *rest = args
-    try:
-        if action == "add" and rest:
-            effect, fields = rest[0], dict(part.split("=", 1) for part in rest[1:] if "=" in part)
-            unknown = set(fields) - {"tool", "target", "situation", "level", "note"}
-            if unknown:
-                return f"Unknown fields: {', '.join(sorted(unknown))} (tool= target= situation= level= note=)"
-            return f"Added {s.rules.add(effect, **fields).line()}"
-        if action in ("del", "delete") and rest:
-            return "Deleted." if s.rules.delete(int(rest[0])) else f"No rule {rest[0]}."
-        if action in ("on", "off") and rest:
-            return s.rules.update(int(rest[0]), enabled=action == "on").line()
-        if action == "test" and len(rest) >= 1:
-            from .gate import Situation
-            from .tools.base import ToolContext, TurnState
-
-            arguments = json.loads(" ".join(rest[1:]) or "{}")
-            state = TurnState(turn_id="test", conversation_id="", client="console", timezone=s.settings.timezone)
-            action_ = s.toolbox.action(rest[0], ToolContext(s, state), arguments)
-            explained = s.gate.explain(action_, Situation("interactive"))
-            return (
-                f"{action_.tool} [{action_.klass}, {action_.level}] {' '.join(action_.targets)}\n"
-                f"→ {explained['effect']} ({explained['reason']})"
-                + (f"; raised: {', '.join(explained['raised'])}" if explained["raised"] else "")
-            )
-    except (RuleError, ValueError, KeyError) as error:
-        return f"Error: {error}"
-    return "Usage: /rules [list] | add <allow|ask|refuse> tool=… target=… situation=… level=… note=… | del <id> | on|off <id> | test <tool> <json>"
-
-
 def _hook(s: Services, ref: str):
     from .triggers import TriggerError
 
@@ -366,108 +332,134 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
     return usage
 
 
-LEVEL_USAGE = (
-    "Usage: /level [list] | default [chat|unattended] <n> | conversation|project|schedule|hook <id> [<n>|follow]"
-    " | tool <name> [<class>] [<ask> <run> | reset] | add <name> [<before>] | rename <n> <name> | remove <n>"
+MODE_USAGE = (
+    "Usage: /mode [list] | show <name|default> | conversation|project|schedule|hook <id> [<name>|follow]"
+    " | new <name> [<pack,pack>] | packs <name> <pack,pack> | delete <name> [<conversations> <automation conversations> <automations> <projects>]"
+    " | verdict <name> <approve|ask|refuse> [tool=…] [class=…] [target=…] [tainted=<verdict>] | unverdict <name> [tool=…] [class=…] [target=…]"
+    " | test <tool> <json> [mode=<name>] [tainted] | import-legacy"
 )
-LEVEL_TABLES = {"conversation": "conversations", "project": "projects", "schedule": "schedules", "hook": "triggers"}
+MODE_TABLES = {"conversation": "conversations", "project": "projects", "schedule": "schedules", "hook": "triggers"}
 
 
-def _level(s: Services, args: list[str], token: TokenInfo) -> str:
-    levels = s.levels
+def _mode_text(mode) -> str:
+    lines = [f"{mode.name}: packs {', '.join(mode.packs) or '(none)'}"]
+    return "\n".join(
+        [*lines, *(f"  {line.text()}" for line in mode.lines)]
+        if mode.lines
+        else [*lines, "  (no lines: the default mode decides)"]
+    )
+
+
+def _fields(words: list[str]) -> dict[str, str]:
+    fields = dict(part.split("=", 1) for part in words if "=" in part)
+    unknown = set(fields) - {"tool", "class", "target", "tainted"}
+    if unknown:
+        raise ModeError(f"Unknown fields: {', '.join(sorted(unknown))} (tool= class= target= tainted=)")
+    return fields
+
+
+def _mode(s: Services, args: list[str], token: TokenInfo) -> str:
+    modes = s.modes
     try:
         if not args or args[0] == "list":
-            lines = [f"{level.position}  {level.name}" for level in levels.ladder()]
-            lines.append(
-                f"Default: chats {levels.label(levels.default_level('interactive'))}, "
-                f"runs nobody watches {levels.label(levels.default_level('unattended'))}"
+            return "\n".join(
+                [f"default (the file {s.settings.default_mode_file}): {len(modes.default.lines)} lines"]
+                + [
+                    f"{name}: packs {', '.join(modes.require(name).packs) or '(none)'}, {len(modes.require(name).lines)} lines, "
+                    + ", ".join(f"{count} {what.replace('_', ' ')}" for what, count in modes.uses(name).items())
+                    for name in modes.names()
+                ]
             )
-            changed = levels.overrides()
-            lines += [
-                f"  {tool}{f' ({klass})' if klass else ''}: asks from {ask}, runs from {run}"
-                for (tool, klass), (ask, run) in sorted(changed.items())
-            ]
-            return "\n".join(lines)
         action, *rest = args
-        changes = (
-            (action == "default" and rest)
-            or (action in LEVEL_TABLES and len(rest) > 1)
-            or (action == "tool" and len(rest) > 1)
-            or (action in ("add", "rename", "remove") and rest)
+        changes = action in ("new", "packs", "verdict", "unverdict", "delete", "import-legacy") or (
+            action in MODE_TABLES and len(rest) > 1
         )
         if (
             changes and token.approvals != "all"
-        ):  # a level is an answer given in advance: as for the API, only scope `all`
-            return "Error: this token may not change the auto levels: they decide what runs without your answer."
-        if action == "default" and rest:
-            which = "chat" if rest[0].isdigit() else rest.pop(0)
-            if which not in ("chat", "unattended") or not rest:
-                return LEVEL_USAGE
-            knob = "auto_level_unattended" if which == "unattended" else "auto_level_default"
-            s.runtime.set(knob, levels.check_level(int(rest[0])))
-            levels.log("default", f"{token.name} set {knob} to {levels.label(int(rest[0]))}")
-            return f"{which}: level {levels.label(int(rest[0]))}"
-        if action in LEVEL_TABLES and rest:
+        ):  # a mode is an answer given in advance: as for the API, only scope `all`
+            return "Error: this token may not change modes: they decide what runs without your answer."
+        if action == "show" and rest:
+            return _mode_text(modes.require(rest[0]))
+        if action in MODE_TABLES and rest:
             if len(rest) == 1:
-                if action == "conversation":
-                    level, source = levels.where(rest[0], levels.mode_of(rest[0]))
-                    return f"Level {levels.label(level)} (from {source})"
-                return LEVEL_USAGE
-            level = None if rest[1] == "follow" else int(rest[1])
+                if action != "conversation":
+                    return MODE_USAGE
+                name, source = modes.where(rest[0])
+                return f"Mode {name} (from {source})"
+            name = modes.check_mode(None if rest[1] == "follow" else rest[1])
             if action == "conversation":
-                s.conversations.update(rest[0], auto_level=levels.check_level(level))
+                conversation = s.conversations.update(rest[0], mode=name)
+                if s.packs is not None:
+                    s.packs.with_mode(conversation)
             else:
-                levels.set_stored(LEVEL_TABLES[action], int(rest[0]), level)
-            levels.log(
-                action,
-                f"{token.name} set the level of {action} {rest[0]} to {level if level is not None else 'follow'}",
+                modes.set_stored(MODE_TABLES[action], int(rest[0]), name)
+            modes.log(action, f"{token.name} set the mode of {action} {rest[0]} to {name or 'follow'}")
+            return f"{action} {rest[0]}: " + ("follows" if name is None else f"mode {name}")
+        if action == "new" and rest:
+            made = modes.create(rest[0], rest[1].split(",") if len(rest) > 1 else [])
+            modes.log("mode", f"{token.name} made the mode {made.name}")
+            return f"Made the mode {made.name}. /mode verdict {made.name} … adds its lines."
+        if action == "packs" and len(rest) == 2:
+            made = modes.update(rest[0], packs=[item for item in rest[1].split(",") if item])
+            modes.log("mode", f"{token.name} set the packs of the mode {made.name}")
+            return _mode_text(made)
+        if action == "verdict" and len(rest) >= 2:
+            fields = _fields(rest[2:])
+            line = Line(
+                rest[1],
+                fields.get("tool", ""),
+                fields.get("class", ""),
+                fields.get("target", ""),
+                fields.get("tainted", ""),
             )
-            return f"{action} {rest[0]}: " + ("follows" if level is None else f"level {levels.label(level)}")
-        if action == "tool" and rest:
-            tool = s.toolbox.get(rest[0])
-            if tool is None:
-                return f"No tool {rest[0]}."
-            name, words = rest[0], rest[1:]
-            klass = words.pop(0) if words and words[0] in tool.classes else None  # one of its classes, else all of them
-            where = f"{name} ({klass})" if klass else name
-            if not words:
-                return "\n".join(
-                    f"{name}{f' ({each})' if len(tool.classes) > 1 else ''}: refused below level {ask}, asks from {ask}, "
-                    f"runs from {run}"
-                    for each in ([klass] if klass else tool.classes)
-                    for ask, run in [levels.thresholds(name, each)]
+            made = modes.set_line(rest[0], line)
+            modes.log("mode", f"{token.name} set {line.text()} in the mode {made.name}")
+            return f"{made.name}: {line.text()}"
+        if action == "unverdict" and len(rest) >= 2:
+            fields = _fields(rest[1:])
+            made = modes.remove_line(rest[0], fields.get("tool", ""), fields.get("class", ""), fields.get("target", ""))
+            modes.log("mode", f"{token.name} removed a line of the mode {made.name}")
+            return _mode_text(made)
+        if action == "delete" and rest:
+            try:
+                moved = modes.delete(
+                    rest[0],
+                    dict(
+                        zip(
+                            ("conversations", "automation_conversations", "automations", "projects"),
+                            map(int, rest[1:5]),
+                        )
+                    ),
                 )
-            if words[0] == "reset":
-                levels.reset_tool(name, klass)
-                return f"{where}: back to the default of its class."
-            if len(words) < 2 or not (words[0].isdecimal() and words[1].isdecimal()):
-                return LEVEL_USAGE
-            ask, run = int(words[0]), int(words[1])
-            levels.set_tool(name, ask, run, klass or WHOLE)
-            levels.log("tool", f"{token.name} set {where} to ask from {ask}, run from {run}")
-            return f"{where}: asks from level {ask}, runs from level {run}"
-        if action == "add" and rest:
-            added = levels.add(rest[0], int(rest[1]) if len(rest) > 1 else None)
-            levels.log("ladder", f"{token.name} added level {added.position} ({added.name})")
-            return f"Added level {added.position} ({added.name})."
-        if action == "rename" and len(rest) >= 2:
-            levels.rename(int(rest[0]), " ".join(rest[1:]))
-            levels.log("ladder", f"{token.name} renamed level {rest[0]} to {' '.join(rest[1:])}")
-            return f"Level {rest[0]} is now {levels.name(int(rest[0]))}."
-        if action == "remove" and rest:
-            name = levels.name(int(rest[0]))
-            levels.remove(int(rest[0]))
-            levels.log("ladder", f"{token.name} removed level {rest[0]} ({name})")
-            return f"Removed level {rest[0]} ({name})."
-    except (LevelError, ValueError, KeyError) as error:
+            except NeedsConfirmation as error:
+                numbers = " ".join(str(count) for count in error.uses.values())
+                return f"{error}\nTo delete it: /mode delete {rest[0]} {numbers}"
+            modes.log("mode", f"{token.name} deleted the mode {rest[0]}: {moved}")
+            return f"Deleted {rest[0]}: {moved['conversations']} conversation(s), {moved['automation_conversations']} automation conversation(s), {moved['automations']} automation(s), {moved['projects']} project(s) follow the default mode."
+        if action == "test" and rest:
+            from .gate import Situation
+            from .tools.base import ToolContext, TurnState
+
+            words = [word for word in rest[1:] if word != "tainted" and not word.startswith("mode=")]
+            state = TurnState(turn_id="test", conversation_id="", client="console", timezone=s.settings.timezone)
+            tested = s.toolbox.action(rest[0], ToolContext(s, state), json.loads(" ".join(words) or "{}"))
+            named = next((word[5:] for word in rest if word.startswith("mode=") and word[5:] != "default"), None)
+            explained = s.gate.explain(
+                tested, Situation("interactive", "tainted" in rest, False, modes.check_mode(named))
+            )
+            return (
+                f"{tested.tool} [{tested.klass}, {tested.level}] {' '.join(tested.targets)}\n"
+                f"→ {explained['effect']} ({explained['reason']})"
+                + (f"; raised: {', '.join(explained['raised'])}" if explained["raised"] else "")
+            )
+        if action == "import-legacy":
+            from .app import static_tools
+            from .gate.legacy import import_legacy
+
+            return import_legacy(s.db, {tool.name: tool.classes for tool in static_tools()})
+    except (ModeError, ValueError, KeyError, ConversationError) as error:
         return f"Error: {error}"
-    return LEVEL_USAGE
-
-
-def _tainted(s: Services, args: list[str], token: TokenInfo) -> str:
-    if args and args[0] in ("on", "off"):
-        s.runtime.set("tainted_rule", args[0] == "on")
-    return f"Tainted-turn rule: {'on' if s.runtime.get('tainted_rule') else 'off'}"
+    return MODE_USAGE
 
 
 async def _approvals(s: Services, args: list[str], token: TokenInfo) -> str:
@@ -477,10 +469,10 @@ async def _approvals(s: Services, args: list[str], token: TokenInfo) -> str:
             "\n".join(f"#{a.id} [{a.level}] {a.summary} ({a.reason}; expires {a.expires_at})" for a in found)
             or "Nothing waits."
         )
-    words = {"allow": "allow_once", "always": "allow_always", "refuse": "refuse_once", "never": "refuse_always"}
+    words = {"allow": "allow_once", "refuse": "refuse_once"}
     answer = words.get(args[0], args[0])
     if answer not in ANSWERS or len(args) != 2:
-        return "Usage: /approvals [list] | allow|always|refuse|never <id>"
+        return "Usage: /approvals [list] | allow|refuse <id>"
     try:
         settled = await s.approvals.decide(int(args[1]), answer, token)
     except (AlreadyAnswered, ApprovalError, ValueError) as error:
@@ -643,10 +635,11 @@ COMMANDS: list[Command] = [
         "Moodle and Auriga: who is connected, or forget a site's token.",
         _school,
     ),
-    Command("rules", "/rules [list] | add | del | on | off | test", "The rule gate.", _rules),
-    Command("tainted", "/tainted [on|off]", "The tainted-turn rule.", _tainted),
     Command(
-        "level", LEVEL_USAGE.removeprefix("Usage: "), "The auto levels: how much each tool runs without asking.", _level
+        "mode",
+        MODE_USAGE.removeprefix("Usage: "),
+        "The modes: what each conversation may use, and what each tool does.",
+        _mode,
     ),
     Command(
         "triggers",
@@ -654,9 +647,7 @@ COMMANDS: list[Command] = [
         "Hooks: what Clara does when something happens (a mail arrives).",
         _triggers,
     ),
-    Command(
-        "approvals", "/approvals [list] | allow|always|refuse|never <id>", "Pending approval requests.", _approvals
-    ),
+    Command("approvals", "/approvals [list] | allow|refuse <id>", "Pending approval requests.", _approvals),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),
     Command("usage", "/usage [24h|7d|30d|90d|365d|all] [day|model|kind|provider|client]", "Token statistics.", _usage),
     Command("alerts", "/alerts [clear <key>]", "Active and recent alerts.", _alerts),

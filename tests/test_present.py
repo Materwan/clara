@@ -19,6 +19,7 @@ from clara.tools.base import ToolContext, TurnState
 from clara.workspace.present import PRESENTED, canonical, presented
 from clara.workspace.store import Workspace
 from fakes import calls
+from modeset import default, line
 
 SECRET = "the-only-words-of-this-report"
 
@@ -145,9 +146,9 @@ async def test_a_file_that_came_from_outside_is_presented_with_where_it_came_fro
     assert next(e for e in events if e["type"] == "present")["origin"] is None  # you trusted it: no badge
 
 
-async def test_a_rule_on_the_path_applies_as_it_does_to_reading(services, llm):
+async def test_a_mode_on_the_path_applies_as_it_does_to_reading(services, llm):
     chat = new_chat(services)
-    services.rules.add("refuse", tool="present", target="private/**")
+    default(services, line("refuse", "present", target="private/**"))
     llm.replies = [
         calls(("ws_write", {"path": "private/diary.md", "content": "x\n"}), ("ws_write", {"path": "open/news.md", "content": "y\n"})),
         calls(("present", {"path": "private/diary.md"}), ("present", {"path": "open/news.md"})),
@@ -302,10 +303,10 @@ async def test_a_vault_note_is_presented_once_the_second_brain_is_open(vaulted, 
     assert results[-1].startswith("Error:") and "No note" in results[-1]
 
 
-async def test_a_vault_card_comes_back_and_a_rule_on_the_note_applies(vaulted, llm):
+async def test_a_vault_card_comes_back_and_a_mode_on_the_note_applies(vaulted, llm):
     chat = new_chat(vaulted)
     vaulted.conversations.update(chat, vault_open=True)
-    vaulted.rules.add("refuse", tool="present", target="vault:Private/**")
+    default(vaulted, line("refuse", "present", target="vault:Private/**"))
     llm.replies = [calls(("present", {"path": "vault:Ideas/Kayak.md"}), ("present", {"path": "vault:Private/Diary.md"})), "One."]
     events = await run(vaulted, "give me both", conversation=chat)
     assert [e["ref"] for e in events if e["type"] == "present"] == ["vault:Ideas/Kayak.md"]

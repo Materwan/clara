@@ -3,7 +3,7 @@
 * Once, daily, on some weekdays, or monthly (the last day of a shorter month), at the wall-clock time of the first
   run in its IANA zone, so summer time is followed.
 * A run is a turn in a conversation: the schedule's own, shared by its runs, or (`per_run`) a new one each time. The run
-  is **unattended**: an action the rules say to ask about is stored and pushed to you, and the run goes on without it.
+  is **unattended**: an action the mode says to ask about is stored and pushed to you, and the run goes on without it.
   The schedule's **packs** (tools.py in packs/) say which special tools it has, and can have a model of its own.
 * A run can **ask you something and wait** (`ask_person`): it then has the status `waiting`, your answer arrives in the
   run's conversation like in any chat (with the same tools), and `finish_run` ends it. A waiting run is reminded once
@@ -116,7 +116,7 @@ class Schedule:
     in_history: bool = False  # its conversations are listed in the web site's history
     attempts: int = MAX_ATTEMPTS  # tries of a run when the model is busy or unreachable (1: no retry)
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
-    auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
+    mode: str | None = None  # its mode (gate/modes.py); None: its project's, else the default mode
     keep_days: int | None = (
         None  # its own limits on the conversations its runs make (memory/retention.py); None: follow
     )
@@ -160,7 +160,7 @@ def _schedule(row) -> Schedule:
         bool(row["in_history"]),
         row["attempts"],
         row["deliver"],
-        row["auto_level"],
+        row["mode"],
         row["keep_days"],
         row["keep_hours"],
         row["keep_last"],
@@ -525,7 +525,7 @@ class Schedules(DueLoop):
             "in_history": schedule.in_history,
             "attempts": schedule.attempts,
             "deliver": schedule.deliver,
-            "auto_level": schedule.auto_level,
+            "mode": schedule.mode,
             "keep_days": schedule.keep_days,
             "keep_hours": schedule.keep_hours,
             "keep_last": schedule.keep_last,

@@ -29,6 +29,6 @@ Only the latest release is supported. Updates are installed by choice (`/update`
 | A provider key, the GitHub token | Revoke it at the provider or on GitHub, then `clara secrets set <name>` or the Connections page. |
 | Google access | Disconnect Drive and Gmail on the Connections page (the tokens are revoked at Google), and check https://myaccount.google.com/permissions. |
 | Microsoft access (a former Outlook connection) | Clara no longer connects Outlook, and nothing revokes a token it was given: if you connected Outlook before, remove Clara's app at https://account.microsoft.com/privacy/app-access (personal) or https://myapps.microsoft.com (work or school). |
-| An email you did not mean to send | It cannot be unsent: every send was shown whole in an approval request and is in the audit log (tool, recipients, time). Turn off the rule that allowed it (Rules page); if you suspect an injection, revoke the web token and the connections above. |
+| An email you did not mean to send | It cannot be unsent: every send was shown whole in an approval request and is in the audit log (tool, recipients, time). Change the mode that allowed it (Modes & approvals page); if you suspect an injection, revoke the web token and the connections above. |
 | A backup | Backups hold the database: facts, conversations, encrypted secrets (useless without the key, which is never in a backup). Rotate the key if you think both leaked. |
 | The Discord account | Revoke the `discord` token; destructive actions could not be approved from Discord anyway (its scope is `safe`). |

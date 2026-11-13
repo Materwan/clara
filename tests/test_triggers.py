@@ -21,6 +21,7 @@ from clara.triggers.matching import FilterError, check, matches
 from clara.triggers.setup import limits_of
 from fakes import calls
 from mailworld import connect_mailbox, gmail_message
+from modeset import default, line
 
 
 @pytest.fixture
@@ -511,20 +512,19 @@ async def test_a_run_has_only_the_tools_of_the_hook_whatever_the_model_asks(serv
     assert not services.workspace.exists("x.txt") and runs(services, trigger) == [("ok", 1)]
 
 
-async def test_a_run_is_tainted_from_its_first_word_so_a_send_asks_even_with_a_rule(services, llm, world):
-    services.runtime.set("auto_level_unattended", 4)  # a send asks from level 4: below it no rule can open it
-    services.rules.add("allow", tool="mail_send", situation="unattended")  # the owner opened sending to unattended runs
+async def test_a_run_is_tainted_from_its_first_word_so_a_send_asks_even_when_the_mode_approves_it(services, llm, world):
+    default(services, line("approve", "mail_send", tainted="ask"))  # the owner opened sending to runs, until they read something
     send = calls(("mail_send", {"to": ["boss@acme.example"], "subject": "Re: Invoice 42", "body": "Paid."}))
     await new_mail_run(services, llm, world, tools=["mail_read", "mail_send"], replies=[send, "Asked to send."])
     await work(services)
     assert not world.gmail_sent  # nothing left
     pending = services.approvals.list("pending")
     assert [(a.tool, a.action_class, a.level) for a in pending] == [("mail_send", "mail_send", "destructive")]
-    assert "untrusted content" in pending[0].reason  # why it asked, whatever the rule said
+    assert "untrusted content" in pending[0].reason  # why it asked, whatever the mode approves
 
 
 async def test_a_sending_hook_still_cannot_send_without_the_tool_in_its_list(services, llm, world):
-    services.rules.add("allow", tool="mail_send", situation="unattended")
+    default(services, line("approve", "mail_send"))
     send = calls(("mail_send", {"to": ["boss@acme.example"], "subject": "x", "body": "x"}))
     await new_mail_run(services, llm, world, replies=[send, "No."])  # the default tools: reading only
     await work(services)

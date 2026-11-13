@@ -82,65 +82,6 @@ What the current design already sets:
 - A new tool needs a class, a level and a target in the gate, is named in FEATURES.md (the docs test checks it), and
   the tool count line is updated.
 
-## Modes instead of auto levels and rules
-
-The owner asked to replace the ladder of auto levels (`FEATURES.md`, « Auto levels ») and the rules with **modes**. Today a call with no
-matching rule is decided by the conversation's level and the tool's two thresholds (ask from, run from). A mode names, once, what a
-conversation may use and what happens to each tool.
-
-What the owner decided:
-
-- **A mode** is a name, a list of packs and, for each tool of those packs, a verdict: `approve`, `ask` or `refuse`. Example: a mail mode
-  switches the Mail pack on, reads mail with `approve` and asks for every write.
-- **Two verdicts per tool:** one for a normal turn and one `(if tainted)` for a tainted conversation. The tainted verdict is never more
-  permissive than the normal one (a tool that asks in a normal turn asks or is refused when tainted, it is never approved). It replaces the
-  tainted-turn raise.
-- **One mode per conversation.** A conversation that needs mail and files has a mode made for both.
-- **Where a conversation's mode comes from:** as the level does today: its own, else its schedule's or hook's, else its project's, else
-  the server default. The selector of the chat, the project page, and the schedules and hooks become mode selectors. Discord does not
-  change the mode of a conversation: its `/level` goes away.
-- **Packs:** the mode's packs are switched on in the conversation that uses it, and are added to the ones already on. Changing the mode of
-  a conversation adds the new mode's packs and keeps the others. A tool of a pack that is on but that the mode does not name takes its
-  verdict from the predefined default mode.
-- **Precision:** a verdict is set per tool and per action class, as the thresholds are (a script with or without network, a URL you wrote or
-  any other), with exceptions per target on the same line (a mail address, a folder, a domain), as the rules have them.
-- **The default mode:** the only predefined mode. The server fixes it and only the server changes it (no token, so not through the API or
-  the web). Today's rules and the thresholds of the current default level go into it, and everything that
-  had a level of its own (conversations, projects, schedules, hooks, a tool's thresholds) falls back to it. The levels 0 to 5 go away,
-  and with them the last level that suspended the tainted-turn raise and the secret check: to run a tool with no card after outside
-  content, a mode sets that tool's `(if tainted)` verdict to `approve`, one tool at a time.
-- **What does not change:** the floor of the gate, the local-only and chat-only limits and the secret check (a raise to `ask` that no mode
-  sets) stay before and after any mode. Only a token with the approval scope `all` may create or change a mode; a script cannot.
-- **« Approve all next »** stays a grant for this conversation only, limited to 30 minutes. The limit of calls, the silence of the page
-  and the limit to some classes go away: it covers any tool it is clicked on. It approves the calls of that tool that would ask: in a
-  normal turn, and in a tainted turn only when the mode says `ask` for that tool when tainted. Where the mode refuses, or where the
-  tainted verdict is not `ask`, the grant does nothing there.
-- **Clara does not choose the mode of an automation she creates:** her tool has no mode field, so the automation gets the default mode
-  (or its project's) and you change it on the page afterwards, as it is with levels today.
-- **Deleting a mode** shows a warning with the number of conversations, of automation conversations and of automations that use it. On
-  confirmation, all of them move to the default mode. The default mode cannot be deleted.
-- **A hook or a schedule may run with a mode that approves everything**, including tainted: the goal of the change is more permissiveness
-  while you keep control, and choosing the right mode is your responsibility.
-- **One page:** the **Auto mode** page and the **Rules & approval** page become one page with tabs. The first tab lists the modes; a
-  mode opens to show its packs, then every tool with its rules (its verdicts and its special rules per class and target).
-- **The migration** always takes the automatic backup before it runs, as every migration does.
-
-- **The default mode is a file the server reads at start**, so changing it needs a restart and no token can. Its place, format and
-  checks are a technical choice, left for the implementation.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The design of the page and the contents of its tabs after the list of modes.
-- The technical details: the file of the default mode, how `/v1/levels`, the settings `auto_level_default` and
-  `auto_level_unattended`, the `tool_levels` table and the console's `/level` commands are replaced, and the migration.
-
-What the current design already sets:
-
-- The gate's order today is floor, local only, chat only, level refusal, rules, level allow or ask, raises (`gate/engine.py`). The modes
-  replace the level and rule steps and the tainted raise. `tests/test_levels.py` holds the red-team cases to keep.
-- It needs a dated entry in `docs/DECISIONS.md` that supersedes « Auto levels (2026-10-30) », `FEATURES.md` updated, and a migration:
-  take its number at merge (see `CLAUDE.md`, « Migration numbers »).
-
 ## Automations: regular expressions, combined triggers, one place for the result
 
 The owner asked to change how an automation is made: precise filters, triggers that combine, and a simpler result. Today a schedule (at a
@@ -355,7 +296,7 @@ What the current design already sets:
 - The prompt must stay identical from one turn to the next (`agent/prompt.py`), so the list of skills goes in the context block.
 - `messages.shown` (migration 0028) lets a message show `/name args` while the model gets the expanded text.
 - The model has no tool to read or change rules or levels (`docs/THREAT-MODEL.md`); it gets none for skills.
-- It depends on « Modes instead of auto levels and rules »: the tools of a skill get a normal verdict and a verdict when tainted in a mode, and
+- It depends on the modes (built): the tools of a skill get a normal verdict and a verdict when tainted in a mode, and
   only a token with the approval scope `all` changes a mode.
 - `docs/NON-GOALS.md` excludes « Arbitrary MCP servers or plug-ins »: a dated entry in `docs/DECISIONS.md` must say that a skill is text, and
   that its scripts run in the existing sandbox and add no server code.

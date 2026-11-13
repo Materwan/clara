@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import discord
@@ -231,8 +232,7 @@ async def test_approvals_come_with_buttons_in_the_approval_channel(bot):
     assert not await bot.show_approval({"id": 1, "level": "write", "summary": "again", "reason": ""})  # shown once
     (first, buttons), (second, none) = approval.sent
     assert "#1" in first and [item.custom_id for item in buttons.children] == [
-        "clara:approval:1:allow_once", "clara:approval:1:allow_always", "clara:approval:1:refuse_once",
-        "clara:approval:1:refuse_always"]
+        "clara:approval:1:allow_once", "clara:approval:1:refuse_once"]
     assert none is None and "web site or with clara-admin" in second
     assert not any(bot.channels[name].sent for name in ("general", "notification", "alerts"))
 
@@ -838,28 +838,11 @@ async def test_the_tools_command_lists_and_switches_the_packs_of_the_conversatio
     assert "No tool called" in await bot.tools_text("nothing", "on")
 
 
-async def test_the_level_command_shows_and_sets_the_level_of_the_conversation(bot, monkeypatch):
-    ladder = {"top": 5, "defaults": {"chat": 3, "unattended": 3},
-              "levels": [{"position": n, "name": name} for n, name in enumerate(
-                  ["No tool", "Trusted read", "Any read", "Files and vault", "Mail", "Everything"])]}
-    calls = []
-
-    async def call(method, path, **options):
-        calls.append((method, path, options.get("json")))
-        if path == "/v1/levels":
-            return ladder
-        return {"own": 2, "level": 2, "name": "Any read", "source": "own", "top": 5}
-
-    monkeypatch.setattr(bot.clara, "call", call)
-    assert "No conversation here" in await bot.level_text(None)
-    assert "inside a conversation" in await bot.level_text("2")
-    bot.set_conversation("c-1")
-    assert "Level `2` (Any read), from own" in await bot.level_text(None)
-    await bot.level_text("2")
-    await bot.level_text("follow")
-    assert ("PUT", "/v1/conversations/c-1/level", {"level": 2}) in calls
-    assert ("PUT", "/v1/conversations/c-1/level", {"level": None}) in calls
-    assert "A level is" in await bot.level_text("9") and "A level is" in await bot.level_text("lots")
+async def test_the_bot_has_no_level_or_mode_command_and_never_changes_a_mode(bot):
+    """A mode lets calls run without a card, so only a token that may answer everything sets one: the bot's cannot."""
+    assert not hasattr(bot, "level_text") and not hasattr(bot, "mode_text")
+    source = (Path(__file__).resolve().parent.parent / "src" / "clara_discord" / "bot.py").read_text(encoding="utf-8")
+    assert "/v1/levels" not in source and "/level" not in source and "/mode" not in source and "always" not in source
 
 
 # ----------------------------------------------------------------------

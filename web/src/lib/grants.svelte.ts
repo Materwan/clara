@@ -1,55 +1,47 @@
-// Approve all next: the grants of the conversation on screen. The page that pressed the button beats every few seconds
-// to keep them alive; when it is closed, reloaded or left, the beat stops and the server ends them (and this page asks
-// it to at once). A grant is never resumed by another page: each page load has its own `tab`.
+// Approve all next: the grants of the conversation on screen (this conversation only, 30 minutes, any tool; the server keeps
+// them, so closing the page does not end them). Read when a conversation opens and after a change; Stop ends them.
 
 import { api } from './api';
 import { toast } from './state.svelte';
 
-export type Grant = { id: number; tool: string; class: string; calls: number; max_calls: number; seconds_left: number; pressed_by: string };
+export type Grant = { id: number; tool: string; calls: number; seconds_left: number; pressed_by: string };
 
-const tab = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `tab-${Math.random().toString(36).slice(2)}${Date.now()}`;
 export const grants = $state<{ conversation: string | null; items: Grant[] }>({ conversation: null, items: [] });
-let timer: ReturnType<typeof setInterval> | undefined;
 
-function take(data: { grants?: Grant[]; ended?: { tool: string; calls: number; reason: string }[] }): void {
+function take(conversation: string, data: { grants?: Grant[]; ended?: { tool: string; calls: number; reason: string }[] }): void {
+  if (grants.conversation !== conversation) return;
   grants.items = data.grants ?? [];
   for (const ended of data.ended ?? []) toast(`Approve all next for ${ended.tool} ended: ${ended.reason} (${ended.calls} calls).`);
-  if (!grants.items.length) clear();
 }
 
-function clear(): void {
-  if (timer !== undefined) clearInterval(timer);
-  timer = undefined;
-  grants.conversation = null;
-  grants.items = [];
-}
-
-async function beat(): Promise<void> {
-  const conversation = grants.conversation;
+/** Read what is on for a conversation (null: none is on screen). */
+export async function load(conversation: string | null): Promise<void> {
+  if (grants.conversation !== conversation) grants.items = [];
+  grants.conversation = conversation;
   if (!conversation) return;
   try {
-    const data = await api.put(`/v1/conversations/${conversation}/grants`, { tab });
-    if (grants.conversation === conversation) take(data);
+    take(conversation, await api.get(`/v1/conversations/${conversation}/grants`));
   } catch {
-    /* the next beat tries again; the server ends the grant if none gets through */
+    /* the bar just stays as it was */
   }
 }
 
 /** Press the button on a waiting request: it is allowed, and the next ones of its tool in its conversation too. */
 export async function press(approvalId: number, conversation: string): Promise<{ status: string }> {
-  if (grants.conversation && grants.conversation !== conversation) stop();
-  const data = await api.post(`/v1/approvals/${approvalId}/grant`, { tab });
+  const data = await api.post(`/v1/approvals/${approvalId}/grant`);
   grants.conversation = conversation;
   grants.items = data.grants;
-  if (timer === undefined) timer = setInterval(beat, (data.beat ?? 10) * 1000);
   return data.approval;
 }
 
-/** Stop every grant of the conversation: the button, a conversation left, the page closed. */
-export function stop(): void {
+/** Stop every grant of the conversation on screen. */
+export async function stop(): Promise<void> {
   const conversation = grants.conversation;
-  clear();
-  if (conversation) void api.leave(`/v1/conversations/${conversation}/grants`);
+  if (!conversation) return;
+  try {
+    await api.del(`/v1/conversations/${conversation}/grants`);
+    grants.items = [];
+  } catch (error) {
+    toast((error as Error).message, 'error');
+  }
 }
-
-if (typeof window !== 'undefined') window.addEventListener('pagehide', stop);

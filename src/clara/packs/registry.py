@@ -114,7 +114,7 @@ PACKS: tuple[Pack, ...] = (
         "github",
         "GitHub",
         "The repositories you added: look at files, code, issues, pull requests and their changes; commit, branch, open "
-        "and merge pull requests, open and close issues. A change asks you first, unless your rules allow it.",
+        "and merge pull requests, open and close issues. A change asks you first, unless its mode approves it.",
         frozenset({"github_read", "github_write", "github_branch", "github_pr", "github_issue"}),
         icon="branch",
         check=_github_needed,
@@ -264,6 +264,15 @@ class Packs:
                 and any(fnmatch.fnmatchcase(name, pattern) for name in pack.tools for pattern in patterns)
             )
         ]
+
+    def with_mode(self, conversation: Conversation) -> Conversation:
+        """The conversation with the packs of its mode switched on: added to the ones already on, never taking one away (so a
+        change of mode keeps what the old one switched on). Done at each turn and when a mode is set (api/modes.py)."""
+        wanted = self.s.modes.get(self.s.modes.resolve(conversation.id))
+        missing = [pack for pack in (wanted.packs if wanted else ()) if pack not in conversation.active_packs()]
+        if not missing:
+            return conversation
+        return self.s.conversations.update(conversation.id, packs=[*conversation.active_packs(), *missing])
 
     def active(self, conversation: Conversation | None) -> list[str]:
         if conversation is None:

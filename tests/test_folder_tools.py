@@ -18,6 +18,7 @@ from clara.gate.approvals import ApprovalError
 from clara.tools.base import ToolContext, ToolError, TurnState
 from clara.tools.folder_tools import TOOL_FOLDERS, FolderGrant, FolderRequest, clean, hidden
 from fakes import calls
+from modeset import default, line
 
 GRANT = "grant-0001-aaaa"
 OTHER = "grant-0002-bbbb"
@@ -99,14 +100,16 @@ def test_the_folder_classes_and_their_defaults(services):
     assert CLASSES["folder_read"][:2] == ("any_read", "any_read")
     assert CLASSES["folder_sensitive"][:2] == ("any_read", "all")
     assert "folder_sensitive" in FOR_A_CONVERSATION and "folder_sensitive" in NOT_PUBLISHED
-    chat = Situation("interactive", level=3)
-    unattended = Situation("unattended", level=5)  # not even the last level opens it: there is no browser to answer
+    default(services, line("approve", klass="folder_read"), line("approve", klass="folder_sensitive"))  # no mode opens it to a run
+    chat = Situation("interactive")
+    unattended = Situation("unattended")  # not even a mode that approves it opens it: there is no browser to answer
     listing = Action("folder_list", "read", "folder_read", ("folder:docs",), "List docs")
     secret = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
     assert services.gate.decide(listing, chat).effect == "allow"
     assert services.gate.decide(listing, unattended).effect == "refuse"
-    assert services.gate.decide(secret, chat).effect == "ask"
+    assert services.gate.decide(secret, chat).effect == "allow"
     assert services.gate.decide(secret, unattended).effect == "refuse"
+    assert services.gate.decide(listing, Situation("interactive", mode_name=None)).effect == "allow"
 
 
 # ----------------------------------------------------------------------
@@ -230,15 +233,14 @@ async def test_an_allowance_is_only_for_folder_reads_of_a_conversation(services,
 
 
 async def test_always_is_not_an_answer_for_a_request_that_lasts_one_conversation(services, conversation):
-    """A rule for `folder:.env` would apply to the `.env` of every folder opened later."""
+    """« Allow always » is gone with the rules (a rule for `folder:.env` would have applied to the `.env` of every folder)."""
     ctx = context(services, conversation)
     action = Action("folder_read", "read", "folder_sensitive", ("folder:.env",), "Read .env")
     approval = services.approvals.create(action, Situation("interactive"), ctx, {"path": ".env"}, Decision("ask", "test"))
     token = services.tokens.create("browser", "web")[0]
-    with pytest.raises(ApprovalError, match="cannot be allowed for good"):
+    with pytest.raises(ApprovalError, match="answer must be one of"):
         await services.approvals.decide(approval.id, "allow_always", token)
     assert services.approvals.get(approval.id).status == "pending"  # still there to answer
-    assert not services.rules.list()
     await services.approvals.decide(approval.id, "allow_conversation", token)
     assert services.allowances.covers(conversation, "folder_read", "folder:.env")
 

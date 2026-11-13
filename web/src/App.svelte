@@ -16,8 +16,7 @@
   import Projects from './pages/Projects.svelte';
   import Library from './pages/Library.svelte';
   import Connections from './pages/Connections.svelte';
-  import AutoMode from './pages/AutoMode.svelte';
-  import Rules from './pages/Rules.svelte';
+  import Modes from './pages/Modes.svelte';
   import Models from './pages/Models.svelte';
   import Usage from './pages/Usage.svelte';
   import Admin from './pages/Admin.svelte';
@@ -35,8 +34,7 @@
   const SETTINGS = [
     { path: '/memory', label: 'Memory', icon: 'memory', page: Memory },
     { path: '/connections', label: 'Connections', icon: 'plug', page: Connections },
-    { path: '/rules', label: 'Rules & approvals', icon: 'shield', page: Rules },
-    { path: '/auto-mode', label: 'Auto mode', icon: 'sparkle', page: AutoMode },
+    { path: '/modes', label: 'Modes', icon: 'shield', page: Modes },
     { path: '/models', label: 'Models', icon: 'chip', page: Models },
     { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
     { path: '/admin', label: 'Admin', icon: 'server', page: Admin },
@@ -168,7 +166,7 @@
       <!-- pinned: the approvals waiting for you, and the account tab -->
       <div class="rail-foot">
         {#if live.approvals.length}
-          <a class="approvals-badge" href="#/rules"><Icon name="shield" size={18} /><span class="text">Waiting for you</span><span class="count">{live.approvals.length}</span></a>
+          <a class="approvals-badge" href="#/modes?tab=waiting"><Icon name="shield" size={18} /><span class="text">Waiting for you</span><span class="count">{live.approvals.length}</span></a>
         {/if}
         <AccountMenu name={session.token} {alerts} {inSettings} onSignOut={signOut} />
       </div>
@@ -188,7 +186,7 @@
             {#each SETTINGS as page (page.path)}
               <a href={'#' + page.path} aria-current={page === current ? 'page' : undefined}>
                 <Icon name={page.icon} size={16} />{page.label}
-                {#if page.path === '/rules' && live.approvals.length}<span class="count">{live.approvals.length}</span>{/if}
+                {#if page.path === '/modes' && live.approvals.length}<span class="count">{live.approvals.length}</span>{/if}
                 {#if page.path === '/admin' && alerts}<span class="count danger">{alerts}</span>{/if}
               </a>
             {/each}

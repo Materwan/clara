@@ -81,7 +81,7 @@ class Trigger:
     created_at: str
     updated_at: str
     deliver: str = "notice"  # where a run's result goes (events/delivery.py)
-    auto_level: int | None = None  # its auto level (gate/levels.py); None: its project's, else the unattended default
+    mode: str | None = None  # its mode (gate/modes.py); None: its project's, else the default mode
     keep_days: int | None = None  # its own limits on the conversations of its runs (memory/retention.py); None: follow
     keep_hours: int | None = None  # the global setting (days and hours are both set, or both None)
     keep_last: int | None = None
@@ -118,7 +118,7 @@ def _trigger(row) -> Trigger:
         row["created_at"],
         row["updated_at"],
         row["deliver"],
-        row["auto_level"],
+        row["mode"],
         row["keep_days"],
         row["keep_hours"],
         row["keep_last"],
@@ -439,7 +439,7 @@ class Triggers(DueLoop):
             "announce": trigger.announce,
             "in_history": trigger.in_history,
             "deliver": trigger.deliver,
-            "auto_level": trigger.auto_level,
+            "mode": trigger.mode,
             "keep_days": trigger.keep_days,
             "keep_hours": trigger.keep_hours,
             "keep_last": trigger.keep_last,

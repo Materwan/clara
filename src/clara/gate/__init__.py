@@ -1,19 +1,16 @@
-"""The rule gate: rules, decisions, approvals and the audit log."""
+"""The gate: modes, decisions, approvals and the audit log."""
 
-from .actions import CLASSES, EFFECTS, LEVELS, SITUATIONS, Action, Decision, Situation
-from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals, NoRuleError
+from .actions import CLASSES, EFFECTS, LEVELS, Action, Decision, Situation
+from .approvals import ANSWERS, AlreadyAnswered, Approval, ApprovalError, Approvals
 from .engine import Audit, Gate, args_digest
-from .grants import GRANTABLE, Grant, GrantError, Grants
-from .levels import Level, LevelError, Levels
-from .rules import Rule, RuleError, Rules
+from .grants import Grant, GrantError, Grants
+from .modes import DefaultModeError, Line, Mode, ModeError, Modes
 
 __all__ = [
     "ANSWERS",
     "CLASSES",
     "EFFECTS",
-    "GRANTABLE",
     "LEVELS",
-    "SITUATIONS",
     "Action",
     "AlreadyAnswered",
     "Approval",
@@ -21,17 +18,15 @@ __all__ = [
     "Approvals",
     "Audit",
     "Decision",
+    "DefaultModeError",
     "Gate",
     "Grant",
     "GrantError",
     "Grants",
-    "Level",
-    "LevelError",
-    "Levels",
-    "NoRuleError",
-    "Rule",
-    "RuleError",
-    "Rules",
+    "Line",
+    "Mode",
+    "ModeError",
+    "Modes",
     "Situation",
     "args_digest",
 ]

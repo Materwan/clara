@@ -10,11 +10,10 @@ from pydantic import BaseModel, Field
 
 from ..auth import CLIENTS
 from ..connectors.forms import forms_in, with_answers
-from ..gate import LevelError
 from ..memory.conversations import ANY, ConversationError
 from ..workspace.present import PRESENT, cards_for
 from .common import ApiError, caller, failure, refuse_when_stopping, services
-from .levels import may_set
+from .modes import settable
 
 router = APIRouter(prefix="/v1/conversations", tags=["conversations"])
 
@@ -60,8 +59,8 @@ class NewConversation(BaseModel):
     packs: list[str] | None = Field(
         default=None, max_length=20, description="The tool packs switched on (default: web)"
     )
-    auto_level: int | None = Field(
-        default=None, ge=0, le=9, description="Its own auto level (null: it follows its project, else the default)"
+    mode: str | None = Field(
+        default=None, max_length=30, description="Its own mode's name (null: it follows its project, else the default)"
     )
 
 
@@ -77,12 +76,7 @@ def create(body: NewConversation, request: Request) -> dict:
     s = services(request)
     if body.project is not None and s.projects.get(body.project) is None:
         raise ApiError(404, f"No project {body.project}.")
-    try:
-        auto_level = s.levels.check_level(body.auto_level)
-    except LevelError as error:
-        raise ApiError(422, str(error)) from None
-    if auto_level is not None:
-        may_set(request, None, auto_level)  # a token that may not answer everything cannot start one above the default
+    mode = settable(request, body.mode)  # a mode is an answer given in advance: only a token that may answer everything
     conversation = s.conversations.create(
         caller(request).client,
         title=body.title,
@@ -91,9 +85,9 @@ def create(body: NewConversation, request: Request) -> dict:
         incognito=body.incognito,
         local_only=body.local_only,
         packs=_packs(s, body.packs) if body.packs is not None else None,
-        auto_level=auto_level,
+        mode=mode,
     )
-    return conversation.describe()
+    return (s.packs.with_mode(conversation) if s.packs is not None and mode else conversation).describe()
 
 
 @router.get("/{conversation_id}")

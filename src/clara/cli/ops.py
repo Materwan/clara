@@ -11,6 +11,7 @@ clara doctor [--pull]                       check what Clara needs (rootless Pod
 clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
 clara restore --verify <file>               open a backup, check it, count its rows
 clara restore <file>                        put a backup back (the server must be stopped)
+clara mode import-legacy                    print a default-mode file made from the old auto levels and rules (writes nothing)
 clara migrate | purge                       bring the schema up to date | vacuum the file (server stopped)
 clara preflight --database <copy>           what the updater runs on a copy before switching releases
 """
@@ -128,6 +129,20 @@ def secrets(args: argparse.Namespace) -> int:
         new = KeyMaterial.parse(Path(args.new_key_file).read_text(encoding="utf-8"), args.new_key_file)
         count = store.rotate(new)
         print(f"Re-encrypted {count} secret(s). Now point the clara-secret-key credential at the new key and restart.")
+    return 0
+
+
+def mode(args: argparse.Namespace) -> int:
+    """The default-mode file the levels and rules of the old database say, on the standard output: review it, install it."""
+    from ..app import static_tools
+    from ..gate.legacy import import_legacy
+
+    db = _database(_settings())
+    print(import_legacy(db, {tool.name: tool.classes for tool in static_tools()}))
+    print(
+        "# Review it, then install it as /etc/clara/default-mode.toml and restart (docs/OPERATIONS.md).",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -391,7 +406,13 @@ def preflight(args: argparse.Namespace) -> int:
         return 1
     _store(settings, db)
     from .. import app  # every module of the server imports
+    from ..gate.modes import DefaultModeError, load_default
 
+    try:  # an update must not switch to a release that refuses to start on the default-mode file you have
+        load_default(settings.default_mode_file, {tool.name for tool in app.static_tools()})
+    except DefaultModeError as error:
+        print(error, file=sys.stderr)
+        return 1
     print(f"preflight ok: Clara {__version__}, schema {before} -> {after}, {app.__name__} imports")
     return 0
 
@@ -425,6 +446,9 @@ def main(argv: list[str] | None = None) -> int:
     back.add_argument("file")
     back.add_argument("--verify", action="store_true")
     back.set_defaults(run=restore)
+    modes = commands.add_parser("mode")
+    modes.add_argument("action", choices=("import-legacy",))
+    modes.set_defaults(run=mode)
     commands.add_parser("migrate").set_defaults(run=migrate_command)
     commands.add_parser("purge").set_defaults(run=purge)
     first = commands.add_parser("preflight")

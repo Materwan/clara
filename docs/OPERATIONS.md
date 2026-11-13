@@ -49,12 +49,31 @@ From a source tree (development machines): `sudo deploy/install.sh --from-source
 - **Models:** on the Models page (or `/provider`, `/models`, `/model`), check the local hosts, choose the default
   model, the side-jobs model and the fallbacks. For a hosted provider: `clara secrets set gemini_api_key` (the value
   is read hidden), then enable it, after reading [PROVIDERS.md](PROVIDERS.md).
-- **Auto levels:** each conversation runs at a level (0 refuses every tool, the last runs every tool) that decides, tool by
-  tool, what is refused, asked or run. Set the level of a chat in the chat, of a project on its page, of a schedule or a hook on
-  its card, or with `/level`; read and change what each level opens on the **Auto mode** page, and the defaults
-  (`auto_level_default`, `auto_level_unattended`, 3 at first).
-- **Rules:** read the defaults on Rules & approvals; add rules for what you want allowed without asking (for example
-  `allow ws_delete scratch/**`). A rule cannot open a tool the level refuses.
+- **Modes:** each conversation runs in a **mode**: its packs of special tools and, for each tool, whether it runs (`approve`), asks you
+  (`ask`) or is refused (`refuse`), with a stricter verdict when the conversation read outside content. Set the mode of a chat in the
+  chat, of a project on its page, of a schedule or a hook on its card, or with `/mode`; make and edit modes on the **Modes**
+  page or with `/mode new`, `/mode verdict`… (only the web site, the terminal and the console may; scripts and Discord cannot).
+  A conversation that has no mode follows its automation, then its project, then the **default mode**.
+- **The default mode is a file**, `/etc/clara/default-mode.toml` (`CLARA_DEFAULT_MODE_FILE`), put there by `install.sh` the first time
+  and never overwritten. It is owned by root, so neither Clara nor a script can change it. To change it: edit it as root (the
+  comments in the file explain each field), check it with `clara-server --check` (the `clara-server` of the release, run as the service user with the
+  environment of the `clara` alias above), then `sudo systemctl restart clara`. A bad file stops the server and `journalctl -u clara` says the line; a missing file means the
+  built-in copy (what the old level 3 did) and the alert `default_mode_file` (`/alerts clear default_mode_file` once it is there).
+  A class the file has no line for takes the built-in one.
+  An installation made before the modes has no such file (an update does not run `install.sh`): the server uses its built-in copy,
+  which says the same, and raises the alert. To put the shipped file there: `sudo install -m 644 -o root -g root
+  /opt/clara/current/deploy/default-mode.toml /etc/clara/default-mode.toml`, then restart, and clear the alert.
+- **Coming from the auto levels and rules** (v1.5.x and before): the update makes every level of its own `follow`, and keeps your old
+  levels, thresholds and rules in tables nothing reads. To carry them over, print a default mode made from them, read it, and install it:
+
+  ```bash
+  clara mode import-legacy > /tmp/default-mode.toml        # prints, writes nothing else; the notes at its top say what it could not carry
+  sudo install -m 644 -o root -g root /tmp/default-mode.toml /etc/clara/default-mode.toml
+  sudo systemctl restart clara
+  ```
+
+  It reads each class at the old default level, the thresholds you set for single tools, and your enabled rules (each opened no more
+  than the level under it opened it). `/mode import-legacy` in `clara-admin` prints the same.
 - **More tokens:** one per script, `clara token create backup-script script` (scripts cannot answer approvals).
 
 ## 3. Optional parts
@@ -135,14 +154,14 @@ end), or from the machine with `clara moodle connect` and `clara auriga connect`
 - **Approving an email** needs the web site or the console. Discord cannot, because sending is a `destructive` action
   and the Discord token's scope is `safe`; if you want to answer from Discord, `/tokens approvals <the bot's token> all`
   gives it that right (and to every other destructive action).
-- **Letting a schedule send** is a rule you write: `allow mail_send mail:to:you@example.com` with the situation
-  `unattended`. It still asks after a turn read untrusted content (an inbox read is one).
+- **Letting a schedule send** is a mode you make: a line `approve mail_send` with the target `mail:to:you@example.com` (and `ask`
+  when tainted, which an inbox read is), set as the schedule's mode. It still asks after a turn read untrusted content.
 - **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
   inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` alert once.
 
 ### Hooks (Clara acts when a mail arrives, or a pull request or a push is made)
 
-A hook is a rule you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
+A hook is something you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
 one, and the model cannot make one. On the web site, make and watch them in **Automation → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
 notifications) listens. GitHub cannot call Clara, so a hook on `github.pull_request` or `github.push` is found by a poll too, every
 `CLARA_GITHUB_POLL_SECONDS` (120), of the repositories added on the Connections page and only for the kinds a hook waits for.
@@ -304,7 +323,7 @@ clara backup now
   memory, filtered by source and level); `journalctl -u clara` keeps the full history.
 - **Alerts** arrive in every client and in Discord's `#alerts`; `/alerts` lists them, `/alerts clear <key>` clears one. The
   list is in [FEATURES.md](../FEATURES.md#13-operations).
-- **Approvals:** answer in the chat, on the Rules & approvals page, with `/approvals` and `/allow`… in a terminal, or
+- **Approvals:** answer in the chat, on the Modes page (Waiting tab), with `/approvals` and `/allow`… in a terminal, or
   with the Discord buttons in `#approval`.
 - **Something odd in a conversation:** `/debug on` records full prompts and answers for one hour in
   `/var/lib/clara/logs/debug-content.jsonl` (deleted at the end).

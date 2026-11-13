@@ -9,8 +9,8 @@ A booked call goes through these states:
 
     pending     waiting for its date
     running     being run (a crash while it ran leaves it `failed`: it may or may not have been done)
-    held        due, but a rule of yours asks about it: an ordinary approval request waits for your answer
-    done, failed, refused (the gate, a rule, or you refused it), expired (nobody answered the request in time)
+    held        due, and an approval request waits for your answer (calls booked before the modes: a rule asked then)
+    done, failed, refused (the gate, a mode, or you refused it), expired (nobody answered the request in time)
     cancelled   by you, before its date
 
 A call missed while the server was down runs once when it comes back and raises a late alert, like a reminder. The
@@ -80,7 +80,7 @@ class DeferredCall:
     booked_at: str
     started_at: str | None
     finished_at: str | None
-    tainted: bool = False  # the turn that booked it had read untrusted content: the rules are asked so when it is due
+    tainted: bool = False  # the turn that booked it had read untrusted content: the mode is asked so when it is due
 
     def describe(self, *, private: bool = False) -> dict:
         """For the clients. `private`: hide what a local-only call holds (its summary, arguments and result)."""
@@ -150,7 +150,7 @@ def _call(row) -> DeferredCall:
     )
 
 
-# What the runner answers: (status, what it says, the request made when a rule asked: its number)
+# What the runner answers: (status, what it says, the request made when one was: its number)
 Outcome = tuple[str, str, int | None]
 Runner = Callable[[DeferredCall], Awaitable[Outcome]]
 Lateness = Callable[[str, float], None]  # (what, seconds late)
@@ -165,7 +165,7 @@ class DeferredCalls(DueLoop):
         self.events = events
         self.home_zone = home_zone
         self.runner: Runner | None = None  # runs a due call through the gate (app.run_deferred)
-        self.approvals: Approvals | None = None  # the requests made when a rule asks at the due time
+        self.approvals: Approvals | None = None  # the requests made for a held call
         self.late: Lateness | None = None
         self.late_after = 300.0
         self._running: dict[int, asyncio.Task] = {}

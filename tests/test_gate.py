@@ -1,4 +1,4 @@
-"""Gate 3: the rule gate. Specificity, ties, the floor, the defaults, the raises, approvals, the audit log."""
+"""Gate 3: the gate. The floor, a mode's verdict, the secret check, approvals, the audit log (the modes themselves: test_modes.py)."""
 
 from __future__ import annotations
 
@@ -8,96 +8,35 @@ import contextlib
 import pytest
 
 from clara.agent.turn import ChatRequest
-from clara.gate import Action, ApprovalError, NoRuleError, RuleError, Situation
+from clara.gate import Action, ApprovalError, Situation
 from clara.tools.base import Tool, fixed
 from conftest import parse_sse
 from fakes import calls
+from modeset import default, line
 
 CHAT = Situation("interactive")
 ALONE = Situation("unattended")
 
 
 @pytest.fixture(autouse=True)
-def level_two(services):
-    """Most tests here are about a request that asks (a deletion): at level 2 the workspace tools ask."""
-    services.runtime.set("auto_level_default", 2)
-    services.runtime.set("auto_level_unattended", 2)
+def asking(services):
+    """Most tests here are about a request that asks (a deletion): in the default mode of these tests the workspace tools ask."""
+    default(services, line("ask", klass="ws_write"), line("ask", klass="ws_destroy"), line("ask", klass="run"))
 
 
 def action(tool="ws_delete", level="destructive", klass="ws_destroy", *targets, secrets=()):
     return Action(tool, level, klass, targets or ("ws:scratch/a.txt",), "test", tuple(secrets))
 
 
-def test_defaults_follow_the_class(services):
-    gate = services.gate
-    for level, expected in {
-        2: {"read": "allow", "ws_write": "ask", "ws_destroy": "ask", "run": "ask", "fetch_other": "allow",
-            "mail_draft": "refuse", "github_write": "refuse", "mail_send": "refuse"},
-        3: {"read": "allow", "ws_write": "allow", "ws_destroy": "allow", "run": "allow", "fetch_other": "allow",
-            "mail_draft": "ask", "github_write": "refuse", "mail_send": "refuse"},
-        4: {"mail_draft": "allow", "mail_trash": "allow", "github_write": "ask", "mail_send": "ask"},
-        5: {"mail_send": "allow", "github_write": "allow", "automation": "allow"},
-    }.items():
-        for klass, effect in expected.items():
-            for situation in (Situation("interactive", level=level), Situation("unattended", level=level)):
-                assert gate.decide(action("some_tool", "write", klass), situation).effect == effect, (level, klass)
-
-
-def test_the_most_specific_rule_wins_and_ties_go_to_the_stricter(services):
-    rules, gate = services.rules, services.gate
-    rules.add("allow", tool="ws_delete")
-    assert gate.decide(action(), CHAT).effect == "allow"
-    rules.add("refuse", tool="ws_delete", target="scratch/**")
-    assert gate.decide(action(), CHAT).effect == "refuse"  # two fields beat one
-    assert gate.decide(action("ws_delete", "destructive", "ws_destroy", "ws:notes/a.md"), CHAT).effect == "allow"
-    rules.add("allow", tool="ws_delete", target="scratch/*.txt")
-    assert gate.decide(action(), CHAT).effect == "allow"  # a longer literal target is more specific
-    rules.add("ask", tool="ws_delete", target="scratch/*.txt")
-    assert gate.decide(action(), CHAT).effect == "ask"  # same specificity: the stricter wins
-
-
-def test_rule_fields_situation_and_level(services):
-    rules, gate = services.rules, services.gate
-    rules.add("allow", tool="ws_run", situation="unattended")
-    assert gate.decide(action("ws_run", "write", "run"), ALONE).effect == "allow"
-    rules.add("refuse", level="destructive", situation="tainted")
-    assert gate.decide(action(), Situation("interactive", tainted=True)).effect == "refuse"
-    assert gate.decide(action(), CHAT).effect == "ask"
-    with pytest.raises(RuleError):
-        rules.add("allow")  # matches everything: refused
-
-
-def test_a_move_needs_every_target_for_allow_but_one_for_refuse(services):
-    rules, gate = services.rules, services.gate
-    move = action("ws_move", "write", "ws_write", "ws:scratch/a", "ws:notes/b")
-    rules.add("ask", tool="ws_move", target="scratch/**")
-    assert gate.decide(move, CHAT).rule_id is None  # notes/b is not under scratch/: the rule does not match
-    rules.add("refuse", tool="ws_move", target="notes/**")
-    assert gate.decide(move, CHAT).effect == "refuse"
-
-
 def test_the_floor_cannot_be_overridden(services):
-    services.rules.add("allow", tool="*")
+    default(services, line("approve", tool="*"))
     assert services.gate.decide(action("ws_read", "read", "read", "ws:.git/config"), CHAT).floor
     assert services.gate.decide(action("ws_read", "read", "read", "ws:a/../b"), CHAT).effect == "refuse"
 
 
-def test_tainted_turns_and_secrets_raise_outside_writes(services):
-    gate = services.gate
-    services.rules.add("allow", tool="github_write")
-    write = action("github_write", "write", "github_write", "github:me/repo")
-    chat = Situation("interactive", level=4)  # github_write asks from level 4: a rule that allows it opens it
-    assert gate.decide(write, chat).effect == "allow"
-    assert gate.decide(write, Situation("interactive", tainted=True, level=4)).effect == "ask"
-    services.runtime.set("tainted_rule", False)
-    assert gate.decide(write, Situation("interactive", tainted=True, level=4)).effect == "allow"
-    leaky = action("github_write", "write", "github_write", "github:me/repo", secrets=["GitHub token"])
-    assert gate.decide(leaky, chat).effect == "ask"
-
-
-def test_the_model_has_no_tool_to_approve_or_edit_rules(services):
+def test_the_model_has_no_tool_to_approve_or_edit_modes(services):
     names = services.toolbox.names
-    assert not any("rule" in name or "approv" in name or "gate" in name for name in names)
+    assert not any("rule" in name or "approv" in name or "gate" in name or "mode" in name.split("_") for name in names)
 
 
 async def test_an_unattended_ask_never_runs_and_never_blocks(services, llm):
@@ -118,7 +57,7 @@ async def test_an_unattended_ask_never_runs_and_never_blocks(services, llm):
     assert services.workspace.exists("doomed.txt")
 
 
-async def test_a_chat_waits_for_the_answer_and_allow_always_writes_a_rule(client, services, llm, token):
+async def test_a_chat_waits_for_the_answer(client, services, llm, token):
     await services.workspace.write("old.txt", "x", overwrite=False, message="test")
     llm.replies = [calls(("ws_delete", {"path": "old.txt"})), "Deleted it."]
     tester = services.tokens.find("tester")
@@ -127,7 +66,7 @@ async def test_a_chat_waits_for_the_answer_and_allow_always_writes_a_rule(client
         for _ in range(100):
             pending = services.approvals.list("pending")
             if pending:
-                await services.approvals.decide(pending[0].id, "allow_always", tester)
+                await services.approvals.decide(pending[0].id, "allow_once", tester)
                 return
             await asyncio.sleep(0.02)
 
@@ -138,8 +77,6 @@ async def test_a_chat_waits_for_the_answer_and_allow_always_writes_a_rule(client
     assert any(event["type"] == "approval" for event in events)
     assert events[-1]["reply"] == "Deleted it."
     assert not services.workspace.exists("old.txt")
-    rule = services.rules.list()[0]
-    assert (rule.effect, rule.tool, rule.target, rule.origin) == ("allow", "ws_delete", "ws:old.txt", "approval")
     approval = services.approvals.list()[0]
     assert approval.status == "done" and approval.told
 
@@ -258,25 +195,26 @@ async def test_an_answer_the_ended_turn_never_took_is_still_carried_out(services
     assert ran == ["hello"]
 
 
-async def test_an_always_answer_that_cannot_make_a_rule_leaves_the_request_pending(services):
-    """Audit (error paths, high): `approved` was committed before the rule was made, so a target over 400 characters
-    left a request that never ran and could not be answered again."""
+async def test_there_is_no_always_answer_and_no_answer_writes_a_rule(services, client):
+    """« Allow always » and « Refuse always » were taken out with the rules: what runs without a card is a mode."""
+    from clara.gate import ANSWERS
     from clara.tools.base import ToolContext, TurnState
 
+    assert ANSWERS == ("allow_once", "refuse_once", "allow_conversation")
     tester = services.tokens.create("someone", "web")[0]
     await services.workspace.write("x.txt", "x", overwrite=False, message="t")
-    context = ToolContext(services, TurnState("t3", "", "web", mode="unattended", timezone="Europe/Paris"))
-    result = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
-    approval_id = result.approval.id
-    services.db.execute("UPDATE approvals SET target = ? WHERE id = ?", ("ws:" + "a" * 500, approval_id))
-
-    with pytest.raises(NoRuleError):
-        await services.approvals.decide(approval_id, "allow_always", tester)
-    assert services.approvals.get(approval_id).status == "pending" and services.rules.list() == []
-    assert issubclass(NoRuleError, ApprovalError)
-
-    settled = await services.approvals.decide(approval_id, "allow_once", tester)  # it can still be answered
-    assert settled.status == "done" and not services.workspace.exists("x.txt")
+    context = ToolContext(services, TurnState("t1", "", "web", mode="unattended", timezone="Europe/Paris"))
+    first = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
+    for answer in ("allow_always", "refuse_always"):
+        with pytest.raises(ApprovalError, match="answer must be one of"):
+            await services.approvals.decide(first.approval.id, answer, tester)
+        refused = await client.post(f"/v1/approvals/{first.approval.id}/decide", json={"answer": answer})
+        assert refused.status_code == 422
+    assert services.approvals.get(first.approval.id).status == "pending"
+    settled = await services.approvals.decide(first.approval.id, "refuse_once", tester)
+    assert settled.status == "denied"
+    again = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
+    assert again.approval is not None and services.workspace.exists("x.txt")  # asked again: nothing was remembered
 
 
 async def test_a_chat_that_gets_no_answer_does_not_run_it(client, services, llm):
@@ -288,20 +226,6 @@ async def test_a_chat_that_gets_no_answer_does_not_run_it(client, services, llm)
     assert "NOT done" in tool["result"]
     assert services.workspace.exists("keep.txt")
     assert services.approvals.list("pending")
-
-
-async def test_refuse_always_writes_a_refusal(services):
-    tester = services.tokens.create("someone", "web")[0]
-    await services.workspace.write("x.txt", "x", overwrite=False, message="t")
-    from clara.tools.base import ToolContext, TurnState
-
-    context = ToolContext(services, TurnState("t1", "", "web", mode="unattended", timezone="Europe/Paris"))
-    result = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
-    assert result.approval is not None
-    settled = await services.approvals.decide(result.approval.id, "refuse_always", tester)
-    assert settled.status == "denied"
-    again = await services.toolbox.call("ws_delete", context, {"path": "x.txt"}, services.toolbox.names)
-    assert again.text.startswith("Refused") and services.workspace.exists("x.txt")
 
 
 async def test_a_local_only_request_never_reaches_discord(services, client):
@@ -354,8 +278,7 @@ async def test_a_tool_that_reads_the_web_taints_the_turn(services, llm):
                               {"url": {"type": "string"}}, ("url",), taints=True))
     services.toolbox.add(Tool("fake_push", "p", push, fixed("github_write", "write", "github:me/r", "push"),
                               {"text": {"type": "string"}}, ("text",)))
-    services.rules.add("allow", tool="fake_push")
-    services.runtime.set("auto_level_default", 4)  # github_write asks from level 4, so that the rule can open it
+    default(services, line("approve", klass="github_write", tainted="ask"))  # runs, but not once the turn read a page
     llm.replies = [calls(("fake_push", {"text": "a"})), calls(("fake_fetch", {"url": "u"})),
                    calls(("fake_push", {"text": "b"})), "done"]
     await services.agent.answer(ChatRequest(message="go", client="cli", wait_for_approvals=False))
@@ -365,21 +288,20 @@ async def test_a_tool_that_reads_the_web_taints_the_turn(services, llm):
 
 def test_a_local_only_turn_sends_nothing_out(services):
     local = Situation("interactive", local_only=True)
-    services.rules.add("allow", tool="web_fetch")  # no rule opens it
+    default(services, line("approve", tool="web_fetch"), line("approve", klass="github_write"))  # no mode opens it
     leaving = ("web_search", "fetch_trusted", "fetch_other", "github_read", "github_write", "drive_read", "drive_write",
                "run_network", "vault_write", "vault_destroy")
     for klass in leaving:
         decision = services.gate.decide(action("web_fetch", "read", klass, "domain:x.org"), local)
         assert decision.effect == "refuse" and decision.floor, klass
-    at_three = Situation("interactive", local_only=True, level=3)
-    assert services.gate.decide(action("ws_write", "write", "ws_write"), at_three).effect == "allow"
-    assert services.gate.decide(action("ws_run", "write", "run"), at_three).effect == "allow"
+    assert services.gate.decide(action("ws_write", "write", "ws_write"), local).effect == "ask"  # what stays here is the mode's
+    assert services.gate.decide(action("ws_read", "read", "read"), local).effect == "allow"
     assert services.gate.decide(action("web_fetch", "read", "fetch_trusted", "domain:x.org"), CHAT).effect == "allow"
 
 
 def test_vault_changes_stay_local_when_the_vault_does_not_push(services):
     services.gate.local_refused = services.gate.local_refused - {"vault_write", "vault_destroy"}
-    local = Situation("interactive", local_only=True, level=3)
+    local = Situation("interactive", local_only=True)
     assert services.gate.decide(action("vault_edit", "write", "vault_write", "vault:a"), local).effect == "allow"
 
 

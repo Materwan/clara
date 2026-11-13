@@ -227,7 +227,7 @@
   {:else if tab === 'booked'}
     <p class="muted small">
       Tool calls Clara booked in a chat to run later (at most {bookedMax} waiting). You allowed each one, with its date, when she booked it. The server runs it by
-      itself then, without a conversation, and asks the rules again: a rule that refuses stops it, and one that asks makes it a request you answer.
+      itself then, without a conversation, and asks the mode again: a mode that refuses stops it, and one that asks makes it a request you answer.
     </p>
     <table>
       <thead><tr><th>When</th><th>Call</th><th>State</th></tr></thead>

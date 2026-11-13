@@ -164,13 +164,10 @@ class ChatRequest:
     fork_of: int | None = None  # the question asked again or edited (its id)
     incognito: bool = False  # for a new conversation
     local_only: bool = False  # for a new conversation
-    auto_level: int | None = None  # for a new conversation: its own auto level (None: it follows its project)
+    conversation_mode: str | None = None  # for a new conversation: its own mode (None: it follows its project)
     title: str = ""  # for a new conversation
     conversation_kind: str = "chat"
     mode: str = "interactive"
-    # The mode whose default auto level a conversation with none of its own gets (None: `mode`). A follow-up after an
-    # approval runs unattended (it never waits for an answer), but in a chat it keeps the level of a chat.
-    level_mode: str | None = None
     kind: str = "chat"  # what the usage log calls it
     no_tools: bool = False
     ephemeral: bool = False  # no persona, no memory, nothing stored (Clara's planning jobs)
@@ -369,14 +366,17 @@ class Agent:
                 project_id=request.project,
                 incognito=request.incognito,
                 local_only=request.local_only,
-                auto_level=request.auto_level,
+                mode=request.conversation_mode,
             )
+        if conversation is not None and self.s.packs is not None:
+            conversation = self.s.packs.with_mode(
+                conversation
+            )  # the packs of its mode are on, added to the ones that were
         state = TurnState(
             turn_id=uuid.uuid4().hex,
             conversation_id=conversation.id if conversation else "",
             client=request.client,
             mode=request.mode,
-            level_mode=request.level_mode,
             waits_for_approvals=(
                 request.mode == "interactive" and request.wait_for_approvals and self.settings.approval_wait > 0
             ),
@@ -1361,7 +1361,6 @@ class Agent:
                 client="server",
                 conversation=conversation_id,
                 mode="unattended",
-                level_mode=self.s.levels.mode_of(conversation_id),
                 kind="followup",
                 quiet=True,
                 **limits,

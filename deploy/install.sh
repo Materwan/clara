@@ -6,7 +6,7 @@
 #   sudo deploy/install.sh --from-source <repo>          a source tree (development; web assets must be built)
 #
 # What it does, each step said as it runs: the `clara` system user and its rootless Podman needs (subuid/subgid,
-# linger), /opt/clara/releases and the `current` link, /etc/clara (settings, credentials), the secret key as an
+# linger), /opt/clara/releases and the `current` link, /etc/clara (settings, the default mode, credentials), the secret key as an
 # encrypted systemd credential, the systemd units, `tailscale set --operator=clara`, three first tokens.
 set -euo pipefail
 
@@ -60,6 +60,8 @@ chown -h clara:clara /opt/clara/current
 say "Settings and the secret key"
 install -d -m 750 -o root -g clara /etc/clara
 [ -f /etc/clara/clara.env ] || install -m 600 -o clara -g clara "$tree/deploy/clara.env.example" /etc/clara/clara.env
+# the default mode: owned by root, so that neither the server nor a script it runs can change it; never overwritten on an update
+[ -f /etc/clara/default-mode.toml ] || install -m 644 -o root -g root "$tree/deploy/default-mode.toml" /etc/clara/default-mode.toml
 if [ ! -f /etc/clara/secret-key.cred ]; then
     /opt/clara/current/.venv/bin/clara secrets new-key | systemd-creds encrypt --name=clara-secret-key - /etc/clara/secret-key.cred
     echo "The key is encrypted for this machine in /etc/clara/secret-key.cred. Keep a copy of it apart from backups:"
@@ -92,7 +94,8 @@ unset CLARA_SECRET_KEY
 cat <<EOF
 
 Next:
-  1. Edit /etc/clara/clara.env (zone, Ollama hosts, release repository).
+  1. Edit /etc/clara/clara.env (zone, Ollama hosts, release repository). /etc/clara/default-mode.toml is the default
+     mode (what each tool does when a conversation's mode says nothing): read it, and restart after any change.
   2. The sandbox image, as clara, from / (clara cannot enter your home directory): cd / && sudo -u clara podman pull
      <image manifest.json names>, then sudo -u clara podman tag <that image> localhost/clara-sandbox:latest
      (or: podman build -t localhost/clara-sandbox:latest sandbox/). Then clara doctor: its first run copies the image

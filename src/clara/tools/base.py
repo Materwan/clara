@@ -48,7 +48,6 @@ class TurnState:
     conversation_id: str
     client: str
     mode: str = "interactive"  # or unattended
-    level_mode: str | None = None  # the mode of the default auto level (None: `mode`), see ChatRequest
     waits_for_approvals: bool = False  # the turn holds the requests it asks for until they are answered
     can_ask: bool = False  # the turn can stop to ask the person questions (ask_questions) and wait for the answers
     timezone: str = "UTC"
@@ -56,7 +55,7 @@ class TurnState:
     incognito: bool = False
     local_only: bool = False
     tainted: bool = False
-    level: int | None = None  # the auto level of the conversation, read again at each call (Toolbox.call)
+    mode_name: str | None = None  # the name of the conversation's mode, read again at each call (Toolbox.call)
     read_chars: int = 20_000
     trusted_urls: set[str] = field(default_factory=set)
     # what the turn read from private sources and what the person wrote: a search query that repeats the first asks (egress.py)
@@ -69,7 +68,7 @@ class TurnState:
 
     @property
     def situation(self) -> Situation:
-        return Situation(self.mode, self.tainted, self.local_only, self.level)
+        return Situation(self.mode, self.tainted, self.local_only, self.mode_name)
 
 
 @dataclass
@@ -134,8 +133,8 @@ class Tool:
 
 
 def acts_as(*classes: str) -> Callable[[Callable], Callable]:
-    """Name the action classes a describe function can answer with, for the Auto mode page (a tool's default thresholds
-    are those of its class). The gate itself only ever looks at the class of the call."""
+    """Name the action classes a describe function can answer with, for the Modes page (a verdict is given per class). The
+    gate itself only ever looks at the class of the call."""
 
     def mark(function: Callable) -> Callable:
         function.classes = classes  # type: ignore[attr-defined]
@@ -183,11 +182,7 @@ class CallResult:
 
 REFUSED = (
     "Refused: {reason}. Do not try to do this another way; if you need it, tell the person what and why, and they "
-    "can change their rules."
-)
-REFUSED_BY_LEVEL = (
-    "Refused: {reason}. Do not try to do this another way; if you need it, tell the person what and why, and they "
-    "can raise the auto level of this conversation."
+    "can change the mode of this conversation."
 )
 
 
@@ -241,23 +236,15 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")
-        # the level is read at each call: lowering it in the middle of a turn takes effect at the next tool
-        context.turn.level = self.gate.levels.resolve(
-            context.turn.conversation_id, context.turn.level_mode or context.turn.mode
-        )
+        # the mode is read at each call: changing it in the middle of a turn takes effect at the next tool
+        context.turn.mode_name = self.gate.modes.resolve(context.turn.conversation_id)
         situation = context.turn.situation
         decision = self.gate.decide(action, situation)
         digest = args_digest(arguments)
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
         if decision.effect == "refuse":
             self.audit.record(action, situation, digest, decision, "floor" if decision.floor else "refused", **common)
-            if decision.by_level:
-                return CallResult(REFUSED_BY_LEVEL.format(reason=decision.reason))
-            return CallResult(
-                REFUSED.format(
-                    reason=decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
-                )
-            )
+            return CallResult(REFUSED.format(reason=decision.reason))
         granted = None
         detail = ""
         if (
@@ -267,12 +254,7 @@ class Toolbox:
             and self.allowances.covers(context.turn.conversation_id, name, action.target)
         ):
             decision, detail = Decision("allow", "allowed for this conversation"), "allowed for this conversation"
-        if (
-            decision.effect == "ask"
-            and self.grants is not None
-            and not self.gate.tainted_raise(action, situation)
-            and not self.gate.secret_raise(action, situation)
-        ):
+        if decision.effect == "ask" and self.grants is not None and not self.gate.secret_raise(action):
             granted = self.grants.cover(action, situation, context.turn.conversation_id, context.turn.client)
             if granted is not None:
                 decision, detail = self.grants.decision(granted), self.grants.detail(granted)
@@ -300,8 +282,9 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")
+        context.turn.mode_name = self.gate.modes.resolve(context.turn.conversation_id)
         situation = context.turn.situation
-        decision = self.gate.decide(action, situation, count_hit=False, approved=True)
+        decision = self.gate.decide(action, situation, approved=True)
         if decision.floor or decision.effect == "refuse":
             return CallResult(REFUSED.format(reason=decision.reason))
         detail = f"allowed on request #{approval_id}"
@@ -367,8 +350,9 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return f"Error: {error}", False
-        decision = self.gate.decide(action, context.turn.situation, count_hit=False, approved=True)
-        if decision.floor:
+        context.turn.mode_name = self.gate.modes.resolve(context.turn.conversation_id)
+        decision = self.gate.decide(action, context.turn.situation, approved=True)
+        if decision.effect == "refuse":  # the floor, or a mode that refuses it now: an answer does not undo either
             return REFUSED.format(reason=decision.reason), False
         text, ok = await self.run(tool, context, arguments)
         if ok and tool.taints:
@@ -380,10 +364,9 @@ class Toolbox:
     ) -> tuple[str, str, Approval | None]:
         """A call booked for later, now due, with nobody in the conversation: (how it ended, what it says, the request made).
 
-        You allowed this exact call and its date when it was booked, so the level and the raises (a tainted turn, a secret)
-        have nothing more to say. What still can stop it: the floor, the local-only rule, a rule that refuses, and a call
-        that now says something else than what you read (`summary`). A rule that asks makes it an ordinary request,
-        pushed to your clients like any unattended one: `held`. The other endings are done, failed and refused."""
+        You allowed this exact call and its date when it was booked, so the mode's approve and ask and the secret check have
+        nothing more to say. What still can stop it: the floor, the local-only rule, a mode that now refuses it, and a call
+        that now says something else than what you read (`summary`). The endings are done, failed and refused."""
         tool = self._tools.get(name)
         if tool is None:
             return "failed", f"Error: the tool {name} no longer exists.", None
@@ -397,6 +380,7 @@ class Toolbox:
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return "failed", f"Error: {error}", None
+        context.turn.mode_name = self.gate.modes.resolve(context.turn.conversation_id)
         situation = context.turn.situation
         digest = args_digest(arguments)
         common = {"conversation_id": context.turn.conversation_id, "turn_id": context.turn.turn_id}
@@ -413,21 +397,7 @@ class Toolbox:
         decision = self.gate.decide(action, situation, approved=True)
         if decision.effect == "refuse":
             self.audit.record(action, situation, digest, decision, "refused", **common)
-            why = decision.reason if decision.floor else f"your rules refuse this ({decision.reason})"
-            return "refused", f"Not run: {why}.", None
-        if decision.effect == "ask":
-            if self.approvals is None:
-                self.audit.record(
-                    action, situation, digest, decision, "refused", detail="no approval service", **common
-                )
-                return "refused", "Not run: a rule asks about it and approvals are not available.", None
-            approval = self.approvals.create(action, situation, context, arguments, decision)
-            self.audit.record(action, situation, digest, decision, "asked", approval_id=approval.id, **common)
-            return (
-                "held",
-                f"A rule of yours asks about this call: request #{approval.id} waits for your answer.",
-                approval,
-            )
+            return "refused", f"Not run: {decision.reason}.", None
         text, ok = await self.run(tool, context, arguments)
         self.audit.record(
             action, situation, digest, decision, "ran" if ok else "failed", detail="booked call", **common

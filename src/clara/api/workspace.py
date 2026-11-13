@@ -43,7 +43,7 @@ def _marks(request: Request):
 
 
 def _settled_by_you(request: Request) -> None:
-    """Trusting a file lets Clara read it as it is: an answer given in advance, as an auto level is."""
+    """Trusting a file lets Clara read it as it is: an answer given in advance, as a mode is."""
     if caller(request).token.approvals != "all":
         raise ApiError(403, "This token may not trust a file: it decides what Clara reads without care.")
 
