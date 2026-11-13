@@ -87,7 +87,7 @@ async def _web_search(context: ToolContext, query: str, max_results: Any = 5) ->
         )
         note = ""
     except ReaderError as error:
-        gists, note = {}, f"\n(The quarantined reader failed ({error}): the excerpts are left out.)"
+        gists, note = {}, f"\n(The quarantined reader failed: {error} The excerpts are left out.)"
     lines = []
     for n, item in enumerate(results, 1):
         gist = gists.get(str(n))
@@ -134,7 +134,7 @@ async def _web_fetch(context: ToolContext, url: str, focus: str = "") -> str:
             )
         except ReaderError as error:
             raise ToolError(
-                f"The quarantined reader could not read {page.url} ({error}). The page was not given to this conversation."
+                f"The quarantined reader could not read {page.url}: {error} The page was not given to this conversation."
             ) from None
         # the page's own words are not shown: only what is an address, with no space or quote to hide a sentence in
         found = list(dict.fromkeys(href for _, href in page.links if LINK.fullmatch(href)))[:SHOWN_LINKS]

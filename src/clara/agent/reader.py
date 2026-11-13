@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..connectors.mail import clean_line, clean_text
 from ..llm import NoModel
+from ..llm.retry import PAYMENT_STATUS, key_refused, retryable, status_of
+from .model import ModelTimeout
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -36,11 +38,39 @@ CHARS_PER_TOKEN = 2.5  # the reader's prompt is cut to its window with this: a l
 ANSWER_ROOM = 6_000  # characters left for the instructions and the report inside the window
 ITEM_FIELD = 400  # characters of each field of an item of a list (a search result, a mail of a search)
 GIST = 160
+STATUS_WORDS = {PAYMENT_STATUS: "the balance is spent", 404: "the model was not found", 429: "too many requests"}
+LASTING = (
+    "Trying again is useless: tell the person that the reader's model must be fixed (the reader_model setting, on the "
+    "Admin page)."
+)
+PASSING = "It may work later, but do not try again now or in a loop: if you need this text, tell the person."
 COPY = 30  # a flagged report loses any run of this many characters it copied from the text (see `without_copied`)
 
 
 class ReaderError(Exception):
-    """The reader could not give a report; the text it was given stays out of the conversation."""
+    """The reader could not give a report; the text it was given stays out of the conversation. `str(error)` is what the
+    conversation is told, and every tool that fails closed puts it in its answer: a cause in fixed words (never what the
+    provider said, which is outside text) and whether trying again can help. `cause` alone is what the alert says."""
+
+    def __init__(self, cause: str, advice: str = ""):
+        super().__init__(f"{cause}. {advice}" if advice else f"{cause}.")
+        self.cause = cause
+
+
+def why_it_failed(error: Exception, ref: str, provider: str) -> tuple[str, bool]:
+    """Why a call to the reader's model failed, in fixed words that carry the provider's id and status and none of its
+    text, and whether it will fail again (a wrong model, a refused key, a 4xx other than a passing one) or may work later."""
+    status = status_of(error)
+    if status is None:
+        if isinstance(error, ModelTimeout):
+            return f"{ref} did not answer in time", False
+        return f"{ref} could not be asked ({type(error).__name__})", False
+    words = (
+        "the key was refused"
+        if key_refused(error)
+        else STATUS_WORDS.get(status) or ("the provider failed" if status >= 500 else "the request was refused")
+    )
+    return f"HTTP {status} from {provider}: {words} ({ref})", not retryable(error)
 
 
 @dataclass(frozen=True)
@@ -174,6 +204,7 @@ class Report:
     total: int  # characters the text has (from the line it began at)
     first_line: int = 1  # the line the reader began at
     next_line: int = 0  # when the text was cut: the line to go on from (0: no line to give)
+    piece: int = 0  # when a line was longer than this, it was numbered in pieces of this many characters
 
     @property
     def addressed_to_ai(self) -> bool:
@@ -205,7 +236,16 @@ class Report:
             lines.append("Dates: " + "; ".join(values["dates"]))
         if self.seen < self.total:
             where = f" from line {self.first_line}" if self.first_line > 1 else ""
-            more = f" Call again with start_line={self.next_line} to read on." if self.next_line else ""
+            more = (
+                f" Call again with start_line={self.next_line} to read on."
+                if self.next_line
+                else " The text was cut and has no line break to read on from."
+            )
+            if self.piece and self.next_line:
+                more += (
+                    f" A line that long is numbered in pieces of {self.piece:,} characters, one line each (the counts "
+                    "include the line breaks this adds)."
+                )
             lines.append(f"[The reader read the first {self.seen:,} of {self.total:,} characters{where}.{more}]")
         if self.addressed_to_ai:
             lines.append(
@@ -296,6 +336,16 @@ def without_copied(values: dict[str, Any], text: str) -> dict[str, Any]:
     return cleaned
 
 
+def in_pieces(text: str, room: int) -> str:
+    """The text with each line that does not fit in `room` characters with its line break cut into lines that do. A text
+    that was cut can be read on only from a line (`start_line`), so a long line must be made of lines to be read to its end."""
+    return "\n".join(
+        part
+        for line in text.split("\n")
+        for part in ([line] if len(line) < room else (line[at : at + room - 1] for at in range(0, len(line), room - 1)))
+    )
+
+
 def without_ids(text: str, ids: re.Pattern[str]) -> str:
     """The text without `[id]` marks. It goes on until none is left: taking `[6]` out of `[[6]6]` makes a new one."""
     while True:
@@ -338,7 +388,17 @@ class Reader:
         try:
             return router.reader(chosen, local_only)
         except NoModel as error:
-            raise ReaderError(f"no model can run the reader ({error})") from None
+            raise self._failing(f"no model can run the reader ({error})", lasting=True) from None
+
+    def _failing(self, cause: str, *, lasting: bool) -> ReaderError:
+        """The error for a reader whose model cannot be used, and the `reader` alert, which lasts until a read works."""
+        self.s.alerts.raise_(
+            "reader",
+            "The quarantined reader cannot read",
+            f"{cause}. Pages, mail and files from outside are not given to the chat until it works. Check the "
+            "reader_model setting (Admin page, Settings) and the model's provider.",
+        )
+        return ReaderError(cause, LASTING if lasting else PASSING)
 
     async def _ask(self, system: str, user: str, choice, check_answer) -> Any:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -350,10 +410,13 @@ class Reader:
             except (
                 Exception
             ) as error:  # a failed model is the reader's failure, whatever it was; a stop (cancel) passes
-                log.warning("the reader's model %s failed: %s", choice.ref, type(error).__name__)
-                raise ReaderError(f"its model ({choice.ref}) did not answer ({type(error).__name__})") from None
+                log.warning(
+                    "the reader's model %s failed: %s (status %s)", choice.ref, type(error).__name__, status_of(error)
+                )
+                cause, lasting = why_it_failed(error, choice.ref, choice.provider.id)
+                raise self._failing(cause, lasting=lasting) from None
             try:
-                return check_answer(parse_object(answer))
+                found = check_answer(parse_object(answer))
             except ValueError as error:
                 problem = str(error) or problem
                 log.info("the reader's answer was refused (attempt %d): %s", attempt + 1, problem)
@@ -364,7 +427,10 @@ class Reader:
                         "content": "Your last answer could not be used. Answer again with only the JSON object described.",
                     },
                 ]
-        raise ReaderError(f"its report was not usable ({problem})")
+            else:
+                self.s.alerts.clear("reader")
+                return found
+        raise ReaderError(f"its report was not usable ({problem})", PASSING)
 
     def _room(self, window: int) -> int:
         """How many characters of a text a model with this window can take, with the configured cap."""
@@ -388,13 +454,17 @@ class Reader:
         spec = SHAPES[shape]
         choice = self._choice(conversation_id, local_only)
         first = max(1, start_line)
+        room = self._room(choice.window)
         body = clean_text(text)
+        pieces = in_pieces(body, room)
+        piece = room - 1 if len(pieces) > len(body) else 0
+        body = pieces
         if first > 1:
             body = "\n".join(body.split("\n")[first - 1 :])
             if not body:
                 raise ReaderError(f"the text has no line {first}")
         total = len(body)
-        body = body[: self._room(choice.window)]
+        body = body[:room]
         tag = f"=====DOCUMENT-{secrets.token_hex(8)}====="
         system = SYSTEM.format(
             source=spec.source, schema="\n".join(field.describe(spec.source) for field in spec.fields)
@@ -417,7 +487,7 @@ class Reader:
 
         values = await self._ask(system, user, choice, valid)
         following = first + body.count("\n") if len(body) < total else 0  # the last line may be cut: it is read again
-        return Report(shape, values, len(body), total, first, following if following > first else 0)
+        return Report(shape, values, len(body), total, first, following if following > first else 0, piece)
 
     async def gists(
         self, source: str, items: dict[str, str], *, conversation_id: str = "", local_only: bool = False

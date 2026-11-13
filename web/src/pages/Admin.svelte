@@ -112,16 +112,38 @@
     });
   }
 
+  /** Change a setting. A value that is not JSON, or that the server refuses (its words name the setting, the rule and an example), is
+   *  said in the dialog itself, which stays open on what was typed so that it can be corrected: a toast is gone before it is read. */
   async function setSetting(item: any): Promise<void> {
-    const text = await promptDialog({ title: `Change ${item.key}`, message: `${item.key} (JSON)`, label: `Value of ${item.key}, as JSON`, value: JSON.stringify(item.value) });
-    if (text === null) return;
-    try {
-      const value = JSON.parse(text);
-      if (item.key.startsWith('automation_keep_') && !(await confirmDeletions(item.key, value))) return;
-      await api.put(`/v1/admin/settings/${item.key}`, { value });
+    const how = `${item.key}: write a JSON value (a text between double quotes, a number, true or false, a list).`;
+    let text = JSON.stringify(item.value);
+    let problem = '';
+    for (;;) {
+      const typed = await promptDialog({ title: `Change ${item.key}`, message: problem ? `Not saved. ${problem}` : how, label: `Value of ${item.key}, as JSON`, value: text });
+      if (typed === null) return;
+      text = typed;
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        problem = `That is not JSON. A text needs double quotes ("like this"); a number, true and false do not.`;
+        continue;
+      }
+      try {
+        if (item.key.startsWith('automation_keep_') && !(await confirmDeletions(item.key, value))) return;
+        await api.put(`/v1/admin/settings/${item.key}`, { value });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 0;
+        if (status < 400 || status >= 500) {
+          toast((error as Error).message, 'error');
+          return;
+        }
+        problem = (error as Error).message;
+        continue;
+      }
+      toast(`${item.key} saved.`, 'ok');
       load();
-    } catch (error) {
-      toast((error as Error).message, 'error');
+      return;
     }
   }
 

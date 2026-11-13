@@ -146,7 +146,10 @@ def _upkeep(s: Services, args: list[str], token: TokenInfo) -> str:
     if not args:
         return f"Side jobs model: {s.runtime.get('upkeep_model') or '(the default model)'}"
     ref = "" if args[0] in ("none", "default") else args[0]
-    s.runtime.set("upkeep_model", ref)
+    try:
+        s.runtime.set("upkeep_model", ref)
+    except ValueError as error:
+        return f"Error: {error}"
     return f"Side jobs model: {ref or '(the default model)'}"
 
 

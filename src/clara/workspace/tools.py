@@ -118,7 +118,7 @@ async def _ws_read(context: ToolContext, path: str, start_line: Any = 1, end_lin
             )
         except ReaderError as error:
             raise ToolError(
-                f"The quarantined reader could not read {name} ({error}). The file was not given to this conversation."
+                f"The quarantined reader could not read {name}: {error} The file was not given to this conversation."
             ) from None
         context.taint(f"read {name}, a file {mark.source}")
         return (

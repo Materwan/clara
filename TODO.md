@@ -35,18 +35,8 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
   tester: about 3 in 4 runs are missed. Another forged transcript in a chat test was flagged 3 of 3. Idea: a code check that forces the
   flag for a forged transcript or for « ignore all previous instructions », at the price of more false alarms (an article about AI
   that quotes the phrase is already flagged 3 of 3). Decided 2026-11-13: left to the model, no code check.
-- **A broken reader costs a lot and hides its cause (low to medium).** With a wrong `reader_model`, one 4-turn mail scenario made 44
-  to 65 tool calls and 87 to 124 s (6 to 9 calls and 15 to 39 s with a working reader); one run moved a file nobody asked for (allowed
-  by the gate). Nothing hostile leaked. Causes: the failure text does not say that trying again is useless; the provider status is
-  dropped (`connectors/tools.py:136-138`, `connectors/mail_tools.py:340,426`, `workspace/tools.py:121`), so a wrong model and a passing
-  429 look alike; the reader has no fallback model and no retry on a provider error (`reader.py:299-303`, `llm/router.py:101-112`);
-  no alert on the Admin page. Ideas: « do not retry » in the text, keep the status, give the reader a fallback model, raise an alert.
-- **The reader settings are loose (low).** `reader_model` accepts `"opencode-go:"`, `":model"`, `["a:b"]` (saved as `"['a:b']"`) and
-  `null` (`runtime.py:27-31`), so a malformed model makes every read fail with no warning at save time; a value that is not JSON shows the
-  browser's raw error (`web/src/pages/Admin.svelte:115-125`); a good save shows no message; the description of `reader_max_chars` gives
-  neither its range (1,000 to 400,000) nor its default.
-- **Small ones (low).** A text of more than 40,000 characters with no newline cannot be read past its first 40,000, and the report gives
-  no line to resume from (`reader.py:366-367`). `parse_object` takes the first JSON object (`reader.py:257-267`): latent, the model never triggered it in 20
+- Decided 2026-11-13: the reader has no fallback model and no retry on a provider error.
+- **Small ones (low).** `parse_object` takes the first JSON object (`reader.py:257-267`): latent, the model never triggered it in 20
   runs. `mail_mark_read` runs with no card in a tainted hook run (documented,
   `actions.py:61`). A file you edit in the Library stays trusted although the page says a change makes it untrusted
   (`api/workspace.py:51-56`, on purpose).
@@ -54,7 +44,6 @@ To fix, most serious first (all reproduced by the orchestrator unless noted):
 Not decided:
 
 - Which of the proposals to build. (Decided 2026-11-13 for a trash after untrusted content: only the sentence of the threat model changes.)
-- Whether the reader gets a fallback model, and whether a broken reader is an alert on the Admin page.
 
 Not covered by the test (still to try):
 

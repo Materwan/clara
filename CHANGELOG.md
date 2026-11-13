@@ -59,6 +59,21 @@ answers one more field, `lapses`.
   digits only; `moodle_file_save` takes its file id as text and its error notes no longer end with two periods; the request to save a Moodle
   document names the document, as a mail's and a Drive file's do, and shows the path as it will be written; the reconnect text has no backticks;
   Moodle entries outside the period asked for are not shown.
+- **A failed read says why, and says when not to try again.** When the quarantined reader cannot read, the tool now gives the
+  provider's id, the HTTP status and a short phrase (`HTTP 404 from opencode-go: the model was not found`), never what the
+  provider answered. A wrong or unknown model, a refused key or any other lasting refusal says that trying again is useless and
+  names `reader_model`; a passing one (a limit, a busy provider, a timeout) says it may work later, and not to loop.
+- **A new alert, `reader`, while the reader's model fails.** It shows on the Admin page and in `#alerts`, names the status and
+  the setting to check, repeats at most every 6 hours, and ends with the next good read.
+- **`reader_model` and `reader_max_chars` are checked when you save them.** A model must be `provider:model` with both parts
+  filled (or empty); `opencode-go:`, `:model`, a list and `null` are refused, for `default_model`, `upkeep_model` and `fallbacks`
+  too. The size must be a whole number from 1,000 to 400,000. A refusal names the setting, the rule and an example.
+- **The Admin page says what happens when you change a setting.** A value that is not JSON, or that is refused, is shown in the
+  dialog (which stays open on what you typed) instead of the browser's raw error, and a good save says so. The size's description
+  now gives its range and its default.
+- **A very long line can be read to its end.** A text with a line longer than the reader's window (a minified file, one huge
+  paragraph) is numbered in pieces, so `start_line` goes on inside it; the report says so. A cut that has no line to go on from
+  says that too.
 
 ## v1.5.1 — 04/11/2026
 

@@ -7,6 +7,7 @@ live. Unknown keys are refused, so a typo cannot create a setting nobody reads.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -25,10 +26,18 @@ class Knob:
 
 
 def _ref_or_empty(value: Any) -> str:
-    value = str(value or "").strip()
-    if value and ":" not in value:
-        raise ValueError("a model is written provider:model")
-    return value
+    """A model, written provider:model with both parts filled, or empty. It is checked here, the one place the Admin page, the
+    API and the console share: a list or `null` used to be saved as text, and a half-written model failed every call later."""
+    if isinstance(value, str):
+        text = value.strip()
+        provider, _, model = text.partition(":")
+        if not text or (
+            re.fullmatch(r"[A-Za-z0-9._-]+", provider)
+            and re.fullmatch(r"[^\s\[\]{}()'\"`][^\s]*", model.strip())
+            and model == model.strip()
+        ):
+            return text
+    raise ValueError("a text written provider:model with both parts filled, for example opencode-go:glm-5, or empty")
 
 
 def _refs(value: Any) -> list[str]:
@@ -55,10 +64,10 @@ def _text(value: Any) -> str:
     return value
 
 
-def _whole(low: int, high: int) -> Callable[[Any], int]:
+def _whole(low: int, high: int, example: int | None = None) -> Callable[[Any], int]:
     def check(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-            raise ValueError(f"a whole number from {low} to {high}")
+            raise ValueError(f"a whole number from {low} to {high}" + (f", for example {example}" if example else ""))
         return value
 
     return check
@@ -77,12 +86,16 @@ KNOBS: dict[str, Knob] = {
         "the conversation gets only its typed report, never the raw text.",
     ),
     "reader_model": Knob(
-        "", _ref_or_empty, "The model of the quarantined reader ('': the model of titles and summaries)."
+        "",
+        _ref_or_empty,
+        "The model of the quarantined reader, written provider:model, for example opencode-go:glm-5 "
+        "('': the model of titles and summaries). A wrong one makes every read fail.",
     ),
     "reader_max_chars": Knob(
         40_000,
-        _whole(1_000, 400_000),
-        "Characters of a page, mail or file the quarantined reader reads (the rest is cut and the report says so).",
+        _whole(1_000, 400_000, 40_000),
+        "Characters of a page, mail or file the quarantined reader reads, from 1,000 to 400,000, 40,000 unless you "
+        "change it (the rest is cut and the report says so).",
     ),
     "auto_level_default": Knob(
         3,

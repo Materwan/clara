@@ -76,7 +76,7 @@ you point at them and can be dismissed (an error stays 8 seconds; on a phone the
 | Auto mode (Settings) | The ladder of auto levels (add, rename, remove), the level of a chat and of a run nobody watches that have none of their own, and every tool's thresholds: the level it asks from and the level it runs from, with a bar showing refuse, ask and run across the levels, changed one tool at a time or for a whole action class |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
 | Usage (Settings) | Token counts by day, model, kind, provider or client over 24 h to all time; the last calls |
-| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (one panel per group, each with a link to the provider's page where its value is made: Ollama's keys page for `ollama_api_key`, and so on; set, replace or remove, values never shown; the refresh tokens are made by connecting, with a link to Connections); runtime settings; **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
+| Admin (Settings) | Status, alerts, restart and stop; tokens (create, revoke); secrets (one panel per group, each with a link to the provider's page where its value is made: Ollama's keys page for `ollama_api_key`, and so on; set, replace or remove, values never shown; the refresh tokens are made by connecting, with a link to Connections); runtime settings (a value that is not JSON, or that is refused, is said in the dialog, which stays open on what was typed; a good save says so); **Discord** (the bot's state and the channels it sees, which channel carries each kind of message, a test message per channel); debug switch; backups (list, back up now); releases (notes, install); the console |
 
 The site is built at release time (`scripts/build-web.sh`): the machine needs no Node. Every page is served with a
 strict Content-Security-Policy (scripts, styles, fonts and connections from the site only; nothing is inlined as a
@@ -676,9 +676,16 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   reported speech), up to 10 facts, and for a mail a kind of message, what the sender asks for and the dates it names. A text
   addressed to an AI sets `addressed_to_ai` and the report carries a warning, and then every run of about 30 characters that its `answer` or its
   `facts` copied from the text (case and spaces do not count) is taken out of them, so that a `focus` such as « the lines that contain… » cannot make it quote a hostile line
-  (a report left with no summary and no answer is refused, as before). A mail's headers are shown as addresses only (the one in angle brackets for the sender; To, Cc and Reply-To), with the date and the ids: the sender's name and the subject are not, and an attachment is a kind of file and a media type; the reader's report carries the subject in its own words. In a list the preview is replaced by a gist of 160 characters, and no item can hold the start of another: a `[number]` or the `[id]` of an item is taken out of the text of every item before the list is given to the reader. A long text is read in parts: `start_line` goes on from a line, and a report of a cut text says which. If the reader cannot answer
+  (a report left with no summary and no answer is refused, as before). A mail's headers are shown as addresses only (the one in angle brackets for the sender; To, Cc and Reply-To), with the date and the ids: the sender's name and the subject are not, and an attachment is a kind of file and a media type; the reader's report carries the subject in its own words. In a list the preview is replaced by a gist of 160 characters, and no item can hold the start of another: a `[number]` or the `[id]` of an item is taken out of the text of every item before the list is given to the reader. A long text is read in parts: `start_line` goes on from a line, and a report of a cut text says which. A line too long to be read
+  in one go is numbered in pieces that fit the reader's window, one line each, so that `start_line` reaches the rest of it (the report says so, and its
+  counts include the line breaks that adds); a cut with no line to go on from says that it has none. If the reader cannot answer
   (no model, an error, two answers that are not usable), a document is **not** given to the conversation (the tool says so) and a list is shown
-  without its gists. The reader is a model call: it costs tokens (one call for a page, a mail or an attachment, one for a list) at the price of
+  without its gists. The tool says why in fixed words: the provider's id, the HTTP status and a short phrase (`HTTP 404 from opencode-go: the
+  model was not found (opencode-go:beam-free)`), never what the provider answered, which is outside text. A failure that will happen again (a
+  wrong or unknown model, a refused key, a 4xx other than 408, 409, 425 and 429) says that trying again is useless and that the person must fix
+  `reader_model`; a passing one (a 408, 409, 425, 429, 500, 502, 503, 504 or 529, a timeout, a report that was not usable) says that it may work later and that Clara must
+  not loop on it. A call that fails for the provider or the model (not a text refused as unusable) also raises the `reader` alert, which
+  ends with the next good read. The reader is a model call: it costs tokens (one call for a page, a mail or an attachment, one for a list) at the price of
   the model that runs it, `reader_model`, else the model of titles and summaries; it must be local when the conversation is local
   only or answered by a local model. `reader` turns it off (the text then reaches the conversation as before); `reader_max_chars`
   (40,000) bounds what it reads. The conversation stays tainted: a summary is free text and a hostile page can still write a misleading one. GitHub, Drive and folder
@@ -1128,6 +1135,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `gmail` | Google refused the Gmail refresh token (reconnect Gmail) |
   | `moodle` | Moodle refused the token (sign in to Moodle again); over once Moodle accepts a call |
   | `auriga` | Auriga's sign-in service refused the refresh token (sign in to Auriga again); over once Auriga accepts a call |
+  | `reader` | The quarantined reader's model could not be used (a wrong model, a refused key, a limit, no answer): pages, mail and files from outside are not given to the chat until it works; check `reader_model` (the text says which status); over with the next good read |
   | `update` | An update was not installed, or was rolled back |
   | `funnel` | Funnel was found on and turned off |
   | `tailscale` | Tailscale has not been serving Clara for 2 minutes |
@@ -1270,6 +1278,10 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 
 ### Runtime settings (changed while Clara runs: console, Admin page)
 
+Every value is checked once, when it is saved, whichever way it comes (the Admin page, `PUT /v1/admin/settings/{key}`, a console command such as
+`/upkeep`), and a refusal names the setting and the rule (a model or a size gives an example too). A model (`default_model`, `upkeep_model`, `fallbacks`, `reader_model`) is
+written `provider:model` with both parts filled, or empty where empty means « the default »; a list, `null` and a half-written model are refused.
+
 | Setting | Meaning |
 | --- | --- |
 | `default_model` | The model that answers when a conversation has none of its own |
@@ -1278,8 +1290,8 @@ Sizes accept `k`, `m` and `g`. A wrong value stops the start with the list of ev
 | `providers_enabled` | Providers that may be used (local Ollama hosts are enabled at first) |
 | `tainted_rule` | The tainted-turn rule (on) |
 | `reader` | The quarantined reader (on): web pages, search results, mail, attachments and files that came from outside are read by a model with no tools and no memory, and the conversation gets only its checked report |
-| `reader_model` | The model of the quarantined reader (empty: the model of titles and summaries) |
-| `reader_max_chars` | Characters of a text the quarantined reader reads, the rest is cut and the report says so (40,000; 1,000 to 400,000) |
+| `reader_model` | The model of the quarantined reader, written `provider:model` with both parts filled (empty: the model of titles and summaries); anything else is refused when it is saved |
+| `reader_max_chars` | Characters of a text the quarantined reader reads, the rest is cut and the report says so (40,000; a whole number from 1,000 to 400,000, else refused when it is saved) |
 | `auto_level_default` | The auto level of a chat that has none of its own and none from its project (3; 0 to the last level) |
 | `auto_level_unattended` | The auto level of a schedule, reminder or hook run that has none of its own and none from its project (3) |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |

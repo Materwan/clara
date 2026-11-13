@@ -264,7 +264,7 @@ async def _mail_search(
         )
         note = ""
     except ReaderError as error:
-        gists, note = {}, f"\n(The quarantined reader failed ({error}): the previews are left out.)"
+        gists, note = {}, f"\n(The quarantined reader failed: {error} The previews are left out.)"
     return head + "\n".join(_quiet_line(item, gists.get(item.id)) for item in found) + note
 
 
@@ -337,7 +337,7 @@ async def _mail_read(
         )
     except ReaderError as error:
         raise ToolError(
-            f"The quarantined reader could not read this message ({error}). Its text was not given to this conversation."
+            f"The quarantined reader could not read this message: {error} Its text was not given to this conversation."
         ) from None
     lines.append(report.text())
     return "\n".join(lines)
@@ -423,7 +423,7 @@ async def _mail_attachment_read(
         )
     except ReaderError as error:
         raise ToolError(
-            f"The quarantined reader could not read attachment {attachment} ({error}). Its text was not given to this "
+            f"The quarantined reader could not read attachment {attachment}: {error} Its text was not given to this "
             "conversation."
         ) from None
     return f"{DATA}\nAttachment {attachment}:\n{report.text()}"
