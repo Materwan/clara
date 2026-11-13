@@ -13,8 +13,7 @@ POST   /v1/modes/test                      {tool, arguments, situation, tainted,
 GET    /v1/conversations/{id}/mode         the mode it runs in, and where that comes from
 PUT    /v1/conversations/{id}/mode         {mode}: its own mode (null: follow)
 PUT    /v1/projects/{id}/mode              {mode}: the mode of the conversations that follow the project (null: the default)
-PUT    /v1/schedules/{id}/mode             {mode}: the mode of its runs (null: its project's, else the default)
-PUT    /v1/triggers/{id}/mode              the same for a hook
+PUT    /v1/automations/{id}/mode           {mode}: the mode of its runs (null: its project's, else the default)
 
 The default mode is a file the server reads at start: no route changes it. Only a token that may answer every request (approval
 scope `all`: the web site, a terminal, the console) makes, changes, deletes or sets a mode: a mode lets calls run without a card, so
@@ -382,11 +381,6 @@ def set_project_mode(project_id: int, body: StoredMode, request: Request) -> dic
     return _set(request, "projects", project_id, body.mode, "project")
 
 
-@router.put("/schedules/{schedule_id}/mode")
-def set_schedule_mode(schedule_id: int, body: StoredMode, request: Request) -> dict:
-    return _set(request, "schedules", schedule_id, body.mode, "schedule")
-
-
-@router.put("/triggers/{trigger_id}/mode")
-def set_trigger_mode(trigger_id: int, body: StoredMode, request: Request) -> dict:
-    return _set(request, "triggers", trigger_id, body.mode, "hook")
+@router.put("/automations/{automation_id}/mode")
+def set_automation_mode(automation_id: int, body: StoredMode, request: Request) -> dict:
+    return _set(request, "automations", automation_id, body.mode, "automation")

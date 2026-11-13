@@ -51,7 +51,7 @@ From a source tree (development machines): `sudo deploy/install.sh --from-source
   is read hidden), then enable it, after reading [PROVIDERS.md](PROVIDERS.md).
 - **Modes:** each conversation runs in a **mode**: its packs of special tools and, for each tool, whether it runs (`approve`), asks you
   (`ask`) or is refused (`refuse`), with a stricter verdict when the conversation read outside content. Set the mode of a chat in the
-  chat, of a project on its page, of a schedule or a hook on its card, or with `/mode`; make and edit modes on the **Modes**
+  chat, of a project on its page, of an automation on its card, or with `/mode`; make and edit modes on the **Modes**
   page or with `/mode new`, `/mode verdict`… (only the web site, the terminal and the console may; scripts and Discord cannot).
   A conversation that has no mode follows its automation, then its project, then the **default mode**.
 - **The default mode is a file**, `/etc/clara/default-mode.toml` (`CLARA_DEFAULT_MODE_FILE`), put there by `install.sh` the first time
@@ -92,7 +92,7 @@ listening on 127.0.0.1:8888, with `deploy/searxng/settings.yml` and a random `se
 
 Create a **fine-grained personal access token** on GitHub limited to the repositories Clara should reach, with the
 permissions she needs (Contents, Issues, Pull requests: read and write; Metadata: read). Paste it on the Connections
-page, then add each repository there: Clara reaches no other, and every change asks first by default. For hooks on pull
+page, then add each repository there: Clara reaches no other, and every change asks first by default. For automations on pull
 requests and pushes, read access to Contents and Pull requests is what the poll uses.
 
 ### Google Drive
@@ -154,42 +154,55 @@ end), or from the machine with `clara moodle connect` and `clara auriga connect`
 - **Approving an email** needs the web site or the console. Discord cannot, because sending is a `destructive` action
   and the Discord token's scope is `safe`; if you want to answer from Discord, `/tokens approvals <the bot's token> all`
   gives it that right (and to every other destructive action).
-- **Letting a schedule send** is a mode you make: a line `approve mail_send` with the target `mail:to:you@example.com` (and `ask`
-  when tainted, which an inbox read is), set as the schedule's mode. It still asks after a turn read untrusted content.
+- **Letting an automation send** is a mode you make: a line `approve mail_send` with the target `mail:to:you@example.com` (and `ask`
+  when tainted, which an inbox read is), set as the automation's mode. It still asks after a turn read untrusted content.
 - **New-mail notifications:** the Connections page's *New email* box (or `mail_notify` on the Admin page). It looks at the
   inbox every `CLARA_MAIL_POLL_SECONDS`; a mailbox that refuses raises the `gmail` alert once.
 
-### Hooks (Clara acts when a mail arrives, or a pull request or a push is made)
+### Automations (Clara acts when a mail arrives, a pull request or a push is made, or a time comes)
 
-A hook is something you write: *when a mail matches this, run Clara with this prompt and these tools*. Nothing is on until you make
-one, and the model cannot make one. On the web site, make and watch them in **Automation → Hooks**; the console does the same: The mail poll runs every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while a hook (or the
-notifications) listens. GitHub cannot call Clara, so a hook on `github.pull_request` or `github.push` is found by a poll too, every
-`CLARA_GITHUB_POLL_SECONDS` (120), of the repositories added on the Connections page and only for the kinds a hook waits for.
-A hook's run is untrusted, so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
+An automation is something you write: *when this trigger holds, run Clara with this prompt and these tools*. The trigger is a tree of
+AND and OR: an event (a mail, a push, a pull request) with a filter, a cron time, a date, and conditions of time (a window, a cron
+used as a window). Nothing is on until you make one, and the model cannot make one without your answer. (The web page and its form
+are being rebuilt for automations: until then make and watch them with the console, as below, or the API.) The mail poll runs
+every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while an automation (or the notifications) listens. GitHub cannot call Clara,
+so an automation on `github.pull_request` or `github.push` is found by a poll too, every `CLARA_GITHUB_POLL_SECONDS` (120), of the
+repositories added on the Connections page and only for the kinds an automation waits for. The run an event starts is untrusted,
+so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
 
 ```text
-/triggers add invoices '{"on": "mail.received",
-    "filter": {"from": {"contains": ["@billing.example"]}, "subject": {"contains": ["invoice", "facture"]}},
+/automations add invoices '{"when": {"type": "and", "of": [
+      {"type": "event", "kind": "mail.received", "filter": {"from": "@billing\\.example$", "subject": "invoice|facture"}},
+      {"type": "window", "from": "08:00", "to": "20:00", "days": [0, 1, 2, 3, 4]}]},
     "prompt": "An invoice arrived. Read it, add a task with the amount and the due date, and tell me in one sentence.",
     "tools": ["mail_read", "add_task", "notify"], "max_per_hour": 10}'
-/triggers test invoices          # the latest stored event: does it match, what would Clara receive, with which tools
-/triggers runs invoices          # what it did, each with a conversation you can open
-/triggers off invoices           # stops it, and drops what waited
+/automations test invoices       # the latest stored event: does the trigger hold, branch by branch and why, with which tools
+/automations runs invoices       # what it did, each with a conversation you can open
+/automations off invoices        # stops it, and drops what waited
 ```
 
-The same through `POST /v1/triggers` (fields in FEATURES.md, section 5). Good habits:
+The same through `POST /v1/automations` (fields in FEATURES.md, section 5). A filter is a regular expression on the RE2 engine,
+searched anywhere in the field and not case-sensitive (`"not": true` makes it « must not match »; `"case_sensitive": true` makes case
+matter). Good habits:
 
-- **Give the fewest tools.** With none listed a run can only search and read mail and notify. List what the job needs and no more;
-  a hostile mail can steer a run only within them.
-- **Test before trusting.** `/triggers test` runs nothing. To see the first real event, make the hook with `"action": "notify"` and a
+- **Give the fewest tools.** With none listed, a run an event starts can only search and read mail and notify (a run a time starts: only
+  notify). List what the job needs and no more; a hostile mail can steer a run only within them.
+- **Test before trusting.** `/automations test` runs nothing. To see the first real event, make it with `"action": "notify"` and a
   text like `"{from}: {subject}"`, which uses no model.
-- **A backlog is yours to decide.** After a stop, `catch_up` is `all` by default: every mail found late gets a run, at most
+- **A mail outside a window is ignored**, and recorded as skipped in the history so you can see it was seen.
+- **A backlog is yours to decide.** After a stop, `catch_up` is `all` by default for an event: every mail found late gets a run, at most
   `max_per_hour` an hour, oldest first. For a long outage prefer `"catch_up": "digest"` (one run for all) and `"max_age_hours"`.
+  An automation that has only times skips what it missed unless you say `latest` or `all`.
 - **Sending.** An email-triggered run is tainted, so a send always asks you; answer it on the web site or the console (it is
-  `destructive`, which Discord cannot approve). Add `mail_send` to the hook's tools only for a hook that needs to reply.
-- **Where the runs are.** Each run is a conversation in the project « Hook: <name> ». Switch that project's *in history* on to see
-  them in the web history; put files or instructions in the project to give every run the same context.
-- **Cost.** A run is a model call (kind `hook` in `/usage`). The filter is cheap and uses no model, so make it as narrow as you can.
+  `destructive`, which Discord cannot approve). Add `mail_send` to the automation's tools only for one that needs to reply.
+- **Where the runs are.** Each run has a conversation of its own by default. Switch **Show in history** on to see them in the web
+  history and, on Discord, in a forum thread with the whole answer, which you answer; put a project on the automation to give every
+  run the same files and instructions.
+- **Cost.** A run is a model call (kind `hook` for a run an event started, `schedule` for one a time started, in `/usage`). The
+  filter is cheap and uses no model, so make it as narrow as you can.
+- **Upgrading from schedules and hooks.** The upgrade (schema 32) takes the automatic backup, then turns every schedule and hook into an
+  automation (a schedule keeps its id, a hook gets the highest schedule id plus its own; the old tables stay as `legacy_*` copies).
+  Check the list once: a hook that shared a name with a schedule is called `<name> (hook)`.
 
 ### The Obsidian vault
 
@@ -253,8 +266,8 @@ systemctl enable --now clara-discord
 
 and `CLARA_DISCORD_EXPECTED=true` in `/etc/clara/clara.env`, so its silence raises an alert.
 
-What goes where: your chat and Clara's answers in `#general` (a scheduled run's question too, with a thread for your answer); approval requests, with buttons, in `#approval`
-(`#general` says when one waits); reminders, task reminders, schedule summaries, notifications and update news in
+What goes where: your chat and Clara's answers in `#general` (the question of an automation's run too, with a thread for your answer); approval requests, with buttons, in `#approval`
+(`#general` says when one waits); reminders, task reminders, automation summaries, notifications and update news in
 `#notification`; alerts in `#alerts`. Keep the server to yourself: anyone in it reads those channels.
 
 **Choosing the channels and checking the bot:** the Admin page's **Discord** tab shows whether the bot is connected (its
@@ -266,7 +279,7 @@ hook failures, hook notices, new mail, Clara's own notices, booked calls, answer
 alerts) has a
 selector: `#notification`, `#general`, `#alerts`, or off on Discord. Nothing changes until you choose; a change applies to
 the next message. A common use: send *Hook failures* to `#alerts`, or switch *New mail* off on Discord and keep it on the
-web site. Approval requests and the questions of scheduled runs cannot be moved, and alerts cannot be switched off. The
+web site. Approval requests and the questions of automation runs cannot be moved, and alerts cannot be switched off. The
 setting is `discord_routes`, which the Settings tab also shows as JSON.
 
 
@@ -285,10 +298,10 @@ mirror stops, `#alerts` says so and the Admin page offers **Resume the mirror** 
 ### Special tools and the daily note
 
 Special tools (**packs**) are switched on per conversation in the web chat's **"+" menu** (or `/tools` on Discord and in
-`clara-chat`), and per schedule on the Automation page. The ones that read a day back need nothing more; **Second brain**
+`clara-chat`), and per automation on the Automation page. The ones that read a day back need nothing more; **Second brain**
 and **Daily notes** need the vault (above); **Discord thread** needs the bot connected (below).
 
-When there is a vault, the first start makes the schedule **"Bilan du jour"**: every day at 23:59 (in `CLARA_TIMEZONE`)
+When there is a vault, the first start makes the automation **"Bilan du jour"**: every day at 23:59 (in `CLARA_TIMEZONE`)
 Clara reads the day, asks you one question on the web site and in a Discord thread, waits for your answer, then writes the
 day into the « Récap (Clara) » block of the daily note. You edit it on the Automation page (time, prompt, packs, model, what
 to do when the server was off or when the last run is not over), pause it, or delete it (it is not made again).

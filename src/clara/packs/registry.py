@@ -1,15 +1,15 @@
-"""Tool packs: the special tools a conversation or a schedule is granted.
+"""Tool packs: the special tools a conversation or an automation is granted.
 
 A pack is a name for a group of tools. The tools of a pack that is not switched on are not offered to the model at all
 (like a tool whose service is off); a pack that is on only makes its tools exist, the rule gate still decides each call.
 
 * In a chat, the "+" menu of the web site (or `/tools` on Discord and in the terminal) switches packs on or off for the
   conversation; the choice is saved with it, so it follows the conversation to every client.
-* A schedule lists the packs its runs get; the conversation of a run starts with them.
+* An automation lists the packs its runs get (or the tools, which switch the packs they need on); the conversation of a run starts with them.
 
 Two packs are the familiar switches: `web` (web search and fetch, on by default) and `second_brain` (the vault open, its
-tools offered), which are stored where they always were. A pack for schedules only (`where="schedule"`) is offered in
-the conversation of a scheduled run, never in a plain chat; one for chats only (`where="chat"`) the other way round.
+tools offered), which are stored where they always were. A pack for automations only (`where="automation"`) is offered in
+the conversation of an automation's run, never in a plain chat; one for chats only (`where="chat"`) the other way round.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..connectors.mail import PROVIDERS
-from ..events.delivery import discord_connected, forum
+from ..events.delivery import discord_connected
 
 if TYPE_CHECKING:
     from ..memory.conversations import Conversation
@@ -40,7 +40,7 @@ class Pack:
     label: str
     description: str
     tools: frozenset[str]
-    where: str = "both"  # chat, schedule or both
+    where: str = "both"  # chat, automation or both
     default: bool = False  # on in a new conversation
     icon: str = "tools"
     check: Callable[[Services], str] | None = None  # "": usable, else why it is not
@@ -169,7 +169,7 @@ PACKS: tuple[Pack, ...] = (
     Pack(
         "automations",
         "Automations",
-        "Read, create, change and delete your schedules and hooks. Every change asks you first.",
+        "Read, create, change and delete your automations. Every change asks you first.",
         frozenset({"automation_list", "automation_create", "automation_update", "automation_delete"}),
         where="chat",
         icon="play",
@@ -188,7 +188,7 @@ PACKS: tuple[Pack, ...] = (
         "Ask you a question on the web site and Discord, wait for your answer in the "
         "conversation, then finish the run.",
         frozenset({"ask_person", "finish_run"}),
-        where="schedule",
+        where="automation",
         icon="bell",
     ),
     Pack(
@@ -196,7 +196,7 @@ PACKS: tuple[Pack, ...] = (
         "Discord thread",
         "Open, write in and remove a Discord thread, whose replies come back to the run.",
         frozenset({"discord_thread"}),
-        where="schedule",
+        where="automation",
         icon="chat",
         check=_discord_needed,
     ),
@@ -213,7 +213,7 @@ class Packs:
         return pack.check(self.s) if pack.check else ""
 
     def listing(self, where: str | None = None) -> list[dict]:
-        """The packs for a place (`chat` or `schedule`; None: all), with why one cannot be used right now."""
+        """The packs for a place (`chat` or `automation`; None: all), with why one cannot be used right now."""
         return [
             {
                 "id": pack.id,
@@ -239,7 +239,7 @@ class Packs:
             raise PackError(f"No such tool pack: {', '.join(unknown)}.")
         misplaced = [item for item in wanted if BY_ID[item].where not in (where, "both")]
         if misplaced:
-            raise PackError(f"Not for {'a chat' if where == 'chat' else 'a schedule'}: {', '.join(misplaced)}.")
+            raise PackError(f"Not for {'a chat' if where == 'chat' else 'an automation'}: {', '.join(misplaced)}.")
         return [pack.id for pack in PACKS if pack.id in wanted]
 
     @staticmethod
@@ -284,11 +284,11 @@ class Packs:
     # Scheduled runs
     # ------------------------------------------------------------------
     def run_of(self, conversation_id: str):
-        """The scheduled run a conversation belongs to (its row, with the schedule's name), or None."""
+        """The automation run a conversation belongs to (its row, with the automation's name), or None."""
         if not conversation_id:
             return None
         return self.s.db.one(
-            "SELECT r.*, s.name AS schedule_name, s.deliver FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            "SELECT r.*, a.name AS automation_name, a.in_history FROM automation_runs r JOIN automations a ON a.id = r.automation_id"
             " WHERE r.conversation_id = ? ORDER BY r.id DESC LIMIT 1",
             (conversation_id,),
         )
@@ -297,7 +297,7 @@ class Packs:
     # What is offered
     # ------------------------------------------------------------------
     def hidden(self, conversation: Conversation | None) -> set[str]:
-        """The tools of the packs that are off, unusable now, or for schedules in a conversation that is no run (and the
+        """The tools of the packs that are off, unusable now, or for automations in a conversation that is no run (and the
         chat-only ones in a run's: an automation never manages automations)."""
         active = set(self.active(conversation))
         run = self.run_of(conversation.id) if conversation is not None else None
@@ -306,10 +306,10 @@ class Packs:
             if (
                 pack.id not in active
                 or self.unavailable(pack)
-                or (pack.where == "schedule" and run is None)
+                or (pack.where == "automation" and run is None)
                 or (pack.where == "chat" and run is not None)
             ):
                 hidden |= pack.tools
-        if run is not None and forum(run["deliver"]):  # its thread is the forum's: none is opened in #general
+        if run is not None and run["in_history"]:  # its thread is the forum's: none is opened in #general
             hidden |= BY_ID["discord_thread"].tools
         return hidden

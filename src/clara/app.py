@@ -19,7 +19,6 @@ import os
 import signal
 import sys
 from collections.abc import AsyncIterator
-from datetime import time
 
 import uvicorn
 from fastapi import FastAPI
@@ -28,9 +27,10 @@ from . import __version__
 from .agent.model import ModelRunner
 from .agent.prompt import Persona
 from .agent.reader import Reader
-from .agent.turn import Agent, ChatRequest
+from .agent.turn import Agent
 from .api import admin as admin_api
 from .api import auth as auth_api
+from .api import automations as automations_api
 from .api import chat as chat_api
 from .api import connections as connections_api
 from .api import conversations as conversations_api
@@ -45,13 +45,14 @@ from .api import packs as packs_api
 from .api import projects as projects_api
 from .api import retention as retention_api
 from .api import time as time_api
-from .api import triggers as triggers_api
 from .api import vault as vault_api
 from .api import web as web_api
 from .api import workspace as workspace_api
 from .api.common import install_error_handlers
 from .api.middleware import AuthMiddleware, BodyLimitMiddleware, SecurityHeadersMiddleware, TrafficMiddleware
 from .auth import FailureLimiter, Tokens, WebSessions
+from .automations import Automations
+from .automations.setup import install as automations_install
 from .connectors import setup as connectors_setup
 from .connectors.asks import Questions
 from .connectors.mail_tools import mail_tools
@@ -59,7 +60,7 @@ from .connectors.quizzes import Quizzes
 from .connectors.school_tools import school_tools
 from .connectors.tools import drive_tools, github_tools, web_tools
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
-from .events import Events, delivery
+from .events import Events
 from .gate import Approvals, Audit, DefaultModeError, Gate, Grants, Modes
 from .gate.allowances import Allowances
 from .gate.approvals import BOOKED_TURN
@@ -70,7 +71,6 @@ from .knowledge.github_snapshot import GitHub as GitHubSnapshots
 from .knowledge.projects import Projects
 from .knowledge.vault.tools import vault_tools
 from .llm import Catalog, NoModel, Providers, Router
-from .llm.retry import retryable
 from .memory.conversations import Conversations
 from .memory.facts import Facts
 from .memory.retention import AutomationRetention
@@ -94,10 +94,8 @@ from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
 from .settings import Settings, SettingsError, load_settings
-from .timekeeping import DeferredCall, DeferredCalls, Reminders, Schedules, Stopping, Tasks
+from .timekeeping import DeferredCall, DeferredCalls, Reminders, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
-from .timekeeping.schedules import CLOSING as SCHEDULE_CLOSING
-from .timekeeping.schedules import Run, Schedule, instructions_of, message_of, shown_of
 from .timeutil import parse_iso, zone
 from .tools.base import Tool, Toolbox, ToolContext, TurnState
 from .tools.discord_tools import can_say, discord_tools
@@ -105,7 +103,6 @@ from .tools.folder_tools import FolderGrants, folder_tools
 from .tools.knowledge_tools import knowledge_tools
 from .tools.memory_tools import memory_tools
 from .tools.time_tools import time_tools
-from .triggers.setup import install as triggers_install
 from .workspace import setup as workspace_setup
 from .workspace.tools import workspace_tools
 
@@ -212,7 +209,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         ),
         reminders=Reminders(db, events, home),
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
-        schedules=Schedules(db, events, home),
+        automations=Automations(db, events, home),
         deferred=DeferredCalls(db, events, home),
         gate=Gate(modes, vault_push=settings.vault_push),
         modes=modes,
@@ -234,6 +231,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
     s.modes.audit = audit
     s.toolbox = Toolbox(tools, s.gate, audit)
+    s.automations.projects = s.projects
+    s.automations.tool_names = lambda: s.toolbox.names
     s.toolbox.approvals = s.approvals
     s.toolbox.grants = s.grants
     s.toolbox.allowances = s.allowances
@@ -264,15 +263,9 @@ def wire(s: Services) -> None:
     s.tasks.planner = jobs.plan
     s.tasks.follower = jobs.follow
     late = late_alert(s)
-    for loop in (s.reminders, s.tasks, s.schedules, s.deferred):
+    for loop in (s.reminders, s.tasks, s.deferred):
         loop.late = late
         loop.late_after = float(s.settings.late_alert_seconds)
-    s.schedules.runner = lambda schedule, number, run: run_schedule(s, schedule, number, run)
-    s.schedules.closer = lambda schedule, run: close_run(s, schedule, run)
-    s.schedules.check_packs = lambda ids: s.packs.check(ids, "schedule") if s.packs is not None else list(ids)
-    hours, minutes = s.settings.waiting_remind_at.split(":")
-    s.schedules.remind_at = time(int(hours), int(minutes))
-    s.schedules.waiting = s.approvals.pending_count
     s.approvals.toolbox = s.toolbox
     s.approvals.followup = s.agent.followup
     s.deferred.runner = lambda call: run_deferred(s, call)
@@ -314,113 +307,18 @@ async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int |
     return status, text, request.id if request is not None else None
 
 
-async def run_schedule(s: Services, schedule: Schedule, number: int, run: Run) -> str:
-    """One run: a turn in a conversation (the schedule's own, or a new one for each run) with the schedule's packs and
-    model. The run remembers its conversation, which is where your answer comes back when it asks something."""
-    from .agent.turn import ServerStopping
-
-    packs = list(schedule.packs)
-    if schedule.per_run:
-        day = run.due.astimezone(zone(schedule.timezone)).date().isoformat()
-        conversation_id = s.conversations.create(
-            "server",
-            title=f"{schedule.name} — {day}",
-            project_id=schedule.project_id,
-            local_only=schedule.local_only,
-            model=schedule.model,
-            packs=packs,
-        ).id
-    else:
-        conversation_id = schedule.conversation_id
-        if conversation_id is None or s.conversations.get(conversation_id) is None:
-            conversation_id = s.conversations.create(
-                "server",
-                kind="schedule",
-                title=schedule.name,
-                project_id=schedule.project_id,
-                local_only=schedule.local_only,
-            ).id
-            s.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation_id, schedule.id))
-        s.conversations.update(conversation_id, packs=packs, model=schedule.model)
-    s.db.execute("UPDATE schedule_runs SET conversation_id = ? WHERE id = ?", (conversation_id, run.id))
-    if delivery.forum(schedule.deliver):
-        delivery.started(
-            s,
-            f"Scheduled task: {schedule.name}",
-            conversation=conversation_id,
-            payload={"schedule": schedule.id, "run": run.id},
-        )
-    request = ChatRequest(
-        message=message_of(schedule),
-        client="server",
-        conversation=conversation_id,
-        instructions=instructions_of(schedule),
-        prefix=f"[Scheduled task “{schedule.name}”, run {number}]",
-        shown=shown_of(schedule, run.due),
-        timezone=schedule.timezone,
-        mode="unattended",
-        kind="schedule",
-        quiet=True,
-        model=schedule.model or None,
-    )
-    attempt = 1
-    while True:
-        before = s.conversations.message_count(conversation_id)
-        try:
-            return await s.agent.answer(request)
-        except ServerStopping:
-            raise Stopping() from None
-        except Exception as error:
-            # A turn that used a tool or wrote text stores what it did: only a run that stored nothing is tried again.
-            done = s.conversations.message_count(conversation_id) != before
-            if done or attempt >= schedule.attempts or not retryable(error):
-                raise
-            log.warning(
-                "schedule %s: attempt %d of %d failed (%s), trying again",
-                schedule.id,
-                attempt,
-                schedule.attempts,
-                error,
-            )
-            await s.schedules.pause_before_retry(attempt)
-            attempt += 1
-
-
-async def close_run(s: Services, schedule: Schedule, run) -> None:
-    """A run that waits for an answer nobody gave: Clara finishes it from what she has (in its own conversation)."""
-    from .agent.turn import ServerStopping
-
-    try:
-        await s.agent.answer(
-            ChatRequest(
-                message=SCHEDULE_CLOSING,
-                client="server",
-                conversation=run["conversation_id"],
-                timezone=schedule.timezone,
-                mode="unattended",
-                kind="schedule",
-                quiet=True,
-                model=schedule.model or None,
-            )
-        )
-    except ServerStopping:
-        raise Stopping() from None
-
-
 def recover(s: Services) -> None:
     """What a crash (kill -9, a power cut) left half done is put straight before anything runs."""
     healed = s.conversations.heal_versions()
     failed = s.approvals.recover()
-    interrupted = s.schedules.recover()
-    cut = s.triggers.recover() if s.triggers is not None else 0
+    cut = s.automations.recover()
     booked = s.deferred.recover()
-    if healed or failed or interrupted or cut or booked:
+    if healed or failed or cut or booked:
         log.warning(
             "after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
-            "%d scheduled run(s) to run again, %d hook run(s) put right, %d booked call(s) marked to check",
+            "%d automation run(s) put right, %d booked call(s) marked to check",
             healed,
             failed,
-            interrupted,
             cut,
             booked,
         )
@@ -508,7 +406,7 @@ def create_app(s: Services) -> FastAPI:
     ):
         app.include_router(router)
     app.include_router(workspace_api.router)
-    app.include_router(triggers_api.router)
+    app.include_router(automations_api.router)
     app.include_router(retention_api.router)
     app.include_router(connections_api.router)
     app.include_router(vault_api.router)
@@ -679,7 +577,7 @@ def extend(s: Services) -> None:
     connectors_setup.install(s)
     vault_setup.install(s)
     packs_install(s)
-    triggers_install(s)
+    automations_install(s)
     ops_setup.install(s)
 
 

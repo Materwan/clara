@@ -18,7 +18,7 @@
   const current = $derived(steps[index]);
   const last = $derived(index === steps.length - 1);
   const missing = $derived(current.missing ?? []);
-  // “To go on: give the hook a name.”, and how many more when there are several
+  // “To go on: give it a name.”, and how many more when there are several
   const why = $derived(
     missing.length
       ? `To go on: ${missing[0].charAt(0).toLowerCase()}${missing[0].slice(1)}${missing.length > 1 ? ` (and ${missing.length - 1} more)` : ''}`

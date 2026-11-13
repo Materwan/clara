@@ -27,6 +27,14 @@ from modeset import line, make, only, own
 ROOT = __import__("pathlib").Path(__file__).resolve().parent.parent
 
 
+def new_schedule(services, name: str = "W", prompt: str = "p"):
+    return services.automations.create(name, {"type": "once", "at": "2099-01-05T09:00"}, prompt=prompt)
+
+
+def new_hook(services, name: str = "H", prompt: str = "p"):
+    return services.automations.create(name, {"type": "event", "kind": "mail.received"}, prompt=prompt)
+
+
 def action(tool="some_tool", klass="ws_write", level="write", *targets, secrets=()):
     return Action(tool, level, klass, targets or ("ws:a.txt",), "test", tuple(secrets))
 
@@ -382,23 +390,23 @@ def test_a_conversation_follows_its_automation_then_its_project_then_the_default
         modes.set_stored("projects", project.id, "default")  # the default mode is what follows: it is not stored
 
 
-def test_a_run_takes_the_mode_of_its_schedule_or_its_hook(services):
+def test_a_run_takes_the_mode_of_its_automation(services):
     modes = services.modes
     make(services, "Runs")
     make(services, "Own")
-    schedule = services.schedules.create(name="Weekly", prompt="Summarise.", at="2099-01-05T09:00")
+    schedule = new_schedule(services, "Weekly", "Summarise.")
     conversation = services.conversations.create("server", kind="schedule")
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (conversation.id, schedule.id))
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (conversation.id, schedule.id))
     assert modes.where(conversation.id) == (DEFAULT, "default")
-    modes.set_stored("schedules", schedule.id, "Runs")
+    modes.set_stored("automations", schedule.id, "Runs")
     assert modes.where(conversation.id) == ("Runs", "automation")
     own(services, conversation.id, "Own")
     assert modes.where(conversation.id) == ("Own", "own")
     with pytest.raises(ModeError):
-        modes.set_stored("schedules", 999, "Runs")
-    trigger = services.triggers.create(name="H", on="mail.received", prompt="p")
-    modes.set_stored("triggers", trigger.id, "Runs")
-    assert services.triggers.find(trigger.id).mode == "Runs" and services.schedules.get(schedule.id).mode == "Runs"
+        modes.set_stored("automations", 999, "Runs")
+    trigger = new_hook(services, "H", "p")
+    modes.set_stored("automations", trigger.id, "Runs")
+    assert services.automations.find(trigger.id).mode == "Runs" and services.automations.get(schedule.id).mode == "Runs"
 
 
 async def test_the_mode_is_read_at_each_call_so_changing_it_stops_the_next_tool(services, probe):
@@ -452,10 +460,10 @@ async def test_the_card_names_the_mode_that_asked(services, probe):
 
 async def test_a_run_nobody_watches_holds_what_its_mode_asks(services, llm):
     make(services, "Careful", line("ask", klass="ws_write"))
-    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
-    services.modes.set_stored("schedules", schedule.id, "Careful")
+    schedule = new_schedule(services, "W", "p")
+    services.modes.set_stored("automations", schedule.id, "Careful")
     made = services.conversations.create("server", kind="schedule")
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (made.id, schedule.id))
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (made.id, schedule.id))
     llm.replies = [calls(("ws_write", {"path": "a.txt", "content": "x"})), "Asked."]
     await services.agent.answer(
         ChatRequest(message="go", client="server", conversation=made.id, mode="unattended", kind="schedule")
@@ -520,10 +528,10 @@ async def test_a_conversation_that_follows_a_project_mode_gets_its_packs_at_its_
 
 async def test_a_run_nobody_watches_gets_the_packs_of_its_modes_at_its_turn(services, llm):
     make(services, "Runs", packs=["day_activity"])
-    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
-    services.modes.set_stored("schedules", schedule.id, "Runs")
+    schedule = new_schedule(services, "W", "p")
+    services.modes.set_stored("automations", schedule.id, "Runs")
     made = services.conversations.create("server", kind="schedule", packs=["web"])
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (made.id, schedule.id))
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (made.id, schedule.id))
     llm.replies = ["Done."]
     await services.agent.answer(ChatRequest(message="go", client="server", conversation=made.id, mode="unattended", kind="schedule"))
     assert services.conversations.get(made.id).active_packs() == ["web", "day_activity"]
@@ -560,14 +568,14 @@ def test_a_mode_is_made_changed_and_deleted_with_the_numbers_of_what_uses_it(ser
     chat = services.conversations.create("web")
     run = services.conversations.create("server", kind="schedule")
     project = services.projects.create("P")
-    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
-    trigger = services.triggers.create(name="H", on="mail.received", prompt="p")
+    schedule = new_schedule(services, "W", "p")
+    trigger = new_hook(services, "H", "p")
     own(services, chat.id, "Mail work")
     own(services, run.id, "Mail work")
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (run.id, schedule.id))
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (run.id, schedule.id))
     modes.set_stored("projects", project.id, "Mail work")
-    modes.set_stored("schedules", schedule.id, "Mail work")
-    modes.set_stored("triggers", trigger.id, "Mail work")
+    modes.set_stored("automations", schedule.id, "Mail work")
+    modes.set_stored("automations", trigger.id, "Mail work")
     uses = {"conversations": 1, "automation_conversations": 1, "automations": 2, "projects": 1}
     assert modes.uses("Mail work") == uses
     from clara.gate.modes import NeedsConfirmation
@@ -579,8 +587,8 @@ def test_a_mode_is_made_changed_and_deleted_with_the_numbers_of_what_uses_it(ser
         modes.delete("Mail work", {**uses, "automations": 1})  # the numbers changed since you read them
     assert modes.delete("Mail work", uses) == uses
     assert modes.names() == [] and services.conversations.get(chat.id).mode is None
-    assert modes.where(run.id) == (DEFAULT, "default") and services.triggers.find(trigger.id).mode is None
-    assert services.schedules.get(schedule.id).mode is None and services.projects.get(project.id).mode is None
+    assert modes.where(run.id) == (DEFAULT, "default") and services.automations.find(trigger.id).mode is None
+    assert services.automations.get(schedule.id).mode is None and services.projects.get(project.id).mode is None
 
 
 async def test_the_page_reads_the_modes_and_everything_it_needs_to_edit_one(client, services):
@@ -639,7 +647,7 @@ async def test_a_mode_is_made_changed_and_deleted_from_the_page(client, services
     assert any(row["tool"] == "mode" and row["outcome"] == "mode" for row in services.audit.recent())
 
 
-async def test_the_mode_of_a_conversation_a_project_a_schedule_and_a_hook(client, services):
+async def test_the_mode_of_a_conversation_a_project_and_an_automation(client, services):
     make(services, "Mail work", packs=["mail"])
     chat = services.conversations.create("web")
     got = (await client.get(f"/v1/conversations/{chat.id}/mode")).json()
@@ -655,12 +663,12 @@ async def test_the_mode_of_a_conversation_a_project_a_schedule_and_a_hook(client
     assert (await client.put(f"/v1/projects/{project.id}/mode", json={"mode": "Mail work"})).json() == {"mode": "Mail work"}
     assert (await client.get(f"/v1/projects/{project.id}")).json()["mode"] == "Mail work"
     assert (await client.put("/v1/projects/999/mode", json={"mode": "Mail work"})).status_code == 404
-    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
-    assert (await client.put(f"/v1/schedules/{schedule.id}/mode", json={"mode": "Mail work"})).status_code == 200
-    assert (await client.get(f"/v1/schedules/{schedule.id}")).json()["mode"] == "Mail work"
-    trigger = services.triggers.create(name="H", on="mail.received", prompt="p")
-    assert (await client.put(f"/v1/triggers/{trigger.id}/mode", json={"mode": "Mail work"})).status_code == 200
-    assert (await client.get(f"/v1/triggers/{trigger.id}")).json()["mode"] == "Mail work"
+    schedule = new_schedule(services, "W", "p")
+    assert (await client.put(f"/v1/automations/{schedule.id}/mode", json={"mode": "Mail work"})).status_code == 200
+    assert (await client.get(f"/v1/automations/{schedule.id}")).json()["mode"] == "Mail work"
+    trigger = new_hook(services, "H", "p")
+    assert (await client.put(f"/v1/automations/{trigger.id}/mode", json={"mode": "Mail work"})).status_code == 200
+    assert (await client.get(f"/v1/automations/{trigger.id}")).json()["mode"] == "Mail work"
     made = await client.post("/v1/conversations", json={"mode": "Mail work"})
     assert made.status_code == 201 and made.json()["mode"] == "Mail work" and "mail" in made.json()["packs"]
 
@@ -690,8 +698,8 @@ async def test_only_a_token_that_may_answer_everything_makes_changes_or_sets_a_m
     make(services, "Mail work")
     chat = services.conversations.create("web")
     project = services.projects.create("P")
-    schedule = services.schedules.create(name="W", prompt="p", at="2099-01-05T09:00")
-    trigger = services.triggers.create(name="H", on="mail.received", prompt="p")
+    schedule = new_schedule(services, "W", "p")
+    trigger = new_hook(services, "H", "p")
     numbers = {"conversations": 0, "automation_conversations": 0, "automations": 0, "projects": 0}
     for kind in ("discord", "script"):  # the bot (scope safe) and a script (scope none)
         async with await client_as(services, f"as-{kind}", kind) as other:
@@ -704,8 +712,8 @@ async def test_only_a_token_that_may_answer_everything_makes_changes_or_sets_a_m
                 other.put(f"/v1/conversations/{chat.id}/mode", json={"mode": "Mail work"}),
                 other.put(f"/v1/conversations/{chat.id}/mode", json={"mode": None}),
                 other.put(f"/v1/projects/{project.id}/mode", json={"mode": "Mail work"}),
-                other.put(f"/v1/schedules/{schedule.id}/mode", json={"mode": "Mail work"}),
-                other.put(f"/v1/triggers/{trigger.id}/mode", json={"mode": "Mail work"}),
+                other.put(f"/v1/automations/{schedule.id}/mode", json={"mode": "Mail work"}),
+                other.put(f"/v1/automations/{trigger.id}/mode", json={"mode": "Mail work"}),
                 other.post("/v1/conversations", json={"mode": "Mail work"}),
                 other.post("/v1/chat", json={"message": "hi", "mode": "Mail work"}),
             ):
@@ -728,7 +736,7 @@ def test_the_model_cannot_change_a_mode(services):
     assert not any(part in ("mode", "level") for name in services.toolbox.names for part in name.split("_"))
     from clara.packs import automations
 
-    fields = {*automations.BOTH, *automations.SCHEDULE_ONLY, *automations.HOOK_ONLY}
+    fields = set(automations.ORDER)
     assert not fields & {"mode", "level", "auto_level"}  # an automation she makes gets the default mode (or its project's)
 
 
@@ -860,7 +868,7 @@ def test_the_migration_makes_every_level_follow_keeps_the_legacy_tables_and_take
     assert {"modes", "mode_packs", "mode_verdicts", "legacy_auto_levels", "legacy_tool_levels", "legacy_rules", "legacy_settings"} <= tables
     assert not tables & {"auto_levels", "tool_levels", "rules"}
     assert new.execute("SELECT mode FROM conversations WHERE id = 'c1'").fetchone()[0] is None
-    for table in ("conversations", "projects", "schedules", "triggers"):
+    for table in ("conversations", "projects", "automations"):
         assert "auto_level" not in [row[1] for row in new.execute(f"PRAGMA table_info({table})")]
     assert [tuple(r) for r in new.execute("SELECT key FROM settings")] == [("default_model",)]
     assert {tuple(r)[0] for r in new.execute("SELECT key FROM legacy_settings")} == {

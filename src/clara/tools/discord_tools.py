@@ -46,36 +46,30 @@ def _say(context: ToolContext, text: str, title: str = "") -> str:
 
 
 # What a deleted Discord thread or forum asks Clara to delete too, once you approve it. The model is never offered it.
-FORGET_KINDS = ("conversation", "loose", "incognito", "project", "schedule", "hook")
+FORGET_KINDS = ("conversation", "loose", "incognito", "project", "automation")
 
 
 def scope_of(kind: str, target: str = "") -> tuple[str, tuple]:
     """The conversations a deletion of this kind covers, as a condition on the conversations table: a conversation; the
-    loose ones (the main forum); the incognito ones (their forum); a project, a schedule or a hook with its runs."""
+    loose ones (the main forum); the incognito ones (their forum); a project or an automation with its runs."""
     if kind == "conversation":
         return "id = ?", (target,)
     if kind == "loose":
         return (
             "project_id IS NULL AND incognito = 0 AND local_only = 0"
-            " AND id NOT IN (SELECT conversation_id FROM schedule_runs WHERE conversation_id IS NOT NULL)"
-            " AND id NOT IN (SELECT conversation_id FROM trigger_runs WHERE conversation_id IS NOT NULL)"
-            " AND id NOT IN (SELECT conversation_id FROM schedules WHERE conversation_id IS NOT NULL)",
+            " AND id NOT IN (SELECT conversation_id FROM automation_runs WHERE conversation_id IS NOT NULL)"
+            " AND id NOT IN (SELECT conversation_id FROM automations WHERE conversation_id IS NOT NULL)",
             (),
         )
     if kind == "incognito":
         return "incognito = 1", ()
     if kind == "project":
         return "project_id = ?", (int(target),)
-    if kind == "schedule":
+    if kind == "automation":
         return (
-            "id IN (SELECT conversation_id FROM schedule_runs WHERE schedule_id = ? AND conversation_id IS NOT NULL)"
-            " OR id IN (SELECT conversation_id FROM schedules WHERE id = ? AND conversation_id IS NOT NULL)",
+            "id IN (SELECT conversation_id FROM automation_runs WHERE automation_id = ? AND conversation_id IS NOT NULL)"
+            " OR id IN (SELECT conversation_id FROM automations WHERE id = ? AND conversation_id IS NOT NULL)",
             (int(target), int(target)),
-        )
-    if kind == "hook":
-        return (
-            "id IN (SELECT conversation_id FROM trigger_runs WHERE trigger_id = ? AND conversation_id IS NOT NULL)",
-            (int(target),),
         )
     raise ValueError(f"Unknown kind {kind!r}.")
 
@@ -87,23 +81,14 @@ def _forget(context: ToolContext, kind: str, target: str = "", summary: str = ""
         raise ToolError(f"Unknown kind {kind!r}.")
     if kind == "project" and s.projects.get(int(target)) is None:
         raise ToolError("No such project any more.")
-    try:
-        if kind == "schedule":
-            s.schedules.get(int(target))
-        elif kind == "hook":
-            s.triggers.get(int(target))
-    except Exception:  # a schedule or a hook that is gone: the service says so with its own error
-        raise ToolError(f"No such {kind} any more.") from None
+    if kind == "automation" and s.automations.find(int(target)) is None:
+        raise ToolError("No such automation any more.")
     removed = s.conversations.delete_where(*scope_of(kind, target))
     if kind == "project":
         s.projects.delete(int(target))
-    elif kind == "schedule":
-        s.schedules.delete(int(target))
-    elif kind == "hook":
-        s.triggers.delete(int(target))
-    return f"Deleted {removed} conversations" + (
-        f" and the {kind}." if kind in ("project", "schedule", "hook") else "."
-    )
+    elif kind == "automation":
+        s.automations.delete(int(target))
+    return f"Deleted {removed} conversations" + (f" and the {kind}." if kind in ("project", "automation") else ".")
 
 
 def discord_tools() -> list[Tool]:
@@ -118,9 +103,9 @@ def discord_tools() -> list[Tool]:
             parameters={
                 "kind": {
                     "type": "string",
-                    "enum": ["conversation", "loose", "incognito", "project", "schedule", "hook"],
+                    "enum": ["conversation", "loose", "incognito", "project", "automation"],
                 },
-                "target": {"type": "string", "description": "The id of the conversation, project, schedule or hook."},
+                "target": {"type": "string", "description": "The id of the conversation, project or automation."},
                 "summary": {"type": "string"},
             },
             required=("kind",),

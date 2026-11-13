@@ -240,76 +240,83 @@ def _school(s: Services, args: list[str], token: TokenInfo) -> str:
     return "\n".join(lines)
 
 
-def _hook(s: Services, ref: str):
-    from .triggers import TriggerError
+def _automation(s: Services, ref: str):
+    from .automations import AutomationError
 
-    found = s.triggers.find(int(ref)) if ref.isdigit() else s.triggers.by_name(ref)
+    found = s.automations.find(int(ref)) if ref.isdigit() else s.automations.by_name(ref)
     if found is None:
-        raise TriggerError(f"No hook {ref}.")
+        raise AutomationError(f"No automation {ref}.")
     return found
 
 
-def _hook_line(s: Services, item) -> str:
-    info = s.triggers.describe(item)
+def _automation_line(s: Services, item) -> str:
+    info = s.automations.describe(item)
     last = info["last"]
     return (
-        f"#{item.id} {item.name}  {item.on} {item.action}{'' if item.enabled else ' (off)'}  catch-up {item.catch_up}, "
-        f"{item.max_per_hour}/h  queued {info['queued']}  last: {last['status'] + ' ' + (last['finished_at'] or '')[:16] if last else 'never'}"
+        f"#{item.id} {item.name}  {info['when_words']}  {item.action}{'' if item.enabled else ' (off)'}  "
+        f"catch-up {item.catch_up}, {item.max_per_hour}/h  queued {info['queued']}  "
+        f"last: {last['status'] + ' ' + (last['finished_at'] or '')[:16] if last else 'never'}"
     )
 
 
-def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
-    from .triggers import KINDS, TriggerError
+def _automations(s: Services, args: list[str], token: TokenInfo) -> str:
+    from .automations import KINDS, AutomationError
 
-    if s.triggers is None:
-        return "Hooks are not available."
     usage = (
-        "Usage: /triggers [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
-        "del <id|name> | test <id|name> [event id] | runs <id|name> [n] | events [n]"
+        "Usage: /automations [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
+        "run <id|name> | del <id|name> | test <id|name> [event id] | runs <id|name> [n] | events [n]"
     )
     if not args or args[0] == "list":
-        return "\n".join(_hook_line(s, item) for item in s.triggers.listing()) or (
-            f"(no hooks) Kinds of event: {', '.join(KINDS)}. {usage}"
+        return "\n".join(_automation_line(s, item) for item in s.automations.listing()) or (
+            f"(no automation) Kinds of event: {', '.join(KINDS)}. {usage}"
         )
     action, *rest = args
     try:
         if action == "show" and rest:
-            item = _hook(s, rest[0])
-            return json.dumps(s.triggers.describe(item), indent=2, ensure_ascii=False)
+            item = _automation(s, rest[0])
+            return json.dumps(s.automations.describe(item), indent=2, ensure_ascii=False)
         if action in ("add", "edit") and len(rest) >= 2:
             try:
                 fields = json.loads(" ".join(rest[1:]))
             except ValueError as error:
-                return f'The fields are not JSON ({error}). Quote them: \'{{"on": "mail.received", ...}}\'.'
+                return f'The fields are not JSON ({error}). Quote them: \'{{"when": {{"type": "cron", ...}}, ...}}\'.'
             if not isinstance(fields, dict):
                 return "The fields are a JSON object."
             if action == "add":
-                on = fields.pop("on", "")
-                made = s.triggers.create(rest[0], on, **fields)
+                made = s.automations.create(rest[0], fields.pop("when", None), **fields)
                 return (
-                    f"Made hook #{made.id}. Its runs are listed under it in the history once you set in_history.\n"
-                    f"{_hook_line(s, made)}"
+                    f"Made automation #{made.id}. Its runs are listed under it in the history once you set in_history.\n"
+                    f"{_automation_line(s, made)}"
                 )
-            return "Changed.\n" + _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, **fields))
+            return "Changed.\n" + _automation_line(s, s.automations.update(_automation(s, rest[0]).id, **fields))
         if action in ("on", "off") and rest:
-            return _hook_line(s, s.triggers.update(_hook(s, rest[0]).id, enabled=action == "on"))
+            return _automation_line(s, s.automations.update(_automation(s, rest[0]).id, enabled=action == "on"))
+        if action == "run" and rest:
+            return _automation_line(s, s.automations.run_now(_automation(s, rest[0]).id))
         if action in ("del", "delete") and rest:
-            return "Deleted." if s.triggers.delete(_hook(s, rest[0]).id) else "Nothing deleted."
+            return "Deleted." if s.automations.delete(_automation(s, rest[0]).id) else "Nothing deleted."
         if action == "test" and rest:
-            item = _hook(s, rest[0])
-            event = (
-                s.triggers.event(int(rest[1])) if len(rest) > 1 else (s.triggers.recent_events(1, item.on) or [None])[0]
-            )
-            if event is None:
-                return "No event of this kind was stored yet (/triggers events)."
-            shown = s.triggers.preview(item, event)
+            item = _automation(s, rest[0])
+            if len(rest) > 1:
+                event = s.automations.event(int(rest[1]))
+            else:
+                event = max(
+                    (e for kind in item.kinds for e in s.automations.recent_events(1, kind)),
+                    key=lambda e: e.id,
+                    default=None,
+                )
+            if event is None and item.kinds:
+                return "No event of its kinds was stored yet (/automations events)."
+            shown = s.automations.test(item, event)
+            head = f"Event #{event.id}: {event.title}\n" if event else "At this moment\n"
             return (
-                f"Event #{event.id}: {event.title}\n{'MATCHES' if shown['matches'] else 'does not match: ' + shown['why_not']}\n"
-                f"Action: {shown['action']}; tools: {', '.join(shown['tools']) or '(none)'}\n--- what Clara would receive ---\n{shown['message']}"
+                f"{head}{'MATCHES' if shown['matches'] else 'does not match: ' + shown['why_not']}\n"
+                f"Action: {shown['action']}; tools: {', '.join(shown['tools']) or '(none)'}; tainted: {shown['tainted']}\n"
+                f"--- what Clara would receive ---\n{shown['message']}"
             )
         if action == "runs" and rest:
-            item = _hook(s, rest[0])
-            runs = s.triggers.runs(item.id, int(rest[1]) if len(rest) > 1 else 10)
+            item = _automation(s, rest[0])
+            runs = s.automations.runs(item.id, int(rest[1]) if len(rest) > 1 else 10)
             return (
                 "\n".join(
                     f"run {r['id']} {r['status']:<11} {r['queued_at'][:16]}  {r['event_count']} event(s)  "
@@ -319,7 +326,7 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
                 or "No run yet."
             )
         if action == "events":
-            found = s.triggers.recent_events(int(rest[0]) if rest else 10)
+            found = s.automations.recent_events(int(rest[0]) if rest else 10)
             return (
                 "\n".join(
                     f"#{e.id} {e.kind} {e.occurred_at[:16]}{' (self)' if e.self_caused else ''}  {e.title[:90]}"
@@ -327,18 +334,18 @@ def _triggers(s: Services, args: list[str], token: TokenInfo) -> str:
                 )
                 or "No event yet."
             )
-    except (TriggerError, ValueError) as error:
+    except (AutomationError, ValueError) as error:
         return f"Error: {error}"
     return usage
 
 
 MODE_USAGE = (
-    "Usage: /mode [list] | show <name|default> | conversation|project|schedule|hook <id> [<name>|follow]"
+    "Usage: /mode [list] | show <name|default> | conversation|project|automation <id> [<name>|follow]"
     " | new <name> [<pack,pack>] | packs <name> <pack,pack> | delete <name> [<conversations> <automation conversations> <automations> <projects>]"
     " | verdict <name> <approve|ask|refuse> [tool=…] [class=…] [target=…] [tainted=<verdict>] | unverdict <name> [tool=…] [class=…] [target=…]"
     " | test <tool> <json> [mode=<name>] [tainted] | import-legacy"
 )
-MODE_TABLES = {"conversation": "conversations", "project": "projects", "schedule": "schedules", "hook": "triggers"}
+MODE_TABLES = {"conversation": "conversations", "project": "projects", "automation": "automations"}
 
 
 def _mode_text(mode) -> str:
@@ -642,10 +649,10 @@ COMMANDS: list[Command] = [
         _mode,
     ),
     Command(
-        "triggers",
-        "/triggers [list] | show | add | edit | on | off | del | test | runs | events",
-        "Hooks: what Clara does when something happens (a mail arrives).",
-        _triggers,
+        "automations",
+        "/automations [list] | show | add | edit | on | off | run | del | test | runs | events",
+        "Automations: what Clara does when a trigger holds (a mail arrives, a time comes).",
+        _automations,
     ),
     Command("approvals", "/approvals [list] | allow|refuse <id>", "Pending approval requests.", _approvals),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),

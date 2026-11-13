@@ -160,7 +160,7 @@
           </select>
         </div>
       {/each}
-      <p class="muted small">Always the same: approval requests go to #approval (the buttons are there), the questions of scheduled runs and your conversation to #general.
+      <p class="muted small">Always the same: approval requests go to #approval (the buttons are there), the questions of automation runs and your conversation to #general.
         Alerts can move but cannot be switched off.</p>
       <div class="row"><button disabled={!changed || saving} onclick={() => save({})}>Back to the defaults</button></div>
     </section>

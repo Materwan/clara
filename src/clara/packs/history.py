@@ -436,7 +436,7 @@ class HistoryReader:
 
     def _schedules(self, start: datetime, end: datetime, tz) -> str:
         rows = self.s.db.all(
-            "SELECT s.name, r.status, r.summary, r.finished_at FROM schedule_runs r JOIN schedules s ON s.id = r.schedule_id"
+            "SELECT s.name, r.status, r.summary, r.finished_at FROM automation_runs r JOIN automations s ON s.id = r.automation_id"
             " WHERE r.status IN ('ok', 'closed', 'failed') AND r.finished_at >= ? AND r.finished_at < ?"
             " ORDER BY r.id LIMIT 30",
             (iso(start), iso(end)),

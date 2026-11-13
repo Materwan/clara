@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The model of a schedule or of a hook: the server's default unless one is picked. Both forms use it as it is.
+  // The model of an automation: the server's default unless one is picked. Both forms use it as it is.
   let { value = $bindable(), models }: { value: string; models: { models: { ref: string }[]; default: string } } = $props();
 </script>
 

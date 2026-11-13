@@ -5,12 +5,12 @@
   (alert after 5 minutes of silence, when CLARA_DISCORD_EXPECTED or CLARA_DISCORD_AUTOSTART); the systemd watchdog,
   fed only while every loop turns on time: a pass is expected every period, two minutes of lateness are allowed;
 * every 10 minutes: incognito conversations idle for CLARA_INCOGNITO_HOURS are deleted; and, apart, the conversations of
-  hook runs and per-run schedules past their automation's limits (age, count; memory/retention.py);
+  automation runs past their automation's limits (age, count; memory/retention.py);
 * every hour: events read by every listener, usage and audit rows older than CLARA_RETENTION_DAYS, expired web
-  sessions, and the events of hooks older than 30 days (those a run still needs stay);
+  sessions, and the events of automations older than 30 days (those a run still needs stay);
 * every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
   waits for the mail providers, so the watchdog does not count it;
-* every CLARA_GITHUB_POLL_SECONDS (0: never): pull requests and pushes in the repositories you added, while a hook waits
+* every CLARA_GITHUB_POLL_SECONDS (0: never): pull requests and pushes in the repositories you added, while an automation waits
   for them. Same reason, same exception for the watchdog.
 """
 
@@ -154,8 +154,7 @@ class Upkeep:
         s.db.execute("DELETE FROM audit_log WHERE at < ?", (limit,))
         s.web_sessions.prune()
         s.deferred.sweep()
-        if s.triggers is not None:
-            s.triggers.prune(s.settings.retention_days)
+        s.automations.prune(s.settings.retention_days)
 
     def stalled(self) -> list[str]:
         """The watched loops that are late: a pass is expected every period (the time-driven loops, every 30 s at most),

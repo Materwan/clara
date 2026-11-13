@@ -1,4 +1,4 @@
-// What the forms of a schedule and of a hook have in common, in the same words: how often a run that failed is tried again, and the
+// What the form of an automation has in common with other forms, in the same words: how often a run that failed is tried again, and the
 // first line of a prompt for a summary. The values are the numbers the server takes (`attempts`).
 export const ATTEMPTS = [
   { value: '1', label: 'Give up', hint: 'A model that is busy or unreachable ends the run.' },

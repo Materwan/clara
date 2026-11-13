@@ -166,7 +166,7 @@
 <div class="page stack">
   <p class="intro">A <b>mode</b> says, for each tool, whether it runs without asking (<span class="tag ok">approve</span>), asks you
     (<span class="tag warn">ask</span>) or is refused (<span class="tag danger">refuse</span>), and which special tools it switches on.
-    Set the mode of a conversation in the chat, of a project's conversations on its page, and of the runs of a schedule or a hook on theirs.
+    Set the mode of a conversation in the chat, of a project's conversations on its page, and of the runs of an automation on its.
     Clara can neither read nor change a mode, nor answer a request.</p>
   <div><Segmented label="Section" options={tabs} bind:value={tab} /></div>
 

@@ -175,7 +175,7 @@ class ChatRequest:
     quiet: bool = False  # never notify that this turn ended
     wait_for_approvals: bool = True  # a chat waits for your answer to an approval request (False: it is pushed)
     tainted: bool = False  # the turn starts as if it had read untrusted content (a run an outside event started)
-    only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (a hook's allow-list)
+    only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (an automation's allow-list)
     ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
     # What the Discord mirror shows in place of the message (an automation run's origin). The model is given, and the
     # conversation stores, the whole message: this changes what is displayed, not what Clara reads.
@@ -235,7 +235,7 @@ class Agent:
         self.vault_closed_block = ""
         self.vault_tools: frozenset[str] = frozenset()
         self.vault_opener = ""
-        # conversation id -> limits its later turns keep (a hook's run: tainted, only its tools), as ChatRequest fields
+        # conversation id -> limits its later turns keep (an automation run: tainted if an event started it, only its tools), as ChatRequest fields
         self.restrictions: list[Callable[[str], dict]] = []
 
     # ------------------------------------------------------------------
@@ -458,7 +458,7 @@ class Agent:
         return lines, max(0, self.s.facts.count_live() - len(lines))
 
     def _scoped_facts(self, conversation_id: str) -> list[ScopedFacts]:
-        """The memory of the conversation's project and of its automation (a schedule or a hook), each within its own budget.
+        """The memory of the conversation's project and of its automation, each within its own budget.
         A fact waiting for the person's confirmation is not in it."""
         blocks: list[ScopedFacts] = []
         for home in self.s.conversations.memory_scopes(conversation_id).values():

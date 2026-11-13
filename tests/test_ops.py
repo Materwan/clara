@@ -498,18 +498,18 @@ async def test_a_crash_is_put_straight_at_start(services):
     approval = services.approvals.create(action, Situation("interactive"), ToolContext(services, state),
                                          {"path": "a.txt"}, Decision("ask", "default"))
     services.db.execute("UPDATE approvals SET status = 'approved' WHERE id = ?", (approval.id,))
-    schedule = services.schedules.create("news", "Give me the news.", "2030-01-01 08:00", repeat="daily")
+    schedule = services.automations.create("news", {"type": "cron", "expr": "0 8 * * *"}, prompt="Give me the news.")
     due = iso(utcnow() - timedelta(minutes=5))
-    services.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, started_at, status) VALUES (?, ?, ?, 'running')",
-                        (schedule.id, due, due))
+    services.db.execute("INSERT INTO automation_runs (automation_id, due_at, queued_at, started_at, status) VALUES (?, ?, ?, ?, 'running')",
+                        (schedule.id, due, due, due))
     (services.workspace.root / "half.txt").write_text("written when the power went")
 
     recover(services)
 
     settled = services.approvals.get(approval.id)
     assert settled.status == "failed" and "may or may not have been done" in settled.result
-    assert services.db.value("SELECT status FROM schedule_runs WHERE schedule_id = ?", (schedule.id,)) == "interrupted"
-    assert services.db.value("SELECT next_at FROM schedules WHERE id = ?", (schedule.id,)) == due
+    # a run of a time that had done nothing starts again at the next start, as it always did
+    assert services.db.value("SELECT status FROM automation_runs WHERE automation_id = ?", (schedule.id,)) == "queued"
     assert services.workspace.git_sync("status", "--porcelain").strip() == ""
 
 

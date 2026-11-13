@@ -1,5 +1,5 @@
-"""Schedules with tool packs: a conversation per run, a run that asks and waits, what happens when runs are missed or
-overlap, and the daily-note schedule made at start."""
+"""Automations that run at a time, with tool packs: a conversation per run, a run that asks and waits, what happens when runs
+are missed or overlap, and the daily-note automation made at start."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import pytest
 
 from clara.agent.turn import ChatRequest
 from clara.app import build_services, create_app, extend, open_database
+from clara.automations import AutomationError
+from clara.automations import service as automations_module
 from clara.knowledge.vault.git import init_repository
 from clara.llm.types import LlmError
 from clara.packs import daily_note
 from clara.settings import load_settings
-from clara.timekeeping import ScheduleError
-from clara.timekeeping import schedules as schedules_module
 from fakes import calls
 from test_packs import SCHEMA, TEMPLATE, commit_all
 
@@ -60,7 +60,7 @@ def build(environ, llm, clock, vault_dir=None):
     services = build_services(settings, db, provider_factory=llm.factory)
     extend(services)
     services.runtime.set("default_model", "local:fake")
-    services.schedules._clock = clock
+    services.automations._clock = clock
     return services, db
 
 
@@ -80,40 +80,51 @@ def novault(environ, llm, clock):
     db.close()
 
 
+DAILY = {"type": "cron", "expr": "59 23 * * *"}
+
+
 def plan(s, **options):
     options.setdefault("packs", WAITING_PACKS)
-    return s.schedules.create(options.pop("name", "Bilan"), options.pop("prompt", "Fais le bilan du jour."), "2026-10-18T23:59",
-                              timezone=PARIS, repeat="daily", **options)
+    if "missed" in options:
+        options["catch_up"] = options.pop("missed")
+    return s.automations.create(options.pop("name", "Bilan"), options.pop("when", DAILY), prompt=options.pop("prompt", "Fais le bilan du jour."),
+                                timezone=PARIS, **options)
+
+
+def backdate(s, automation, expr: str, reached: str) -> None:
+    """The automation looked last at `reached` and is due at the first instant of `expr` after it (as after a long stop)."""
+    tree = json.dumps({"type": "or", "of": [{"type": "cron", "expr": expr, "as": "instant"}]})
+    s.db.execute("UPDATE automations SET tree = ?, reached_at = ?, next_at = ? WHERE id = ?", (tree, reached, reached, automation.id))
 
 
 async def run_due(s, clock: Clock, at: str) -> None:
     clock.at(at)
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    s.automations.fire_due()
+    await s.automations.wait_running()
 
 
 def schedule_conversation(s, schedule) -> str:
-    return s.schedules.get(schedule.id).conversation_id
+    return s.automations.get(schedule.id).conversation_id
 
 
 def runs(s, schedule_id: int) -> list[dict]:
-    return list(reversed(s.schedules.runs(schedule_id)))
+    return list(reversed(s.automations.runs(schedule_id)))
 
 
 # ----------------------------------------------------------------------
 # A schedule with packs, a model, a conversation per run
 # ----------------------------------------------------------------------
-def test_a_schedule_keeps_its_packs_and_policies_and_checks_them(s):
+def test_an_automation_keeps_its_packs_and_policies_and_checks_them(s):
     schedule = plan(s, per_run=True, missed="latest", overlap="replace", model="local:fake")
-    described = s.schedules.describe(schedule)
+    described = s.automations.describe(schedule)
     assert described["packs"] == ["second_brain", "day_conversations", "ask_person", "discord_thread"]
-    assert (described["per_run"], described["missed"], described["overlap"], described["model"]) == (True, "latest", "replace", "local:fake")
-    changed = s.schedules.update(schedule.id, packs=["web"], overlap="queue", per_run=False, model="")
+    assert (described["per_run"], described["catch_up"], described["overlap"], described["model"]) == (True, "latest", "replace", "local:fake")
+    changed = s.automations.update(schedule.id, packs=["web"], overlap="queue", per_run=False, model="")
     assert changed.packs == ("web",) and changed.overlap == "queue" and not changed.per_run and changed.model == ""
-    for bad in ({"packs": ["bogus"]}, {"packs": ["web", "ask_person", "nope"]}, {"missed": "never"}, {"overlap": "sometimes"}):
-        with pytest.raises(ScheduleError):
-            s.schedules.update(schedule.id, **bad)
-    with pytest.raises(ScheduleError):
+    for bad in ({"packs": ["bogus"]}, {"packs": ["web", "ask_person", "nope"]}, {"catch_up": "never"}, {"overlap": "sometimes"}):
+        with pytest.raises(AutomationError):
+            s.automations.update(schedule.id, **bad)
+    with pytest.raises(AutomationError):
         plan(s, name="Autre", packs=["bogus"])
     assert plan(s, name="Simple", packs=None).packs == ()  # nothing asked for: no pack, not even web
 
@@ -124,8 +135,8 @@ async def test_every_run_has_its_own_conversation_with_the_packs_and_the_model(s
     await run_due(s, clock, "2026-10-18T21:59:30")
     await run_due(s, clock, "2026-10-19T21:59:30")
     first, second = runs(s, schedule.id)
-    assert first["status"] == second["status"] == "ok" and first["conversation_id"] != second["conversation_id"]
-    conversation = s.conversations.get(first["conversation_id"])
+    assert first["status"] == second["status"] == "ok" and first["conversation"] != second["conversation"]
+    conversation = s.conversations.get(first["conversation"])
     assert conversation.title == "Bilan — 2026-10-18" and conversation.kind == "chat" and conversation.model == "local:fake"
     assert conversation.vault_open and "ask_person" in conversation.packs and "second_brain" in conversation.describe()["packs"]
     assert "Fais le bilan du jour." in llm.seen[0]["messages"][-1]["content"]
@@ -142,7 +153,7 @@ async def test_a_run_is_shown_on_discord_by_its_name_and_its_due_time_and_the_mo
     await run_due(s, clock, "2026-10-18T21:59:30")
     await run_due(s, clock, "2026-10-19T21:59:30")
     turns = s.mirror.stored_turns(schedule_conversation(s, schedule))
-    assert [turn["user"]["text"] for turn in turns] == ["Scheduled task “Bilan” — 2026-10-18 23:59", "Scheduled task “Bilan” — 2026-10-19 23:59"]
+    assert [turn["user"]["text"] for turn in turns] == ["Automation “Bilan” — 2026-10-18 23:59", "Automation “Bilan” — 2026-10-19 23:59"]
     message = llm.seen[0]["messages"][-1]["content"]
     assert "Fais le bilan du jour." in message and "corps du document" in message  # the model's input is the whole message
     stored = s.db.value("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id", (schedule_conversation(s, schedule),))
@@ -156,24 +167,24 @@ async def test_a_run_with_a_conversation_of_its_own_is_shown_the_same_way(s, llm
     await run_due(s, clock, "2026-10-19T21:59:30")
     first, second = runs(s, schedule.id)
     for run, day in ((first, "2026-10-18"), (second, "2026-10-19")):
-        (turn,) = s.mirror.stored_turns(run["conversation_id"])
-        assert turn["user"]["text"] == f"Scheduled task “Bilan” — {day} 23:59" and "📎" not in turn["user"]["text"]
-        assert s.db.value("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user'", (run["conversation_id"],)) == turn["user"]["text"]
+        (turn,) = s.mirror.stored_turns(run["conversation"])
+        assert turn["user"]["text"] == f"Automation “Bilan” — {day} 23:59" and "📎" not in turn["user"]["text"]
+        assert s.db.value("SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user'", (run["conversation"],)) == turn["user"]["text"]
 
 
 async def test_the_time_of_a_run_is_on_the_clock_of_its_schedule_not_the_servers(s, llm, clock):
     """The server's zone is CLARA_TIMEZONE; the schedule's is its own, and daylight saving follows the date of the run."""
-    schedule = s.schedules.create("Tokyo", "Fais le bilan.", "2026-10-19T08:30", timezone="Asia/Tokyo", repeat="daily")
+    schedule = s.automations.create("Tokyo", {"type": "cron", "expr": "30 8 * * *"}, prompt="Fais le bilan.", timezone="Asia/Tokyo")
     assert s.settings.timezone != "Asia/Tokyo"
     llm.replies = ["Un."]
     await run_due(s, clock, "2026-10-18T23:30:30")  # 08:30 in Tokyo (UTC+9) is 23:30 UTC the evening before
     (turn,) = s.mirror.stored_turns(schedule_conversation(s, schedule))
-    assert turn["user"]["text"] == "Scheduled task “Tokyo” — 2026-10-19 08:30"
+    assert turn["user"]["text"] == "Automation “Tokyo” — 2026-10-19 08:30"
     winter = plan(s, name="Hiver")
     llm.replies = ["Deux."]
     await run_due(s, clock, "2026-11-02T22:59:30")  # Paris is back to UTC+1 on 2026-10-25: 23:59 is 22:59 UTC
     (turn,) = s.mirror.stored_turns(schedule_conversation(s, winter))
-    assert turn["user"]["text"] == "Scheduled task “Hiver” — 2026-11-02 23:59"
+    assert turn["user"]["text"] == "Automation “Hiver” — 2026-11-02 23:59"
 
 
 async def test_a_shared_conversation_is_kept_and_follows_the_schedule(s, llm, clock):
@@ -182,9 +193,9 @@ async def test_a_shared_conversation_is_kept_and_follows_the_schedule(s, llm, cl
     await run_due(s, clock, "2026-10-18T21:59:30")
     await run_due(s, clock, "2026-10-19T21:59:30")
     first, second = runs(s, schedule.id)
-    assert first["conversation_id"] == second["conversation_id"] == s.schedules.get(schedule.id).conversation_id
-    assert s.conversations.get(first["conversation_id"]).kind == "schedule"
-    s.schedules.update(schedule.id, packs=["web"])
+    assert first["conversation"] == second["conversation"] == s.automations.get(schedule.id).conversation_id
+    assert s.conversations.get(first["conversation"]).kind == "schedule"
+    s.automations.update(schedule.id, packs=["web"])
     llm.replies = ["Trois."]
     await run_due(s, clock, "2026-10-20T21:59:30")
     assert "day_activity" not in {tool["function"]["name"] for tool in llm.seen[-1]["tools"]}
@@ -205,16 +216,16 @@ async def test_a_run_that_asks_waits_for_the_answer_and_finishes_with_the_note_w
     assert run["status"] == "waiting" and run["finished_at"] is None and run["summary"].startswith("Qu'as-tu fait")
     asked = s.events.recent(1, ["ask"])[0]
     assert asked.text == "Qu'as-tu fait d'autre aujourd'hui ?" and asked.title == "Bilan — 2026-10-18"
-    assert asked.payload == {"conversation": run["conversation_id"], "stage": "asked", "run": run["id"], "thread": True}
+    assert asked.payload == {"conversation": run["conversation"], "stage": "asked", "run": run["id"], "thread": True}
     assert asked.targets == ("web", "discord") and not s.events.recent(5, ["schedule"])  # no summary yet
-    assert s.schedules.describe(schedule)["waiting_run"]["conversation"] == run["conversation_id"]
-    with pytest.raises(ScheduleError):
-        s.schedules.run_now(schedule.id)  # it waits for you
+    assert s.automations.describe(schedule)["waiting_run"]["conversation"] == run["conversation"]
+    with pytest.raises(AutomationError):
+        s.automations.run_now(schedule.id)  # it waits for you
     # your answer, from any client, goes on in the run's conversation with the same tools
     recap = "**Fait hors de Clara**\n- Couru 5 km, voir [[Clara]]"
     llm.replies = [calls(("vault_daily_block", {"content": recap})), calls(("finish_run", {"summary": "Récap écrit dans la note du jour."})),
                    "C'est écrit."]
-    await s.agent.answer(ChatRequest(message="J'ai couru 5 km.", client="discord", conversation=run["conversation_id"]))
+    await s.agent.answer(ChatRequest(message="J'ai couru 5 km.", client="discord", conversation=run["conversation"]))
     names = {tool["function"]["name"] for tool in llm.seen[-3]["tools"]}
     assert {"vault_daily_block", "finish_run", "ask_person"} <= names
     done = runs(s, schedule.id)[0]
@@ -224,9 +235,9 @@ async def test_a_run_that_asks_waits_for_the_answer_and_finishes_with_the_note_w
     finished = s.events.recent(1, ["ask"])[0]
     assert finished.payload["stage"] == "finished" and finished.text == "Récap écrit dans la note du jour."
     assert not s.events.recent(5, ["schedule"])  # the ask event was its notification
-    assert s.schedules.describe(schedule)["waiting_run"] is None
-    s.schedules.run_now(schedule.id)  # free again
-    await s.schedules.wait_running()
+    assert s.automations.describe(schedule)["waiting_run"] is None
+    s.automations.run_now(schedule.id)  # free again
+    await s.automations.wait_running()
 
 
 async def test_a_run_without_the_thread_pack_asks_without_a_thread(s, llm, clock):
@@ -251,11 +262,11 @@ async def test_a_waiting_run_is_reminded_once_the_next_morning(s, llm, clock):
     await ask_and_wait(s, llm, clock)
     for moment in ("2026-10-19T06:59:00", "2026-10-19T07:01:00"):  # 08:59, then 09:01 in Paris
         clock.at(moment)
-        s.schedules.fire_due()
+        s.automations.fire_due()
     asks = s.events.recent(5, ["ask"])
     assert [event.payload["stage"] for event in asks] == ["reminder", "asked"] and "Still waiting" in asks[0].text
     clock.at("2026-10-19T08:00:00")
-    s.schedules.fire_due()
+    s.automations.fire_due()
     assert len(s.events.recent(5, ["ask"])) == 2  # once
 
 
@@ -266,45 +277,45 @@ async def test_overlap_replace_closes_the_waiting_run_from_what_it_has_then_star
     schedule, first = await ask_and_wait(s, llm, clock, overlap="replace")
     llm.replies = [calls(("finish_run", {"summary": "Récap écrit sans réponse."})), "Terminé.", "Nouveau bilan."]
     clock.at("2026-10-19T21:59:30")
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    s.automations.fire_due()
+    await s.automations.wait_running()
     assert runs(s, schedule.id)[0]["status"] == "closed" and runs(s, schedule.id)[0]["summary"] == "Récap écrit sans réponse."
-    assert any("[No answer received]" in m.content for m in s.conversations.messages_after(first["conversation_id"]))
+    assert any("[No answer received]" in m.content for m in s.conversations.messages_after(first["conversation"]))
     assert s.events.recent(1, ["ask"])[0].payload["stage"] == "closed"
-    s.schedules.fire_due()  # the queued run starts now that the old one is over
-    await s.schedules.wait_running()
+    s.automations.fire_due()  # the queued run starts now that the old one is over
+    await s.automations.wait_running()
     second = runs(s, schedule.id)[-1]
-    assert second["status"] == "ok" and second["conversation_id"] != first["conversation_id"]
+    assert second["status"] == "ok" and second["conversation"] != first["conversation"]
 
 
 async def test_a_closing_that_does_not_finish_the_run_closes_it_all_the_same(s, llm, clock):
     schedule, _ = await ask_and_wait(s, llm, clock, overlap="replace")
     llm.replies = ["Je ne sais pas quoi faire."]
     clock.at("2026-10-19T21:59:30")
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    s.automations.fire_due()
+    await s.automations.wait_running()
     assert runs(s, schedule.id)[0]["status"] == "closed" and runs(s, schedule.id)[0]["summary"] == "Closed without an answer."
 
 
 async def test_overlap_skip_records_the_new_run_as_skipped(s, llm, clock):
     schedule, _ = await ask_and_wait(s, llm, clock, overlap="skip")
     clock.at("2026-10-19T21:59:30")
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    s.automations.fire_due()
+    await s.automations.wait_running()
     assert [run["status"] for run in runs(s, schedule.id)] == ["waiting", "skipped"]
 
 
 async def test_overlap_queue_waits_until_the_old_run_ends(s, llm, clock):
     schedule, first = await ask_and_wait(s, llm, clock, overlap="queue")
     clock.at("2026-10-19T21:59:30")
-    s.schedules.fire_due()
-    assert [run["status"] for run in runs(s, schedule.id)] == ["waiting", "queued"] and s.schedules.describe(schedule)["queued"] == 1
-    s.schedules.fire_due()
+    s.automations.fire_due()
+    assert [run["status"] for run in runs(s, schedule.id)] == ["waiting", "queued"] and s.automations.describe(schedule)["queued"] == 1
+    s.automations.fire_due()
     assert [run["status"] for run in runs(s, schedule.id)] == ["waiting", "queued"]  # still waits for your answer
     llm.replies = [calls(("finish_run", {"summary": "Fini."})), "ok", "Le suivant."]
-    await s.agent.answer(ChatRequest(message="Rien d'autre.", client="web", conversation=first["conversation_id"]))
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    await s.agent.answer(ChatRequest(message="Rien d'autre.", client="web", conversation=first["conversation"]))
+    s.automations.fire_due()
+    await s.automations.wait_running()
     assert [run["status"] for run in runs(s, schedule.id)] == ["ok", "ok"]
     assert parse(runs(s, schedule.id)[1]["due_at"]) == datetime(2026, 10, 19, 21, 59, tzinfo=UTC)  # for its own due time
 
@@ -317,13 +328,13 @@ async def test_a_run_still_going_is_not_doubled_either(s, llm, clock):
     schedule = plan(s, overlap="queue")
     llm.delay = 0.05
     clock.at("2026-10-18T21:59:30")
-    s.schedules.fire_due()
+    s.automations.fire_due()
     clock.at("2026-10-19T21:59:30")  # the first has not ended (the fake model is slow)
-    s.schedules.fire_due()
+    s.automations.fire_due()
     assert [run["status"] for run in runs(s, schedule.id)] == ["running", "queued"]
-    await s.schedules.wait_running()
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
+    await s.automations.wait_running()
+    s.automations.fire_due()
+    await s.automations.wait_running()
     assert [run["status"] for run in runs(s, schedule.id)] == ["ok", "ok"]
 
 
@@ -332,12 +343,12 @@ async def test_a_run_still_going_is_not_doubled_either(s, llm, clock):
 # ----------------------------------------------------------------------
 async def off_for_days(s, llm, clock, missed: str):
     schedule = plan(s, packs=["web"], missed=missed, name=f"Matin {missed}")
-    s.db.execute("UPDATE schedules SET local_at = '2026-10-18T08:00', next_at = '2026-10-18T06:00:00+00:00' WHERE id = ?", (schedule.id,))
+    backdate(s, schedule, "0 8 * * *", "2026-10-18T05:59:00+00:00")
     llm.replies = ["ok"] * 5
     await run_due(s, clock, "2026-10-21T10:00:00")  # 12:00 on the 21st: the 18th, 19th, 20th and 21st at 08:00 were missed
     for _ in range(4):
-        s.schedules.fire_due()
-        await s.schedules.wait_running()
+        s.automations.fire_due()
+        await s.automations.wait_running()
     return [(run["status"], run["due_at"][8:10]) for run in runs(s, schedule.id)]
 
 
@@ -355,16 +366,16 @@ async def test_missed_all_runs_them_one_after_the_other(s, llm, clock):
 
 async def test_a_catch_up_is_not_a_late_alert_but_a_fresh_run_is(s, llm, clock):
     told = []
-    s.schedules.late = lambda what, seconds: told.append(what)
+    s.automations.late = lambda what, seconds: told.append(what)
     schedule = plan(s, packs=["web"], missed="latest")
-    s.db.execute("UPDATE schedules SET local_at = '2026-10-18T08:00', next_at = '2026-10-18T06:00:00+00:00' WHERE id = ?", (schedule.id,))
+    backdate(s, schedule, "0 8 * * *", "2026-10-18T05:59:00+00:00")
     llm.replies = ["ok", "ok"]
     await run_due(s, clock, "2026-10-19T10:00:00")
     assert not told
     clock.at("2026-10-20T06:20:00")  # 08:20: twenty minutes late
-    s.schedules.fire_due()
-    await s.schedules.wait_running()
-    assert told == ["schedule “Bilan”"]
+    s.automations.fire_due()
+    await s.automations.wait_running()
+    assert told == ["automation “Bilan”"]
 
 
 # ----------------------------------------------------------------------
@@ -372,19 +383,19 @@ async def test_a_catch_up_is_not_a_late_alert_but_a_fresh_run_is(s, llm, clock):
 # ----------------------------------------------------------------------
 def test_the_daily_note_schedule_is_made_once_with_its_packs(s, clock):
     schedule_id = daily_note.seed(s)
-    schedule = s.schedules.get(schedule_id)
-    assert schedule.name == "Bilan du jour" and schedule.enabled and schedule.repeat == "daily"
-    assert schedule.local_at.strftime("%H:%M") == "23:59" and schedule.timezone == PARIS
+    schedule = s.automations.get(schedule_id)
+    assert schedule.name == "Bilan du jour" and schedule.enabled and schedule.tree["of"] == [{"type": "cron", "expr": "59 23 * * *", "as": "instant"}]
+    assert schedule.timezone == PARIS
     assert schedule.next_at == datetime(2026, 10, 18, 21, 59, tzinfo=UTC)  # tonight, 23:59 in Paris
-    assert set(schedule.packs) == set(daily_note.PACKS) and schedule.per_run and schedule.missed == "latest"
+    assert set(schedule.packs) == set(daily_note.PACKS) and schedule.per_run and schedule.catch_up == "latest"
     assert schedule.overlap == "replace" and "vault_daily_block" in schedule.prompt and "ask_person" in schedule.prompt
     assert daily_note.seed(s) is None  # once
-    s.schedules.delete(schedule_id)
+    s.automations.delete(schedule_id)
     assert daily_note.seed(s) is None  # and not again after you deleted it
 
 
 def test_without_a_vault_no_daily_note_schedule_is_made(novault):
-    assert daily_note.seed(novault) is None and novault.schedules.listing() == []
+    assert daily_note.seed(novault) is None and novault.automations.listing() == []
     assert not novault.db.one("SELECT 1 FROM settings WHERE key = ?", (daily_note.SEED_KEY,))
 
 
@@ -397,9 +408,9 @@ def test_the_days_of_the_earlier_recap_become_runs_of_the_schedule(s):
                      " VALUES (?, ?, ?, ?, '2026-10-16T21:59:30+00:00', NULL, ?, '2026-10-16T21:59:00+00:00')",
                      (day, status, conversation, PARIS, path))
     schedule_id = daily_note.seed(s)
-    moved = {run["due_at"][:10]: run for run in s.schedules.runs(schedule_id)}
+    moved = {run["due_at"][:10]: run for run in s.automations.runs(schedule_id)}
     assert set(moved) == {"2026-10-16", "2026-10-15"}  # a day that was only being asked is not a run
-    assert moved["2026-10-16"]["status"] == "waiting" and moved["2026-10-16"]["conversation_id"] == asked
+    assert moved["2026-10-16"]["status"] == "waiting" and moved["2026-10-16"]["conversation"] == asked
     assert moved["2026-10-15"]["status"] == "ok" and moved["2026-10-15"]["summary"] == "1-daily/2026/2026-10-15.md"
     assert s.conversations.get(asked).describe()["packs"].count("ask_person") == 1  # its answer still finds its tools
     assert not s.db.one("SELECT 1 FROM sqlite_master WHERE name = 'recaps_legacy'")
@@ -412,7 +423,7 @@ def test_a_recap_with_an_unreadable_day_is_logged_and_the_table_is_kept(s, caplo
                      " VALUES (?, 'written', NULL, ?, NULL, NULL, '', '2026-10-16T21:59:00+00:00')", (day, zone_name))
     with caplog.at_level("WARNING", logger="clara.packs.daily_note"):
         schedule_id = daily_note.seed(s)
-    assert [run["due_at"][:10] for run in s.schedules.runs(schedule_id)] == ["2026-10-15"]
+    assert [run["due_at"][:10] for run in s.automations.runs(schedule_id)] == ["2026-10-15"]
     assert s.db.one("SELECT 1 FROM sqlite_master WHERE name = 'recaps_legacy'")  # kept
     assert len(s.db.all("SELECT day FROM recaps_legacy")) == 3
     warning = next(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
@@ -424,13 +435,13 @@ async def test_the_daily_note_runs_end_to_end_at_23_59(s, llm, clock):
     llm.replies = [calls(("day_conversations", {}), ("day_activity", {}), ("files_created", {})),
                    calls(("ask_person", {"question": "Voici ta journée : …"})), "J'attends."]
     await run_due(s, clock, "2026-10-18T21:59:30")
-    run = s.schedules.runs(s.schedules.listing()[0].id)[0]
+    run = s.automations.runs(s.automations.listing()[0].id)[0]
     assert run["status"] == "waiting"
     results = [m["content"] for m in llm.seen[1]["messages"] if m["role"] == "tool"]
     assert any("Conversations du dimanche 18 octobre 2026" in text for text in results)  # no date given: the run's day
     assert any("Activité du dimanche 18 octobre 2026" in text for text in results)
     assert any("Fichiers du dimanche 18 octobre 2026" in text for text in results)
-    assert s.conversations.get(run["conversation_id"]).title == "Bilan du jour — 2026-10-18"
+    assert s.conversations.get(run["conversation"]).title == "Bilan du jour — 2026-10-18"
 
 
 # ----------------------------------------------------------------------
@@ -451,49 +462,49 @@ async def client(s, token):
         yield http
 
 
-async def test_the_api_creates_a_schedule_with_packs_and_policies(client, s):
-    body = {"name": "Bilan", "prompt": "Fais le bilan.", "at": "2030-01-01T23:59", "timezone": PARIS, "repeat": "daily",
-            "packs": ["day_conversations", "ask_person"], "per_run": True, "missed": "latest", "overlap": "replace",
+async def test_the_api_creates_an_automation_with_packs_and_policies(client, s):
+    body = {"name": "Bilan", "prompt": "Fais le bilan.", "when": DAILY, "timezone": PARIS,
+            "packs": ["day_conversations", "ask_person"], "per_run": True, "catch_up": "latest", "overlap": "replace",
             "model": "local:fake"}
-    made = await client.post("/v1/schedules", json=body)
+    made = await client.post("/v1/automations", json=body)
     assert made.status_code == 201
     shown = made.json()
-    assert (shown["packs"], shown["per_run"], shown["missed"], shown["overlap"], shown["model"]) == (
+    assert (shown["packs"], shown["per_run"], shown["catch_up"], shown["overlap"], shown["model"]) == (
         ["day_conversations", "ask_person"], True, "latest", "replace", "local:fake")
-    changed = await client.patch(f"/v1/schedules/{shown['id']}", json={"packs": [], "model": "", "overlap": "queue"})
+    changed = await client.patch(f"/v1/automations/{shown['id']}", json={"packs": [], "model": "", "overlap": "queue"})
     assert changed.json()["packs"] == [] and changed.json()["model"] == "" and changed.json()["overlap"] == "queue"
-    assert (await client.post("/v1/schedules", json={**body, "packs": ["bogus"]})).status_code == 422
-    assert (await client.post("/v1/schedules", json={**body, "model": "not a model"})).status_code == 422
-    assert (await client.post("/v1/schedules", json={**body, "overlap": "later"})).status_code == 422
-    assert (await client.post(f"/v1/schedules/{shown['id']}/close")).status_code == 409  # nothing waits
-    assert (await client.post("/v1/schedules/999/close")).status_code == 404
+    assert (await client.post("/v1/automations", json={**body, "packs": ["bogus"]})).status_code == 422
+    assert (await client.post("/v1/automations", json={**body, "model": "not a model"})).status_code == 422
+    assert (await client.post("/v1/automations", json={**body, "overlap": "later"})).status_code == 422
+    assert (await client.post(f"/v1/automations/{shown['id']}/close")).status_code == 409  # nothing waits
+    assert (await client.post("/v1/automations/999/close")).status_code == 404
 
 
-async def test_the_api_runs_a_schedule_now(client, s, llm, clock):
+async def test_the_api_runs_an_automation_now(client, s, llm, clock):
     schedule = plan(s, packs=["web"])
     llm.replies = ["Fait."]
-    assert (await client.post(f"/v1/schedules/{schedule.id}/run")).status_code == 200
-    await s.schedules.wait_running()
-    assert (await client.get(f"/v1/schedules/{schedule.id}")).json()["history"][0]["status"] == "ok"
+    assert (await client.post(f"/v1/automations/{schedule.id}/run")).status_code == 200
+    await s.automations.wait_running()
+    assert (await client.get(f"/v1/automations/{schedule.id}")).json()["history"][0]["status"] == "ok"
 
 
 async def test_the_api_closes_the_waiting_run(client, s, llm, clock):
     schedule, run = await ask_and_wait(s, llm, clock)
     llm.replies = [calls(("finish_run", {"summary": "Fermé."})), "ok"]
-    assert (await client.post(f"/v1/schedules/{schedule.id}/close")).status_code == 200
-    await s.schedules.wait_running()
-    detail = (await client.get(f"/v1/schedules/{schedule.id}")).json()
-    assert detail["history"][0]["status"] == "closed" and detail["history"][0]["conversation_id"] == run["conversation_id"]
+    assert (await client.post(f"/v1/automations/{schedule.id}/close")).status_code == 200
+    await s.automations.wait_running()
+    detail = (await client.get(f"/v1/automations/{schedule.id}")).json()
+    assert detail["history"][0]["status"] == "closed" and detail["history"][0]["conversation"] == run["conversation"]
     assert detail["waiting_run"] is None
 
 
 def test_the_next_start_is_not_a_spin_while_a_queued_run_waits(s, llm, clock):
     schedule = plan(s, overlap="queue")
-    s.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, started_at, status) VALUES (?, '2026-10-18T21:59:00+00:00', ?, 'waiting')",
+    s.db.execute("INSERT INTO automation_runs (automation_id, due_at, queued_at, started_at, status) VALUES (?, '2026-10-18T21:59:00+00:00', 'x', ?, 'waiting')",
                  (schedule.id, "2026-10-18T22:00:00+00:00"))
-    s.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (?, '2026-10-19T21:59:00+00:00', 'queued')", (schedule.id,))
-    s.db.execute("UPDATE schedule_runs SET waiting_since = '2026-10-18T22:00:00+00:00', reminded_at = '2026-10-19T07:00:00+00:00' WHERE status = 'waiting'")
-    soon = s.schedules.next_due()
+    s.db.execute("INSERT INTO automation_runs (automation_id, due_at, queued_at, status) VALUES (?, '2026-10-19T21:59:00+00:00', 'x', 'queued')", (schedule.id,))
+    s.db.execute("UPDATE automation_runs SET waiting_since = '2026-10-18T22:00:00+00:00', reminded_at = '2026-10-19T07:00:00+00:00' WHERE status = 'waiting'")
+    soon = s.automations.next_due()
     assert soon is not None and soon >= clock.now + timedelta(hours=1)  # the next due moment, not "now"
 
 
@@ -525,14 +536,14 @@ def test_a_version_3_database_upgrades_and_keeps_its_runs_and_recap_days(tmp_pat
     assert (before, after) == (3, len(migrations())) and backup is not None
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
-    runs = connection.execute("SELECT * FROM schedule_runs ORDER BY id").fetchall()
+    runs = connection.execute("SELECT * FROM automation_runs ORDER BY id").fetchall()
     assert [(row["status"], row["summary"], row["late_seconds"], row["conversation_id"]) for row in runs] == [
         ("ok", "Three items.", 4, None), ("missed", "off", 0, None)]
-    connection.execute("INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (1, 'x', 'waiting')")  # the new statuses exist
-    connection.execute("INSERT INTO schedule_runs (schedule_id, due_at, status) VALUES (1, 'y', 'queued')")
-    assert connection.execute("SELECT packs, per_run, missed, overlap, model FROM schedules").fetchone()[:] == ('["web"]', 0, "skip", "skip", "")
+    connection.execute("INSERT INTO automation_runs (automation_id, due_at, queued_at, status) VALUES (1, 'x', 'x', 'waiting')")
+    connection.execute("INSERT INTO automation_runs (automation_id, due_at, queued_at, status) VALUES (1, 'y', 'y', 'queued')")
+    assert connection.execute("SELECT packs, per_run, catch_up, overlap, model FROM automations").fetchone()[:] == ('["web"]', 0, "skip", "skip", "")
     assert connection.execute("SELECT packs FROM conversations").fetchone()[0] == '["web"]'
-    assert connection.execute("SELECT in_history FROM schedules").fetchone()[0] == 0  # hidden from the history until switched on
+    assert connection.execute("SELECT in_history FROM automations").fetchone()[0] == 0  # hidden from the history until switched on
     assert connection.execute("SELECT day, status FROM recaps_legacy").fetchone()[:] == ("2026-10-17", "asked")
     assert connection.execute("SELECT name FROM sqlite_master WHERE name = 'recaps'").fetchone() is None
     connection.close()
@@ -543,7 +554,7 @@ def test_a_version_3_database_upgrades_and_keeps_its_runs_and_recap_days(tmp_pat
 # ----------------------------------------------------------------------
 @pytest.fixture
 def no_wait(monkeypatch):
-    monkeypatch.setattr(schedules_module, "RETRY_WAITS", (0, 0))
+    monkeypatch.setattr(automations_module, "RETRY_WAITS", (0, 0))
 
 
 def asked(llm) -> int:
@@ -556,7 +567,7 @@ async def test_a_busy_model_is_asked_again_and_the_run_goes_on(s, llm, clock, no
     await run_due(s, clock, "2026-10-18T21:59:30")
     run = runs(s, schedule.id)[0]
     assert run["status"] == "ok" and asked(llm) == 2
-    assert s.conversations.message_count(run["conversation_id"]) == 2  # the second attempt's question and reply, once
+    assert s.conversations.message_count(run["conversation"]) == 2  # the second attempt's question and reply, once
 
 
 async def test_a_run_tried_three_times_fails_with_the_last_error(s, llm, clock, no_wait):
@@ -591,10 +602,19 @@ async def test_a_run_that_already_did_something_is_not_run_again(s, llm, clock, 
 
 def test_the_attempts_are_one_to_three_and_shown(s):
     schedule = plan(s, packs=["web"])
-    assert schedule.attempts == 3 and s.schedules.describe(schedule)["attempts"] == 3
-    assert s.schedules.update(schedule.id, attempts=1).attempts == 1
+    assert schedule.attempts == 3 and s.automations.describe(schedule)["attempts"] == 3
+    assert s.automations.update(schedule.id, attempts=1).attempts == 1
     for bad in (0, 4, "two"):
-        with pytest.raises(ScheduleError):
-            s.schedules.update(schedule.id, attempts=bad)
-    with pytest.raises(ScheduleError):
+        with pytest.raises(AutomationError):
+            s.automations.update(schedule.id, attempts=bad)
+    with pytest.raises(AutomationError):
         plan(s, name="Autre", packs=["web"], attempts=5)
+
+
+def test_instants_have_a_pool_of_places_of_their_own(s):
+    runs = s.automations
+    runs._instant_runs.update({1: False, 2: False})  # two event runs fill the pool of events
+    assert not runs._has_slot(False)
+    assert runs._has_slot(True)  # a 09:00 run does not wait behind them
+    runs._instant_runs[3] = True
+    assert not runs._has_slot(True)

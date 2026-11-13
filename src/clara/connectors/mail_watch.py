@@ -2,7 +2,7 @@
 
 * **Notifications**, off until you turn them on (the runtime setting `mail_notify`, on the Connections page or the Admin
   page): see below.
-* **Hooks** (triggers/): every new message is an event `mail.received`, stored and matched against the hooks you wrote, in the
+* **Automations** (automations/): every new message is an event `mail.received`, stored and matched against the automations you wrote, in the
   same transaction that moves the place forward, so a crash loses none and repeats none. The poll only looks while a listener
   exists; with none, the place is forgotten, so the first look after one appears starts from now and never replays old mail.
 
@@ -24,8 +24,8 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ..automations.events import SourceEvent
 from ..timeutil import iso, now_iso
-from ..triggers.events import SourceEvent
 from .mail import LABELS, NEW_BATCH, PROVIDERS, MailError, Summary
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ class MailWatch:
     # ------------------------------------------------------------------
     async def poll(self) -> None:
         notify = bool(self.s.runtime.get("mail_notify"))
-        hooks = self.s.triggers is not None and self.s.triggers.wants("mail.received")
+        hooks = self.s.automations.wants("mail.received")
         connectors = self.s.connectors
         for provider in PROVIDERS:
             if connectors is None or not connectors.mail_connected(provider):
@@ -150,7 +150,7 @@ class MailWatch:
         # starts again from the old place, and a crash after this repeats nothing
         if hooks:
             address = (self.s.connections.get(provider) or {}).get("account", "")
-            self.s.triggers.ingest([mail_event(provider, address, item) for item in arrived], also=move)
+            self.s.automations.ingest([mail_event(provider, address, item) for item in arrived], also=move)
         else:
             move()
 

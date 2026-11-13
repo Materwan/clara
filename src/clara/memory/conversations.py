@@ -20,7 +20,7 @@ from datetime import timedelta
 from ..db import Database
 from ..mirror.clock import bump
 from ..timeutil import iso, now_iso, utcnow
-from .facts import HOOK, PROJECT, SCHEDULE, fts_query, scope_name
+from .facts import AUTOMATION, PROJECT, fts_query, scope_name
 
 MAX_TITLE = 100
 PREVIEW = 300
@@ -32,8 +32,8 @@ NONE = "none"
 class MemoryScope:
     """A memory a conversation shares with others besides the global one (memory/facts.py)."""
 
-    kind: str  # "project", or "automation" (the schedule or hook whose run the conversation is)
-    scope: str  # as facts store it: project:3, schedule:2, hook:5
+    kind: str  # "project", or "automation" (the automation whose run the conversation is)
+    scope: str  # as facts store it: project:3, automation:2
     name: str
 
 
@@ -228,8 +228,8 @@ class Conversations:
         """The project and the automation whose memory this conversation shares, by kind (none of them: an empty dict)."""
         row = self.db.one(
             "SELECT c.project_id, (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name,"
-            f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
-            f" {self._HOOK} AS hook_id, (SELECT t.name FROM triggers t WHERE t.id = {self._HOOK}) AS hook_name"
+            f" {self._AUTOMATION} AS automation_id,"
+            f" (SELECT a.name FROM automations a WHERE a.id = {self._AUTOMATION}) AS automation_name"
             " FROM conversations c WHERE c.id = ?",
             (conversation_id,),
         )
@@ -238,12 +238,10 @@ class Conversations:
             return found
         if row["project_id"] is not None:
             found["project"] = MemoryScope("project", scope_name(PROJECT, row["project_id"]), row["project_name"])
-        if row["schedule_id"] is not None:
+        if row["automation_id"] is not None:
             found["automation"] = MemoryScope(
-                "automation", scope_name(SCHEDULE, row["schedule_id"]), row["schedule_name"]
+                "automation", scope_name(AUTOMATION, row["automation_id"]), row["automation_name"]
             )
-        elif row["hook_id"] is not None:
-            found["automation"] = MemoryScope("automation", scope_name(HOOK, row["hook_id"]), row["hook_name"])
         return found
 
     def require(self, conversation_id: str) -> Conversation:
@@ -252,18 +250,16 @@ class Conversations:
             raise ConversationError(f"No conversation {conversation_id}.")
         return conversation
 
-    # The schedule a conversation belongs to: the one that owns it, or the one whose run made it (one per run).
-    _SCHEDULE = (
-        "COALESCE((SELECT s.id FROM schedules s WHERE s.conversation_id = c.id),"
-        " (SELECT r.schedule_id FROM schedule_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))"
+    # The automation a conversation belongs to: the one that owns it (the one its runs share), or the one whose run made it (one
+    # per run).
+    _AUTOMATION = (
+        "COALESCE((SELECT a.id FROM automations a WHERE a.conversation_id = c.id),"
+        " (SELECT r.automation_id FROM automation_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1))"
     )
-    # The hook a conversation belongs to: the one whose run made it.
-    _HOOK = "(SELECT r.trigger_id FROM trigger_runs r WHERE r.conversation_id = c.id ORDER BY r.id DESC LIMIT 1)"
-    # Whether the group of a conversation shows it in the history: its schedule's say, else its hook's, else its project's,
-    # else yes. A schedule's own conversation whose schedule is gone has no group to switch on, so it stays out.
+    # Whether the group of a conversation shows it in the history: its automation's say, else its project's, else yes. The shared
+    # conversation of an automation that is gone has no group to switch on, so it stays out (its kind is still 'schedule').
     _SHOWN = (
-        f"COALESCE((SELECT s.in_history FROM schedules s WHERE s.id = {_SCHEDULE}),"
-        f" (SELECT t.in_history FROM triggers t WHERE t.id = {_HOOK}),"
+        f"COALESCE((SELECT a.in_history FROM automations a WHERE a.id = {_AUTOMATION}),"
         " CASE WHEN c.kind = 'schedule' THEN 0 END, (SELECT p.in_history FROM projects p WHERE p.id = c.project_id), 1)"
     )
 
@@ -279,7 +275,7 @@ class Conversations:
         archived: bool | None = False,
     ) -> list[dict]:
         """Pinned first, then the most recently active. `q` searches titles, summaries and messages. Each one names its
-        `group` (its schedule, else its hook, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
+        `group` (its automation, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
         leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
         the conversations the listed clients started."""
         where = []
@@ -315,8 +311,8 @@ class Conversations:
         rows = self.db.all(
             "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
             " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
-            f" {self._SCHEDULE} AS schedule_id, (SELECT s.name FROM schedules s WHERE s.id = {self._SCHEDULE}) AS schedule_name,"
-            f" {self._HOOK} AS hook_id, (SELECT t.name FROM triggers t WHERE t.id = {self._HOOK}) AS hook_name,"
+            f" {self._AUTOMATION} AS automation_id,"
+            f" (SELECT a.name FROM automations a WHERE a.id = {self._AUTOMATION}) AS automation_name,"
             " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
             f" FROM conversations c WHERE {' AND '.join(where) or '1'} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
@@ -328,10 +324,8 @@ class Conversations:
 
     @staticmethod
     def _group(row) -> dict | None:
-        if row["schedule_id"] is not None:
-            return {"kind": "schedule", "id": row["schedule_id"], "name": row["schedule_name"]}
-        if row["hook_id"] is not None:
-            return {"kind": "hook", "id": row["hook_id"], "name": row["hook_name"]}
+        if row["automation_id"] is not None:
+            return {"kind": "automation", "id": row["automation_id"], "name": row["automation_name"]}
         if row["project_id"] is not None:
             return {"kind": "project", "id": row["project_id"], "name": row["project_name"]}
         return None

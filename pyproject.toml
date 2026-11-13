@@ -18,6 +18,7 @@ dependencies = [
     "pypdf>=6.21.4",            # text of PDF attachments and project files
     "pillow>=11.0",          # frames of animated pictures sent to models
     "prompt_toolkit>=3.0",   # clara-chat and clara-admin
+    "google-re2>=1.1.20251105",  # RE2: linear-time regular expressions for automation filters
 ]
 
 [project.optional-dependencies]

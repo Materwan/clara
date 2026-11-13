@@ -8,12 +8,11 @@ from datetime import timedelta
 
 import pytest
 
+from clara.automations import AutomationError
 from clara.memory.retention import Limits, Own, RetentionError, check_own, effective
 from clara.ops.upkeep import Upkeep
-from clara.timekeeping import ScheduleError
 from clara.timeutil import iso, utcnow
 from clara.tools.base import ToolContext, TurnState
-from clara.triggers import TriggerError
 from modeset import at_level
 
 LATER = "2099-01-05T09:00"
@@ -23,26 +22,26 @@ def stamp(hours_ago: float) -> str:
     return iso(utcnow() - timedelta(hours=hours_ago))
 
 
+ONCE = {"type": "once", "at": LATER}
+MAIL = {"type": "event", "kind": "mail.received", "filter": {"subject": "invoice"}}
+
+
 def schedule(s, name: str = "Digest", **fields):
     fields.setdefault("per_run", True)
-    return s.schedules.create(name, "Summarise.", LATER, timezone="Europe/Paris", **fields)
+    return s.automations.create(name, ONCE, prompt="Summarise.", timezone="Europe/Paris", **fields)
 
 
 def hook(s, name: str = "Invoices", **fields):
-    return s.triggers.create(name, "mail.received", prompt="Handle it.", filter={"subject": "invoice"}, **fields)
+    return s.automations.create(name, MAIL, prompt="Handle it.", **fields)
 
 
 def run_of(s, owner, hours_ago: float, status: str = "ok", **conversation) -> str:
-    """A conversation made by a run of `owner` (a schedule or a hook), idle for `hours_ago` hours."""
+    """A conversation made by a run of `owner` (an automation), idle for `hours_ago` hours."""
     pinned = conversation.pop("pinned", False)
     cid = s.conversations.create("server", title=f"run {hours_ago}h", **conversation).id
     s.db.execute("UPDATE conversations SET updated_at = ?, pinned = ? WHERE id = ?", (stamp(hours_ago), int(pinned), cid))
-    if hasattr(owner, "per_run"):
-        s.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id, started_at) VALUES (?, ?, ?, ?, ?)",
-                     (owner.id, stamp(hours_ago), status, cid, stamp(hours_ago)))
-    else:
-        s.db.execute("INSERT INTO trigger_runs (trigger_id, event_ids, status, queued_at, conversation_id) VALUES (?, '[]', ?, ?, ?)",
-                     (owner.id, status, stamp(hours_ago), cid))
+    s.db.execute("INSERT INTO automation_runs (automation_id, due_at, status, conversation_id, started_at, queued_at) VALUES (?, ?, ?, ?, ?, ?)",
+                 (owner.id, stamp(hours_ago), status, cid, stamp(hours_ago), stamp(hours_ago)))
     return cid
 
 
@@ -72,7 +71,7 @@ def test_the_age_limit_deletes_the_conversations_of_hook_runs_and_per_run_schedu
     assert services.retention.sweep() == 2
     assert left(services, old_s, new_s, old_h, new_h) == [False, True, False, True]
     # the run keeps its row; only its conversation link goes
-    rows = services.db.all("SELECT conversation_id FROM schedule_runs WHERE schedule_id = ? ORDER BY id", (digest.id,))
+    rows = services.db.all("SELECT conversation_id FROM automation_runs WHERE automation_id = ? ORDER BY id", (digest.id,))
     assert [row[0] for row in rows] == [None, new_s]
 
 
@@ -112,9 +111,9 @@ def test_whichever_comes_first(services):
 def test_the_shared_conversation_of_a_schedule_a_chat_and_a_reminder_chat_are_not_in_scope(services):
     shared_schedule = schedule(services, "Shared", per_run=False)
     shared = services.conversations.create("server", kind="schedule", title="Shared").id
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (shared, shared_schedule.id))
-    services.db.execute("INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id) VALUES (?, ?, 'ok', ?)",
-                        (shared_schedule.id, stamp(900), shared))
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (shared, shared_schedule.id))
+    services.db.execute("INSERT INTO automation_runs (automation_id, due_at, status, conversation_id, queued_at) VALUES (?, ?, 'ok', ?, ?)",
+                        (shared_schedule.id, stamp(900), shared, stamp(900)))
     chat = services.conversations.create("web", title="A chat").id
     project = services.projects.create("Work").id
     in_project = services.conversations.create("web", title="Project chat", project_id=project).id
@@ -128,7 +127,7 @@ def test_the_shared_conversation_of_a_schedule_a_chat_and_a_reminder_chat_are_no
 def test_a_schedule_that_stopped_running_one_per_run_keeps_its_old_ones_in_scope(services):
     digest = schedule(services)
     old = run_of(services, digest, 100)
-    services.schedules.update(digest.id, per_run=False)
+    services.automations.update(digest.id, per_run=False)
     limits(services, days=1)
     services.retention.sweep()
     assert left(services, old) == [False]
@@ -210,7 +209,7 @@ def test_deleting_is_the_usual_deletion(services):
     services.conversations.add_turn(cid, "hello", [])
     services.db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (stamp(100), cid))  # add_turn made it fresh
     fact, _ = services.facts.add("Likes short answers.", "model", conversation_id=cid)
-    services.db.execute("INSERT INTO discord_threads (conversation_id, place_key, thread_id) VALUES (?, 'schedule:1', '777')", (cid,))
+    services.db.execute("INSERT INTO discord_threads (conversation_id, place_key, thread_id) VALUES (?, 'automation:1', '777')", (cid,))
     limits(services, days=1)
     services.retention.sweep()
     assert services.db.value("SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (cid,)) == 0
@@ -221,7 +220,7 @@ def test_deleting_is_the_usual_deletion(services):
 def test_a_disabled_automation_is_swept_too(services):
     digest = schedule(services)
     old = run_of(services, digest, 100)
-    services.schedules.update(digest.id, enabled=False)
+    services.automations.update(digest.id, enabled=False)
     limits(services, days=1)
     services.retention.sweep()
     assert left(services, old) == [False]
@@ -265,28 +264,28 @@ def test_own_values_are_checked_and_stored_together():
 def test_the_services_store_describe_and_reset_them(services):
     s = schedule(services, keep_days=2, keep_last=4)
     assert (s.keep_days, s.keep_hours, s.keep_last) == (2, 0, 4)
-    assert services.schedules.describe(s)["keep_last"] == 4
-    changed = services.schedules.update(s.id, keep_hours=5)
+    assert services.automations.describe(s)["keep_last"] == 4
+    changed = services.automations.update(s.id, keep_hours=5)
     assert (changed.keep_days, changed.keep_hours) == (2, 5)
-    reset = services.schedules.update(s.id, keep_days=None, keep_hours=None, keep_last=None)
+    reset = services.automations.update(s.id, keep_days=None, keep_hours=None, keep_last=None)
     assert (reset.keep_days, reset.keep_hours, reset.keep_last) == (None, None, None)
-    with pytest.raises(ScheduleError):
-        services.schedules.update(s.id, keep_days=-3)
+    with pytest.raises(AutomationError):
+        services.automations.update(s.id, keep_days=-3)
     h = hook(services, keep_hours=36)
     assert (h.keep_days, h.keep_hours, h.keep_last) == (0, 36, None)
-    assert services.triggers.update(h.id, keep_last=3).keep_last == 3
-    assert services.triggers.update(h.id, keep_days=None, keep_hours=None).keep_hours is None
-    with pytest.raises(TriggerError):
-        services.triggers.update(h.id, keep_last=99999)
+    assert services.automations.update(h.id, keep_last=3).keep_last == 3
+    assert services.automations.update(h.id, keep_days=None, keep_hours=None).keep_hours is None
+    with pytest.raises(AutomationError):
+        services.automations.update(h.id, keep_last=99999)
 
 
 def test_a_null_for_one_of_days_and_hours_makes_the_whole_age_follow_again(services):
     s = schedule(services, keep_days=2, keep_hours=5)
-    assert services.schedules.update(s.id, keep_days=None).keep_hours is None
+    assert services.automations.update(s.id, keep_days=None).keep_hours is None
     h = hook(services, keep_days=2, keep_hours=5)
-    kept = services.triggers.update(h.id, keep_hours=None)
+    kept = services.automations.update(h.id, keep_hours=None)
     assert (kept.keep_days, kept.keep_hours) == (None, None)
-    assert services.retention.preview_change("hook", h.id, keep_days=None)["would_delete"] == 0
+    assert services.retention.preview_change("automation", h.id, keep_days=None)["would_delete"] == 0
 
 
 def test_the_knobs_refuse_nonsense(services):
@@ -309,7 +308,7 @@ def test_the_preview_does_not_blame_a_change_for_what_is_already_going_to_be_del
     assert (lower["would_delete"], lower["more"]) == (3, 1)
     assert {(item["name"], item["count"], item["more"]) for item in lower["automations"]} == {("Digest", 2, 0), ("Invoices", 1, 1)}
     # for one automation: lowering what it has itself adds only what it did not delete before
-    mine = services.retention.preview(only=("schedule", digest.id), own=check_own(0, 1, None))
+    mine = services.retention.preview(only=("automation", digest.id), own=check_own(0, 1, None))
     assert (mine["would_delete"], mine["more"]) == (3, 1)
 
 
@@ -318,11 +317,11 @@ def test_the_preview_counts_what_the_sweep_would_delete_and_deletes_nothing(serv
     ids = [run_of(services, digest, 30), run_of(services, digest, 2), run_of(services, invoices, 40)]
     found = services.retention.preview(general=Limits(1, 0, 0))
     assert found["would_delete"] == 2 and found["more"] == 2  # nothing was going to be deleted before
-    assert {(item["kind"], item["name"], item["count"]) for item in found["automations"]} == {("schedule", "Digest", 1), ("hook", "Invoices", 1)}
+    assert {(item["kind"], item["name"], item["count"]) for item in found["automations"]} == {("automation", "Digest", 1), ("automation", "Invoices", 1)}
     assert left(services, *ids) == [True] * 3 and services.retention.sweep() == 0  # nothing saved, nothing to delete
-    only = services.retention.preview(only=("schedule", digest.id), own=check_own(0, 1, None))
+    only = services.retention.preview(only=("automation", digest.id), own=check_own(0, 1, None))
     assert only["would_delete"] == 2 and [item["id"] for item in only["automations"]] == [digest.id]
-    assert services.retention.preview_change("schedule", digest.id, keep_days=0, keep_hours=1)["would_delete"] == 2
+    assert services.retention.preview_change("automation", digest.id, keep_days=0, keep_hours=1)["would_delete"] == 2
 
 
 async def test_the_preview_route(services, client):
@@ -331,28 +330,28 @@ async def test_the_preview_route(services, client):
     found = (await client.get("/v1/retention/preview", params={"keep_days": 1})).json()
     assert found["would_delete"] == 1 and found["more"] == 1 and found["automations"][0]["name"] == "Digest"
     assert (await client.get("/v1/retention/preview")).json()["would_delete"] == 0  # the saved limits: off
-    one = (await client.get("/v1/retention/preview", params={"kind": "schedule", "id": digest.id, "keep_days": 0, "keep_hours": 1})).json()
+    one = (await client.get("/v1/retention/preview", params={"kind": "automation", "id": digest.id, "keep_days": 0, "keep_hours": 1})).json()
     assert one["would_delete"] == 2
-    assert (await client.get("/v1/retention/preview", params={"kind": "schedule", "id": digest.id})).json()["would_delete"] == 0  # follows
-    assert (await client.get("/v1/retention/preview", params={"kind": "schedule", "id": 99})).status_code == 404
-    assert (await client.get("/v1/retention/preview", params={"kind": "hook"})).status_code == 422
+    assert (await client.get("/v1/retention/preview", params={"kind": "automation", "id": digest.id})).json()["would_delete"] == 0  # follows
+    assert (await client.get("/v1/retention/preview", params={"kind": "automation", "id": 99})).status_code == 404
+    assert (await client.get("/v1/retention/preview", params={"kind": "automation"})).status_code == 422
     assert (await client.get("/v1/retention/preview", params={"keep_days": -2})).status_code == 422
 
 
 async def test_the_routes_change_an_automations_limits_and_null_follows_again(services, client):
     digest, invoices = schedule(services), hook(services)
-    patched = (await client.patch(f"/v1/schedules/{digest.id}", json={"keep_days": 3, "keep_hours": 0, "keep_last": 10})).json()
+    patched = (await client.patch(f"/v1/automations/{digest.id}", json={"keep_days": 3, "keep_hours": 0, "keep_last": 10})).json()
     assert (patched["keep_days"], patched["keep_hours"], patched["keep_last"]) == (3, 0, 10)
-    follows = (await client.patch(f"/v1/schedules/{digest.id}", json={"keep_days": None, "keep_hours": None, "keep_last": None})).json()
+    follows = (await client.patch(f"/v1/automations/{digest.id}", json={"keep_days": None, "keep_hours": None, "keep_last": None})).json()
     assert (follows["keep_days"], follows["keep_hours"], follows["keep_last"]) == (None, None, None)
-    assert (await client.patch(f"/v1/schedules/{digest.id}", json={"keep_days": 99999})).status_code == 422
-    made = (await client.post("/v1/triggers", json={"name": "Receipts", "on": "mail.received", "prompt": "x", "keep_last": 5})).json()
+    assert (await client.patch(f"/v1/automations/{digest.id}", json={"keep_days": 99999})).status_code == 422
+    made = (await client.post("/v1/automations", json={"name": "Receipts", "when": MAIL, "prompt": "x", "keep_last": 5})).json()
     assert made["keep_last"] == 5 and made["keep_days"] is None
-    hooked = (await client.patch(f"/v1/triggers/{invoices.id}", json={"keep_hours": 12})).json()
+    hooked = (await client.patch(f"/v1/automations/{invoices.id}", json={"keep_hours": 12})).json()
     assert (hooked["keep_days"], hooked["keep_hours"]) == (0, 12)
-    cleared = (await client.patch(f"/v1/triggers/{invoices.id}", json={"keep_days": None, "keep_hours": None})).json()
+    cleared = (await client.patch(f"/v1/automations/{invoices.id}", json={"keep_days": None, "keep_hours": None})).json()
     assert cleared["keep_hours"] is None
-    new = (await client.post("/v1/schedules", json={"name": "Weekly", "prompt": "x", "at": LATER, "keep_days": 7})).json()
+    new = (await client.post("/v1/automations", json={"name": "Weekly", "prompt": "x", "when": ONCE, "keep_days": 7})).json()
     assert (new["keep_days"], new["keep_hours"]) == (7, 0)
 
 
@@ -410,47 +409,47 @@ def level_four(services):
 async def test_the_request_says_how_many_conversations_a_change_deletes(services, level_four):
     digest = schedule(services)
     run_of(services, digest, 30), run_of(services, digest, 2)
-    asked = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    asked = await call(services, "automation_update", {"id": digest.id, "keep_days": 1, "keep_hours": 0})
     assert asked.approval is not None
     assert "keep_days: the global setting → 1" in asked.approval.summary
     assert "deletes 1 more conversation of its runs for good" in asked.approval.summary
-    quiet = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 30, "keep_hours": 0})
+    quiet = await call(services, "automation_update", {"id": digest.id, "keep_days": 30, "keep_hours": 0})
     assert "This deletes no conversation that the limits now saved would not delete." in quiet.approval.summary
-    assert services.schedules.get(digest.id).keep_days is None  # nothing changes until you allow it
+    assert services.automations.get(digest.id).keep_days is None  # nothing changes until you allow it
     tester = services.tokens.create("tester", "cli")[0]
     await services.approvals.decide(asked.approval.id, "allow_once", tester)
-    changed = services.schedules.get(digest.id)
+    changed = services.automations.get(digest.id)
     assert (changed.keep_days, changed.keep_hours) == (1, 0)
 
 
 async def test_the_tool_wants_the_age_whole_and_follows_with_minus_one(services, level_four):
     invoices = hook(services, keep_days=2, keep_hours=0)
-    lonely = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_days": 1})
+    lonely = await call(services, "automation_update", {"id": invoices.id, "keep_days": 1})
     assert lonely.approval is None and "keep_days and keep_hours are one age" in lonely.text
-    mixed = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_days": -1, "keep_hours": 3})
+    mixed = await call(services, "automation_update", {"id": invoices.id, "keep_days": -1, "keep_hours": 3})
     assert mixed.approval is None and "one age" in mixed.text
-    out_of_range = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_last": 20000})
+    out_of_range = await call(services, "automation_update", {"id": invoices.id, "keep_last": 20000})
     assert out_of_range.approval is None and "keep_last must be from 0" in out_of_range.text
-    follow = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_days": -1, "keep_hours": -1})
+    follow = await call(services, "automation_update", {"id": invoices.id, "keep_days": -1, "keep_hours": -1})
     assert "keep_days: 2 → the global setting" in follow.approval.summary
     tester = services.tokens.create("tester", "cli")[0]
     await services.approvals.decide(follow.approval.id, "allow_once", tester)
-    assert services.triggers.get(invoices.id).keep_days is None
+    assert services.automations.get(invoices.id).keep_days is None
 
 
 async def test_the_tool_refuses_a_fraction_that_would_become_no_limit(services, level_four):
     invoices = hook(services, keep_days=2, keep_hours=0)
     for arguments in ({"keep_last": 0.9}, {"keep_days": 0.5, "keep_hours": 0}, {"keep_last": True}):
-        refused = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, **arguments})
+        refused = await call(services, "automation_update", {"id": invoices.id, **arguments})
         assert refused.approval is None and "must be a whole number" in refused.text, arguments
-    whole = await call(services, "automation_update", {"kind": "hook", "id": invoices.id, "keep_last": 3.0})
+    whole = await call(services, "automation_update", {"id": invoices.id, "keep_last": 3.0})
     assert whole.approval is not None and "keep_last: the global setting → 3" in whole.approval.summary
 
 
 async def test_a_change_allowed_later_does_not_delete_more_than_its_request_said(services, level_four):
     digest = schedule(services)
     first, second = run_of(services, digest, 30), run_of(services, digest, 10)
-    asked = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    asked = await call(services, "automation_update", {"id": digest.id, "keep_days": 1, "keep_hours": 0})
     assert "deletes 1 more conversation of its runs for good" in asked.approval.summary
     services.db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (stamp(30), second))  # it aged while the request waited
     tester = services.tokens.create("tester", "cli")[0]
@@ -458,36 +457,36 @@ async def test_a_change_allowed_later_does_not_delete_more_than_its_request_said
     settled = services.approvals.get(asked.approval.id)
     assert settled.status == "failed"
     assert "Nothing was changed" in settled.result and "1 more conversation, and they would now delete 2" in settled.result
-    assert services.schedules.get(digest.id).keep_days is None and left(services, first, second) == [True, True]
-    again = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    assert services.automations.get(digest.id).keep_days is None and left(services, first, second) == [True, True]
+    again = await call(services, "automation_update", {"id": digest.id, "keep_days": 1, "keep_hours": 0})
     assert "deletes 2 more conversations of its runs for good" in again.approval.summary  # asked again: it shows the new number
     await services.approvals.decide(again.approval.id, "allow_once", tester)
-    assert services.schedules.get(digest.id).keep_days == 1
+    assert services.automations.get(digest.id).keep_days == 1
 
 
 async def test_a_change_that_deletes_less_than_said_goes_through(services, level_four):
     digest = schedule(services)
     run_of(services, digest, 30), run_of(services, digest, 31)
-    asked = await call(services, "automation_update", {"kind": "schedule", "id": digest.id, "keep_days": 1, "keep_hours": 0})
+    asked = await call(services, "automation_update", {"id": digest.id, "keep_days": 1, "keep_hours": 0})
     assert "deletes 2 more" in asked.approval.summary
     services.db.execute("UPDATE conversations SET pinned = 1")  # pinned since: it deletes nothing, which is not more
     tester = services.tokens.create("tester", "cli")[0]
     await services.approvals.decide(asked.approval.id, "allow_once", tester)
-    assert services.approvals.get(asked.approval.id).status == "done" and services.schedules.get(digest.id).keep_days == 1
+    assert services.approvals.get(asked.approval.id).status == "done" and services.automations.get(digest.id).keep_days == 1
 
 
 async def test_a_created_automation_can_carry_limits(services, level_four):
-    asked = await call(services, "automation_create", {"kind": "schedule", "name": "Weekly", "prompt": "x", "at": LATER,
+    asked = await call(services, "automation_create", {"name": "Weekly", "prompt": "x", "when": ONCE,
                                                          "per_run": True, "keep_days": 7, "keep_hours": 0, "keep_last": 4})
     assert "keep_last: 4" in asked.approval.summary
     tester = services.tokens.create("tester", "cli")[0]
     await services.approvals.decide(asked.approval.id, "allow_once", tester)
-    made = services.schedules.listing()[0]
+    made = services.automations.listing()[0]
     assert (made.keep_days, made.keep_hours, made.keep_last, made.per_run) == (7, 0, 4, True)
 
 
 def test_the_migration_adds_nullable_columns(services):
-    for table in ("schedules", "triggers"):
+    for table in ("automations",):
         columns = {row["name"]: row for row in services.db.all(f"PRAGMA table_info({table})")}
         for name in ("keep_days", "keep_hours", "keep_last"):
             assert name in columns and columns[name]["notnull"] == 0 and columns[name]["dflt_value"] is None

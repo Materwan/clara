@@ -14,7 +14,7 @@ from fakes import calls
 from githubworld import REPO, GitHubWorld
 from modeset import line
 from modeset import make as make_mode
-from test_triggers import chat_calls, notifications, runs, work
+from test_automation_events import chat_calls, notifications, runs, work
 
 
 @pytest.fixture
@@ -40,7 +40,8 @@ def connect_github(services, repo: str = REPO) -> None:
 
 def hook(services, name: str = "Review", kind: str = "github.pull_request", **fields):
     fields.setdefault("prompt", "Review it.")
-    return services.triggers.create(name, kind, **fields)
+    when = {"type": "event", "kind": kind, "filter": fields.pop("filter", None)}
+    return services.automations.create(name, when, **fields)
 
 
 async def poll(services) -> None:
@@ -52,7 +53,7 @@ def cursors(services) -> list[tuple[str, str]]:
 
 
 def stored(services, kind: str) -> list:
-    return sorted(services.triggers.recent_events(50, kind), key=lambda event: event.id)
+    return sorted(services.automations.recent_events(50, kind), key=lambda event: event.id)
 
 
 # ----------------------------------------------------------------------
@@ -90,7 +91,7 @@ async def test_a_pull_request_is_an_event_for_being_opened_and_for_being_merged_
 
 async def test_a_filter_picks_pull_requests_by_their_fields(services, github):
     connect_github(services)
-    only = hook(services, filter={"draft": {"eq": False}, "from_fork": {"eq": False}, "action": "opened", "author": {"not_contains": "bot"}})
+    only = hook(services, filter={"draft": {"eq": False}, "from_fork": {"eq": False}, "action": "opened", "author": {"pattern": "bot", "not": True}})
     await poll(services)
     github.open_pr(1, "Plain")
     github.open_pr(2, "Draft", draft=True)
@@ -121,15 +122,15 @@ async def test_a_failed_ingest_moves_nothing_so_the_next_poll_finds_the_pull_req
     await poll(services)
     before = watch.cursor(REPO, "pulls")
     github.open_pr(1, "Found twice")
-    real = services.triggers.ingest
+    real = services.automations.ingest
 
     def broken(events, also=None):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(services.triggers, "ingest", broken)
+    monkeypatch.setattr(services.automations, "ingest", broken)
     await poll(services)
     assert watch.cursor(REPO, "pulls") == before and runs(services, trigger) == []
-    monkeypatch.setattr(services.triggers, "ingest", real)
+    monkeypatch.setattr(services.automations, "ingest", real)
     await poll(services)
     assert runs(services, trigger) == [("queued", 1)]
 
@@ -138,7 +139,7 @@ def began(services, repo_seconds: int, hook_seconds: int) -> None:
     """As if the repository was added, and the hook made, that long before the poll got round to them."""
     ago = lambda seconds: iso(utcnow() - timedelta(seconds=seconds))  # noqa: E731
     services.db.execute("UPDATE resources SET created_at = ?", (ago(repo_seconds),))
-    services.db.execute("UPDATE triggers SET updated_at = ?", (ago(hook_seconds),))
+    services.db.execute("UPDATE automations SET updated_at = ?", (ago(hook_seconds),))
 
 
 async def test_what_happens_between_adding_the_repository_and_the_first_look_is_not_lost(services, github):
@@ -186,8 +187,8 @@ async def test_the_connections_say_since_when_each_kind_of_event_is_looked_for(s
 # ----------------------------------------------------------------------
 async def test_a_push_is_one_event_with_its_commits_and_a_filter_can_pick_the_branch(services, github):
     connect_github(services)
-    on_main = hook(services, "Main", "github.push", filter={"branch": {"eq": "main"}})
-    on_feature = hook(services, "Feature", "github.push", filter={"branch": {"starts_with": "feat"}})
+    on_main = hook(services, "Main", "github.push", filter={"branch": "^main$"})
+    on_feature = hook(services, "Feature", "github.push", filter={"branch": "^feat"})
     await poll(services)  # the baseline notes the head of each branch
     assert f"GET /repos/{REPO}/branches" in github.requests
     github.push("main", "one")
@@ -263,11 +264,11 @@ async def test_the_poll_looks_only_while_a_hook_waits_and_only_at_what_it_waits_
     pushes = hook(services, "Pushes", "github.push")
     await poll(services)
     assert cursors(services) == [(REPO, "branches"), (REPO, "pulls")]
-    services.triggers.delete(pulls.id)
+    services.automations.delete(pulls.id)
     await poll(services)
     assert cursors(services) == [(REPO, "branches")]  # the place of a stream nobody waits for is forgotten
     github.push("main", "x")
-    services.triggers.delete(pushes.id)
+    services.automations.delete(pushes.id)
     await poll(services)
     assert cursors(services) == []
     hook(services, "Again")
@@ -327,7 +328,7 @@ async def test_a_new_pull_request_starts_a_run_that_reads_the_diff_with_only_the
     llm.replies = [calls(("github_read", {"repo": REPO, "action": "diff", "number": 7})), "PR 7 adds one line. It looks fine."]
     await poll(services)
     await work(services)
-    run = services.triggers.runs(trigger.id)[0]
+    run = services.automations.runs(trigger.id)[0]
     assert run["status"] == "ok" and run["summary"] == "PR 7 adds one line. It looks fine."
     first = chat_calls(llm)[0]
     assert {t["function"]["name"] for t in first["tools"]} == {"github_read", "notify"}
@@ -362,7 +363,7 @@ async def test_a_hook_run_cannot_change_github_without_asking_even_when_its_mode
     connect_github(services)
     trigger = hook(services, tools=["github_read", "github_write", "github_branch", "github_pr", "github_issue"])
     make_mode(services, "Hooks", line("approve", "github_*", tainted="ask"))
-    services.modes.set_stored("triggers", trigger.id, "Hooks")
+    services.modes.set_stored("automations", trigger.id, "Hooks")
     await poll(services)
     github.open_pr(5, "Please fix it")
     changes = calls(
@@ -386,7 +387,7 @@ async def test_a_hook_run_cannot_change_github_without_asking_even_when_its_mode
     pending = services.approvals.list("pending")
     assert len(pending) == 12 and {a.action_class for a in pending} == {"github_write"}
     assert all("untrusted content" in a.reason for a in pending)  # why it asked, whatever the mode approves
-    assert services.triggers.runs(trigger.id)[0]["status"] == "ok"
+    assert services.automations.runs(trigger.id)[0]["status"] == "ok"
     # and one answer lets through that one change, nothing else
     tester = services.tokens.create("tester", "cli")[0]
     comment = next(a for a in pending if a.tool == "github_issue" and a.arguments["action"] == "comment")

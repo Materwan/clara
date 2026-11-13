@@ -1,12 +1,12 @@
 """Automatic deletion of the conversations automations make (DECISIONS.md, « Automation retention »).
 
-**What is in scope.** The conversation of each hook run, and each conversation a schedule makes when it runs one per run.
-A schedule's own shared conversation is not (it is the schedule's memory of its runs), nor are the chats reminders and
-tasks post into. The link is the one the history already uses: the run that made the conversation.
+**What is in scope.** The conversation of each run of an automation that has one for each run. An automation's own shared
+conversation is not (it is the automation's memory of its runs), nor are the chats reminders and tasks post into. The link is
+the one the history already uses: the run that made the conversation.
 
 **The limits.** An age (days and hours since the conversation's last message, `updated_at`) and a count (the latest N
-conversations of each schedule or hook), whichever comes first. They are runtime settings (`automation_keep_days`,
-`automation_keep_hours`, `automation_keep_last`; 0 is off, and all three are 0 at first); a schedule or a hook may set its
+conversations of each automation), whichever comes first. They are runtime settings (`automation_keep_days`,
+`automation_keep_hours`, `automation_keep_last`; 0 is off, and all three are 0 at first); an automation may set its
 own, and a value left NULL follows the global one. The age is one pair: either both days and hours are the automation's
 own (0 and 0: none), or both follow.
 
@@ -41,8 +41,7 @@ MAX_HOURS = 8760
 MAX_LAST = 10_000
 CHUNK = 400  # conversations deleted in one statement
 
-SCHEDULE = "schedule"
-HOOK = "hook"
+AUTOMATION = "automation"
 KEEP_FIELDS = ("keep_days", "keep_hours", "keep_last")
 KEEP_AGE = (
     "Days and hours since the last message after which a conversation of its runs is deleted; send both, or neither "
@@ -153,12 +152,9 @@ _KEPT = (
 )
 
 
-# Per kind of automation: the table of its runs, the column naming the automation, the statuses of a run still going, and the
-# table of automations that own a conversation of their own (a schedule's shared one, which is not in scope).
-_RUNS = {
-    SCHEDULE: ("schedule_runs", "schedule_id", "'queued', 'running', 'waiting'", "schedules"),
-    HOOK: ("trigger_runs", "trigger_id", "'queued', 'running'", ""),
-}
+# Per kind of automation (there is one): the table of its runs, the column naming the automation, the statuses of a run still
+# going, and the table of automations that own a conversation of their own (the shared one, which is not in scope).
+_RUNS = {AUTOMATION: ("automation_runs", "automation_id", "'queued', 'running', 'waiting'", "automations")}
 
 
 def _kept(kind: str) -> str:
@@ -203,9 +199,8 @@ class AutomationRetention:
 
     def _automations(self) -> dict[tuple[str, int], tuple[str, Own]]:
         found: dict[tuple[str, int], tuple[str, Own]] = {}
-        for kind, table in ((SCHEDULE, "schedules"), (HOOK, "triggers")):
-            for row in self.db.all(f"SELECT id, name, keep_days, keep_hours, keep_last FROM {table}"):
-                found[(kind, row["id"])] = (row["name"], own_of(row))
+        for row in self.db.all("SELECT id, name, keep_days, keep_hours, keep_last FROM automations"):
+            found[(AUTOMATION, row["id"])] = (row["name"], own_of(row))
         return found
 
     def exists(self, kind: str, automation_id: int) -> bool:
@@ -228,7 +223,7 @@ class AutomationRetention:
             if (only is None or key == only) and (limits := effective(mine, general)).active
         }
         grouped: dict[tuple[str, int], list] = {}
-        for kind in (SCHEDULE, HOOK):
+        for kind in (AUTOMATION,):
             if not any(key[0] == kind for key in limited):
                 continue
             for row in self.db.all(_members(kind) + " ORDER BY c.updated_at DESC, c.created_at DESC, c.id DESC"):

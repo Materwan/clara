@@ -1,4 +1,4 @@
-"""Tasks, schedules, versions and compaction."""
+"""Tasks, automations at a time, versions and compaction."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 import pytest
 
 from clara.agent.turn import ChatRequest
-from clara.timekeeping import Followup, ScheduleError, TaskError, Tasks
-from clara.timekeeping.schedules import Schedules
+from clara.automations import AutomationError, Automations
+from clara.timekeeping import Followup, TaskError, Tasks
 from conftest import parse_sse
 
 
@@ -57,21 +57,21 @@ async def test_a_task_reminder_follows_clara_and_stops_after_the_last(services):
 
 
 async def test_a_daily_schedule_runs_unattended_and_records_its_runs(services, llm):
-    clock = Clock("2026-10-23T05:00")
-    schedules = Schedules(services.db, services.events, "Europe/Paris", clock=clock)
+    clock = Clock("2026-10-23T07:00")  # 09:00 in Paris: today's 08:00 has gone
+    schedules = Automations(services.db, services.events, "Europe/Paris", clock=clock)
     ran: list[int] = []
 
-    async def runner(schedule, number, run):
-        ran.append(number)
+    async def runner(automation, run_id, due, events):
+        ran.append(run_id)
         return "All green.\n\nDetails follow."
 
     schedules.runner = runner
-    schedule = schedules.create("Morning check", "Check the backups", "2026-10-24T08:00", repeat="daily")
+    schedule = schedules.create("Morning check", {"type": "cron", "expr": "0 8 * * *"}, prompt="Check the backups")
     assert schedule.next_at.isoformat() == "2026-10-24T06:00:00+00:00"
     clock.now = datetime(2026, 10, 24, 6, 0, 5, tzinfo=UTC)
     assert schedules.fire_due() == 1
     await schedules.wait_running()
-    assert ran == [1]
+    assert len(ran) == 1
     current = schedules.get(schedule.id)
     assert current.next_at.isoformat() == "2026-10-25T07:00:00+00:00"  # 08:00 CET after the change
     run = schedules.runs(schedule.id)[0]
@@ -79,8 +79,8 @@ async def test_a_daily_schedule_runs_unattended_and_records_its_runs(services, l
     clock.now = datetime(2026, 10, 25, 9, 30, tzinfo=UTC)  # more than an hour late
     schedules.fire_due()
     assert schedules.runs(schedule.id)[0]["status"] == "missed"
-    with pytest.raises(ScheduleError):
-        schedules.create("x", "y", "2026-10-24T08:00", timezone="+02:00")
+    with pytest.raises(AutomationError):
+        schedules.create("x", {"type": "cron", "expr": "0 8 * * *"}, prompt="y", timezone="+02:00")
 
 
 async def test_a_question_asked_again_keeps_both_versions(client, services, llm):

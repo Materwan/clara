@@ -76,7 +76,7 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "fetch_trusted": ("trusted_read", "trusted_read", "Fetch a URL you wrote or a search returned"),
     "fetch_other": ("any_read", "any_read", "Fetch any other URL"),
     "discord": ("mail", "all", "Open, write in or remove a Discord thread"),
-    "automation": ("mail", "all", "Create, change or delete an automation: a schedule or a hook"),
+    "automation": ("mail", "all", "Create, change or delete an automation"),
     "deferred": (
         "any_read",
         "all",

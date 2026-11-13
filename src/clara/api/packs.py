@@ -1,4 +1,4 @@
-"""Tool packs: the special tools a conversation or a schedule can be given."""
+"""Tool packs: the special tools a conversation or an automation can be given."""
 
 from __future__ import annotations
 
@@ -12,6 +12,6 @@ router = APIRouter(prefix="/v1/packs", tags=["packs"])
 
 
 @router.get("")
-def packs(request: Request, where: Literal["chat", "schedule"] | None = None) -> dict:
-    """The packs (for a chat or for a schedule; all by default), with whether each can be used right now and why not."""
+def packs(request: Request, where: Literal["chat", "automation"] | None = None) -> dict:
+    """The packs (for a chat or for an automation; all by default), with whether each can be used right now and why not."""
     return {"packs": services(request).packs.listing(where)}

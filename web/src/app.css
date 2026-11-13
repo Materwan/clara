@@ -594,7 +594,7 @@ tr.off td { opacity: .5; }
 .search-field input { width: 100%; padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-32); font-size: var(--fs-sm); }
 .convo-list { list-style: none; margin: 0; padding: 0; }
 .group-title { font-size: var(--fs-2xs); font-weight: 650; color: var(--muted); padding: var(--sp-12) var(--sp-12) var(--sp-4); }
-/* a project or a schedule: a disclosure over its conversations, which sit a step in */
+/* a project or an automation: a disclosure over its conversations, which sit a step in */
 .group-head button { width: 100%; justify-content: flex-start; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8); color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; text-align: left; }
 .group-head button .icon { flex: none; color: var(--muted); }
 .group-head button[aria-expanded='true'] > .icon:first-child { transform: rotate(90deg); }

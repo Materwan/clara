@@ -139,7 +139,7 @@ def test_the_github_pack_is_unusable_without_a_token_and_holds_the_five_tools(se
     services.secrets.set("github_token", "github_pat_test")
     assert "repository" in reason()
     connect_github(services)
-    pack = next(item for item in services.packs.listing("schedule") if item["id"] == "github")  # schedules take it too
+    pack = next(item for item in services.packs.listing("automation") if item["id"] == "github")  # schedules take it too
     assert pack["available"] and pack["reason"] == "" and set(pack["tools"]) == GITHUB_TOOLS
     assert {name for name in services.toolbox.names if name.startswith("github_")} == GITHUB_TOOLS
     assert services.packs.check(["github", "web"], "schedule") == ["web", "github"]  # a schedule or a project may list it
@@ -183,7 +183,7 @@ def test_the_github_pack_migration_gives_it_to_what_already_called_a_github_tool
     old.close()
     assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (ours - 1, migrate_module.LATEST_VERSION)
     new = connect(path)
-    schedules = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM schedules")}
+    schedules = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM automations")}
     assert schedules == {1: ["web", "github"], 2: ["web"], 3: ["web", "github"]}  # schedule 3 keeps one pack, not two
     chats = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM conversations")}
     assert chats == {"c1": ["web", "github"], "c2": ["web"], "c3": ["web", "github"], "c4": ["web", "github"], "c5": ["web"]}

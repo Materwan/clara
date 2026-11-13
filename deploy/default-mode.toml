@@ -146,7 +146,7 @@ tainted = "ask"
 class = "discord"
 verdict = "refuse"
 
-# Create, change or delete an automation: a schedule or a hook
+# Create, change or delete an automation
 [[verdict]]
 class = "automation"
 verdict = "refuse"

@@ -162,7 +162,7 @@
       if (conversationId === id) mode = found;
     }).catch(() => {});
   });
-  const followed = $derived(mode.source === 'project' ? 'the project' : mode.source === 'automation' ? 'its schedule or hook' : 'the default');
+  const followed = $derived(mode.source === 'project' ? 'the project' : mode.source === 'automation' ? 'its automation' : 'the default');
 
   async function setMode(value: string | null): Promise<void> {
     if (loadError) return;

@@ -1,7 +1,7 @@
-"""The facts Clara keeps, each with where it came from, in one global memory and one for each project, schedule and hook.
+"""The facts Clara keeps, each with where it came from, in one global memory and one for each project and automation.
 
-* **scope** `""` is the global memory (about you, true everywhere). `project:<id>`, `schedule:<id>` and `hook:<id>` are
-  the memory common to every conversation and run of that project, schedule or hook: what Clara learns in one, the next
+* **scope** `""` is the global memory (about you, true everywhere). `project:<id>` and `automation:<id>` are
+  the memory common to every conversation and run of that project or automation: what Clara learns in one, the next
   knows. The same sentence may stand in several scopes. A scope's facts go when it is deleted (a trigger of the database).
   A **scoped fact saved in a tainted turn** is stored `tool`, unconfirmed and *hidden*: no conversation sees it, in the
   prompt or in `recall_facts`, until you confirm it (the global memory shows such a fact, tagged). A planted note would
@@ -37,9 +37,9 @@ MAX_FACT_LENGTH = 300
 MAX_CATEGORY = 32
 SOURCES = ("you", "model", "tool")
 GLOBAL = ""
-PROJECT, SCHEDULE, HOOK = "project", "schedule", "hook"
-SCOPE_TABLES = {PROJECT: "projects", SCHEDULE: "schedules", HOOK: "triggers"}
-MAX_SCOPED_FACTS = 100  # live facts of one project, schedule or hook (the ones waiting for you included)
+PROJECT, AUTOMATION = "project", "automation"
+SCOPE_TABLES = {PROJECT: "projects", AUTOMATION: "automations"}
+MAX_SCOPED_FACTS = 100  # live facts of one project or automation (the ones waiting for you included)
 # ...of which at most this many may wait for your confirmation: a hostile mail cannot fill the memory with them
 MAX_WAITING_FACTS = 20
 
@@ -53,7 +53,7 @@ def scope_name(kind: str, number: int) -> str:
 
 
 def split_scope(scope: str) -> tuple[str, int] | None:
-    """('hook', 5) for 'hook:5'; None for the global memory or for text that is no scope."""
+    """('automation', 5) for 'automation:5'; None for the global memory or for text that is no scope."""
     kind, _, number = scope.partition(":")
     if kind in SCOPE_TABLES and number.isdecimal():
         return kind, int(number)
@@ -217,13 +217,13 @@ class Facts:
         return fact, True
 
     def check_scope(self, scope: str) -> str:
-        """The scope is the global memory or a project, schedule or hook that exists. Returns it as facts store it: `project:03`
+        """The scope is the global memory or a project or an automation that exists. Returns it as facts store it: `project:03`
         and `project:3` are the same memory, and only the canonical spelling is stored, so no fact is left under another name."""
         if scope == GLOBAL:
             return GLOBAL
         found = split_scope(scope)
         if found is None:
-            raise FactError("A scope is empty (everything), project:<id>, schedule:<id> or hook:<id>.")
+            raise FactError("A scope is empty (everything), project:<id> or automation:<id>.")
         kind, number = found
         if self.db.one(f"SELECT 1 FROM {SCOPE_TABLES[kind]} WHERE id = ?", (number,)) is None:
             raise FactError(f"No {kind} {number}.")
@@ -267,7 +267,7 @@ class Facts:
         )
 
     def scopes(self) -> dict[str, dict[str, int]]:
-        """For each project, schedule or hook that keeps a memory: its live facts, how many of them wait for you, and every
+        """For each project or automation that keeps a memory: its live facts, how many of them wait for you, and every
         fact it keeps (`total`: expired and replaced ones too, since a delete removes them all)."""
         live = self.db.all(
             "SELECT scope, COUNT(*) AS facts, COALESCE(SUM(confirmed = 0), 0) AS waiting FROM facts"

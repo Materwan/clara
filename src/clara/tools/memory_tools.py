@@ -1,6 +1,6 @@
 """Memory tools: remember, forget, recall_facts, search_history.
 
-A fact belongs to the global memory or to the memory of a project or an automation (a schedule or a hook), which every
+A fact belongs to the global memory or to the memory of a project or an automation, which every
 conversation and run of it reads. Clara chooses where each fact goes (`scope`) whenever the conversation has a project or an
 automation; nothing is chosen for her.
 
@@ -181,7 +181,7 @@ def memory_tools() -> list[Tool]:
             description=(
                 "Save one durable fact: one short sentence. Where it goes is yours to choose, with `scope`: `global` for "
                 "what is true about the person everywhere (preference, relative, constraint), `project` for what holds for "
-                "this project's conversations only, `automation` for what the runs of this schedule or hook should know "
+                "this project's conversations only, `automation` for what the runs of this automation should know "
                 "next time (a rule the person gave, a mail to skip). Say it whenever the conversation has a project or an "
                 "automation. When it replaces an older fact, give that fact's id in `replaces`. When it holds only for a "
                 "while, give `expires` (local date-time)."

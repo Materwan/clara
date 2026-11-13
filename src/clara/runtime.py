@@ -113,7 +113,7 @@ KNOBS: dict[str, Knob] = {
     "automation_keep_days": Knob(
         0,
         _whole(0, MAX_DAYS),
-        "Days after its last message a conversation made by a hook run or a per-run schedule is deleted, added to "
+        "Days after its last message a conversation made by a run of an automation with a conversation for each run is deleted, added to "
         "automation_keep_hours (0 and 0: no age limit; an automation may set its own).",
     ),
     "automation_keep_hours": Knob(
@@ -124,7 +124,7 @@ KNOBS: dict[str, Knob] = {
     "automation_keep_last": Knob(
         0,
         _whole(0, MAX_LAST),
-        "How many conversations of each schedule or hook are kept, the latest ones; the others are deleted "
+        "How many conversations of each automation's runs are kept, the latest ones; the others are deleted "
         "(0: no count limit; an automation may set its own).",
     ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),

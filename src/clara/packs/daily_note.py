@@ -1,7 +1,7 @@
-"""The daily note, as a schedule: every day at 23:59 Clara reads the day with the packs' tools, asks you one question on the
+"""The daily note, as an automation: every day at 23:59 Clara reads the day with the packs' tools, asks you one question on the
 web site and Discord, waits for your answer, then writes the day into a block of the daily note of the vault.
 
-It is made once at start (when there is a vault), as an ordinary schedule: its prompt, time and packs are yours to
+It is made once at start (when there is a vault), as an ordinary automation: its prompt, time and packs are yours to
 change on the Automation page, or to delete (it is not made again). The days of the earlier, built-in recap (table
 `recaps_legacy`) become runs of it.
 """
@@ -37,8 +37,8 @@ Tu fais le bilan de la journée de la personne, dans sa note du jour du vault (l
 """
 
 
-def _legacy(s: Services, schedule_id: int, packs: list[str]) -> int:
-    """The days of the earlier recap table become runs of the schedule; the check-in conversations keep working."""
+def _legacy(s: Services, automation_id: int, packs: list[str]) -> int:
+    """The days of the earlier recap table become runs of the automation; the check-in conversations keep working."""
     if not s.db.one("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'recaps_legacy'"):
         return 0
     moved = 0
@@ -58,11 +58,12 @@ def _legacy(s: Services, schedule_id: int, packs: list[str]) -> int:
             unreadable.append(f"{row['day']!r} ({row['timezone']!r})")
             continue
         s.db.execute(
-            "INSERT INTO schedule_runs (schedule_id, due_at, started_at, finished_at, status, summary, conversation_id,"
-            " waiting_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO automation_runs (automation_id, due_at, queued_at, started_at, finished_at, status, summary,"
+            " conversation_id, waiting_since) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                schedule_id,
+                automation_id,
                 due,
+                row["asked_at"] or due,
                 row["asked_at"],
                 row["finished_at"],
                 status,
@@ -86,30 +87,30 @@ def _legacy(s: Services, schedule_id: int, packs: list[str]) -> int:
 
 
 def seed(s: Services) -> int | None:
-    """Make the daily-note schedule, once, when there is a vault. Returns its id, or None when nothing was done."""
+    """Make the daily-note automation, once, when there is a vault. Returns its id, or None when nothing was done."""
     if s.vault is None or s.db.one("SELECT 1 FROM settings WHERE key = ?", (SEED_KEY,)):
         return None
     tz = s.settings.timezone
-    today = s.schedules.local_now(tz).date()
-    schedule = s.schedules.create(
+    hour, minute = AT.split(":")
+    automation = s.automations.create(
         NAME,
-        PROMPT,
-        f"{today.isoformat()}T{AT}",
+        {"type": "cron", "expr": f"{int(minute)} {int(hour)} * * *"},
+        prompt=PROMPT,
         timezone=tz,
-        repeat="daily",
         packs=PACKS,
         per_run=True,
-        missed="latest",
+        catch_up="latest",
         overlap="replace",
     )
-    moved = _legacy(s, schedule.id, PACKS)
+    moved = _legacy(s, automation.id, PACKS)
     s.db.execute(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (SEED_KEY, json.dumps(schedule.id), now_iso())
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (SEED_KEY, json.dumps(automation.id), now_iso()),
     )
     log.info(
-        "made the schedule “%s” (every day at %s)%s",
+        "made the automation “%s” (every day at %s)%s",
         NAME,
         AT,
         f"; {moved} earlier day(s) moved into it" if moved else "",
     )
-    return schedule.id
+    return automation.id

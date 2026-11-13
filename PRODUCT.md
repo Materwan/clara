@@ -12,7 +12,7 @@ One person: the owner, who runs Clara on their own always-on Linux machine and r
 
 - **Desk, long sessions:** chatting with Clara, reading long answers, working in projects, notes and files for an hour or more on a large screen.
 - **Phone, quick checks:** over the tailnet on a phone: ask a question, answer an approval, glance at what she did. A mobile app is a non-goal, so the site must hold up on a phone.
-- **Supervising her:** approvals, rules, automation (schedules, hooks), alerts, logs and usage: keeping an agent that acts on the owner's behalf under control.
+- **Supervising her:** approvals, rules, automation (what she does at a time or when something happens), alerts, logs and usage: keeping an agent that acts on the owner's behalf under control.
 - **Setting up connections:** connecting GitHub, Google Drive, Gmail, Discord and model providers; occasional but high-stakes configuration.
 
 The interface language is English (confirmed). Clara herself answers in whatever language the owner writes in; the owner writes French to her, and the daily-note schedule prompt is French.
@@ -31,9 +31,9 @@ An agent built for exactly one person, on that person's own machine, with no acc
 
 - Served by `clara-server` on 127.0.0.1, exposed only inside the tailnet by `tailscale serve` (HTTPS); signed in with a pasted web token that becomes a cookie. The site's CSP allows scripts, styles, fonts and connections from itself only; the Drive picker is the single exception.
 - Svelte 5 + TypeScript in `web/`, built in a pinned Node container into `src/clara/web/dist` and shipped in the release; the server machine needs no Node.
-- Approvals can be answered from the web site, another client, or Discord buttons; unattended runs (reminders, tasks, schedules, hooks) go through the same gate.
+- Approvals can be answered from the web site, another client, or Discord buttons; unattended runs (reminders, tasks, automations) go through the same gate.
 - Conversations come from every client (web, terminal, Discord, console) and share one list; incognito and local-only conversations have privacy rules that the interface must respect.
-- Clara's pages: Chat, Projects, Library, Tasks, Automation (schedules and hooks), and under Settings: Memory, Connections, Rules & approvals, Models, Usage, Admin.
+- Clara's pages: Chat, Projects, Library, Tasks, Automation (what she does at a time or when something happens), and under Settings: Memory, Connections, Rules & approvals, Models, Usage, Admin.
 
 ## Capabilities and Constraints
 

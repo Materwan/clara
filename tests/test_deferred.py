@@ -118,9 +118,9 @@ def test_the_pack_is_for_chats_and_runs_and_off_in_a_new_conversation(services):
     assert pack.where == "both" and not pack.default and pack.tools == NAMES
     assert {tool.name for tool in deferred_tools()} == NAMES
     assert "deferred_calls" in [item["id"] for item in services.packs.listing("chat")]
-    assert "deferred_calls" in [item["id"] for item in services.packs.listing("schedule")]
+    assert "deferred_calls" in [item["id"] for item in services.packs.listing("automation")]
     assert "deferred_calls" not in services.packs.active(None)
-    assert services.packs.check(["deferred_calls"], "schedule") == ["deferred_calls"]
+    assert services.packs.check(["deferred_calls"], "automation") == ["deferred_calls"]
 
 
 def test_a_hook_gets_the_pack_only_when_its_allow_list_names_a_booking_tool(services):
@@ -142,19 +142,19 @@ async def test_the_tools_are_offered_only_where_the_pack_is_on(services, llm):
 
 
 async def test_a_scheduled_run_is_offered_them_when_its_pack_is_on_and_still_not_the_automations(services):
-    schedule = services.schedules.create("Run", "x", "2099-01-05T09:00", timezone="Europe/Paris")
+    schedule = services.automations.create("Run", {"type": "once", "at": "2099-01-05T09:00"}, prompt="x", timezone="Europe/Paris")
     cid = services.conversations.create("web", title="Run", packs=["web", "deferred_calls", "automations"]).id
     services.db.execute(
-        "INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id, started_at) VALUES (?, ?, 'running', ?, ?)",
-        (schedule.id, "2099-01-05T08:00:00+00:00", cid, "2099-01-05T08:00:00+00:00"),
+        "INSERT INTO automation_runs (automation_id, due_at, queued_at, status, conversation_id, started_at) VALUES (?, ?, ?, 'running', ?, ?)",
+        (schedule.id, "2099-01-05T08:00:00+00:00", "2099-01-05T08:00:00+00:00", cid, "2099-01-05T08:00:00+00:00"),
     )
     hidden = services.packs.hidden(services.conversations.get(cid))
     assert not NAMES & hidden
     assert "automation_create" in hidden
     off = services.conversations.create("web", title="Off", packs=["web"]).id  # a run whose schedule did not list the pack
     services.db.execute(
-        "INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id, started_at) VALUES (?, ?, 'running', ?, ?)",
-        (schedule.id, "2099-01-06T08:00:00+00:00", off, "2099-01-06T08:00:00+00:00"),
+        "INSERT INTO automation_runs (automation_id, due_at, queued_at, status, conversation_id, started_at) VALUES (?, ?, ?, 'running', ?, ?)",
+        (schedule.id, "2099-01-06T08:00:00+00:00", "2099-01-06T08:00:00+00:00", off, "2099-01-06T08:00:00+00:00"),
     )
     assert NAMES <= services.packs.hidden(services.conversations.get(off))
 

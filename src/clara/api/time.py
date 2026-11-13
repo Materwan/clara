@@ -1,4 +1,4 @@
-"""Reminders, tasks and scheduled prompts."""
+"""Reminders, tasks and booked calls (automations are in api/automations.py)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,10 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from ..llm import ProviderError, split_ref
-from ..memory.retention import KEEP_FIELDS
-from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, ScheduleError, TaskError
+from ..timekeeping import NO_DUE, NO_PARENT, ReminderError, TaskError
 from ..timekeeping.deferred import MAX_PENDING as MAX_PENDING_CALLS
 from ..timekeeping.tasks import MAX_DESCRIPTION, MAX_TITLE
 from .common import ApiError, caller, services
-from .retention import KeepLimits
 
 router = APIRouter(prefix="/v1", tags=["time"])
 
@@ -184,161 +181,4 @@ async def change_task(task_id: int, body: TaskChange, request: Request) -> dict:
 def delete_task(task_id: int, request: Request) -> dict:
     if not services(request).tasks.delete(task_id):
         raise ApiError(404, f"No task {task_id}.")
-    return {"deleted": True}
-
-
-# ----------------------------------------------------------------------
-# Scheduled prompts
-# ----------------------------------------------------------------------
-class ScheduleDocument(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    text: str | None = Field(default=None, max_length=150_000, description="Leave out to keep the stored text")
-
-
-class NewSchedule(KeepLimits):
-    name: str = Field(min_length=1, max_length=100)
-    prompt: str = Field(default="", max_length=20_000)
-    documents: list[ScheduleDocument] = Field(default_factory=list, max_length=20)
-    at: str = Field(min_length=1, max_length=40)
-    timezone: str | None = Field(default=None, max_length=64)
-    repeat: Literal["", "daily", "weekly", "monthly"] = ""
-    weekdays: list[int] = Field(default_factory=list, max_length=7)
-    project: int | None = None
-    local_only: bool = False
-    packs: list[str] = Field(default_factory=lambda: ["web"], max_length=20, description="The tool packs its runs get")
-    per_run: bool = Field(default=False, description="A new conversation for each run")
-    missed: Literal["skip", "latest", "all"] = "skip"
-    overlap: Literal["skip", "replace", "queue"] = "skip"
-    model: str = Field(default="", max_length=200, description="'': the default model")
-    attempts: int = Field(default=3, description="Tries of a run when the model is busy or unreachable: 1 to 3")
-    deliver: Literal["notice", "web", "discord", "both"] = Field(
-        default="notice",
-        description="Where a run's result goes: notice (a short notification everywhere), web, discord (the whole answer in #general, to answer there) or both",
-    )
-
-
-def _model(model: str) -> str:
-    try:
-        split_ref(model) if model.strip() else None
-    except ProviderError as error:
-        raise ApiError(422, str(error)) from None
-    return model.strip()
-
-
-@router.get("/schedules")
-def schedules(request: Request) -> dict:
-    service = services(request).schedules
-    return {"schedules": [service.describe(item) for item in service.listing()]}
-
-
-@router.post("/schedules", status_code=201)
-def add_schedule(body: NewSchedule, request: Request) -> dict:
-    service = services(request).schedules
-    try:
-        schedule = service.create(
-            body.name,
-            body.prompt,
-            body.at,
-            documents=[d.model_dump() for d in body.documents],
-            timezone=body.timezone,
-            repeat=body.repeat,
-            weekdays=body.weekdays,
-            project_id=body.project,
-            local_only=body.local_only,
-            packs=body.packs,
-            per_run=body.per_run,
-            missed=body.missed,
-            overlap=body.overlap,
-            model=_model(body.model),
-            attempts=body.attempts,
-            deliver=body.deliver,
-            keep_days=body.keep_days,
-            keep_hours=body.keep_hours,
-            keep_last=body.keep_last,
-        )
-    except ScheduleError as error:
-        raise ApiError(422, str(error)) from None
-    return service.describe(schedule)
-
-
-@router.get("/schedules/{schedule_id}")
-def get_schedule(schedule_id: int, request: Request) -> dict:
-    service = services(request).schedules
-    schedule = service.find(schedule_id)
-    if schedule is None:
-        raise ApiError(404, f"No scheduled task {schedule_id}.")
-    return {**service.describe(schedule), "history": service.runs(schedule_id)}
-
-
-class ScheduleChange(KeepLimits):
-    model_config = {"extra": "forbid"}
-    name: str | None = Field(default=None, max_length=100)
-    prompt: str | None = Field(default=None, max_length=20_000)
-    documents: list[ScheduleDocument] | None = Field(default=None, max_length=20)
-    at: str | None = Field(default=None, max_length=40)
-    timezone: str | None = Field(default=None, max_length=64)
-    repeat: Literal["", "daily", "weekly", "monthly"] | None = None
-    weekdays: list[int] | None = Field(default=None, max_length=7)
-    project: int | None = None
-    local_only: bool | None = None
-    enabled: bool | None = None
-    packs: list[str] | None = Field(default=None, max_length=20)
-    per_run: bool | None = None
-    missed: Literal["skip", "latest", "all"] | None = None
-    overlap: Literal["skip", "replace", "queue"] | None = None
-    model: str | None = Field(default=None, max_length=200)
-    attempts: int | None = None
-    in_history: bool | None = None
-    deliver: Literal["notice", "web", "discord", "both"] | None = None
-
-
-@router.patch("/schedules/{schedule_id}")
-def change_schedule(schedule_id: int, body: ScheduleChange, request: Request) -> dict:
-    service = services(request).schedules
-    fields = {
-        key: value
-        for key, value in body.model_dump(exclude_unset=True).items()
-        if value is not None or key in KEEP_FIELDS  # null: follow the global limits again
-    }
-    if "project" in fields:
-        fields["project_id"] = fields.pop("project") or None
-    if "model" in fields:
-        fields["model"] = _model(fields["model"])
-    before = service.find(schedule_id)
-    try:
-        changed = service.update(schedule_id, **fields)
-    except ScheduleError as error:
-        raise ApiError(404 if "No scheduled" in str(error) else 422, str(error)) from None
-    if "in_history" in fields or (before is not None and changed.in_history != before.in_history):
-        # also when choosing `deliver` = discord or both switched it on
-        services(request).mirror.group_switched(f"schedule:{schedule_id}", changed.in_history)
-    return service.describe(changed)
-
-
-@router.post("/schedules/{schedule_id}/run")
-async def run_schedule(
-    schedule_id: int, request: Request
-) -> dict:  # async: starting a run needs the server's event loop
-    service = services(request).schedules
-    try:
-        return service.describe(service.run_now(schedule_id))
-    except ScheduleError as error:
-        raise ApiError(409, str(error)) from None
-
-
-@router.post("/schedules/{schedule_id}/close")
-async def close_schedule(schedule_id: int, request: Request) -> dict:
-    """Close the run that waits for your answer, from what Clara has (she finishes it in the background)."""
-    service = services(request).schedules
-    if service.find(schedule_id) is None:
-        raise ApiError(404, f"No scheduled task {schedule_id}.")
-    if not service.close_waiting(schedule_id):
-        raise ApiError(409, "No run of it is waiting for an answer (or it is being closed).")
-    return service.describe(service.get(schedule_id))
-
-
-@router.delete("/schedules/{schedule_id}")
-def delete_schedule(schedule_id: int, request: Request) -> dict:
-    if not services(request).schedules.delete(schedule_id):
-        raise ApiError(404, f"No scheduled task {schedule_id}.")
     return {"deleted": True}

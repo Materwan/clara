@@ -454,10 +454,10 @@ async def test_the_tool_without_a_date_means_the_day_of_the_run(s, llm):
     from clara.tools.base import ToolContext, TurnState
     from clara.tools.days import resolve_day
 
-    schedule = s.schedules.create("Bilan", "x", "2030-01-01T23:59", timezone=PARIS, repeat="daily", packs=["day_conversations"])
+    schedule = s.automations.create("Bilan", {"type": "cron", "expr": "59 23 * * *"}, prompt="x", timezone=PARIS, packs=["day_conversations"])
     conversation = chat(s, "Run")
-    run = s.db.insert("INSERT INTO schedule_runs (schedule_id, due_at, status, conversation_id) VALUES (?, '2026-10-18T21:59:00+00:00',"
-                      " 'running', ?)", (schedule.id, conversation))
+    run = s.db.insert("INSERT INTO automation_runs (automation_id, due_at, queued_at, status, conversation_id) VALUES (?, '2026-10-18T21:59:00+00:00',"
+                      " '2026-10-18T21:59:00+00:00', 'running', ?)", (schedule.id, conversation))
     context = ToolContext(s, TurnState(turn_id="t", conversation_id=conversation, client="server", timezone=PARIS))
     assert run and resolve_day(context) == DAY  # 23:59 in Paris is still the 18th
     assert resolve_day(context, "2026-10-12") == date(2026, 10, 12)
@@ -491,22 +491,22 @@ def test_the_registry_checks_the_packs_and_where_they_belong(s):
         s.packs.check(["nothing"], "chat")
     with pytest.raises(PackError):
         s.packs.check(["ask_person"], "chat")  # for schedules only
-    assert s.packs.check(["ask_person", "discord_thread"], "schedule") == ["ask_person", "discord_thread"]
+    assert s.packs.check(["ask_person", "discord_thread"], "automation") == ["ask_person", "discord_thread"]
     chat_ids = {pack["id"] for pack in s.packs.listing("chat")}
     assert "files_created" in chat_ids and "ask_person" not in chat_ids
-    assert {pack["id"] for pack in s.packs.listing("schedule")} >= {"ask_person", "discord_thread", "web"}
+    assert {pack["id"] for pack in s.packs.listing("automation")} >= {"ask_person", "discord_thread", "web"}
 
 
 def test_a_pack_that_cannot_be_used_says_why(s):
-    discord = next(pack for pack in s.packs.listing("schedule") if pack["id"] == "discord_thread")
+    discord = next(pack for pack in s.packs.listing("automation") if pack["id"] == "discord_thread")
     assert not discord["available"] and "not connected" in discord["reason"]
     s.clients["discord"] = __import__("time").monotonic()
-    assert next(pack for pack in s.packs.listing("schedule") if pack["id"] == "discord_thread")["available"]
+    assert next(pack for pack in s.packs.listing("automation") if pack["id"] == "discord_thread")["available"]
 
 
 async def test_the_api_lists_the_packs_and_saves_them_with_the_conversation(client, s):
     listing = (await client.get("/v1/packs", params={"where": "chat"})).json()["packs"]
-    assert [pack["id"] for pack in listing][:2] == ["web", "second_brain"] and all(pack["where"] != "schedule" for pack in listing)
+    assert [pack["id"] for pack in listing][:2] == ["web", "second_brain"] and all(pack["where"] != "automation" for pack in listing)
     made = (await client.post("/v1/conversations", json={"packs": ["day_conversations"]})).json()
     assert made["packs"] == ["day_conversations"]
     changed = (await client.patch(f"/v1/conversations/{made['id']}", json={"packs": ["web", "second_brain", "files_created"]})).json()
@@ -531,7 +531,7 @@ async def test_the_qcm_is_a_pack_off_until_it_is_switched_on(client, s, llm):
     assert "qcm" in await offered(chat(s, "quiz", packs=["web", "qcm"]))
     listing = {pack["id"]: pack for pack in (await client.get("/v1/packs", params={"where": "chat"})).json()["packs"]}
     assert listing["qcm"]["tools"] == ["qcm"] and not listing["qcm"]["default"] and listing["qcm"]["available"]
-    assert "qcm" not in {pack["id"] for pack in s.packs.listing("schedule")}  # a run has nobody to answer it
+    assert "qcm" not in {pack["id"] for pack in s.packs.listing("automation")}  # a run has nobody to answer it
 
 
 async def test_a_project_starts_its_conversations_with_its_tools(client, s, llm):

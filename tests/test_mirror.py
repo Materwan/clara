@@ -347,14 +347,15 @@ async def test_a_run_cannot_write_in_an_archived_conversation_either(services):
 
 async def test_choosing_to_deliver_to_discord_shows_the_automation_and_brings_its_conversations_back(client, services):
     conversation = talk(services, kind="schedule")
-    schedule = services.schedules.create(
-        "Bilan", "Fais le bilan.", "2099-01-01T08:00", timezone="Europe/Paris", conversation_id=conversation
+    schedule = services.automations.create(
+        "Bilan", {"type": "once", "at": "2099-01-01T08:00"}, prompt="Fais le bilan.", timezone="Europe/Paris"
     )
-    await client.patch(f"/v1/schedules/{schedule.id}", json={"in_history": True})
-    await client.patch(f"/v1/schedules/{schedule.id}", json={"in_history": False})
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (conversation, schedule.id))
+    await client.patch(f"/v1/automations/{schedule.id}", json={"in_history": True})
+    await client.patch(f"/v1/automations/{schedule.id}", json={"in_history": False})
     assert services.conversations.get(conversation).describe()["archived_by"] == "group"
     assert place_of(services, conversation) is None
-    changed = (await client.patch(f"/v1/schedules/{schedule.id}", json={"deliver": "discord"})).json()
+    changed = (await client.patch(f"/v1/automations/{schedule.id}", json={"in_history": True})).json()
     assert changed["in_history"] is True  # its runs live in a forum thread, made from the switch
     assert not services.conversations.get(conversation).describe()["archived"]
-    assert place_of(services, conversation) == f"schedule:{schedule.id}"
+    assert place_of(services, conversation) == f"automation:{schedule.id}"

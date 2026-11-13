@@ -5,6 +5,47 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 ## Unreleased
 
+- **One kind of automation.** A schedule (at a time) and a hook (when something happens) are one **automation**: one list, one API
+  (`/v1/automations`, replacing `/v1/schedules*` and `/v1/triggers*`), one console command (`/automations`, replacing `/triggers`),
+  one memory (`automation:<id>`) and one Discord forum. Schema version 32 converts the ones that exist, after the automatic backup:
+  a schedule keeps its id, a hook gets the highest schedule id plus its own (`legacy_ids` keeps the old and the new), their runs,
+  memory, Discord forums and threads, mode, retention and conversations follow, and the old tables stay as `legacy_*` copies.
+  The Automation page is one list and one form for both (below); the old routes `/v1/schedules*` and `/v1/triggers*` are gone.
+- **The Automation page is rebuilt.** One list (name, the trigger in one line, the next time or the kinds of event, the last run and its
+  status, and the buttons Test, Run now, Edit, Pause, Runs, Memory, Delete, Close) and one form: what Clara does, **When: it starts a run
+  when any of these happens** (a tree editor: **+ Event** with a regular expression per condition, « must not match » and
+  « case-sensitive » ticks and **+ condition**; **+ Time** with a date, a window or a cron expression; **+ All of group**, one event with
+  conditions of time, which refuses a second event on the spot), tools and project, the result (**Show in history**), and an
+  **Advanced** fold (what to do with a missed time, an overlap, the pace, cleaning up). A trigger that is deeper than the editor draws
+  is shown in words and kept as it is.
+- **Test, per node.** A dialog on each automation tests the trigger on a stored event or on a moment and shows, node by node, whether it
+  holds and why, whether a run would start, the message Clara would receive, the tools and whether the run is tainted.
+- **The rail groups the conversations of the automations under « Automations »** (the groups « Schedules » and « Hooks » are one).
+- **A run started by an instant no longer waits behind a backlog of events.** Runs started by events take two places at once as before;
+  runs started by a cron instant, a date or *Run now* have a place of their own, so a long mail backlog cannot delay a 09:00 run.
+- **Filters are regular expressions, on the RE2 engine** (`google-re2`, a new dependency): a match is a search anywhere in the field,
+  not case-sensitive unless ticked, with a « must not match » tick for each field. RE2 runs in linear time, so a subject written by a
+  stranger cannot make a pattern run for ever; a pattern with a lookahead or a back-reference is refused when saved, with the engine's
+  message. The five operators are gone; the migration turned each stored filter into escaped expressions that match the same text.
+- **Triggers combine in a tree of AND and OR.** A trigger is made of events (a mail, a push, a pull request), instants (`cron`, with the
+  full five-field syntax and `L` for the last day of the month, and `once`, a date) and conditions of time (`window`, from HH:MM to
+  HH:MM on chosen weekdays, which may cross midnight; or a cron used as a window to the minute). An AND holds at most one event; two
+  events are joined with OR. An event outside the window of an AND is recorded as skipped, visible in the history, and starts no run.
+  A cron expression runs in the time zone of the automation.
+- **A run is tainted by what started it, and has the tools of what started it.** A mail, a push or a pull request taints the run from its
+  first word, as before; a cron instant, a date and *Run now* do not. With no tools or packs listed a run has the read tools of its event
+  and `notify`, and `notify` alone for an instant.
+- **« Where the result goes » is gone.** Every run sends the short notification to every client, Discord included; **Show in history**
+  makes the Discord forum thread with the whole answer, which you answer. `discord` and `both` became Show in history, the four values
+  became the notification, and `announce` now applies to every automation.
+- **One `catch_up`** (`all`, `latest`, `digest`, `skip`) for what was missed (a schedule's `missed`, a hook's `catch_up`): a missed instant is
+  worked out again from its cron expression and the place the automation had reached; an event is dated from when it happened. Defaults
+  follow the trigger (what a hook or a schedule did).
+- **The Test dry run says, for a stored event, a sample or a moment, whether each branch of the trigger holds, and why.**
+  `automation_create` and `automation_update` take one `when` argument (the tree as JSON), checked by the same code as the API; the request
+  shows the trigger in words on one line.
+- **Migrations may be written in Python** (`NNNN_name.py` with `migrate(connection)`): same numbering, same backup, same transaction as the SQL
+  ones; a failure leaves the database at the version it had.
 - **A Moodle document can no longer pass for a lapsed sign-in.** Only a small JSON answer to a download (4 KB at most, typed as JSON) is
   read as Moodle's error. A file whose bytes are the `invalidtoken` answer is saved as a document: it no longer marks the sign-in as lapsed
   or raises the `moodle` alert.

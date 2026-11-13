@@ -1,6 +1,6 @@
 """The Discord mirror: what the bot must make in Discord, from what Clara holds.
 
-A place is a forum in Discord (inside its own category): one for each project, schedule and hook whose "Show in history"
+A place is a forum in Discord (inside its own category): one for each project and automation whose "Show in history"
 is on, one for the conversations that belong to none of them (`main`), and one for the incognito ones. Each conversation
 that is mirrored is a thread in its place. Local-only conversations are never mirrored.
 
@@ -145,14 +145,12 @@ class Mirror:
     # Places and groups
     # ------------------------------------------------------------------
     def _groups(self) -> dict[str, dict]:
-        """Every project, schedule and hook: its place key, its name and whether its conversations are shown in history."""
+        """Every project and automation: its place key, its name and whether its conversations are shown in history."""
         found: dict[str, dict] = {}
         for row in self.db.all("SELECT id, name, in_history FROM projects"):
             found[f"project:{row['id']}"] = {"name": row["name"], "shown": bool(row["in_history"])}
-        for row in self.db.all("SELECT id, name, in_history FROM schedules"):
-            found[f"schedule:{row['id']}"] = {"name": row["name"], "shown": bool(row["in_history"])}
-        for row in self.db.all("SELECT id, name, in_history FROM triggers"):
-            found[f"hook:{row['id']}"] = {"name": row["name"], "shown": bool(row["in_history"])}
+        for row in self.db.all("SELECT id, name, in_history FROM automations"):
+            found[f"automation:{row['id']}"] = {"name": row["name"], "shown": bool(row["in_history"])}
         return found
 
     @staticmethod
@@ -162,10 +160,8 @@ class Mirror:
             return None
         if row["incognito"]:
             return INCOGNITO
-        if row["schedule_id"] is not None:
-            return f"schedule:{row['schedule_id']}"
-        if row["hook_id"] is not None:
-            return f"hook:{row['hook_id']}"
+        if row["automation_id"] is not None:
+            return f"automation:{row['automation_id']}"
         if row["project_id"] is not None:
             return f"project:{row['project_id']}"
         return MAIN
@@ -179,9 +175,9 @@ class Mirror:
         return key if groups.get(key, {}).get("shown") else None
 
     def _conversations(self, where: str = "1 = 1", params: tuple = ()) -> list:
-        """The conversations, with the schedule and the hook they belong to (as the history groups them)."""
+        """The conversations, with the automation they belong to (as the history groups them)."""
         return self.db.all(
-            f"SELECT c.*, {Conversations._SCHEDULE} AS schedule_id, {Conversations._HOOK} AS hook_id FROM conversations c WHERE {where}",
+            f"SELECT c.*, {Conversations._AUTOMATION} AS automation_id FROM conversations c WHERE {where}",
             params,
         )
 
@@ -193,7 +189,7 @@ class Mirror:
         return self.place_of_id(conversation_id) is not None
 
     def group_switched(self, key: str, shown: bool) -> None:
-        """A project, schedule or hook got or lost its "Show in history": its conversations are archived in Clara (and
+        """A project or an automation got or lost its "Show in history": its conversations are archived in Clara (and
         their threads on Discord) when it is off, and unarchived again when it is on, if the switch did the archiving."""
         with self.db.transaction() as tx:
             changed = []

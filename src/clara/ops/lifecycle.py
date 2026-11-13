@@ -55,13 +55,7 @@ class Lifecycle:
 
     def busy(self) -> bool:
         s = self.s
-        return (
-            s.agent.busy
-            or s.reminders_firing()
-            or s.schedules.firing
-            or s.deferred.firing
-            or (s.triggers is not None and s.triggers.firing)
-        )
+        return s.agent.busy or s.reminders_firing() or s.automations.firing or s.deferred.firing
 
     def progress(self) -> dict:
         waited = time.monotonic() - self.started_stopping if self.started_stopping else 0.0

@@ -1,19 +1,19 @@
-"""New activity on GitHub, for hooks: a poll of each repository you added, on its own loop (ops/upkeep.py). GitHub cannot call
-Clara (she is on your tailnet only), so she looks. Two streams per repository, each only while a hook waits for its kind:
+"""New activity on GitHub, for automations: a poll of each repository you added, on its own loop (ops/upkeep.py). GitHub cannot call
+Clara (she is on your tailnet only), so she looks. Two streams per repository, each only while an automation waits for its kind:
 
 * **pulls** (`github.pull_request`): the pull requests most recently updated; a pull request opened, merged or closed since
   the place the poll had reached is an event. Nothing is remembered per pull request: the times GitHub gives are enough.
 * **branches** (`github.push`): the head of each branch against the head seen last time; a branch that moved, or is new, is
   an event with its commits. GitHub does not say when a push was made, so an event is dated from the last look: a push found
-  after a long gap (the server was off) is a *backlog* for the hook's `catch_up`, exactly like a mail found late.
+  after a long gap (the server was off) is a *backlog* for the automation's `catch_up`, exactly like a mail found late.
 
-Like the mail poll: the place moves in the same transaction that stores the events and plans the runs (`Triggers.ingest`), so a
+Like the mail poll: the place moves in the same transaction that stores the events and plans the runs (`Automations.ingest`), so a
 crash loses none and repeats none; the first look only notes where things stand (for pull requests, as of the moment the
-repository began to be waited for, which can be a poll earlier than the look), so a new hook never replays history; and with
-no hook waiting the place is forgotten. Each answer carries an etag, and "nothing changed" costs no rate limit.
+repository began to be waited for, which can be a poll earlier than the look), so a new automation never replays history; and with
+no automation waiting the place is forgotten. Each answer carries an etag, and "nothing changed" costs no rate limit.
 
 Nothing here is Clara's own: the token is yours, so her commits and yours look the same and no event is `self_caused`. What
-keeps a hook from answering itself is the gate: a hook's run is tainted, so every change it makes on GitHub asks you first.
+keeps an automation from answering itself is the gate: an event's run is tainted, so every change it makes on GitHub asks you first.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from ..automations.events import SourceEvent
+from ..automations.service import STALE_AFTER
 from ..timeutil import iso, now_iso, parse_iso, utcnow
-from ..triggers.events import SourceEvent
-from ..triggers.service import STALE_AFTER
 from .github import PULLS_PAGE, GitHub, GitHubError
 
 if TYPE_CHECKING:
@@ -121,8 +121,7 @@ class GitHubWatch:
     async def poll(self) -> None:
         connectors = self.s.connectors
         client = connectors.github_client() if connectors is not None else None
-        triggers = self.s.triggers
-        streams = [stream for stream, kind in STREAMS.items() if triggers is not None and triggers.wants(kind)]
+        streams = [stream for stream, kind in STREAMS.items() if self.s.automations.wants(kind)]
         repos = [resource.locator for resource in self.s.connections.resources("github_repo")] if client else []
         self.keep(repos, streams)
         if client is None or not streams:
@@ -155,7 +154,7 @@ class GitHubWatch:
 
     def _hand_over(self, events: list[SourceEvent], move) -> None:
         if events:
-            self.s.triggers.ingest(events, also=move)
+            self.s.automations.ingest(events, also=move)
         else:
             move()
 
@@ -165,7 +164,7 @@ class GitHubWatch:
         kind. A first look starts from there, not from the moment the poll got round to it, so what happened in between is not
         lost. Never further back than STALE_AFTER, so a server that was off (or had polling off) replays no history."""
         added = self.s.connections.repo(repo)
-        waiting = self.s.triggers.waiting_since(STREAMS[stream])
+        waiting = self.s.automations.waiting_since(STREAMS[stream])
         moments = [parse_iso(at) for at in (added and added.created_at, waiting) if at]
         return min(max([now - STALE_AFTER, *moments]), now)
 

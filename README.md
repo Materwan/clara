@@ -43,7 +43,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
   |                    v                                                         |
   |   tools: memory, time, projects, files, forms, vault, web (Brave, SearXNG),         |
   |          GitHub, Drive, Gmail, workspace, scripts (rootless Podman)          |
-  |   time: reminders, tasks, schedules -> unattended turns through the gate     |
+  |   time: reminders, tasks, automations -> unattended turns through the gate   |
   |   ops: events, alerts, backups (SQLite + restic), traffic and usage logs     |
   +---------+---------------------------+---------------------------+------------+
             |                           |                           |
@@ -53,7 +53,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
 
 A message arrives with a client token. Clara builds the prompt (her fixed persona, your facts, the conversation, the
 project), calls the model and streams the answer. Each tool call is checked by the gate, by the verdict of its conversation's mode: it runs, waits for your
-answer (in the chat, on another client, or as Discord buttons), or is refused. Reminders and schedules start turns
+answer (in the chat, on another client, or as Discord buttons), or is refused. Reminders and automations start turns
 from inside the server, through the same gate, as "unattended".
 
 ## Requirements
@@ -125,7 +125,7 @@ uv run clara-server                      # http://127.0.0.1:8765
 
 | Folder | What is there |
 | --- | --- |
-| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/`, `triggers/` (hooks: what Clara does when a mail arrives, or a pull request or a push is made), `events/` (the event store and which Discord channel carries each kind), `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
+| `src/clara/` | The server: `app.py` (wiring), `settings.py`, `db/` (schema, migrations, lock), `secrets/`, `auth/`, `llm/` (providers, catalogue, router), `agent/` (turn loop, prompt, compaction, model runner), `memory/`, `knowledge/` (projects, files, vault), `timekeeping/` (reminders, tasks, booked calls), `automations/` (what Clara does when a trigger holds: a mail arrives, a pull request or a push is made, a time comes, a window of time is on; filters are regular expressions on RE2), `events/` (the event store and which Discord channel carries each kind), `gate/` (rules, approvals, audit), `tools/`, `workspace/` (files, git, sandbox), `connectors/` (web, GitHub, Drive, Gmail, forms), `api/`, `ops/` (lifecycle, Tailscale, backups, updater, launcher, logs, alerts), `cli/` |
 | `src/clara_discord/` | The Discord bot |
 | `web/` | The Svelte site (built into `src/clara/web/dist`) |
 | `tests/` | The test suite (a fake model provider in `fakes.py`) |

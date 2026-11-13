@@ -1,4 +1,4 @@
-"""A memory of its own for each project, schedule and hook: what Clara learns in one conversation or run, the next one of the
+"""A memory of its own for each project and automation: what Clara learns in one conversation or run, the next one of the
 same project or automation knows. A scoped fact saved after reading outside content waits, hidden, for your confirmation."""
 
 from __future__ import annotations
@@ -14,16 +14,19 @@ from clara.memory.facts import MAX_SCOPED_FACTS, MAX_WAITING_FACTS, FactError
 from clara.tools.base import Tool, fixed
 from fakes import calls
 from modeset import default, line
-from test_triggers import event, work
+from test_automation_events import event, work
 
 REMEMBER_TOOLS = ["remember", "recall_facts", "forget"]
 
 
 def hook(services, name: str = "Mail rules", **fields):
-    fields.setdefault("filter", {"subject": "invoice"})
+    filter_ = fields.pop("filter", {"subject": "invoice"})
     fields.setdefault("prompt", "Handle it.")
     fields.setdefault("tools", REMEMBER_TOOLS)
-    return services.triggers.create(name, "mail.received", **fields)
+    return services.automations.create(name, {"type": "event", "kind": "mail.received", "filter": filter_}, **fields)
+
+
+DAILY = {"type": "cron", "expr": "59 23 * * *"}
 
 
 def chat_calls(llm) -> list[dict]:
@@ -73,7 +76,7 @@ def test_the_same_sentence_stands_in_every_scope_and_a_tombstone_belongs_to_its_
 
 
 def test_a_scope_must_exist_and_be_well_formed(services):
-    for bad in ("project:99", "hook:1", "schedule:7", "folder:1", "project:", "project:x"):
+    for bad in ("project:99", "automation:1", "hook:1", "schedule:7", "folder:1", "project:", "project:x"):
         with pytest.raises(FactError):
             services.facts.add("A fact.", "you", scope=bad)
 
@@ -164,18 +167,18 @@ def test_the_scopes_count_every_fact_a_delete_removes_expired_and_replaced_ones_
     assert services.facts.scopes() == {f"project:{other.id}": {"facts": 0, "waiting": 0, "total": 1}}
 
 
-def test_deleting_a_project_a_schedule_or_a_hook_deletes_its_memory(services):
+def test_deleting_a_project_or_an_automation_deletes_its_memory(services):
     project = services.projects.create("Taxes")
-    schedule = services.schedules.create("Bilan", "Do it.", "2026-10-18T23:59", timezone="Europe/Paris", repeat="daily")
+    schedule = services.automations.create("Bilan", DAILY, prompt="Do it.", timezone="Europe/Paris")
     trigger = hook(services)
-    scopes = [f"project:{project.id}", f"schedule:{schedule.id}", f"hook:{trigger.id}"]
+    scopes = [f"project:{project.id}", f"automation:{schedule.id}", f"automation:{trigger.id}"]
     for scope in scopes:
         kept, _ = services.facts.add("Remembered here.", "you", scope=scope)
         services.facts.forget(services.facts.add("Forgotten here.", "you", scope=scope)[0].id)
     survivor, _ = services.facts.add("Remembered everywhere.", "you")
     services.projects.delete(project.id)
-    services.schedules.delete(schedule.id)
-    services.triggers.delete(trigger.id)
+    services.automations.delete(schedule.id)
+    services.automations.delete(trigger.id)
     assert services.facts.scopes() == {}
     assert services.db.value("SELECT COUNT(*) FROM forgotten WHERE scope != ''", (), 0) == 0
     assert [f.id for f in services.facts.live()] == [survivor.id]
@@ -189,16 +192,16 @@ def test_a_conversation_knows_its_project_and_its_automation(services):
     project = services.projects.create("Taxes")
     trigger = hook(services, project=project.id)
     run = services.conversations.create("server", title="run", project_id=project.id)
-    services.triggers.ingest([event("m1")])
-    services.db.execute("UPDATE trigger_runs SET conversation_id = ?", (run.id,))
+    services.automations.ingest([event("m1")])
+    services.db.execute("UPDATE automation_runs SET conversation_id = ?", (run.id,))
     homes = services.conversations.memory_scopes(run.id)
     assert {kind: (home.scope, home.name) for kind, home in homes.items()} == {
-        "project": (f"project:{project.id}", "Taxes"), "automation": (f"hook:{trigger.id}", "Mail rules")}
+        "project": (f"project:{project.id}", "Taxes"), "automation": (f"automation:{trigger.id}", "Mail rules")}
     assert services.conversations.memory_scopes(services.conversations.create("cli").id) == {}
-    schedule = services.schedules.create("Bilan", "Do it.", "2026-10-18T23:59", timezone="Europe/Paris", repeat="daily")
+    schedule = services.automations.create("Bilan", DAILY, prompt="Do it.", timezone="Europe/Paris")
     own = services.conversations.create("server", kind="schedule")
-    services.db.execute("UPDATE schedules SET conversation_id = ? WHERE id = ?", (own.id, schedule.id))
-    assert services.conversations.memory_scopes(own.id)["automation"].scope == f"schedule:{schedule.id}"
+    services.db.execute("UPDATE automations SET conversation_id = ? WHERE id = ?", (own.id, schedule.id))
+    assert services.conversations.memory_scopes(own.id)["automation"].scope == f"automation:{schedule.id}"
 
 
 # ----------------------------------------------------------------------
@@ -395,25 +398,25 @@ async def test_the_prompt_block_of_a_memory_has_its_own_budget_pinned_facts_firs
 
 
 # ----------------------------------------------------------------------
-# Hooks and schedules
+# Automations on events and at times
 # ----------------------------------------------------------------------
 async def test_a_hook_run_leaves_a_note_that_waits_and_the_next_run_applies_it_once_confirmed(services, llm):
     trigger = hook(services)
-    scope = f"hook:{trigger.id}"
+    scope = f"automation:{trigger.id}"
     llm.replies = [calls(("remember", {"fact": "Trash the newsletters of Acme.", "scope": "automation"})), "Noted: newsletters of Acme go."]
-    services.triggers.ingest([event("m1")])
+    services.automations.ingest([event("m1")])
     await work(services)
     note = services.facts.listing("unconfirmed", scope)
     assert [(f.text, f.source, f.confirmed) for f in note] == [("Trash the newsletters of Acme.", "tool", False)]
     waiting = [e for e in services.events.recent(10, ["notification"]) if e.source == "memory"]
     assert len(waiting) == 1 and "Mail rules" in waiting[0].text and "Acme" not in waiting[0].text  # none of the fact's words
     llm.replies = ["Nothing to do."]
-    services.triggers.ingest([event("m2", subject="Invoice 43")])
+    services.automations.ingest([event("m2", subject="Invoice 43")])
     await work(services)
     assert "Trash the newsletters of Acme." not in prompt_of(llm)  # hidden until you confirm it
     services.facts.confirm(note[0].id)
     llm.replies = ["Trashed."]
-    services.triggers.ingest([event("m3", subject="Invoice 44")])
+    services.automations.ingest([event("m3", subject="Invoice 44")])
     await work(services)
     system = prompt_of(llm)
     assert "## What you know for the automation “Mail rules”" in system and "Trash the newsletters of Acme." in system
@@ -423,7 +426,7 @@ async def test_several_notes_in_one_run_make_one_notification(services, llm):
     hook(services)
     llm.replies = [calls(("remember", {"fact": "First note.", "scope": "automation"}),
                          ("remember", {"fact": "Second note.", "scope": "automation"})), "Done."]
-    services.triggers.ingest([event("m1")])
+    services.automations.ingest([event("m1")])
     await work(services)
     assert len([e for e in services.events.recent(20, ["notification"]) if e.source == "memory"]) == 1
 
@@ -432,29 +435,29 @@ async def test_a_hook_with_a_project_reads_both_memories_and_writes_where_it_is_
     project = services.projects.create("Mailbox")
     trigger = hook(services, project=project.id)
     services.facts.add("Project rule: be brief.", "you", scope=f"project:{project.id}")
-    services.facts.add("Hook rule: skip receipts.", "you", scope=f"hook:{trigger.id}")
+    services.facts.add("Hook rule: skip receipts.", "you", scope=f"automation:{trigger.id}")
     services.facts.add("Global: Alex writes in French.", "you")
     llm.replies = [calls(("remember", {"fact": "Hook note.", "scope": "automation"}), ("remember", {"fact": "Project note.", "scope": "project"})), "Done."]
-    services.triggers.ingest([event("m1")])
+    services.automations.ingest([event("m1")])
     await work(services)
     system = prompt_of(llm, 0)
     assert all(text in system for text in ("Project rule: be brief.", "Hook rule: skip receipts.", "Global: Alex writes in French."))
-    assert [f.text for f in services.facts.listing("unconfirmed", f"hook:{trigger.id}")] == ["Hook note."]
+    assert [f.text for f in services.facts.listing("unconfirmed", f"automation:{trigger.id}")] == ["Hook note."]
     assert [f.text for f in services.facts.listing("unconfirmed", f"project:{project.id}")] == ["Project note."]
 
 
 async def test_a_schedule_learns_in_one_run_and_the_next_run_in_a_new_conversation_knows(services, llm):
-    schedule = services.schedules.create("Bilan", "Check the mailbox.", "2026-10-18T23:59", timezone="Europe/Paris", repeat="daily", per_run=True)
+    schedule = services.automations.create("Bilan", DAILY, prompt="Check the mailbox.", timezone="Europe/Paris", per_run=True, tools=REMEMBER_TOOLS)
     llm.replies = [calls(("remember", {"fact": "Skip the mails from billing@acme.example.", "scope": "automation"})), "Noted."]
-    services.schedules.run_now(schedule.id)
-    await services.schedules.wait_running()
-    learned = services.facts.live(scope=f"schedule:{schedule.id}")
+    services.automations.run_now(schedule.id)
+    await services.automations.wait_running()
+    learned = services.facts.live(scope=f"automation:{schedule.id}")
     assert [(f.text, f.source, f.confirmed) for f in learned] == [("Skip the mails from billing@acme.example.", "model", True)]  # nothing untrusted was read
     llm.replies = ["Done."]
-    services.schedules.run_now(schedule.id)
-    await services.schedules.wait_running()
-    runs = services.schedules.runs(schedule.id)
-    assert runs[0]["conversation_id"] != runs[1]["conversation_id"]
+    services.automations.run_now(schedule.id)
+    await services.automations.wait_running()
+    runs = services.automations.runs(schedule.id)
+    assert runs[0]["conversation"] != runs[1]["conversation"]
     assert "Skip the mails from billing@acme.example." in prompt_of(llm)
 
 
@@ -483,7 +486,7 @@ async def test_you_write_read_confirm_and_delete_the_facts_of_a_scope_through_th
 
 async def test_a_scope_that_does_not_exist_or_is_not_one_is_refused(client):
     assert (await client.get("/v1/memory/facts", params={"scope": "project:99"})).status_code == 404
-    assert (await client.post("/v1/memory/facts", json={"text": "x", "scope": "hook:99"})).status_code == 404
+    assert (await client.post("/v1/memory/facts", json={"text": "x", "scope": "automation:99"})).status_code == 404
     assert (await client.get("/v1/memory/facts", params={"scope": "folder:1"})).status_code == 422
 
 

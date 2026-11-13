@@ -1,8 +1,7 @@
-"""Time: reminders, tasks, scheduled prompts, and the loops that fire them."""
+"""Time: reminders, tasks, booked calls, and the loops that fire them (the automations are in clara.automations)."""
 
 from .deferred import DeferredCall, DeferredCalls, DeferredError
 from .reminders import AnnounceFailed, Reminder, ReminderError, Reminders
-from .schedules import Run, Schedule, ScheduleError, Schedules, Stopping
 from .tasks import DONE, NO_DUE, NO_PARENT, OPEN, STATUSES, Followup, Task, TaskError, Tasks
 
 __all__ = [
@@ -19,11 +18,6 @@ __all__ = [
     "Reminder",
     "ReminderError",
     "Reminders",
-    "Run",
-    "Schedule",
-    "ScheduleError",
-    "Schedules",
-    "Stopping",
     "Task",
     "TaskError",
     "Tasks",

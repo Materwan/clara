@@ -6,7 +6,7 @@
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import { toast } from '../lib/state.svelte';
 
-  // The facts of one memory: the global one (scope ''), or that of a project (`project:3`), a schedule (`schedule:2`) or a hook (`hook:5`).
+  // The facts of one memory: the global one (scope ''), or that of a project (`project:3`) or an automation (`automation:2`).
   // In a project's or an automation's memory, what Clara saved after reading outside content waits, hidden from every conversation,
   // until it is confirmed here.
   let { scope = '', onchange }: { scope?: string; onchange?: () => void } = $props();

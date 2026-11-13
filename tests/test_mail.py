@@ -827,7 +827,7 @@ def test_migration_16_gives_the_mail_pack_to_a_schedule_whose_runs_called_a_mail
     old.close()
     assert migrate_module.migrate(path, tmp_path / "backups")[:2] == (15, migrate_module.LATEST_VERSION)
     new = connect(path)
-    packs = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM schedules")}
+    packs = {row["id"]: json.loads(row["packs"]) for row in new.execute("SELECT id, packs FROM automations")}
     assert packs == {1: ["web", "mail"], 2: ["web"], 3: ["web", "mail"]}  # schedule 3 keeps one mail pack, not two
 
 

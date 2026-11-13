@@ -46,14 +46,14 @@ def _history(context: ToolContext) -> HistoryReader:
 
 
 def _exclude(context: ToolContext) -> set[str]:
-    """This conversation, and the conversations of the other runs of its schedule (a recap does not read itself)."""
+    """This conversation, and the conversations of the other runs of its automation (a recap does not read itself)."""
     conversation = context.turn.conversation_id
     ids = {conversation} if conversation else set()
     run = context.services.packs.run_of(conversation)
     if run is not None:
         rows = context.services.db.all(
-            "SELECT conversation_id FROM schedule_runs WHERE schedule_id = ? AND conversation_id IS NOT NULL",
-            (run["schedule_id"],),
+            "SELECT conversation_id FROM automation_runs WHERE automation_id = ? AND conversation_id IS NOT NULL",
+            (run["automation_id"],),
         )
         ids |= {row["conversation_id"] for row in rows}
     return ids
@@ -222,7 +222,7 @@ async def _daily_notes(context: ToolContext, start: str, end: str = "", max_char
 def _run(context: ToolContext):
     run = context.services.packs.run_of(context.turn.conversation_id)
     if run is None:
-        raise ToolError("This is not a scheduled run.")
+        raise ToolError("This is not an automation run.")
     return run
 
 
@@ -247,7 +247,7 @@ def _ask_person(context: ToolContext, question: str, title: str = "") -> str:
         raise ToolError("Give the question.")
     conversation = s.conversations.get(context.turn.conversation_id)
     # a run that delivers to Discord asks in its forum thread, never in a thread of #general
-    forum = delivery.forum(run["deliver"])
+    forum = bool(run["in_history"])
     thread = bool(conversation and "discord_thread" in conversation.packs) and not forum
     s.events.publish(
         "ask",
@@ -258,13 +258,13 @@ def _ask_person(context: ToolContext, question: str, title: str = "") -> str:
             "stage": "asked",
             "run": run["id"],
             "thread": thread,
-            **delivery.forum_mark(run["deliver"]),
+            **delivery.forum_mark(forum),
         },
         targets=_surfaces(context),
         source="packs",
         conversation_id=context.turn.conversation_id,
     )
-    s.schedules.mark_waiting(run["id"], text)
+    s.automations.mark_waiting(run["id"], text)
     return "Question sent. The answer will arrive in this conversation. Say one short sentence and stop."
 
 
@@ -274,7 +274,7 @@ def _finish_run(context: ToolContext, summary: str) -> str:
     if run["status"] not in ("running", "waiting"):
         return f"This run is already {run['status']}."
     closing = context.turn.mode == "unattended" and run["status"] == "waiting"
-    s.schedules.finish_run(run["id"], str(summary), closed=closing)
+    s.automations.finish_run(run["id"], str(summary), closed=closing)
     return "The run is finished."
 
 

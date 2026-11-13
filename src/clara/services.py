@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from .agent.reader import Reader
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
+    from .automations import Automations
     from .connectors.asks import Questions
     from .connectors.quizzes import Quizzes
     from .db import Database
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from .runtime import RuntimeSettings
     from .secrets import SecretsStore
     from .settings import Settings
-    from .timekeeping import DeferredCalls, Reminders, Schedules, Tasks
+    from .timekeeping import DeferredCalls, Reminders, Tasks
     from .tools.base import Toolbox
     from .tools.folder_tools import FolderGrants
 
@@ -61,7 +62,7 @@ class Services:
     projects: Projects
     reminders: Reminders
     tasks: Tasks
-    schedules: Schedules
+    automations: Automations
     deferred: DeferredCalls
     gate: Gate
     modes: Modes
@@ -87,7 +88,6 @@ class Services:
     packs: Any = None
     web: Any = None
     connectors: Any = None
-    triggers: Any = None
     connections: Any = None
     github_snapshots: Any = None
     tailscale: Any = None
@@ -107,9 +107,8 @@ class Services:
         return [
             self.reminders,
             self.tasks,
-            self.schedules,
+            self.automations,
             self.deferred,
-            *([self.triggers] if self.triggers is not None else []),
         ]
 
     def reminders_firing(self) -> bool:

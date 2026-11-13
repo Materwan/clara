@@ -1,5 +1,5 @@
 """The bot's side of the Discord mirror: it makes in your server what the server asks for (a category and a forum for each
-project, schedule and hook shown in the history, one for the conversations outside them, one for incognito ones; a thread
+project and automation shown in the history, one for the conversations outside them, one for incognito ones; a thread
 for each conversation; the messages of its turns), and it writes an answer while Clara writes it.
 
 The server says what should be there (`GET /v1/discord/sync`, from a revision: only what changed since the last look is

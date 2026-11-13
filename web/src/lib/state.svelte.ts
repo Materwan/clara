@@ -69,6 +69,7 @@ export function releaseToast(id: number): void {
 // Pages that changed name or were merged into another: an old link or bookmark still lands there (the view, if any, is kept).
 const MOVED = new Map([
   ['schedules', '/automation'],
+  ['hooks', '/automation'],
   ['workspace', '/library'],
   ['vault', '/library?view=vault'],
   ['rules', '/modes'],

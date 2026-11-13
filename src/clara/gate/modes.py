@@ -13,7 +13,7 @@ built-in copy below is used (what the default level 3 did) and an alert says so;
 The other modes live in the database (`modes`, `mode_packs`, `mode_verdicts`) and only a token that may answer every
 request changes them (api/modes.py).
 
-A conversation's mode is its own, else its schedule's or hook's, else its project's, else the default (`Modes.where`).
+A conversation's mode is its own, else its automation's, else its project's, else the default (`Modes.where`).
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ VERDICT_EFFECT = {"approve": "allow", "ask": "ask", "refuse": "refuse"}
 STRICT = {"approve": 0, "ask": 1, "refuse": 2}
 DEFAULT = "default"  # the name of the default mode, which no other mode may take
 MAX_NAME = 30
-STORED = ("conversations", "projects", "schedules", "triggers")  # the tables with a `mode` column
+STORED = ("conversations", "projects", "automations")  # the tables with a `mode` column
 FIELDS = {"tool", "class", "target", "verdict", "tainted"}
 _NAME = re.compile(rf"^[^\x00-\x1f/\\?#%]{{1,{MAX_NAME}}}$")
 
@@ -67,7 +67,7 @@ class DefaultModeError(ModeError):
 
 
 class MissingRow(ModeError):
-    """The project, schedule, hook or conversation a mode was to be stored on does not exist."""
+    """The project, automation or conversation a mode was to be stored on does not exist."""
 
 
 class NeedsConfirmation(ModeError):
@@ -513,9 +513,7 @@ class Modes:
 
     def uses(self, name: str) -> dict[str, int]:
         """What stores this mode: conversations of its own, conversations of automations, automations, projects."""
-        automation = (
-            f"(c.kind = 'schedule' OR {Conversations._SCHEDULE} IS NOT NULL OR {Conversations._HOOK} IS NOT NULL)"
-        )
+        automation = f"(c.kind = 'schedule' OR {Conversations._AUTOMATION} IS NOT NULL)"
 
         def count(sql: str) -> int:
             return int(self.db.value(sql, (name,), 0))
@@ -525,9 +523,7 @@ class Modes:
             "automation_conversations": count(
                 f"SELECT COUNT(*) FROM conversations c WHERE c.mode = ? AND {automation}"
             ),
-            "automations": count(
-                "SELECT (SELECT COUNT(*) FROM schedules WHERE mode = ?1) + (SELECT COUNT(*) FROM triggers WHERE mode = ?1)"
-            ),
+            "automations": count("SELECT COUNT(*) FROM automations WHERE mode = ?"),
             "projects": count("SELECT COUNT(*) FROM projects WHERE mode = ?"),
         }
 
@@ -550,13 +546,12 @@ class Modes:
     # The mode of a conversation
     # ------------------------------------------------------------------
     def where(self, conversation_id: str, *, own: bool = True) -> tuple[str, str]:
-        """(the mode's name, where it comes from): the conversation, its schedule or hook, its project, or the default.
+        """(the mode's name, where it comes from): the conversation, its automation, its project, or the default.
         With `own` false the conversation's own mode is left out: what it would have if it followed."""
         if conversation_id:
             row = self.db.one(
                 "SELECT c.mode AS own, p.mode AS project,"
-                f" COALESCE((SELECT s.mode FROM schedules s WHERE s.id = {Conversations._SCHEDULE}),"
-                f" (SELECT t.mode FROM triggers t WHERE t.id = {Conversations._HOOK})) AS automation"
+                f" (SELECT a.mode FROM automations a WHERE a.id = {Conversations._AUTOMATION}) AS automation"
                 " FROM conversations c LEFT JOIN projects p ON p.id = c.project_id WHERE c.id = ?",
                 (conversation_id,),
             )
@@ -570,7 +565,7 @@ class Modes:
         return self.where(conversation_id)[0]
 
     def check_mode(self, name: str | None) -> str | None:
-        """The name of an existing mode a client may store on a conversation, a project, a schedule or a hook (None: follow).
+        """The name of an existing mode a client may store on a conversation, a project or an automation (None: follow).
         The default mode is what they follow, so it is not stored by name."""
         if name is None:
             return None
@@ -580,7 +575,7 @@ class Modes:
         return found.name
 
     def set_stored(self, table: str, row_id: int | str, name: str | None) -> None:
-        """Set (or, with None, clear) the mode stored on a project, schedule, hook or conversation."""
+        """Set (or, with None, clear) the mode stored on a project, automation or conversation."""
         if table not in STORED:
             raise ModeError(f"No mode is stored on {table}.")
         name = self.check_mode(name)

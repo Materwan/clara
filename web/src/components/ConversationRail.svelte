@@ -7,11 +7,11 @@
   import Icon from './Icon.svelte';
 
   // The list of conversations, in the rail under the pages: on every page, scrolling with the rest of the rail.
-  // The conversations of a project, of a schedule or of a hook are grouped under its name; they are listed only when that
-  // project, schedule or hook is switched on for the history, and those of Discord only when the account menu
+  // The conversations of a project or of an automation are grouped under its name; they are listed only when that
+  // project or automation is switched on for the history, and those of Discord only when the account menu
   // shows them (a search looks through all of them; so do pinned conversations).
-  type Group = { key: string; kind: 'project' | 'schedule' | 'hook'; name: string; items: any[] };
-  const ICONS = { project: 'folder', schedule: 'clock', hook: 'bolt' } as const;
+  type Group = { key: string; kind: 'project' | 'automation'; name: string; items: any[] };
+  const ICONS = { project: 'folder', automation: 'play' } as const;
   const KEY = 'clara-rail-groups';
   const SHOWN = 5; // conversations a group lists before "Show more"
 
@@ -38,8 +38,7 @@
     return [...found.values()];
   });
   const projects = $derived(groups.filter((group) => group.kind === 'project'));
-  const schedules = $derived(groups.filter((group) => group.kind === 'schedule'));
-  const hooks = $derived(groups.filter((group) => group.kind === 'hook'));
+  const automations = $derived(groups.filter((group) => group.kind === 'automation'));
 
   function remembered(): Record<string, boolean> {
     try {
@@ -215,13 +214,9 @@
       <li class="group-title">Projects</li>
       {#each projects as group (group.key)}{@render section(group)}{/each}
     {/if}
-    {#if schedules.length}
-      <li class="group-title">Schedules</li>
-      {#each schedules as group (group.key)}{@render section(group)}{/each}
-    {/if}
-    {#if hooks.length}
-      <li class="group-title">Hooks</li>
-      {#each hooks as group (group.key)}{@render section(group)}{/each}
+    {#if automations.length}
+      <li class="group-title">Automations</li>
+      {#each automations as group (group.key)}{@render section(group)}{/each}
     {/if}
     {#if loose.length}
       <li class="group-title">Conversations</li>

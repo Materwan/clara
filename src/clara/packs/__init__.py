@@ -1,4 +1,4 @@
-"""Tool packs: the special tools a conversation or a schedule is granted (registry.py), and their tools."""
+"""Tool packs: the special tools a conversation or an automation is granted (registry.py), and their tools."""
 
 from __future__ import annotations
 

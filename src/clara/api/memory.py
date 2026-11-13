@@ -1,4 +1,4 @@
-"""Memory: the facts Clara keeps, in the global memory and in the memory of each project, schedule and hook. You can list,
+"""Memory: the facts Clara keeps, in the global memory and in the memory of each project and automation. You can list,
 add, edit, confirm, pin and delete them."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _expiry(request: Request, text: str | None) -> str | None:
 
 
 def _scope(request: Request, scope: str) -> str:
-    """The scope, which must be the global memory (empty) or a project, schedule or hook that exists, as it is stored."""
+    """The scope, which must be the global memory (empty) or a project or an automation that exists, as it is stored."""
     try:
         return services(request).facts.check_scope(scope)
     except FactError as error:
@@ -39,7 +39,7 @@ def listing(
     request: Request,
     state: Literal["live", "unconfirmed", "expired", "superseded", "all"] = "live",
     q: str = Query("", max_length=200),
-    scope: str = Query("", max_length=40, description="'' (global), project:<id>, schedule:<id> or hook:<id>"),
+    scope: str = Query("", max_length=40, description="'' (global), project:<id> or automation:<id>"),
 ) -> dict:
     facts = services(request).facts
     scope = _scope(request, scope)
@@ -55,7 +55,7 @@ def listing(
 
 @router.get("/scopes")
 def scopes(request: Request) -> dict:
-    """The projects, schedules and hooks that keep a memory: its live facts, how many wait for your confirmation, and every
+    """The projects and automations that keep a memory: its live facts, how many wait for your confirmation, and every
     fact it keeps (`total`), which is what deleting it removes."""
     return {"scopes": services(request).facts.scopes()}
 
@@ -66,7 +66,7 @@ class NewFact(BaseModel):
     pinned: bool = False
     expires_at: str | None = Field(default=None, max_length=40)
     replaces: int | None = None
-    scope: str = Field(default="", max_length=40, description="'' (global), project:<id>, schedule:<id> or hook:<id>")
+    scope: str = Field(default="", max_length=40, description="'' (global), project:<id> or automation:<id>")
 
 
 @router.post("/facts", status_code=201)

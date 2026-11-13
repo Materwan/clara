@@ -1,7 +1,7 @@
 <script lang="ts">
   import { loadModes, modeList } from '../lib/modeList.svelte';
 
-  // The mode of a conversation, a project, a schedule or a hook: what its tools may do without asking, and which special tools
+  // The mode of a conversation, a project or an automation: what its tools may do without asking, and which special tools
   // it switches on. `value` is its own mode (null: it follows `follows`, and `effective` is the mode it runs in then). The
   // default mode is never stored by name: following it is the choice. `onchange` hears the pick.
   let { value, effective, follows, label = 'Mode', onchange, small = false, disabled = false }: {

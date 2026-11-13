@@ -99,14 +99,14 @@ async def event(body: DiscordEvent, request: Request) -> dict:
 
 def _forum_deleted(s, place: str):
     """A forum was deleted on Discord: you are asked whether to delete what it held, with its conversations (a project, a
-    schedule or a hook goes too). None for a place this server does not know."""
+    automation goes too). None for a place this server does not know."""
     if place == MAIN:
-        kind, target, name = "loose", "", "the conversations outside any project, schedule or hook"
+        kind, target, name = "loose", "", "the conversations outside any project or automation"
     elif place == INCOGNITO:
         kind, target, name = "incognito", "", "the incognito conversations"
-    elif ":" in place and place.split(":", 1)[0] in ("project", "schedule", "hook"):
+    elif ":" in place and place.split(":", 1)[0] in ("project", "automation"):
         kind, target = place.split(":", 1)
-        name = {"project": "the project", "schedule": "the schedule", "hook": "the hook"}[kind] + f" {target}"
+        name = {"project": "the project", "automation": "the automation"}[kind] + f" {target}"
         if kind == "project" and s.projects.get(int(target)) is not None:
             name = f"the project “{s.projects.get(int(target)).name}”"
     else:
@@ -114,7 +114,7 @@ def _forum_deleted(s, place: str):
     where, params = scope_of(kind, target)
     count = s.db.value(f"SELECT COUNT(*) FROM conversations WHERE {where}", params, 0)
     # Every fact of the memory goes with it (the database deletes them all, live or old), so all of them are counted
-    scoped = kind in ("project", "schedule", "hook")
+    scoped = kind in ("project", "automation")
     remembered = s.db.value("SELECT COUNT(*) FROM facts WHERE scope = ?", (f"{kind}:{target}",), 0) if scoped else 0
     noun = "fact" if remembered == 1 else "facts"
     what = f"{count} conversations" + (f" and {remembered} remembered {noun}" if remembered else "")

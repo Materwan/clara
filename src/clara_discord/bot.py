@@ -16,7 +16,7 @@ function: DMs are ignored.
 * The channels keep what still helps (`tidy`): #approval only the requests that wait (a request that is settled or
   expires is deleted), #alerts only the alerts whose problem lasts (`alert_resolved` deletes the message), and
   #notification loses the lines about a run whose forum thread is gone. The bot deletes only its own messages.
-* An automation that delivers to Discord lives in one forum thread (its conversation, in its automation's forum) and
+* An automation with « Show in history » ticked lives in one forum thread (its conversation, in its automation's forum) and
   puts nothing in #general: when a run starts the bot posts its link in the channel the server names (#notification
   by default), the run's questions, reminder and end are written in the thread, and you answer there. The answer itself
   is already in the thread (the mirror writes it), so the `said` message is not posted a second time.

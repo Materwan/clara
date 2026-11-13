@@ -82,73 +82,13 @@ What the current design already sets:
 - A new tool needs a class, a level and a target in the gate, is named in FEATURES.md (the docs test checks it), and
   the tool count line is updated.
 
-## Automations: regular expressions, combined triggers, one place for the result
-
-The owner asked to change how an automation is made: precise filters, triggers that combine, and a simpler result. Today a schedule (at a
-time) and a hook (when something happens) are two kinds with their own runs, catch-up and pace (`FEATURES.md`, sections 4 and 5), and a
-hook's filter has the operators `eq`, `contains`, `starts_with`, `ends_with` and `not_contains`.
-
-What the owner decided:
-
-- **One kind of automation.** A schedule and a hook become one automation with one list, one page and one form. A migration converts the
-  existing schedules and hooks; it takes the automatic backup first, as every migration does.
-- **Filters are regular expressions.** The five operators go away. A match is a search anywhere in the field, not case-sensitive unless
-  you tick it, with a « must not match » tick for each field. The filters that exist are converted to escaped expressions (`contains x`
-  becomes `x`, `starts_with x` becomes `^x`, and so on). The fields that are not text (`has_attachment`, `unread`, `draft`…) stay as they are.
-- **The engine is RE2** (a linear-time engine, the `google-re2` package), so that a pattern written by you cannot be made to run for ever by a
-  subject or a body written by a stranger. It has no lookahead and no back-reference: « must not match » replaces `not_contains`. This
-  supersedes the row « No regular expression in a filter » in `docs/DECISIONS.md`.
-- **Triggers combine in a free tree of AND and OR.** Examples: between 18:00 and 20:00 AND a push on a branch; a push OR at 9:00. An **OR**
-  starts a run when any of its branches fires. An **AND** may hold at most one **event** (a mail, a push, a pull request, a cron instant)
-  among its branches, with conditions of time beside it; two events can be joined with OR, never with AND. The form refuses an AND that
-  holds two events.
-- **A condition of time is a cron expression** (the full syntax, for an instant and for a window). An event that arrives outside the
-  window of an AND is **ignored**: it is recorded as skipped, visible in the automation's history, and starts no run.
-- **« Where the result goes » is removed.** Every run sends the short notification to every client, Discord included, and **Show in
-  history**, when it is ticked, makes the Discord forum thread with the run's whole answer, which you answer. The automations that exist are
-  converted: `notice` stays as it is; `web` (no Discord) and `discord` (the whole answer only, no notice) become `notice`; `discord` and
-  `both` also tick **Show in history**. You lose « only on Discord » and « not on Discord » (the owner accepts it). `announce` (keep a good run
-  quiet) is unchanged.
-
-- **Missed events work as they do today** (a schedule's `missed`: `skip`, `latest`, `all`; a hook's `catch_up`: `all`, `latest`, `digest`,
-  `skip`), and the date and time of each event are kept, so that the runs that were due can be found again: a missed instant is worked out
-  from its cron expression and the time the automation had reached, an event from the time it happened or was seen.
-- **Time zone:** a cron expression runs in the time zone of the automation (`CLARA_TIMEZONE`, or the one the automation was made with),
-  as a schedule's time does today.
-- **A run is tainted only for what it reads that is tainted**, as in any conversation, and **the trigger counts**: a push, a mail or a pull
-  request that is considered tainted makes the conversation tainted; a cron instant does not.
-- **The form** will be shown to the owner as a design before it is built, and so will the page.
-
-- **Three nodes of time:** `cron` (an instant, or a window to the minute for who can write it), `window` (from HH:MM to HH:MM on chosen
-  weekdays, may cross midnight: 18:30 to 20:15) and `once` (a date and a time, as a schedule has today, since a single date has no cron
-  form). The form offers the window and the instant first, and cron as the advanced choice.
-- **Tools when none are listed:** those of the trigger that set the run off, as today for a hook (a push: `github_read` and `notify`; a
-  mail: the mail read tools and `notify`; a cron instant or `once`: `notify` only), never more than the trigger that fired.
-
-Not decided:
-
-- How `automation_create` and `automation_update` carry a tree and a filter (Clara writes the expression, the gate asks you first, as it
-  does today).
-
-What the current design already sets:
-
-- Two events never meet in one condition, so nothing has to be kept between two events to wait for the other.
-- `google-re2` 1.1.20251105 has wheels for Python 3.12, 3.13 and 3.14 on Linux x86_64 and aarch64 (and macOS and Windows), checked on PyPI
-  on 2026-11-10; the release installs from a hash-pinned `requirements.lock`, so the hashes of those wheels go into it.
-- A run is one conversation of its own (or one shared), with the limits of its hook or schedule (`max_per_hour`, `catch_up`,
-  `max_age_hours`, retention): they become the limits of the automation, and the two kinds must be told apart in a migration only where they
-  differ (a per-run conversation, a missed `latest`).
-- The *Test* dry run (`POST /v1/triggers/{id}/test`) must show, for a stored event, whether the expressions and the time conditions match.
-- It needs a dated entry in `docs/DECISIONS.md`, `FEATURES.md` updated (the tool and route names are tested), the threat model row for an
-  outside event (`docs/THREAT-MODEL.md`) kept true, and a migration whose number is taken at merge.
-
 ## New kinds of event: external events, school, feeds
 
 The owner asked for automations that start from more than mail and GitHub. This item adds **event sources** next to the mail and GitHub
-watchers (`triggers/events.py`: a source hands `SourceEvent`s to `Triggers.ingest`, an event is stored once by `(source, key)`, a kind is
-declared with its fields, its read tools and its notification text). The new kinds plug into the automations of the item above: their
+watchers (`automations/events.py`: a source hands `SourceEvent`s to `Automations.ingest`, an event is stored once by `(source, key)`, a kind is
+declared with its fields, its read tools and its notification text). The new kinds plug into the automations (built: `EventKind` in `automations/events.py`): their
 filters are regular expressions and they take part in the tree of AND and OR. Every one of them is outside content: an event of a source
-is tainted, and the trigger counts (see the item above).
+is tainted, and the trigger counts (`EventKind.tainted`, built).
 
 What the owner decided:
 
