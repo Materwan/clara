@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 import threading
 from collections.abc import Iterator
@@ -26,12 +27,26 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import httpx
+
 from ..timeutil import system_zone_name, zone
 from .common import DEFAULT_URL, Api, ClientError, read_token, save_token, token_file, utf8_console
+
+try:  # line editing, history and Tab completion; Windows has no readline, and the terminal works without it
+    import readline
+except ImportError:
+    readline = None
 
 CLIENT = "cli"
 REPEATS = ("daily", "weekly", "monthly")
 ANSWERS = {"o": "allow_once", "r": "refuse_once"}
+# The words this terminal answers itself: a skill never takes one of them (`RESERVED` in skills/parse.py holds them too).
+OWN = frozenset(
+    {
+        "new", "resume", "conversations", "facts", "remember", "forget", "remind", "reminders", "unremind", "tasks", "task",
+        "notify", "model", "tools", "mode", "approvals", "allow", "refuse", "undo", "skills", "quit", "exit", "help",
+    }
+)  # fmt: skip
 
 HELP = """\
 /new [incognito] [local]   start a new conversation
@@ -52,6 +67,8 @@ HELP = """\
 /mode [<name>|follow]      the mode of this conversation: what Clara may use, and what she does without asking
 /approvals                 requests waiting      /allow|/refuse <id>  answer one
 /undo                      revert Clara's last workspace change
+/skills                    the skills this conversation can run
+/name arguments            run a skill (its arguments after the name; the list is /skills)
 /quit                      leave"""
 
 
@@ -314,6 +331,22 @@ class Chat:
         self.incognito = incognito
         self.local_only = local_only
         self.tools = tools
+        # the skills visible per project ("none" or its id), kept for the session
+        self.skills: dict[str, list[dict]] = {}
+        self.listed: list[dict] = []  # the last list read: what Tab completes
+
+    def visible_skills(self) -> list[dict]:
+        """The skills this conversation can run: the server's list for its project (none outside one), read once per project.
+        A list that cannot be read is empty for now, and the next command asks again."""
+        try:
+            project = self.api.get(f"/v1/conversations/{self.conversation}")["project"] if self.conversation else None
+            key = "none" if project is None else str(project)
+            if key not in self.skills:
+                self.skills[key] = self.api.get("/v1/skills", project=key)["skills"]
+            self.listed = self.skills[key]
+        except (ClientError, httpx.HTTPError, KeyError, ValueError):
+            self.listed = []
+        return self.listed
 
     def ask(self, message: str) -> None:
         body: dict = {"message": message, "timezone": self.zone}
@@ -382,6 +415,33 @@ def task_line(task: dict, zone_name: str) -> str:
             f"next {local(task['next_reminder'], zone_name)}" if task["next_reminder"] else "no reminder to come"
         )
     return "  ·  ".join(parts)
+
+
+def skills_text(chat: Chat) -> str:
+    """One line a skill: its command with the argument hint, then its description, cut to the width of the terminal."""
+    listed = chat.visible_skills()
+    if not listed:
+        return "No skill for this conversation. Skills are added on the web site (Settings, Skills)."
+    width = shutil.get_terminal_size().columns
+    lines = []
+    for skill in listed:
+        head = f"/{skill['name']}" + (f" {skill['argument_hint']}" if skill["argument_hint"] else "")
+        line = f"{head}  {' '.join(skill['description'].split())}".rstrip()
+        lines.append(line if len(line) < width else line[: width - 2] + "…")
+    return "\n".join(lines)
+
+
+def completer(chat: Chat):
+    """Tab on the first word of a line that starts with `/`: the terminal's commands and the skills read last."""
+
+    def complete(text: str, state: int) -> str | None:
+        if readline.get_begidx() > 0 or not text.startswith("/"):
+            return None
+        names = sorted({f"/{word}" for word in OWN} | {f"/{skill['name']}" for skill in chat.listed})
+        matches = [name for name in names if name.startswith(text)]
+        return matches[state] if state < len(matches) else None
+
+    return complete
 
 
 def command(chat: Chat, line: str) -> bool:
@@ -487,8 +547,15 @@ def command(chat: Chat, line: str) -> bool:
         print(f"#{argument}: {api.post(f'/v1/approvals/{argument}/decide', {'answer': answer})['status']}")
     elif name == "/undo":
         print(api.post("/v1/workspace/undo", {}).get("message", "Done."))
+    elif name == "/skills":
+        print(skills_text(chat))
     else:
-        print(HELP)
+        # Not one of ours: a skill of this conversation is sent as typed, and the server expands it.
+        skill = line.split(maxsplit=1)[0][1:]
+        if skill in OWN or not any(item["name"] == skill for item in chat.visible_skills()):
+            print(HELP)
+        else:
+            chat.ask(line)
     return True
 
 
@@ -653,6 +720,11 @@ def main(argv: list[str] | None = None) -> int:
         handle(" ".join(args.message))
         return 0
     print(f"Clara — /help for commands, Ctrl+D to leave. Times are read in {chat.zone}.")
+    chat.visible_skills()  # read now, so that Tab can complete the skills
+    if readline is not None:
+        readline.set_completer_delims(" \t\n")  # the slash belongs to the word
+        readline.set_completer(completer(chat))
+        readline.parse_and_bind("bind ^I rl_complete" if "libedit" in (readline.__doc__ or "") else "tab: complete")
     notices = Notices()
     stop = threading.Event()
     threading.Thread(target=listen, args=(api, notices, stop), daemon=True, name="events").start()

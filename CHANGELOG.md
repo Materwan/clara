@@ -288,6 +288,9 @@ answers one more field, `lapses`.
   run (Up and Down, Enter or Tab to choose, Escape to close), and once the first word is a skill a line under the box shows its arguments and
   the packs it needs: a click on an off pack switches it on for the conversation (the server never does). A skill command is shown in the
   history as you typed it, and **Edit** and **Ask again** send it again as typed.
+- **The terminal runs skills.** In `clara-chat`, `/name arguments` sends a skill of the conversation as typed (the server expands it), `/skills`
+  lists the skills one line each, and Tab completes the commands and the skill names where `readline` exists (not on Windows). A terminal
+  command always wins over a skill, and a list that cannot be read only means no skill is offered.
 - **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
   **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
   `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no

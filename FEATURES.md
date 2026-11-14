@@ -109,7 +109,14 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/mode [<name>\|follow]` | The mode of this conversation: show it, or set it (a conversation not started yet is started in that mode); only a token that may answer every request can set one |
 | `/approvals`, `/allow`, `/refuse <id>` | Approval requests |
 | `/undo` | Revert Clara's last workspace change |
+| `/skills` | The skills this conversation can run, one line each: `/name <argument hint>`, then the description (cut to the terminal's width); `/name arguments` runs one (see *Skills*) |
 | `/quit` | Leave |
+
+- A line `/name arguments` whose `name` is a skill of the conversation is sent as typed, and the server expands it. The skills are read
+  once per project for the session (`GET /v1/skills?project=<id>|none`, the project of the conversation); a list that cannot be read
+  only means no skill is offered. The terminal's own commands always win, and a word that is none of them gets the help.
+- Where `readline` exists (not on Windows), Tab completes the first word of a line: the commands and the skills read at start and at
+  each skill command. The history and the line editing come with it.
 
 ### Console commands (`clara-admin`, the Admin page's console, `POST /v1/admin/command`)
 
