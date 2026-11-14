@@ -10,9 +10,9 @@ same tool in that conversation that would ask are allowed without a card, until 
 It covers any tool the button is pressed on, and answers the plain « ask » of the conversation's mode and nothing else:
 where the mode refuses, or approves, there is nothing to answer, and in a tainted turn it only answers a tool whose
 `(if tainted)` verdict is `ask` (the gate has already chosen that verdict when the grant is asked). It never covers the
-secret check (content that looks like a secret leaving the machine), only a turn from the web, and never an unattended
-run. It writes no rule. Every call it lets through is in the audit log with the grant's number, and the web site still
-prints the tool call.
+secret check (content that looks like a secret leaving the machine), only a turn from the web, never an unattended
+run, and never a request of a class in NOT_GRANTABLE (a feed to follow). It writes no rule. Every call it lets
+through is in the audit log with the grant's number, and the web site still prints the tool call.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .actions import Action, Decision, Situation
+from .actions import NOT_GRANTABLE, Action, Decision, Situation
 
 if TYPE_CHECKING:
     from ..auth.tokens import TokenInfo
@@ -73,6 +73,8 @@ class Grants:
         """Start a grant for the tool of a request that is still waiting (the caller answers that request)."""
         if token.client != CLIENT:
             raise GrantError("Only the web site can press Approve all next.")
+        if approval.action_class in NOT_GRANTABLE:
+            raise GrantError("This request is read each time: Approve all next does not cover it.")
         if not approval.conversation_id:
             raise GrantError("This request belongs to no conversation.")
         if not approval.situation.startswith("interactive"):

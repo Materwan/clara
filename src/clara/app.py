@@ -37,6 +37,7 @@ from .api import conversations as conversations_api
 from .api import discord as discord_api
 from .api import event_sources as event_sources_api
 from .api import events as events_api
+from .api import feeds as feeds_api
 from .api import forms as forms_api
 from .api import gate as gate_api
 from .api import memory as memory_api
@@ -91,6 +92,7 @@ from .packs import install as packs_install
 from .packs.automations import automation_tools
 from .packs.daily_note import seed as seed_daily_note
 from .packs.deferred import deferred_tools
+from .packs.feeds import feed_tools
 from .packs.tools import pack_tools
 from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
@@ -152,6 +154,7 @@ def static_tools() -> list[Tool]:
         *vault_tools(),
         *pack_tools(True),
         *automation_tools(),
+        *feed_tools(),
         *deferred_tools(),
     ]
 
@@ -414,6 +417,7 @@ def create_app(s: Services) -> FastAPI:
     app.include_router(automations_api.router)
     app.include_router(retention_api.router)
     app.include_router(connections_api.router)
+    app.include_router(feeds_api.router)
     app.include_router(vault_api.router)
     app.include_router(packs_api.router)
     app.include_router(discord_api.router)

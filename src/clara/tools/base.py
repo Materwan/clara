@@ -9,7 +9,9 @@ that says, before anything runs, what the call would touch. `Toolbox.call` asks 
             (unattended), and the model is told it was NOT done
 
 A tool that was not offered in this turn is not run, whatever the model asks. Whatever goes wrong inside a tool comes
-back as text for the model to read, never as a crash of the turn.
+back as text for the model to read, never as a crash of the turn. A tool whose request must show what it found by asking the
+network (`feed_follow`) has a `prepare`, awaited before `describe` (which is not async), and the gate does not decide before it
+runs: so it must look only where the gate would allow the same look.
 """
 
 from __future__ import annotations
@@ -80,6 +82,9 @@ class ToolContext:
     offered: frozenset[str] | None = (
         None  # the tools this turn offers (Toolbox.call sets it; None: no turn is behind this)
     )
+    looked: dict[str, Any] = field(
+        default_factory=dict
+    )  # what a tool's `prepare` found, for its `describe` to put in the request
 
     def taint(self, source: str) -> None:
         """This call brought in untrusted content that the name of its tool does not say (a marked file of the workspace, a
@@ -114,6 +119,9 @@ class Tool:
     taints: bool = False  # it brings untrusted content into the turn (a web page, an issue, a fetched file)
     public: bool = False  # what it returns is public (the web): a search query may repeat it; the rest is private text
     remote: Remote | None = None  # run by the person's browser, not here (`function` is then never called)
+    # Looks something up before the gate is asked, because `describe` is not async: Toolbox.call awaits it first, so the request can
+    # show what the call would act on (a feed and its latest titles). Whatever it needs the gate to approve first, it asks itself.
+    prepare: Callable[[ToolContext, dict], Awaitable[None]] | None = None
 
     @property
     def classes(self) -> tuple[str, ...]:
@@ -233,6 +241,8 @@ class Toolbox:
             return CallResult("Error: the arguments must be an object.")
         context.offered = frozenset(offered)
         try:
+            if tool.prepare is not None:
+                await tool.prepare(context, arguments)
             action = self.action(name, context, arguments)
         except (ToolError, ValueError, TypeError) as error:
             return CallResult(f"Error: {error}")

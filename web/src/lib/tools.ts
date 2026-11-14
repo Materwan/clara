@@ -59,6 +59,7 @@ const NOTES: Record<string, [string, string, string?]> = {
   automation_create: ['play', 'Made an automation', 'name'],
   automation_update: ['play', 'Changed an automation', 'name'],
   automation_delete: ['play', 'Deleted an automation'],
+  feed_follow: ['link', 'Followed a feed', 'url'],
   deferred_book: ['calendar', 'Booked a call for later', 'tool'],
   deferred_list: ['calendar', 'Looked at the booked calls'],
   deferred_cancel: ['calendar', 'Cancelled a booked call'],

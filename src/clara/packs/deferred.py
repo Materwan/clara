@@ -49,6 +49,7 @@ BOOKED_NEVER = {
     "discord_say": "it speaks in the thread of a conversation",
     "discord_thread": "it works on the thread of a conversation",
     "discord_forget": "only an approved request runs it",
+    "feed_follow": "its request shows the feed as it is when you read it, and a booked call asks nothing more",
 }
 
 

@@ -50,7 +50,7 @@ def asked(services) -> list:
 # ----------------------------------------------------------------------
 def test_the_pack_is_for_chats_only_and_off_in_a_new_conversation(services):
     pack = next(pack for pack in PACKS if pack.id == "automations")
-    assert pack.where == "chat" and not pack.default and pack.tools == NAMES
+    assert pack.where == "chat" and not pack.default and pack.tools == NAMES | {"feed_follow"}  # and the tool that follows a feed (test_feed_follow.py)
     assert {tool.name for tool in automation_tools()} == NAMES
     assert "automations" in [item["id"] for item in services.packs.listing("chat")]
     assert "automations" not in [item["id"] for item in services.packs.listing("automation")]

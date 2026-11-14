@@ -89,6 +89,7 @@ class Services:
     vault: Any = None
     packs: Any = None
     web: Any = None
+    feeds: Any = None
     connectors: Any = None
     connections: Any = None
     github_snapshots: Any = None

@@ -176,7 +176,10 @@ so an automation on `github.pull_request` or `github.push` is found by a poll to
 repositories added on the Connections page and only for the kinds an automation waits for. Moodle and Auriga cannot call Clara either:
 an automation on a school kind (`moodle.quiz_opens`, `moodle.quiz_closes`, `moodle.activity_added`, `moodle.grade_posted`,
 `auriga.grade_posted`, `auriga.planning_changed`) is found by a poll of the connected sites every `CLARA_SCHOOL_POLL_SECONDS` (900),
-again only while one waits; a site that is not connected or whose sign-in lapsed is skipped (its alert tells you). The run an event starts
+again only while one waits; a site that is not connected or whose sign-in lapsed is skipped (its alert tells you). A feed (RSS or Atom: a
+YouTube channel, a blog, a podcast, arXiv) you follow (`POST /v1/feeds` with the address of the feed or of a page; Clara finds the feed once
+and keeps its address) is asked every `CLARA_FEEDS_POLL_SECONDS` (1800), one at a time, again only while an automation waits for `feed.item`;
+a feed that fails keeps the error in fixed words on its record and raises no alert. The run an event starts
 is untrusted, so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
 
 ```text

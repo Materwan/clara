@@ -156,6 +156,11 @@ verdict = "refuse"
 class = "deferred"
 verdict = "ask"
 
+# Follow a feed (RSS or Atom): the request shows the feed that was found and its latest titles, so a page cannot make Clara follow one you did not see
+[[verdict]]
+class = "feed_follow"
+verdict = "ask"
+
 # Delete a conversation, a project or an automation because its Discord thread or forum was deleted
 [[verdict]]
 class = "discord_forget"

@@ -13,6 +13,7 @@ from ..secrets import LOGIN_SECRETS
 from ..tools.base import TurnState
 from .auriga import LAPSED, Auriga, AurigaAuth, AurigaError
 from .drive import Drive, DriveError, GoogleAuth
+from .feeds import Feeds
 from .github import GitHub, GitHubError
 from .github_watch import GitHubWatch
 from .gmail import Gmail
@@ -365,6 +366,7 @@ def install(s: Services) -> None:
         brave_key=lambda: s.secrets.get("brave_api_key"),
         on_key_refused=s.connectors.brave_refused,
     )
+    s.feeds = Feeds(s)
     for tool in web_tools():  # offered while a search service is set up: the Brave key can come later
         s.toolbox.add(tool)
         s.agent.tool_conditions[tool.name] = lambda state: web.can_search()

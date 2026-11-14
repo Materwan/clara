@@ -18,6 +18,7 @@
     newTime, toWhen, type Branch, type EventBranch, type TimeBranch,
   } from '../lib/trigger';
   import EventSources from './EventSources.svelte';
+  import Feeds from './Feeds.svelte';
 
   // What Clara does without being asked, in one list and one form: an automation starts a run when any branch of its trigger holds.
   // A branch is an event (a mail, a push…), a time (a date, a cron expression, a window) or an All of group (one event with conditions
@@ -43,18 +44,25 @@
     { value: 'follow', label: 'The Admin setting', hint: 'automation_keep_last (none at first).' },
     { value: 'own', label: 'Its own count', hint: 'Only the latest ones are kept.' },
   ];
-  const SOURCES: Record<string, { label: string; prefixes: string[]; missing: string; setting: string }> = {
-    mail: { label: 'Mail', prefixes: ['mail'], missing: 'An automation on new mail has nothing to look at. Connect Gmail on the', setting: 'CLARA_MAIL_POLL_SECONDS' },
-    github: { label: 'GitHub', prefixes: ['github'], missing: 'An automation on GitHub has nothing to look at. Connect GitHub and add a repository on the', setting: 'CLARA_GITHUB_POLL_SECONDS' },
-    school: { label: 'School', prefixes: ['moodle', 'auriga'], missing: 'An automation on school events has nothing to look at. Connect Moodle or Auriga on the', setting: 'CLARA_SCHOOL_POLL_SECONDS' },
+  // What an automation on each kind of event needs to look at, and where to set it up (the link ends the sentence: « on the Connections page »).
+  const CONNECT = { href: '#/connections', link: 'Connections', after: 'page.' };
+  const SOURCES: Record<string, { label: string; prefixes: string[]; missing: string; href: string; link: string; after: string; tab?: Tab; setting: string }> = {
+    mail: { label: 'Mail', prefixes: ['mail'], missing: 'An automation on new mail has nothing to look at. Connect Gmail on the', ...CONNECT, setting: 'CLARA_MAIL_POLL_SECONDS' },
+    github: { label: 'GitHub', prefixes: ['github'], missing: 'An automation on GitHub has nothing to look at. Connect GitHub and add a repository on the', ...CONNECT, setting: 'CLARA_GITHUB_POLL_SECONDS' },
+    school: { label: 'School', prefixes: ['moodle', 'auriga'], missing: 'An automation on school events has nothing to look at. Connect Moodle or Auriga on the', ...CONNECT, setting: 'CLARA_SCHOOL_POLL_SECONDS' },
+    feed: {
+      label: 'Feed', prefixes: ['feed'], missing: 'An automation on feed items has no feed to look at. Follow one on the', href: '#/automation?tab=feeds', link: 'Feeds', after: 'tab.', tab: 'feeds',
+      setting: 'CLARA_FEEDS_POLL_SECONDS',
+    },
   };
   const TIME_TYPES = [{ value: 'once', label: 'Once' }, { value: 'window', label: 'Window' }, { value: 'cron', label: 'Cron (advanced)' }];
   const CONDITION_TYPES = TIME_TYPES.filter((item) => item.value !== 'once');
 
-  // Two tabs: the automations (the list and the form below) and the event sources that can start them (`#/automation?tab=sources`).
-  type Tab = 'automations' | 'sources';
-  const TABS = [{ value: 'automations' as Tab, label: 'Automations' }, { value: 'sources' as Tab, label: 'Event sources' }];
-  let tab = $state<Tab>(route.query.get('tab') === 'sources' ? 'sources' : 'automations');
+  // Three tabs: the automations (the list and the form below), the event sources and the feeds that can start them (`#/automation?tab=sources`,
+  // `#/automation?tab=feeds`). The banner for a kind with nothing to look at links to the tab that makes it (the same page: it only switches).
+  type Tab = 'automations' | 'sources' | 'feeds';
+  const TABS = [{ value: 'automations' as Tab, label: 'Automations' }, { value: 'sources' as Tab, label: 'Event sources' }, { value: 'feeds' as Tab, label: 'Feeds' }];
+  let tab = $state<Tab>(TABS.find((item) => item.value === route.query.get('tab'))?.value ?? 'automations');
 
   const empty = () => ({
     id: 0, name: '', action: 'run', prompt: '', branches: [] as Branch[], keepWhen: null as any, unsupported: '', timezone: '',
@@ -70,7 +78,9 @@
   let packs = $state<any[]>([]);
   let models = $state<any>({ models: [], default: '' });
   let toolNames = $state<string[]>([]);
-  let sources = $state<Record<string, { ready: boolean; poll: number }>>({ mail: { ready: true, poll: 120 }, github: { ready: true, poll: 120 }, school: { ready: true, poll: 900 } });
+  let sources = $state<Record<string, { ready: boolean; poll: number }>>({
+    mail: { ready: true, poll: 120 }, github: { ready: true, poll: 120 }, school: { ready: true, poll: 900 }, feed: { ready: true, poll: 1800 },
+  });
   let form = $state(empty());
   let open = $state(false);
   let checked = $state(false); // a save was tried: every mistake is shown where it is
@@ -177,14 +187,22 @@
     const connections = await api.get('/v1/connections').catch(() => null);
     if (connections) {
       sources = {
+        ...sources,
         mail: { ready: connections.gmail.connected, poll: connections.mail.poll_seconds },
         github: { ready: connections.github.connected && connections.github.repos.length > 0, poll: connections.github.poll_seconds },
         school: { ready: connections.moodle.connected || connections.auriga.connected, poll: connections.school?.poll_seconds ?? 900 },
       };
     }
+    await loadFeeds();
     await loadMemory();
     if (inspect) await showRuns(items.find((item) => item.id === inspect!.item.id) ?? inspect.item);
     if (seen) seen = (await api.get('/v1/trigger-events', { limit: 30 })).events;
+  }
+
+  // Whether there is a feed to look at (one call): the Feeds tab says when it changed the list, so the banner follows at once.
+  async function loadFeeds(): Promise<void> {
+    const followed = await api.get('/v1/feeds').catch(() => null);
+    if (followed) sources = { ...sources, feed: { ready: followed.feeds.length > 0, poll: followed.poll_seconds } };
   }
 
   async function loadMemory(): Promise<void> {
@@ -520,7 +538,7 @@
   {#each Object.entries(SOURCES) as [source, info] (source)}
     {#if watched(info.prefixes) && !sources[source].ready}
       <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Nothing to look at</span>
-        <span class="small">{info.missing} <a href="#/connections">Connections</a> page.</span></p>
+        <span class="small">{info.missing} <a href={info.href} onclick={(event) => { if (info.tab) { event.preventDefault(); tab = info.tab; } }}>{info.link}</a> {info.after}</span></p>
     {:else if watched(info.prefixes) && sources[source].poll === 0}
       <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />{info.label} polling is off</span>
         <span class="small"><code>{info.setting}</code> is 0 on the server, so no automation will start from it.</span></p>
@@ -837,8 +855,10 @@
       </table>
     </div>
   {/if}
-  {:else}
+  {:else if tab === 'sources'}
     <EventSources />
+  {:else}
+    <Feeds onchange={loadFeeds} />
   {/if}
 </div>
 

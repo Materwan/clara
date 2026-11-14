@@ -169,8 +169,9 @@ PACKS: tuple[Pack, ...] = (
     Pack(
         "automations",
         "Automations",
-        "Read, create, change and delete your automations. Every change asks you first.",
-        frozenset({"automation_list", "automation_create", "automation_update", "automation_delete"}),
+        "Read, create, change and delete your automations, and follow a feed for them. Every change asks you first, and a feed "
+        "is shown to you first.",
+        frozenset({"automation_list", "automation_create", "automation_update", "automation_delete", "feed_follow"}),
         where="chat",
         icon="play",
     ),

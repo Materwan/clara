@@ -64,7 +64,7 @@ you point at them and can be dismissed (an error stays 8 seconds; on a phone the
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects** and the **automations** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project or an automation shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A switch in the account menu, **Discord conversations** (on at first, kept in the browser), leaves out of the list what Discord started; a search and the pinned ones still show them. A conversation made by an automation's run belongs to that automation even when it has a project |
 | Memory (Settings) | The global memory's facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown. The memory of a project or an automation is on its own page |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel; the **Booked calls** tab: the tool calls Clara booked to run later (what each does, when, and how it ended), with **Cancel** for one that still waits |
-| Automation | One page for what Clara does by herself, unattended, with two tabs: **Automations** (what follows) and **Event sources** (see *Event sources*; `#/automation?tab=sources` opens it). One list (the name, the trigger in one line, the next time or the kinds of event, the last run and its status) and one form. **The form:** the name and what Clara does (**Run Clara** or **Only notify me**); **When: it starts a run when any of these happens**, a tree editor whose top is an Or of branches: **+ Event** (a kind of event, then a filter added field by field: a regular expression with the ticks *must not match* and *case-sensitive*, up to 5 conditions on a field with **+ condition**, a Yes/No control for a yes-or-no field), **+ Time** (*Once*: a date and time; *Window*: from, to, the weekdays; *Cron*, the advanced choice, with the engine's message on save) and **+ All of group** (one event with conditions of time, a window or a cron: a second event is refused on the spot, « An All of group holds at most one event: put two events in separate branches of the Or. »); the time zone; the tools and packs (without a list, a run started by a time can only notify you; an event gives its own read tools), the project, the model, documents, *Local only*; the result (a short notice to every client, Discord included, **Show in history**, **Tell me when a run ends**); and an **Advanced** fold (if a time was missed, the answers offered follow the tree: *digest* needs an event; if the last run is not over; the pace; cleaning up). The editor is flat: a trigger saved with an Or inside an All of group, or a date inside one (from a chat or the API), is shown in words and kept as it is until you replace it. **Test** (a button on each automation) opens a dialog that tries the trigger on a stored event or on a moment and shows, node by node, whether it holds and why, whether a run would start, the message Clara would receive, the tools and whether the run is tainted. **Runs** lists its runs (events, status, what happened, skipped ones included); **Run now**, **Pause**/**Resume**, **Close it** and **Answer** for a run that waits. Each item has a **Mode** selector, the mode its runs have (empty: its project's, else the default mode), and a **Memory** button that opens the facts it keeps (the scope `automation:<id>`); deleting an item says how many facts go with it. An automation that waits for an event source that was revoked says so on its line and in its form (a *Source revoked* tag; its kind is listed as *(revoked)* in the event select, and the form asks you to choose another event or remove the branch before it saves). Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, with the trigger written in words, and the tool has no mode field, so she cannot give an automation a mode: it gets the default mode, or its project's |
+| Automation | One page for what Clara does by herself, unattended, with three tabs: **Automations** (what follows), **Event sources** (see *Event sources*; `#/automation?tab=sources` opens it) and **Feeds** (see *Feeds*; `#/automation?tab=feeds` opens it). One list (the name, the trigger in one line, the next time or the kinds of event, the last run and its status) and one form. **The form:** the name and what Clara does (**Run Clara** or **Only notify me**); **When: it starts a run when any of these happens**, a tree editor whose top is an Or of branches: **+ Event** (a kind of event, then a filter added field by field: a regular expression with the ticks *must not match* and *case-sensitive*, up to 5 conditions on a field with **+ condition**, a Yes/No control for a yes-or-no field), **+ Time** (*Once*: a date and time; *Window*: from, to, the weekdays; *Cron*, the advanced choice, with the engine's message on save) and **+ All of group** (one event with conditions of time, a window or a cron: a second event is refused on the spot, « An All of group holds at most one event: put two events in separate branches of the Or. »); the time zone; the tools and packs (without a list, a run started by a time can only notify you; an event gives its own read tools), the project, the model, documents, *Local only*; the result (a short notice to every client, Discord included, **Show in history**, **Tell me when a run ends**); and an **Advanced** fold (if a time was missed, the answers offered follow the tree: *digest* needs an event; if the last run is not over; the pace; cleaning up). The editor is flat: a trigger saved with an Or inside an All of group, or a date inside one (from a chat or the API), is shown in words and kept as it is until you replace it. **Test** (a button on each automation) opens a dialog that tries the trigger on a stored event or on a moment and shows, node by node, whether it holds and why, whether a run would start, the message Clara would receive, the tools and whether the run is tainted. **Runs** lists its runs (events, status, what happened, skipped ones included); **Run now**, **Pause**/**Resume**, **Close it** and **Answer** for a run that waits. Each item has a **Mode** selector, the mode its runs have (empty: its project's, else the default mode), and a **Memory** button that opens the facts it keeps (the scope `automation:<id>`); deleting an item says how many facts go with it. An automation that waits for an event source that was revoked says so on its line and in its form (a *Source revoked* tag; its kind is listed as *(revoked)* in the event select, and the form asks you to choose another event or remove the branch before it saves). Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, with the trigger written in words, and the tool has no mode field, so she cannot give an automation a mode: it gets the default mode, or its project's |
 | Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Mode** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with and how many facts it remembers (and how many wait for you). Its **Memory** panel is the same list of facts as the Memory page, for this project only: add, edit, pin, confirm (a fact Clara saved after reading outside content waits there, hidden from every conversation, until you confirm it) and forget; deleting the project says how many facts go with it |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs). A file marked as coming from outside and not trusted is shown with its raw text and a note that says so (« This is the raw text of a file that came from outside. Clara reads it through a quarantined reader. ») |
@@ -312,7 +312,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   **QCM** (`qcm`: the quiz tool; chats only, off until you
   switch it on, and only the web chat shows a quiz), **Day conversations**, **Day activity**, **Files created**, **Daily
   notes**, **Automations** (chats only, off until you switch it on: Clara reads, creates, changes, pauses and deletes your
-  automations, see the Automation page; every change asks you first and an automation's run is never offered it),
+  automations, see the Automation page; every change asks you first and an automation's run is never offered it; and follows a feed
+  you named, after a request that shows it, see « Feeds » in section 5),
   **Booked calls** (off until you switch it on, in a chat or in the packs or the tools of an automation: Clara
   books a tool call to run later, see *Booked calls* in section 5), and, for the runs of automations only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
@@ -530,7 +531,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 An automation can wait for something that happens outside. Today that is a new message in the inbox of a connected Gmail mailbox
 (`mail.received`), a pull request opened, merged or closed in a GitHub repository you added (`github.pull_request`), a push to
 one of its branches (`github.push`) and, at Moodle and Auriga, a quiz that opens or closes, a new activity, a grade and a change of
-planning (the six school kinds below). A **kind of event** declares its fields (what a filter may look at), the tools a run may use
+planning (the six school kinds below) and, in the feeds you follow, a new item (`feed.item`, section 5, « Feeds »). A **kind of event** declares its fields (what a filter may look at), the tools a run may use
 when none are listed, the text of a notification, a noun for the sentences and whether what it carries is tainted: a new source
 adds a kind and nothing else changes (the engine knows no kind by name).
 
@@ -601,6 +602,11 @@ adds a kind and nothing else changes (the engine knows no kind by name).
     the far end of the 28 days is not new, and an empty answer, or one with entries left out, is not taken for a cancelled week.
   The Automation page says « Nothing to look at » when an automation waits for school events and neither Moodle nor Auriga is
   connected, and « School polling is off » when the setting is `0`.
+- **Feeds** (RSS and Atom: a YouTube channel, a blog, a podcast, arXiv): see « Feeds » below. The kind is `feed.item` (fields `feed`,
+  `title`, `author`, `link`, `summary`, all text; `web_fetch`, `web_search`), polled every `CLARA_FEEDS_POLL_SECONDS` (1800) only
+  while an enabled automation waits for it, one feed at a time.
+  The Automation page says « Nothing to look at » when an automation waits for feed items and no feed is followed (« An automation on feed
+  items has no feed to look at. Follow one on the Feeds tab. », the link switches to the tab), and « Feed polling is off » when the setting is `0`.
 - **Making one.** You write it (`/automations`, `POST /v1/automations`), or Clara does with the **Automations** pack of a chat
   (`automation_create`, `automation_update`, `automation_delete`: the gate asks you first, refuses it unattended and asks again
   after untrusted content whatever the mode approves, so a message cannot make an automation you did not read; an automation's own
@@ -714,8 +720,91 @@ unset` refuse them: revoke the source instead). It works on its own address and 
   **Latest events** lists the latest 20 of a source, with a note that their text was written by the sender. A token without scope `all`
   can look and send a test event to a source that is not trusted; **New source**, **New secret**, **Revoke** and the box are disabled for
   it, with a line that says why.
-- **Not built yet:** the second listener and Funnel, the GitHub webhook adapter (the HMAC proof), school events and feeds, and a
-  longer retention of the events of a source than the 30 days every event has (and at most 5,000 of them).
+- **Not built yet:** the second listener and Funnel, the GitHub webhook adapter (the HMAC proof), and a longer retention of the
+  events of a source than the 30 days every event has (and at most 5,000 of them).
+
+### Feeds: what a channel, a blog or a podcast publishes
+
+An automation can start from a **new item of a feed** (RSS 2.0, RSS 1.0 or Atom): a YouTube channel
+(`youtube.com/feeds/videos.xml?channel_id=…`), a blog, a podcast, arXiv. Not GitHub, which has its own kinds. A feed is a record you
+add (table `feeds`): the address of the feed itself, the title it had when you added it, when, the place the watcher had reached (the
+ETag and Last-Modified the site answered and the hashes of the keys of the latest 400 items seen, kept only while an automation waits),
+the time of the last look, the last error (fixed words, never a site's text) and how many items it made today. **50 feeds at most**
+(the constant `MAX_FEEDS`, not a setting: the 51st is refused with a 409, as a feed you follow already is).
+
+- **Adding one.** You paste the address of the feed itself, or of a page (a YouTube channel, a blog): Clara finds the feed **once,
+  when you add it**, and keeps its address (she never looks for it again). She tries, in this order: the feed itself, if the address
+  is one; the page's `<link rel="alternate" type="application/rss+xml">` or `application/atom+xml` (the first three it names are tried,
+  and the first that reads as a feed wins); for a YouTube channel, `/channel/UC…` builds `https://www.youtube.com/feeds/videos.xml?channel_id=UC…`
+  with no page read, and `/@handle`, `/c/…`, `/user/…` are read and the channel id found in their `<link>` or metadata (the id is
+  believed only on youtube.com, and only in the form `UC` and 22 characters); and **only if the page names no feed**, six well-known
+  paths of its site (`/feed`, `/rss`, `/rss.xml`, `/atom.xml`, `/feed.xml`, `/index.xml`). No other address is guessed. **Before you
+  confirm, `POST /v1/feeds/find` shows the feed's title and its latest five items** and stores nothing; `POST /v1/feeds` looks again
+  and stores the feed (the first look of the first poll only notes where the feed stands: no event, however many items it holds).
+- **The same guard as `web_fetch`.** Every address asked, the one you paste, each redirect, every feed address a page names and each
+  well-known path, goes through the guard of section 8: public addresses only (no loopback, private, link-local or tailnet address; a name is
+  resolved and every address it has must be public; the connection goes to the address that was checked), at most five redirects, each
+  checked again, a login in an address refused. On top: at most 2 MB read from an address (a feed that is larger is refused, not cut), 15
+  seconds for one address and 40 for the whole search for a feed. A page may name 10,000 links: only its first 100 `<link>` tags are
+  read and the first three feed addresses tried; a feed link to `localhost` or to a private address is no feed.
+- **What is read from a feed.** RSS 2.0, RSS 1.0 (RDF) and Atom (a YouTube feed's description is read from `media:group`). The XML is read
+  by `expat` with **no entity expanded**: a document with a DOCTYPE of any kind (a billion-laughs document, an external entity, an old RSS
+  0.91 header) is refused as soon as the parser meets it, one with more than 100,000 elements or more than 20 levels is refused, and so
+  is one that is not well-formed XML (nothing is repaired: an undefined entity such as `&nbsp;` makes a feed unreadable). JSON Feed is
+  not read. 200 items at most are looked at. An item is cut: a title to 300 characters, an author to 200, a link to 500 (and only
+  `http` or `https`; a longer one is dropped, not cut), a summary to 2,000 after its markup is dropped (the cleaner of mail:
+  no hidden characters). **Nothing in a feed is ever fetched**: an enclosure, an image and a link are text. An item is told apart by its
+  guid, else its link, else a hash of its title and date, so an edited title is not a new item.
+- **Polling.** Every `CLARA_FEEDS_POLL_SECONDS` (`0` never; 60 at least), **only while an enabled automation waits for `feed.item`**; with
+  none, no feed is asked and no place is kept. One feed at a time, never in parallel, the one looked at longest ago first, one second
+  between two, the whole poll stopped after 600 seconds (what was not reached is looked at first at the next poll). Each feed is asked
+  again with **`If-None-Match` (its ETag) and `If-Modified-Since`**: a 304 costs nothing and changes nothing but the time of the look. The
+  **first look only notes where the feed stands** (the keys of the items it holds): no event, and a feed that was not waited for while
+  you were away starts afresh. An item whose key was not seen is an event, **dated the item's own date when that is sane** (not in the
+  future; else the time of the look) and **not older than the first look** (an hour of grace, since sites publish late: an old item that
+  came back into the feed is noted as seen, not announced). **At most 20 events from one feed in a poll** (the newest; the others are noted as
+  seen and said in the log). The event's key is `feed:<feed id>:<hash of the item's key>`, so a replay is one event. The place moves in the
+  same transaction as the events and the runs they plan. An item found within an interval and an hour after its date is on time; one found
+  later (the server was off) is a backlog for the automation's `catch_up`. A feed that fails says why in `last_error`, in fixed words
+  (« The site answered HTTP 500. », « The address is not a public one. », « It is not a feed (RSS or Atom). », « The feed is too large. »…), is
+  logged once per distinct message and tried again at the next poll. **After many failures nothing special happens**: no alert; the error
+  stays on the feed.
+- **The kind.** `feed.item`, fields `feed` (the title it had when you added it), `title`, `author`, `link` and `summary`, all text, all
+  written by the feed's publisher. The notification text is `{feed}: {title}`. It is **tainted**: a run it starts is tainted from its first
+  word, shown inside the untrusted `<event>` block like a GitHub event, and has only `notify` and the kind's read tools, `web_fetch` and
+  `web_search`, unless the automation lists more. What an item says **does not go through the quarantined reader** (as GitHub text does not);
+  a run reads the item's page only through `web_fetch`, which does. A source of events can never make a feed trusted.
+- **The routes.** `GET /v1/feeds` (any token), `POST /v1/feeds/find`, `POST /v1/feeds` and `DELETE /v1/feeds/{feed_id}` (a token with the
+  approval scope `all`, as for a mode: a script and the Discord bot may only list, since the server fetches the address you give).
+- **From a chat.** With the Automations pack on, Clara may propose a feed (« follow this channel ») with **`feed_follow`**: the request (class
+  `feed_follow`) shows the feed she found, its address and its **latest five titles**, each on a line of its own, in quotes, cut, with
+  nothing that could close the quotation (the same rule as a mail's subject), so a page cannot make her follow something you did not
+  see. The class asks in the default mode, **also after untrusted content, and a default never approves it** (a mode you make may);
+  a local-only conversation refuses it (it leaves the machine); a booked call cannot do it, and a run is never offered the pack. Looking is a fetch,
+  so it is made only where `web_fetch` of that address would run with no card in that conversation: in a turn that read untrusted
+  content, an address nobody gave is not looked at, and Clara is told to ask you for it. When you allow it, the feed is found again and
+  added exactly as the page adds it, and **only if it is the feed the request showed**. The card shows the summary as it is, a line at a time
+  (`Follow the feed "<title>" [<address>]`, `Its latest items:`, then ` - "<title>" [<date>]`), and never offers « Approve all next »: each feed is read.
+  The tool line in the chat reads « Followed a feed » with the address.
+  Clara has no tool to remove a feed or to list yours.
+- **The page.** The **Feeds** tab of the Automation page (`#/automation?tab=feeds`) has **one input and a Find button** (« Paste the address of a
+  feed, or of a page (a YouTube channel, a blog) »): Find calls `POST /v1/feeds/find`, shows progress while it runs, and shows under the input
+  the server's fixed sentence when no feed is found (« No feed was found at this address. », « The address is not a public one. »…).
+  **Nothing is stored by Find: a preview card** shows the feed's title, its **real address** (« Found at » when it is not the address you pasted,
+  « Address » when it is), its latest items (each title as plain text with its date: « 5 min ago » within a week, else the day, else « no date ») and
+  **Follow** and **Cancel**. **Follow** sends the **address the feed was found at** (`feed_url`, not what was pasted) to `POST /v1/feeds`; the card goes,
+  the list refreshes and a toast says « Following <title> »; a 409 (« You follow this feed already. », « At most 50 feeds: remove one first. ») is
+  shown on the card. **Followed (N of 50)** lists each feed with its title, its address (cut in the middle when long, the whole one as its
+  `title`, wrapping on a phone), « checked 12 min ago » or « not checked yet » (the exact time as its `title`), « N new today », « waits for an
+  automation » when none waits for it (a feed is read only while one does), the fixed words of its last error as a warning line, and **Remove**
+  (a question first: « Automations that wait for feed items stay; this feed stops being read. »). An invitation shows with no feed, a line when
+  `CLARA_FEEDS_POLL_SECONDS` is `0`, and a note that the Shorts of a channel cannot be told apart. **Everything a feed wrote (its title, its items) is
+  shown as plain text**, never as a link or as markup. A token without the approval scope `all` can read the list but not use Find, Follow or
+  Remove (the input and the buttons are disabled with a line saying why; a 403 says « This token may not add feeds. »).
+- **Limits.** The Shorts of a channel are in its feed and cannot be told apart reliably. A search by name, an OPML file and a YouTube
+  subscription import are not built. YouTube may answer a channel page from some servers with a consent page and no channel id: then paste the
+  `/channel/UC…` address. A compressed answer is expanded by the HTTP client a network chunk at a time before the 2 MB cap is counted (as
+  for `web_fetch`). Not tried against a real site: only stand-ins.
 
 ## 6. Knowledge
 
@@ -1033,7 +1122,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
   added still decides it; the server says so in its log.
 - **The built-in copy** (and the shipped file): each class decided as its thresholds were at level 3, and the classes the tainted-turn
   rule raised (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`, `run_network`,
-  `automation`, `deferred`, `fetch_other`) get an `(if tainted)` verdict of at least `ask`:
+  `automation`, `deferred`, `feed_follow`, `fetch_other`) get an `(if tainted)` verdict of at least `ask`:
 
 | Action class | Normal turn | When tainted |
 | --- | --- | --- |
@@ -1064,6 +1153,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 | `discord`: Open, write in or remove a Discord thread | refuse | same |
 | `automation`: Create, change or delete an automation | refuse | same |
 | `deferred`: Book a tool call to run later: the request shows the whole call and its date, and the call is run then, not asked again | ask | same |
+| `feed_follow`: Follow a feed (RSS or Atom): the request shows the feed that was found and its latest titles, so a page cannot make Clara follow one you did not see | ask | same |
 | `discord_forget`: Delete a conversation, a project or an automation because its Discord thread or forum was deleted | refuse | same |
 | `folder_read`: Read a folder on your computer (a web chat): list, find, search, or read a file that is not hidden or ignored | approve | same |
 | `folder_sensitive`: Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat | ask | same |
@@ -1098,7 +1188,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
   tainted too (also after a marked file of the workspace, or a script that ran with the network, was read), and each tool gets the
   `(if tainted)` verdict of its line. The default mode asks at least for outside-world writes (`github_write`, `drive_write`,
   `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked scripts (`run_network`), changes to your automations
-  (`automation`), booked calls (`deferred`) and the fetch of an address nobody gave (`fetch_other`) then; to run one with no card after
+  (`automation`), booked calls (`deferred`), a feed to follow (`feed_follow`) and the fetch of an address nobody gave (`fetch_other`) then; to run one with no card after
   outside content, give that tool the `(if tainted)` verdict `approve` in a mode, one tool at a time.
 
 ### The test box
@@ -1152,7 +1242,8 @@ a comment. It writes nothing: you read it and install it (docs/OPERATIONS.md).
   pressed on, any number of calls, and needs no page to stay open. It answers the plain `ask` of the conversation's mode and nothing
   else: where the mode refuses a call it does nothing (a refusal is final), where it approves there is nothing to answer, and in a
   tainted turn it only answers a tool whose `(if tainted)` verdict is `ask`. It never covers the secret check (content that looks
-  like a secret leaving the machine), only turns of the web, never an unattended run, and it writes no rule. A banner at the foot
+  like a secret leaving the machine), only turns of the web, never an unattended run, never a request of the class `feed_follow` (the
+  card has no button and `POST /v1/approvals/{approval_id}/grant` answers 422: each feed is read), and it writes no rule. A banner at the foot
   of the page shows the tool, the time left and **Stop**; it ends after `approve_all_minutes` (the Admin page,
   Settings tab), on **Stop**, or when the server restarts. Pressing it in another conversation never carries it over. The page reads
   what is on and what ended with `GET /v1/conversations/{id}/grants`.
@@ -1166,7 +1257,7 @@ the arguments (never the arguments themselves), the effect, the outcome and a de
 
 ## 10. Tools
 
-89 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+90 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -1206,7 +1297,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `present` | Hand a file over to you at the end of her answer, as a card under it. She names it as a workspace path (`reports/plan.md`), `vault:<note>` (a note of the second brain, once it is open in the conversation) or `drive:<file id>` (a Google Drive file she may use: an **Open in Drive** link on Google's own address, made from the id; no download through this server). The file is not read and its content never reaches the model, nor does a name that came from Drive. A workspace file may be one she wrote in the conversation, or any regular file of the workspace once the **Files created** pack is on for the conversation (that pack is the grant); a folder, a link or a file over `CLARA_WORKSPACE_MAX_FILE` is refused. 5 per answer | read (target `ws:<path>` or `vault:<note>`, so a line of a mode on a path applies as it does to `ws_read` and `vault_read`); drive_read for a Drive file (target `drive:<id>`) |
 | `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
 | `web_search` | Search the web (Brave, else SearXNG); the results are gists by the quarantined reader — untrusted | web_search / read |
-| `web_fetch` | Read a web page: a quarantined reader's report of it (`focus`: what to look for) — untrusted | fetch_trusted or fetch_other / read |
+| `web_fetch` | Read a web page: a quarantined reader's report of it (`focus`: what to look for) — untrusted. An address counts as one you wrote (`fetch_trusted`) when it is in your message, or, in a run an automation started, in the automation's own prompt and documents: **an address inside an event's block (a feed item's link or summary, a mail's snippet, a GitHub text, what a source sent) is `fetch_other`** | fetch_trusted or fetch_other / read |
 | `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted (pack GitHub) | github_read / read |
 | `github_write` | Commit a file change (create, overwrite, append, delete) (pack GitHub) | github_write / write or destructive |
 | `github_branch` | Create or delete a branch (pack GitHub) | github_write / write or destructive |
@@ -1247,6 +1338,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `automation_create` | Make an automation: one `when` argument, the trigger as the tree of the form in JSON (events with their filters `{pattern, not, case_sensitive}`, `cron`, `once`, `window`, `and`, `or`), and every other setting of the Automation page. The code of the API checks it first and tells Clara what is wrong before you are asked. It asks you first, with the whole automation and its trigger in words on one line in the request; refused unattended; asks again in a tainted turn when the mode's `(if tainted)` verdict says so (the default mode's does). Made in a local-only conversation, it is local only | automation / write |
 | `automation_update` | Change one, or pause or resume it; the request lists what changes (`old → new`). `when` replaces the trigger (the request says `when: before → after` in words). The limits on its conversations (`keep_days` with `keep_hours`, `keep_last`; `-1` follows the setting) are changed here too, and the request says how many conversations they would delete at the next pass; if more would be deleted by the time you allow it, nothing is changed and Clara asks again | automation / write |
 | `automation_delete` | Delete one with its history (to stop it for a while, pause it) | automation / destructive |
+| `feed_follow` | Follow a feed (RSS or Atom) from the address of the feed or of a page (pack Automations; chats only). The request shows the feed found, its address and its latest five titles, one line each; nothing is followed until you allow it, also after untrusted content; refused in a local-only conversation; cannot be booked. Clara has no tool to remove or list feeds | feed_follow / write |
 | `deferred_book` | Book a tool call to run later, by itself: a tool, its arguments and a date. You read the whole call and allow it once; a mode that refuses it, the floor and the local-only rule still apply when it is due (pack Booked calls) | deferred / the level of the booked call |
 | `deferred_list` | The booked calls that wait and the latest ones that ended, with their numbers; the summary of a local-only call is shown only to a local-only conversation (pack Booked calls) | read |
 | `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
@@ -1496,6 +1588,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
 | `CLARA_GITHUB_POLL_SECONDS` | `120` | How often the added repositories are looked at for automations on pull requests and pushes (only while one waits for them); `0` never; 30 at least |
 | `CLARA_SCHOOL_POLL_SECONDS` | `900` | How often Moodle and Auriga are looked at for automations on school events (only while one waits for them, only a connected site whose sign-in works); `0` never; 60 at least |
+| `CLARA_FEEDS_POLL_SECONDS` | `1800` | How often the feeds you follow are looked at for automations on their new items (only while one waits for them, one feed at a time); `0` never; 60 at least |
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
 | `CLARA_TAILSCALE_BIN` | tailscale | The tailscale binary |
@@ -1645,6 +1738,10 @@ keep-alive every 15 s.
 | `POST /v1/event-sources/{source}/rotate` | A new secret, shown once; the old one stops at once (scope `all` only) |
 | `POST /v1/event-sources/{source}/fire` | An event from this machine, with your API token and no secret; the same body, answers and limits as the public route, stored and handled the same way. For a **trusted** source only a token with scope `all` (403 otherwise) |
 | `GET /v1/event-sources/{source}/events` | The latest events of a source (`limit`) |
+| `GET /v1/feeds` | The feeds you follow (id, `url`, `title`, `added_at`, `checked_at`, `error`, `today`, `watching_since`), with `limit` (50) and `poll_seconds`; any token |
+| `POST /v1/feeds/find` | `url`: the address of a feed or of a page; the feed found, `{feed_url, title, items: [{title, link, published}]}` (the first 5), nothing stored; a 422 says why there is none, in fixed words (scope `all` only: the server fetches the address) |
+| `POST /v1/feeds` | `url`: add the feed (it is found again and its own address stored); 201 `{feed}`; 409 for a feed you follow already and for the 51st (scope `all` only) |
+| `DELETE /v1/feeds/{feed_id}` | Stop following a feed; its place goes, the events it made stay their 30 days (scope `all` only) |
 | `POST /v1/notifications` | Notify yourself |
 | `GET /v1/projects` | Projects |
 | `POST /v1/projects` | Create one (`packs`: the special tools its new conversations start with, web search by default) |

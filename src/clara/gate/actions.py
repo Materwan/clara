@@ -82,6 +82,12 @@ CLASSES: dict[str, tuple[str, str, str]] = {
         "all",
         "Book a tool call to run later: the request shows the whole call and its date, and the call is run then, not asked again",
     ),
+    "feed_follow": (
+        "any_read",
+        "all",
+        "Follow a feed (RSS or Atom): the request shows the feed that was found and its latest titles, so a page cannot make "
+        "Clara follow one you did not see",
+    ),
     "discord_forget": (
         "mail",
         "all",
@@ -102,6 +108,9 @@ CLASSES: dict[str, tuple[str, str, str]] = {
 CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
 # Classes an approval card may allow for the rest of its conversation ("Allow for this conversation")
 FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
+# Classes whose card never offers "Approve all next": what the request shows (a feed, with its latest titles) is chosen by a page, so
+# each one must be read; a grant would let a page have the next ones followed unseen
+NOT_GRANTABLE = frozenset({"feed_follow"})
 # Classes whose requests are not published as events: their summary names a file of the person's computer, which must
 # not reach Discord's #approval or another client; the web chat shows them on its turn
 NOT_PUBLISHED = frozenset({"folder_sensitive"})
@@ -118,6 +127,7 @@ RAISED_WHEN_TAINTED = frozenset(
         "run_network",
         "automation",
         "deferred",
+        "feed_follow",
         # an address neither the person wrote nor a search returned: its host and path can carry text out (2026-10-31)
         "fetch_other",
     }
@@ -153,6 +163,7 @@ LEAVES_MACHINE = OUTSIDE | frozenset(
         "school_save",
         "vault_destroy",
         "discord",
+        "feed_follow",  # it asks the feed's site, and a page's, for what it has
     }
 )
 

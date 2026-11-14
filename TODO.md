@@ -97,26 +97,17 @@ What the owner decided:
     bearer secret, their address and the local callers are built (`automations/sources.py`; the `proof` column is ready for it).
   - **GitHub webhooks** (an adapter for the kinds that exist: `github.push`, `github.pull_request`, same fields, `ping` answered, the delivery
     id as the key, an answer within 10 seconds, so the body is stored and `202` sent before anything runs).
-- **C. Feeds** (`feed.item`, RSS and Atom, fields `feed`, `title`, `author`, `link`, `summary`) for what is not covered above: YouTube
-  channels (`youtube.com/feeds/videos.xml?channel_id=…`), blogs, podcasts, arXiv. Not GitHub (it has its own kinds). Feeds are fetched with
-  the same guard as `web_fetch` (public addresses only, redirects checked, size and time capped), read with a parser that does not expand
-  entities, and asked again with `ETag` and `If-Modified-Since`. `CLARA_FEEDS_POLL_SECONDS`.
 - **A second port for external events.** Clara starts a second listener on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`) that mounts
   `POST /v1/events/<source id>` and nothing else: no `/v1` route, no web site, no console. `tailscale funnel` publishes only that
   listener on a public port (`CLARA_EVENTS_PORT`: 8443 or 10000, never the port of `tailscale serve`). The main listener and `tailscale
   serve` stay as they are, inside the tailnet. Off by default (`CLARA_EVENTS=off`): an installation that does not turn it on is
   exactly as it is today.
 
-- **Adding a feed:** by pasting the address of the feed, or the address of a page (a YouTube channel, a blog): Clara finds the feed once, when
-  you add it, and keeps its address. Before you confirm she shows the feed's title and its latest items. She may also propose a feed from a
-  chat (« follow this channel »): that is an approval card that shows the feed she found and its latest titles, so a page cannot make her
-  follow something unseen. At most 50 feeds (a setting). Not retained for now: a search by name, and an OPML or YouTube subscription import.
-  The Shorts of a channel are in its feed and cannot be told apart reliably.
-
 What I corrected or added to the owner's plan:
 
-- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): feeds (C); the event sources
-  with bearer secrets and the local callers (A, minus the public door) and the school watcher are built. Phase 2: the second listener, Funnel, and the GitHub
+- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): the event sources
+  with bearer secrets and the local callers (A, minus the public door), the school watcher and the feeds (C: the server side and the third tab of
+  the Automation page) are built. Phase 2: the second listener, Funnel, and the GitHub
   webhook adapter. Of everything above, only a service of the Internet that calls Clara needs Phase 2.
 - **A webhook and the poll of the same repository would both produce an event** (their keys differ: the poll's is
   `owner/repo#12:opened:<time>`, a delivery's is its id). When a repository has a GitHub webhook, its poll is turned off, or the two keys
@@ -132,13 +123,6 @@ What I corrected or added to the owner's plan:
   Funnel before this is relied on.
 - **A GitHub webhook needs a step of yours:** adding it in the repository's settings with its address and secret. The token Clara has
   does not need the right to create one. Funnel itself needs `funnel` in your tailnet's ACL (`nodeAttrs`), which only you can set.
-
-Not decided:
-
-- The polling interval of the feeds (the default).
-- How `automation_create` carries a feed (a source of events is chosen with the same `when` as any kind, and `automation_list` names the ones that exist: built; the gate asks first, as it does today).
-- The look of the feeds (their preview, and the form that adds one: a third tab of the Automation page, beside Event sources): the owner will
-  see a design first. The event sources have theirs (the second tab of the Automation page: built).
 
 What the current design already sets:
 

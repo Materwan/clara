@@ -176,6 +176,10 @@ class ChatRequest:
     wait_for_approvals: bool = True  # a chat waits for your answer to an approval request (False: it is pushed)
     tainted: bool = False  # the turn starts as if it had read untrusted content (a run an outside event started)
     only_tools: tuple[str, ...] = ()  # names or globs: the only tools offered to the turn (an automation's allow-list)
+    # The part of the message that the person wrote (None: all of it). Only the addresses in it are ones the person wrote, which
+    # `web_fetch` reads without asking, and what is in it may be searched for. An automation run gives its own prompt: what an
+    # event carries (a link, a summary, a mail's gist, a GitHub text) was written by someone else.
+    trusted_text: str | None = None
     ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
     # What the Discord mirror shows in place of the message (an automation run's origin). The model is given, and the
     # conversation stores, the whole message: this changes what is displayed, not what Clara reads.
@@ -700,11 +704,18 @@ class Agent:
             plan.hidden -= CONVERSATION_FILE_TOOLS if self.s.conversation_files.of(conversation.id) else set()
         schemas, names = self._offered(request, plan)
         client_tools = {schema["function"]["name"] for schema in request.tools}
-        state.trusted_urls |= urls_in(request.message)  # addresses you wrote: web_fetch reads them without asking
-        state.private.allow(request.message)  # what you wrote, you may search for (egress.py)
+        written = request.message if request.trusted_text is None else request.trusted_text
+        state.trusted_urls |= urls_in(written)  # addresses you wrote: web_fetch reads them without asking
+        state.private.allow(written)  # what you wrote, you may search for (egress.py)
+        # what the server said in the conversation of an automation run (the run's message, with its events) is not the person's words
+        of_a_run = (
+            conversation is not None and self.s.packs is not None and self.s.packs.run_of(conversation.id) is not None
+        )
         if conversation is not None:
             for message in self.s.conversations.history(conversation.id, 30, conversation.summary_upto):
                 if message.role == "user":
+                    if of_a_run and message.client == "server":
+                        continue
                     state.trusted_urls |= urls_in(message.content)
                     state.private.allow(message.content)
                 elif message.role == "tool" and not self._public_tool(message.tool_name):

@@ -123,6 +123,12 @@ def _document(doc: dict) -> str:
     return f'<document name="{name}" type="text">\n{fence}\n{doc["text"].rstrip()}\n{fence}\n</document>'
 
 
+def owner_text(automation: Automation) -> str:
+    """What the owner wrote in the message of a run: the automation's prompt and the documents attached to it. The events that
+    come after are written by someone else, so an address in one is not an address the person wrote (`ChatRequest.trusted_text`)."""
+    return "\n\n".join([automation.prompt, *(doc["text"] for doc in automation.documents)])
+
+
 def message_of(
     automation: Automation, events: list[StoredEvent] | None = None, quiet: Mapping[int, Gist] | None = None
 ) -> str:

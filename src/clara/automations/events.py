@@ -1,8 +1,9 @@
 """What happened (an event) and the kinds of event that exist.
 
 A *source* (the mailboxes, polled by connectors/mail_watch.py; GitHub repositories, polled by connectors/github_watch.py; Moodle
-and Auriga, polled by connectors/school_watch.py) finds events and hands them to `Automations.ingest`. An event is stored once:
-(source, key) is unique, so the same one seen twice, after a restart or a replay, is one event.
+and Auriga, polled by connectors/school_watch.py; the feeds you follow, polled by connectors/feeds.py) finds events and hands
+them to `Automations.ingest`. An event is stored once: (source, key) is unique, so the same one seen twice, after a restart or a
+replay, is one event.
 
 A kind declares its own fields (what a filter may look at), the tools a run may use when the automation lists none, the text
 of a notification, and whether what it carries is tainted (written by someone else). The engine knows no kind by name: a
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class SourceEvent:
-    source: str  # mail, github, moodle, auriga
+    source: str  # mail, github, moodle, auriga, feed
     kind: str  # mail.received, github.pull_request
     key: str  # stable inside the source: gmail:<message id>, owner/repo#12:opened:<time>
     occurred_at: str  # when it happened, ISO UTC (the time a mail was received)
@@ -159,6 +160,16 @@ KINDS: dict[str, EventKind] = {
         ("school_calendar",),
         "{date} {title}: {change} ({details})",
         noun="a change of planning",
+    ),
+    # Feeds (connectors/feeds.py): every field was written by the feed's publisher, a stranger. Its read tools: the item's link is read
+    # with `web_fetch`, through the quarantined reader; the text of the item itself is not (as GitHub's is not).
+    "feed.item": EventKind(
+        "feed.item",
+        "A new item in a feed you follow (RSS or Atom: a YouTube channel, a blog, a podcast, arXiv)",
+        {"feed": "text", "title": "text", "author": "text", "link": "text", "summary": "text"},
+        ("web_fetch", "web_search"),
+        "{feed}: {title}",
+        noun="a new feed item",
     ),
 }
 NOTIFY = "notify"

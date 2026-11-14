@@ -227,6 +227,37 @@ answers one more field, `lapses`.
   and a failing site does not stop the other.
 - **The Automation page says « Nothing to look at »** for an automation on school events when neither Moodle nor Auriga is connected, and
   « School polling is off » when `CLARA_SCHOOL_POLL_SECONDS` is `0`. `GET /v1/connections` carries `school.poll_seconds`.
+- **Feeds: an automation can wait for a new item of a feed.** A new kind, `feed.item` (`feed`, `title`, `author`, `link`, `summary`, all
+  text), for what GitHub and school do not cover: a YouTube channel, a blog, a podcast, arXiv (RSS 2.0, RSS 1.0 and Atom). A feed is a record you
+  add (at most 50): **`POST /v1/feeds/find`** shows the feed found at the address of a feed or of a page, its title and its latest five
+  items, and stores nothing; **`POST /v1/feeds`** adds it; `GET /v1/feeds` lists (any token) and `DELETE /v1/feeds/{id}` removes. Clara finds
+  the feed **once, when you add it**, and keeps its address: the page's `<link rel="alternate">`, a YouTube channel's id, and a few well-known
+  paths only when the page names none. Looking and changing need a token that may answer every request. Schema version 35 adds `feeds`.
+- **A poll every `CLARA_FEEDS_POLL_SECONDS`** (new, 1800; `0` never; 60 at least), only while an enabled automation waits for `feed.item`,
+  one feed at a time, with `If-None-Match` and `If-Modified-Since` (a 304 changes nothing). The first look only notes where the feed
+  stands; an item is new when its guid (else its link, else a hash of its title and date) was not seen; an item dated before the first look is
+  not news; at most 20 events from a feed in a poll. A feed that fails says why in fixed words and is tried again; no alert.
+- **A feed is read as a stranger's document.** Every address goes through the guard of `web_fetch` (public addresses only, redirects
+  checked, size and time capped: its loop is now `Web.get`, and `web_fetch` also gets a limit of 60 seconds for a whole answer). The XML
+  is read with no entity expanded: a document with a DOCTYPE, more than 100,000 elements or 20 levels, or over 2 MB is refused. Titles,
+  authors, links and summaries are cut and cleaned, and nothing in a feed is ever fetched.
+- **Clara may propose a feed from a chat.** The new tool `feed_follow` (pack Automations, chats only, off by default) makes a request that
+  shows the feed she found, its address and its latest titles, so a page cannot make her follow something you did not see. The new class
+  `feed_follow` asks in the default mode also after untrusted content, a local-only conversation refuses it, and what is followed is the
+  feed the request showed. She has no tool to remove or list feeds. A feed event is tainted: its run has `notify`, `web_fetch` and `web_search`
+  unless the automation lists more.
+- **The Automation page has a third tab, Feeds** (`#/automation?tab=feeds`). One input takes the address of a feed or of a page (a YouTube
+  channel, a blog); **Find** shows a preview, storing nothing: the feed's title, its real address (« Found at » when it is not the one you
+  pasted) and its latest items; **Follow** stores the feed found, **Cancel** drops the preview. The list shows each feed with its address,
+  « checked 12 min ago » or « not checked yet », « N new today », « waits for an automation » when none waits for it, the fixed words of its last
+  error, and **Remove** (it asks first). What a feed wrote is shown as plain text, never as a link. A token without the approval scope `all`
+  can read the list only. The banner « Nothing to look at » now covers feeds (no feed is followed), with a link to the tab.
+- **The `feed_follow` request reads as it is written** (its title, address and latest items on separate lines) and the chat's tool line
+  says « Followed a feed ».
+- **An address inside an event is no longer one you wrote** (every kind of event: a feed item, a mail, a GitHub text, a source). In a run
+  an automation started, only the addresses of the automation's own prompt and documents are read by `web_fetch` without asking; one in the
+  `<event>` block asks in a tainted run, and so does one in what the server said earlier in the run's conversation. A message you type is
+  unchanged. The `feed_follow` card no longer offers « Approve all next » (`POST /v1/approvals/{id}/grant` answers 422 for it).
 
 ## v1.5.1 — 04/11/2026
 

@@ -34,7 +34,7 @@ from ..auth.tokens import TokenInfo
 from ..db import Database
 from ..events import TARGETS, Events
 from ..timeutil import iso, now_iso, parse_iso, utcnow
-from .actions import FOR_A_CONVERSATION, NOT_PUBLISHED, Action, Decision, Situation
+from .actions import FOR_A_CONVERSATION, NOT_GRANTABLE, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
 from .outside import plain
 
@@ -52,9 +52,9 @@ FOLLOWUP_DELAY = 3.0  # answers given within this long make one follow-up turn
 MAX_PENDING = 10  # requests one conversation may have waiting
 RESULT_SHOWN = 300
 SUMMARY_SHOWN = 500
-# classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation) or
-# be run later (a booked call)
-SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000}
+# classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation), be run
+# later (a booked call) or be followed (a feed, with its address and its latest titles)
+SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000, "feed_follow": 2_000}
 FREE_TEXT = (
     "mail_send",
     "automation",
@@ -125,8 +125,12 @@ class Approval:
 
     @property
     def grantable(self) -> bool:
-        """Can « Approve all next » be pressed on this request? (any request of a chat)"""
-        return bool(self.conversation_id) and self.situation.startswith("interactive")
+        """Can « Approve all next » be pressed on this request? (any request of a chat, but a feed to follow: each is read)"""
+        return (
+            bool(self.conversation_id)
+            and self.situation.startswith("interactive")
+            and self.action_class not in NOT_GRANTABLE
+        )
 
     @property
     def local_only(self) -> bool:

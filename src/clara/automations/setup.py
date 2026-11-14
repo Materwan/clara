@@ -12,7 +12,7 @@ from ..events import delivery
 from ..llm.retry import retryable
 from ..timeutil import zone
 from .events import StoredEvent
-from .message import CLOSING, DIGEST_SHOWN, instructions_of, message_of, shown_of
+from .message import CLOSING, DIGEST_SHOWN, instructions_of, message_of, owner_text, shown_of
 from .service import Automation, Stopping
 
 if TYPE_CHECKING:
@@ -124,6 +124,7 @@ async def run_automation(
         model=automation.model or None,
         tainted=s.automations.is_tainted(events),
         only_tools=only_tools,
+        trusted_text=owner_text(automation),  # not the events: they were written by someone else
     )
     attempt = 1
     while True:

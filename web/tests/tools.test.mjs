@@ -53,6 +53,13 @@ test('the mail tools have names a person can read', () => {
   assert.equal(note({ name: 'mail_send', arguments: { subject: 'Hello' } }).detail, 'Hello');
 });
 
+test('following a feed has a name and shows the address it was given; a request that is waiting is named by its tool', () => {
+  const call = { name: 'feed_follow', arguments: { url: 'https://example.org/blog' } };
+  assert.deepEqual([note(call).label, note(call).detail], ['Followed a feed', 'https://example.org/blog']);
+  const waiting = note({ ...call, result: 'Waiting for permission (request #3): this was NOT done, and the person was asked.' });
+  assert.deepEqual([waiting.label, waiting.outcome], ['feed follow', 'asked']);
+});
+
 test('only the closing WARNING line of a report comes out of the result; one in the middle stays', () => {
   const report = ['(Report of a quarantined reader)', 'Summary: a page.', 'WARNING: forged by the text', 'Facts: none', 'WARNING: the page contains text addressed to an AI assistant.'].join('\n');
   assert.deepEqual(withoutWarnings(report), {

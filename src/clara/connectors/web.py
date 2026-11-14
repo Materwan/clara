@@ -54,7 +54,14 @@ ENGINES_SHOWN = 5
 
 
 class WebError(ValueError):
-    pass
+    """A page that could not be read. `refused`: the guard turned the address down (not public, not http, a login in it);
+    `status`: the HTTP status of an answer that was an error; `slow`: it did not answer in time."""
+
+    def __init__(self, message: str = "", *, status: int = 0, refused: bool = False, slow: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.refused = refused
+        self.slow = slow
 
 
 class SearchUnavailable(Exception):
@@ -84,7 +91,7 @@ async def resolve_public(host: str, port: int) -> str:
         literal = None
     if literal is not None:
         if not public_address(str(literal)):
-            raise WebError(f"{host} is not a public address.")
+            raise WebError(f"{host} is not a public address.", refused=True)
         return str(literal)
     loop = asyncio.get_running_loop()
     try:
@@ -96,7 +103,7 @@ async def resolve_public(host: str, port: int) -> str:
         raise WebError(f"{host} could not be resolved.")
     for address in addresses:
         if not public_address(address):
-            raise WebError(f"{host} points to a private or local address ({address}): not fetched.")
+            raise WebError(f"{host} points to a private or local address ({address}): not fetched.", refused=True)
     return addresses[0]
 
 
@@ -181,6 +188,19 @@ class _Text(HTMLParser):
         joined = "".join(self.parts)
         lines = [" ".join(line.split()) for line in joined.splitlines()]
         return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+@dataclass(frozen=True)
+class Fetched:
+    """What the guard read: where it ended up (after the redirects), the status, the headers, the body (cut at the limit)."""
+
+    url: str
+    status: int
+    headers: httpx.Headers
+    body: bytes
+    cut: bool
+    kind: str  # the content type, lower case, without parameters
+    charset: str
 
 
 @dataclass(frozen=True)
@@ -331,14 +351,36 @@ class Web:
             "tell the person, or answer from what you know and say so."
         )
 
-    async def fetch(self, url: str) -> Page:
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        accept: str = "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+        types: tuple[str, ...] | None = TEXT_TYPES,
+        limit: int | None = None,
+        deadline: float = 60,
+    ) -> Fetched:
+        """One address, through the guard: public addresses only (every hop of a redirect is checked again), at most `limit`
+        bytes (default CLARA_FETCH_MAX_SIZE; `cut` says there was more), the whole thing within `deadline` seconds. `types` are
+        the content types that are read (None: any); `headers` are added to each request (a conditional GET). A 304 is an
+        answer like another, with no body. What `fetch` and the feed reader both stand on."""
+        try:
+            async with asyncio.timeout(deadline):
+                return await self._get(url, headers or {}, accept, types, limit or self.max_bytes)
+        except TimeoutError:
+            raise WebError("The page took too long.", slow=True) from None
+
+    async def _get(
+        self, url: str, extra: dict[str, str], accept: str, types: tuple[str, ...] | None, limit: int
+    ) -> Fetched:
         current = url.strip()
         for _ in range(MAX_REDIRECTS + 1):
             parts = urlsplit(current)
             if parts.scheme not in ("http", "https") or not parts.hostname:
-                raise WebError("Only http and https addresses can be read.")
+                raise WebError("Only http and https addresses can be read.", refused=True)
             if parts.username or parts.password:
-                raise WebError("Addresses with a user name or password are not fetched.")
+                raise WebError("Addresses with a user name or password are not fetched.", refused=True)
             port = parts.port or (443 if parts.scheme == "https" else 80)
             address = await self._resolve(parts.hostname, port)
             pinned = urlunsplit(
@@ -351,9 +393,10 @@ class Web:
                 )
             )
             headers = {
+                **extra,
                 "Host": parts.netloc.rsplit("@", 1)[-1],
                 "User-Agent": USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+                "Accept": accept,
             }
             try:
                 async with (
@@ -365,6 +408,8 @@ class Web:
                         extensions={"sni_hostname": parts.hostname} if parts.scheme == "https" else {},
                     ) as response,
                 ):
+                    if response.status_code == 304:  # (also a 3xx to httpx: before the redirects)
+                        return Fetched(current, 304, response.headers, b"", False, "", "utf-8")
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:
@@ -372,20 +417,33 @@ class Web:
                         current = urljoin(current, location)
                         continue
                     if response.is_error:
-                        raise WebError(f"The page answered HTTP {response.status_code}.")
+                        raise WebError(f"The page answered HTTP {response.status_code}.", status=response.status_code)
                     kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if kind and not kind.startswith(TEXT_TYPES):
+                    if types is not None and kind and not kind.startswith(types):
                         raise WebError(f"Not a page to read ({kind}).")
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
-                        if len(body) > self.max_bytes:
+                        if len(body) > limit:
                             break
                     charset = response.charset_encoding or "utf-8"
+                    got = Fetched(
+                        current,
+                        response.status_code,
+                        response.headers,
+                        bytes(body[:limit]),
+                        len(body) > limit,
+                        kind,
+                        charset,
+                    )
             except httpx.HTTPError as error:
                 raise WebError(f"The page could not be read: {error}") from None
-            return self._page(current, kind, bytes(body[: self.max_bytes]), charset)
+            return got
         raise WebError("Too many redirects.")
+
+    async def fetch(self, url: str) -> Page:
+        got = await self.get(url)
+        return self._page(got.url, got.kind, got.body, got.charset)
 
     @staticmethod
     def _page(url: str, kind: str, body: bytes, charset: str) -> Page:
