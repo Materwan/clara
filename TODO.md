@@ -108,14 +108,9 @@ runs a skill herself** with the tool `skill_run` (2026-11-14): in a chat only, w
 conversation as a message (`shown` « Clara ran /name arguments »), the gate classes `skill_run` (asks after untrusted content) and `skill_pack` (asks
 to switch a pack on). **Its scripts run in the sandbox** (phase 3, 2026-11-14): `ws_run` with the parameter `skill` mounts the skill's files read-only at
 `/skill` for that run (the classes `run` and `run_network`, with the target `skill:<name>`; the network only through `ws_run`'s own card). A skill grants no
-right (`allowed-tools` is ignored). What the owner decided and is not built yet:
+right (`allowed-tools` is ignored). The terminal and Discord clients run skills too (2026-11-14). Not built:
 
-- **Which client after the web site:** both are built (2026-11-14). The terminal: `clara-chat` sends `/name arguments` as typed, `/skills` lists
-  them, Tab completes them where `readline` exists. Discord: one native command `/skill` with `name` (autocomplete) and `arguments`, the server
-  expanding (`docs/DECISIONS.md`, « Skills »).
 - **Schedules and hooks running a skill:** later; the owner left them out of this item.
-- **Answered by phases 2 and 3:** a mode can refuse or ask a skill Clara runs, by class (`skill_run`, `skill_pack`) or for one skill (a line with the target `skill:<name>`); the
-  scripts of a skill have the classes of `ws_run` (`run`, `run_network`) and the same target, and a skill never asks for the network itself.
 
 ## Moodle and Auriga: what is left
 
