@@ -19,8 +19,8 @@ alias clara='sudo -u clara env CLARA_ENV_FILE=/etc/clara/clara.env CLARA_DATA_DI
    (`sha256sum -c --ignore-missing SHA256SUMS`), unpack it and run its installer:
 
    ```bash
-   mkdir clara && tar -xzf clara-v1.5.1.tar.gz -C clara
-   sudo clara/deploy/install.sh clara-v1.5.1.tar.gz
+   mkdir clara && tar -xzf clara-v1.6.0.tar.gz -C clara
+   sudo clara/deploy/install.sh clara-v1.6.0.tar.gz
    ```
 
    It says each step as it runs, and ends with `clara doctor`. Keep the three tokens it prints (console, terminal,
@@ -235,6 +235,8 @@ certificates enabled for the tailnet (MagicDNS and HTTPS, as for `tailscale serv
 2. In `/etc/clara/clara.env`: `CLARA_EVENTS=on`. Optional: `CLARA_EVENTS_PORT` (8443, or 10000: the **public** port; it must not be
    `CLARA_TAILSCALE_PORT`, so with `CLARA_TAILSCALE_PORT=8443` set `CLARA_EVENTS_PORT=10000`) and `CLARA_EVENTS_LOCAL_PORT` (8766, on
    127.0.0.1: it must not be `CLARA_PORT`). Clara refuses to start with a clear message for a port that is not allowed or is taken.
+   **If another service of yours already serves Funnel on 8443, set `CLARA_EVENTS_PORT=10000`** (and the other way round): with the door on,
+   Clara refuses to start while Funnel serves something else on the door's port, because publishing the door would replace it.
 3. `sudo systemctl restart clara`. Clara starts the listener, then publishes it herself: she runs
    `tailscale funnel --bg --https=8443 http://127.0.0.1:8766` (the ports of your settings), as the user `clara` with the Tailscale operator
    rights you gave at install (`tailscale set --operator=clara`). `/status` (or `clara doctor`, or the Admin status `events_door`) says
@@ -429,7 +431,7 @@ clara backup now
 
 1. `/update list` (or Admin → updates) shows the releases and their notes. Read the notes: migrations and new settings
    are listed there.
-2. `/update v1.5.1`. Clara downloads, checks sums (and the signature when `CLARA_RELEASE_PUBKEY` is set), unpacks,
+2. `/update v1.6.0`. Clara downloads, checks sums (and the signature when `CLARA_RELEASE_PUBKEY` is set), unpacks,
    builds the virtualenv, runs a preflight against a copy of the database, pulls the pinned sandbox image and starts
    it once (the copy Podman makes for scripts takes minutes on a small machine: the running release serves meanwhile),
    removes the sandbox images older than the running one and the one a rollback goes back to, takes a

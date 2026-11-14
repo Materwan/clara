@@ -3,12 +3,86 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
-## Unreleased
+## v1.6.0 — 14/11/2026
 
-- **The scripts of a skill run in the sandbox.** `ws_run` has a new optional parameter `skill` (the name of a skill Clara may run): the skill's files, `SKILL.md` included, are mounted read-only at `/skill` (`ro,noexec,nosuid,nodev`, so a script goes through an interpreter: `bash /skill/scripts/check.sh`) beside the workspace, which stays the only writable mount. The classes are still `run` and `run_network`, with the new target `skill:<name>` (a mode line can name one skill; it never covers the network). A skill never gets the network by itself: `network: true` and its card are the only way. The files are written from the database into a temporary folder for that run and removed when it ends, whatever way it ends; the run's log has a `# skill:` line. No new tool, no migration. Scripts run only then: not on `/name` or `skill_run`. A line of a mode that names a skill is now judged on the skill alone, not on the folder a run works in, and a refusal of the mode for the same run (its folder, its class) always stands, whatever such a line says. The skill's folder is private to the user (0700, 0600).
-- **Skills on Discord: `/skill`.** One command with `name` (suggested as you type, from the skills of the conversation's project) and `arguments`
-  (optional): it sends `/<name> <arguments>` to the conversation of the thread you are in, as if you had typed it, and the answer comes in the
-  thread. The server expands it; a skill added later needs no new registration; typing `/name arguments` as plain text still works.
+**Modes, one kind of automation, new kinds of event, and skills.** What Clara may do is now a **mode** you choose, in place of the auto
+levels and the rules; a schedule and a hook are one **automation** with a trigger you build from events and times; programs of yours,
+Moodle and Auriga, feeds and GitHub's webhook can start automations; and you can add **skills**, instructions you run with `/name`
+(and that Clara can run herself, scripts included, in the sandbox). Clara can sign in to Auriga again by herself if you keep your
+school password, and the quarantined reader and the school pack are tighter. **Not tried on real systems when this version came out:**
+the public events door (Funnel) and GitHub's webhook, the school watcher, feeds and the Auriga re-login against the real sites, and the
+shape of a skill's message against a hosted model (a provider may refuse a user message right after a tool result). The tests use
+stand-ins; the checks to make are in `docs/OPERATIONS.md` and `TODO.md`.
+
+**What changes when you update.**
+
+- **The auto levels, the rules and « Allow always » are gone** (migration 0031, which takes the automatic backup first): every level of its own
+  becomes « follow », the old rules stay as unread `legacy_*` tables, and `clara mode import-legacy` prints a default mode made from them.
+  The default mode is a file, `/etc/clara/default-mode.toml`, which `install.sh` puts there when none exists (root-owned: nothing the
+  server runs can change it; a missing file means the built-in copy and an alert, an invalid file stops the start). Its built-in verdicts
+  are what the default level 3 did. **Check the file after the update**, and use `clara mode import-legacy` if you had changed levels.
+- **Schedules and hooks became automations** (migration 0032, in Python, after the backup): ids, runs, memory, Discord forums and threads
+  follow; the routes `/v1/schedules*` and `/v1/triggers*` are replaced by `/v1/automations`, the console command `/triggers` by
+  `/automations`, and the Discord forums are one. A script or a program that calls the old routes must change.
+- **New settings, all with a safe default:** `CLARA_DEFAULT_MODE_FILE`, `CLARA_SCHOOL_POLL_SECONDS` (900), `CLARA_FEEDS_POLL_SECONDS` (1800,
+  `0` never), `CLARA_EVENTS` (`off`), `CLARA_EVENTS_PORT` (8443; use 10000 if Funnel already serves another service on 8443) and
+  `CLARA_EVENTS_LOCAL_PORT` (8766). **The events door is off by default**: nothing is public until you switch it on and follow
+  `docs/OPERATIONS.md`, « The events door ». With it on, Funnel may publish only the events port, mapped to the door.
+- **One new dependency**, `google-re2` (the filters of an automation are RE2 regular expressions). `uv sync` or the installer fetches it.
+- **Approve all next** now covers any tool it is pressed on (30 minutes, this conversation), except a feed to follow and a skill that switches a
+  pack on; a mode's `ask` for a booked call is no longer asked again at the due time.
+- The sandbox image and the release steps do not change.
+
+**Migrations.** 0031 `modes`, 0032 `automations` (Python), 0033 `event_sources`, 0034 `school_events`, 0035 `feeds`, 0036 `skills`,
+0037 `github_webhook`. Each runs in one transaction after the automatic backup (`pre-migration-v<N>-….db`); a database newer than the code
+is refused. Migrations may now be written in Python (below).
+
+**Interface changes.** `/v1/modes` (and `/v1/modes/test`) replace `/v1/levels` and `/v1/rules*`; `mode` replaces `auto_level` on conversations,
+projects and automations; `/v1/automations`, `/v1/event-sources`, `/v1/feeds*`, `/v1/skills*`, `POST /v1/events/<source>`; new console
+commands `/mode`, `/sources`, `/automations`, `clara event fire`, `clara mode …`, `clara auriga forget-password`; Discord has `/skill` and loses
+`/level`; `clara-chat` has `/skills`; new tools `skill_run` and `feed_follow`, and `ws_run` takes an optional `skill`.
+
+**Docs.** `docs/DECISIONS.md` has a section for each of modes, automations, event sources, school events, feeds, skills and the events door;
+`docs/THREAT-MODEL.md` has a row for each new way in; `docs/OPERATIONS.md` explains the default mode file and the events door.
+
+**Modes replace the auto levels and the rules.**
+
+- **Modes replace the auto levels, the rules and the tainted-turn rule** (migration 0031, which takes the automatic backup first).
+  A mode is a name, a list of tool packs and, for each tool, class and target, a verdict (`approve`, `ask`, `refuse`) for a normal
+  turn and another `(if tainted)`, never more permissive. A conversation's mode is its own, its schedule's or hook's, its project's,
+  or the default mode. A call is decided by the floor, the local-only and chat-only limits, then the mode's verdict, then the secret
+  check, which asks in every mode and which no level suspends any more. A refusal by a mode is final. The levels 0 to 5, `/level`,
+  the rules and `/rules`, the `tainted_rule` switch and `/tainted off`, `auto_level_default` and `auto_level_unattended` are gone.
+  Every level of its own on a conversation, a project, a schedule or a hook becomes « follow ». Routes: `/v1/modes` (and
+  `/v1/modes/test`, the old rule tester) replace `/v1/levels` and `/v1/rules*`; `PUT /v1/…/{id}/mode` replaces the `…/level` routes;
+  `mode` replaces `auto_level` on conversations, projects, schedules and hooks and in the body that starts a conversation or a chat.
+  Only a token with the approval scope `all` makes or sets a mode: the Discord bot loses `/level` and has no command for modes.
+  Deleting a mode takes the numbers of what uses it; all of it then follows the default mode.
+- **The default mode is a file the server reads at start**, `CLARA_DEFAULT_MODE_FILE` (new setting, default
+  `/etc/clara/default-mode.toml`, owned by root, so nothing the server runs can change it). `deploy/default-mode.toml` is what the old
+  default level 3 did, and `install.sh` puts it there when none is. A missing file means the built-in copy and the new alert
+  `default_mode_file`; an invalid one stops the server and names the line; `clara-server --check` reports both.
+- **`clara mode import-legacy`** (and `/mode import-legacy`) prints a default mode made from your old levels, thresholds and
+  rules, which migration 0031 keeps in the tables `legacy_auto_levels`, `legacy_tool_levels`, `legacy_rules` and `legacy_settings`.
+  It writes nothing: read it, then install it (docs/OPERATIONS.md).
+- **« Allow always » and « Refuse always » are removed** from the approval cards, `clara-chat`, `/approvals`, the Discord buttons and
+  `POST /v1/approvals/{id}/decide`: no answer writes a rule any more.
+- **The web site has one page for modes, « Modes »,** in place of **Auto mode** and **Rules & approvals** (the old addresses lead to it). Four tabs:
+  Modes, Waiting (the requests waiting and recent ones, with their count in the rail), Test and Audit log. The Modes tab lists the default mode
+  (locked: it is a file) and yours; a mode opens to its packs and a table of every tool, with « Normal turn » and « If tainted » set to
+  approve, ask or refuse, and exceptions per target. Deleting a mode shows how many conversations, automations and projects use it.
+- **A mode selector replaces the auto level selector** in the chat, on a project's page, and on a schedule's or a hook's card.
+- **The approval cards have Allow once, Approve all next and Refuse once** (and, for a hidden file of your computer, Allow for this
+  conversation). Approve all next says it is for this conversation, for 30 minutes, and its banner shows the time left, not a count of calls.
+- **Approve all next covers any tool it is pressed on**, for 30 minutes (`approve_all_minutes`), with no limit of calls
+  (`approve_all_calls` is gone) and no beat of the page (`PUT /v1/conversations/{id}/grants` is now `GET`, and the press takes no body).
+  It answers a mode's `ask` and nothing else: not a refusal, not the secret check, and in a tainted turn only a tool whose
+  `(if tainted)` verdict is `ask`.
+- **A booked call is no longer asked again at the due time by a mode's `ask`;** a mode that now refuses it, the floor and the
+  local-only rule still stop it.
+
+**One kind of automation.**
+
 - **One kind of automation.** A schedule (at a time) and a hook (when something happens) are one **automation**: one list, one API
   (`/v1/automations`, replacing `/v1/schedules*` and `/v1/triggers*`), one console command (`/automations`, replacing `/triggers`),
   one memory (`automation:<id>`) and one Discord forum. Schema version 32 converts the ones that exist, after the automatic backup:
@@ -50,134 +124,13 @@ Every release has a section here, under its tag; the release workflow publishes 
   shows the trigger in words on one line.
 - **Migrations may be written in Python** (`NNNN_name.py` with `migrate(connection)`): same numbering, same backup, same transaction as the SQL
   ones; a failure leaves the database at the version it had.
-- **A Moodle document can no longer pass for a lapsed sign-in.** Only a small JSON answer to a download (4 KB at most, typed as JSON) is
-  read as Moodle's error. A file whose bytes are the `invalidtoken` answer is saved as a document: it no longer marks the sign-in as lapsed
-  or raises the `moodle` alert.
-- **A document has limits on time, memory and pages.** A download takes 120 seconds at most (past that nothing is saved); the text part of
-  a Word file may unpack to 10 MB at most (it was 30 MB, and a 29 MB one took 750 MB of memory); a PDF is read up to 500 pages. A Word file
-  or a PDF over its limit is saved without its text copy, and the answer says which limit it met. The Word and PDF limits apply to every
-  file Clara reads (attachments, project files, mail and Drive files, fetched pages), so a PDF of more than 500 pages is refused there too.
-- **Clara is told not to store text quoted from the school sites with `remember`** (a course name, an assignment title, a file name, a
-  grade comment, a teacher name): she writes the fact in her own words. It is a rule of the prompt while the Moodle/Auriga pack is on,
-  not a gate.
-- **The threat model has a row for the school sites** (Moodle and Auriga): what a hostile course text or document can do, and what
-  holds.
-- **The reader no longer quotes a hostile text.** When the quarantined reader says that a text is addressed to an AI, any run of
-  about 30 characters that its answer or its facts copied from the text is removed. A question such as « the lines that contain
-  X » can no longer make it print a hostile line or the address an order asks to write. A report that does not flag the text is
-  left as it is.
-- **An item of a list cannot forge another.** A `[number]`, or the id of an item, written inside the text of a search result, a
-  mail or a hook event is removed before the list reaches the reader, so it cannot take the place of the next item's id.
-- **`ws_search` gives no number of matches for a file that came from outside.** It says the file is marked and sends you to
-  `ws_read` (the reader's report); it shows no line and no count, so the hidden text cannot be probed one query at a time.
-- **The text cleaner removes more hidden characters:** the C1 controls (U+0080 to U+009F), the Arabic letter mark, the Hangul,
-  Khmer and Mongolian fillers and selectors, the rest of the invisible format characters, the variation selectors (not the emoji
-  one, U+FE0F) and the whole Unicode tag block. French accents, CJK, Arabic, Hebrew, Devanagari and emoji sequences are unchanged.
-- **The threat model now says what a trash does.** It asks at auto level 3 and runs with no card from level 4, even after a mail
-  was read (a trashed mail can be taken back from the Trash). That was already so; only the sentence was wrong. The gate is
-  unchanged.
-- **The chat shows when a conversation read outside content:** an **Outside content** tag in the header (**Outside** on a phone), with
-  the sentence « Anything that writes outside Clara asks first » (a hover, or a tap on a phone). `GET /v1/conversations/{id}` has a new field,
-  `tainted`.
-- **A call that did not go as asked says so before it is opened:** a refused, failed, skipped or waiting tool call has a tag on its line
-  and no longer reads « Saved… »; a run counts them. A reader's `WARNING:` line is no longer cut off at the bottom of a long result.
-- **The mail tools have readable names** on the chat's tool lines.
-- **The alert badge goes away when the alert is resolved:** the web site now receives the `alert_resolved` event (it was for the
-  Discord bot only).
-- **The Rules page and the « Waiting for you » badge follow a card that a chat waits on at once**, not a minute later (the web
-  site is told of the request when the chat asks).
-- **An error toast no longer covers the box you write in on a phone** (it sits at the top of the screen).
-- **Connections:** a form that fails writes its error under it, tied to its field; a long account address is cut with an ellipsis;
-  after **Connect** on Moodle or Auriga the focus goes to the section's button; the Auriga card and its « connected » message say when the
-  sign-in lapses, when the server sends it.
-- **The Library says when it shows the raw text of a file that came from outside.**
+- **An address inside an event is no longer one you wrote** (every kind of event: a feed item, a mail, a GitHub text, a source). In a run
+  an automation started, only the addresses of the automation's own prompt and documents are read by `web_fetch` without asking; one in the
+  `<event>` block asks in a tainted run, and so does one in what the server said earlier in the run's conversation. A message you type is
+  unchanged. The `feed_follow` card no longer offers « Approve all next » (`POST /v1/approvals/{id}/grant` answers 422 for it).
 
-- **Clara can sign in to Auriga again by herself, if you keep your school password.** After a good `clara auriga connect`, it asks « Keep your
-  school email and password so Clara can sign in again by herself? » (email in the open, password hidden; both encrypted in the secrets
-  `auriga_email` and `auriga_password`, never shown again). When Keycloak refuses the refresh token, Clara signs in again alone, the way the
-  student app Chrysalide does (Keycloak's own login form, posted once; the redirect is read, not followed; it takes 30 seconds at most and
-  talks only to Keycloak), and the call that asked goes on. **Once per lapse:** if that fails (a changed password, an extra step, an error),
-  there is no other fallback and no second try: the `auriga` alert says why and Auriga stays off until you sign in yourself. The password is
-  set only at that hidden prompt, and removed by `clara auriga forget-password`, `clara auriga disconnect`, **Disconnect**, or
-  `/school forget-password` (a token that may answer every request). Nothing shows it back: `/school` says only « school password kept » or
-  « not kept ». The threat model has a row for it (it is a bigger secret than a token). Tested against stand-ins only: the real Keycloak
-  was not asked by this code. No migration.
+**Event sources, and a public door for events.**
 
-**Moodle and Auriga, after the first real use (2026-11-11).** No new tool, route, setting or migration; `POST /v1/connections/auriga/finish`
-answers one more field, `lapses`.
-
-- **Synthèse grades are shown.** Every line used to read « (no average yet) »: the value was read from the wrong cell. A line shows the
-  final average; when there is none yet, the average before the RATT retake, with a label that says so; when both are empty, « (no average
-  yet) ». A mark that is not a number (AB) is quoted, and the result of `school_grades` says it must not be interpreted.
-- **The Auriga sign-in says when it lapses.** It ends on a fixed date about a day after you sign in, and using it does not push that back.
-  `clara auriga connect`, `/school` and the Connections answer now say « lapses on <date> » (read from the token); « until it has been idle
-  for a month » was wrong. Nothing warns you before the date. Clara can now sign in again alone, if you keep your school password (above).
-- **Teachers, titles and exams in the calendar.** The teachers of a class are shown; an entry with no pedagogical unit has a title (no more
-  « (untitled) »); an exam is recognised by its activity type, so the `[exam]` mark appears; the kind is the long caption (« Travaux dirigés »).
-- **A quiz close is shown once.** Moodle's Timeline already carries it: the list of quizzes now adds only the opening.
-- **Moodle text is clean.** Names and grade cells no longer show `{mlang}` blocks, `&amp;` or links: every language of a block is kept, joined
-  with « / », tags are dropped and entities are read.
-- **The course list is honest.** « 0% done » is shown only for a course that tracks its progress, and the result says how many courses are
-  hidden from Moodle's overview (they are in none of the in-progress, past and future lists; `all` marks them).
-- **A strange answer is no longer read as « nothing ».** A site answer that is not the shape expected is an error, not « no courses » or an
-  empty calendar; what was left out (a line, a row, a planning entry that could not be read, pages not read) is counted in a note before the
-  lines; one odd planning entry no longer blanks the whole Auriga calendar; a missing page count no longer stops the grades after one page.
-- **Smaller fixes:** a pasted Auriga address that cannot be read gives a message, not a server error; a parameter can no longer replace the
-  Moodle function that was checked; a call that worked no longer clears the alert of a sign-in marked as lapsed; the school year takes ASCII
-  digits only; `moodle_file_save` takes its file id as text and its error notes no longer end with two periods; the request to save a Moodle
-  document names the document, as a mail's and a Drive file's do, and shows the path as it will be written; the reconnect text has no backticks;
-  Moodle entries outside the period asked for are not shown.
-- **A failed read says why, and says when not to try again.** When the quarantined reader cannot read, the tool now gives the
-  provider's id, the HTTP status and a short phrase (`HTTP 404 from opencode-go: the model was not found`), never what the
-  provider answered. A wrong or unknown model, a refused key or any other lasting refusal says that trying again is useless and
-  names `reader_model`; a passing one (a limit, a busy provider, a timeout) says it may work later, and not to loop.
-- **A new alert, `reader`, while the reader's model fails.** It shows on the Admin page and in `#alerts`, names the status and
-  the setting to check, repeats at most every 6 hours, and ends with the next good read.
-- **`reader_model` and `reader_max_chars` are checked when you save them.** A model must be `provider:model` with both parts
-  filled (or empty); `opencode-go:`, `:model`, a list and `null` are refused, for `default_model`, `upkeep_model` and `fallbacks`
-  too. The size must be a whole number from 1,000 to 400,000. A refusal names the setting, the rule and an example.
-- **The Admin page says what happens when you change a setting.** A value that is not JSON, or that is refused, is shown in the
-  dialog (which stays open on what you typed) instead of the browser's raw error, and a good save says so. The size's description
-  now gives its range and its default.
-- **A very long line can be read to its end.** A text with a line longer than the reader's window (a minified file, one huge
-  paragraph) is numbered in pieces, so `start_line` goes on inside it; the report says so. A cut that has no line to go on from
-  says that too.
-- **A setting typed as invalid JSON keeps the dialog open with a message.** The dialog used to close on its own and save nothing, so
-  the « Not saved. That is not JSON » line never showed. The dialog now stays open on what was typed.
-- **Modes replace the auto levels, the rules and the tainted-turn rule** (migration 0031, which takes the automatic backup first).
-  A mode is a name, a list of tool packs and, for each tool, class and target, a verdict (`approve`, `ask`, `refuse`) for a normal
-  turn and another `(if tainted)`, never more permissive. A conversation's mode is its own, its schedule's or hook's, its project's,
-  or the default mode. A call is decided by the floor, the local-only and chat-only limits, then the mode's verdict, then the secret
-  check, which asks in every mode and which no level suspends any more. A refusal by a mode is final. The levels 0 to 5, `/level`,
-  the rules and `/rules`, the `tainted_rule` switch and `/tainted off`, `auto_level_default` and `auto_level_unattended` are gone.
-  Every level of its own on a conversation, a project, a schedule or a hook becomes « follow ». Routes: `/v1/modes` (and
-  `/v1/modes/test`, the old rule tester) replace `/v1/levels` and `/v1/rules*`; `PUT /v1/…/{id}/mode` replaces the `…/level` routes;
-  `mode` replaces `auto_level` on conversations, projects, schedules and hooks and in the body that starts a conversation or a chat.
-  Only a token with the approval scope `all` makes or sets a mode: the Discord bot loses `/level` and has no command for modes.
-  Deleting a mode takes the numbers of what uses it; all of it then follows the default mode. The web pages still speak of levels and
-  rules until the next step.
-- **The default mode is a file the server reads at start**, `CLARA_DEFAULT_MODE_FILE` (new setting, default
-  `/etc/clara/default-mode.toml`, owned by root, so nothing the server runs can change it). `deploy/default-mode.toml` is what the old
-  default level 3 did, and `install.sh` puts it there when none is. A missing file means the built-in copy and the new alert
-  `default_mode_file`; an invalid one stops the server and names the line; `clara-server --check` reports both.
-- **`clara mode import-legacy`** (and `/mode import-legacy`) prints a default mode made from your old levels, thresholds and
-  rules, which migration 0031 keeps in the tables `legacy_auto_levels`, `legacy_tool_levels`, `legacy_rules` and `legacy_settings`.
-  It writes nothing: read it, then install it (docs/OPERATIONS.md).
-- **« Allow always » and « Refuse always » are removed** from the approval cards, `clara-chat`, `/approvals`, the Discord buttons and
-  `POST /v1/approvals/{id}/decide`: no answer writes a rule any more.
-- **The web site has one page for modes, « Modes »,** in place of **Auto mode** and **Rules & approvals** (the old addresses lead to it). Four tabs:
-  Modes, Waiting (the requests waiting and recent ones, with their count in the rail), Test and Audit log. The Modes tab lists the default mode
-  (locked: it is a file) and yours; a mode opens to its packs and a table of every tool, with « Normal turn » and « If tainted » set to
-  approve, ask or refuse, and exceptions per target. Deleting a mode shows how many conversations, automations and projects use it.
-- **A mode selector replaces the auto level selector** in the chat, on a project's page, and on a schedule's or a hook's card.
-- **The approval cards have Allow once, Approve all next and Refuse once** (and, for a hidden file of your computer, Allow for this
-  conversation). Approve all next says it is for this conversation, for 30 minutes, and its banner shows the time left, not a count of calls.
-- **Approve all next covers any tool it is pressed on**, for 30 minutes (`approve_all_minutes`), with no limit of calls
-  (`approve_all_calls` is gone) and no beat of the page (`PUT /v1/conversations/{id}/grants` is now `GET`, and the press takes no body).
-  It answers a mode's `ask` and nothing else: not a refusal, not the secret check, and in a tainted turn only a tool whose
-  `(if tainted)` verdict is `ask`.
-- **A booked call is no longer asked again at the due time by a mode's `ask`;** a mode that now refuses it, the floor and the
-  local-only rule still stop it.
 - **Event sources: programs of yours can tell Clara something happened.** An event source is a record you make (`POST /v1/event-sources`):
   a name (the slug of its kind `custom.<name>`), the fields an event may carry (text or yes/no, 12 at most), and a **secret** held in the
   encrypted store (`event_source_<id>`, shown once, never listed). A program calls `POST /v1/events/<id>` with `Authorization: Bearer
@@ -211,6 +164,43 @@ answers one more field, `lapses`.
 - **Send a test event is a real event:** it is stored and any automation that waits for the source may start a run; the dialog says so.
 - **An automation that waits for a revoked source says so** on its row and in its form, with a *Source revoked* tag, and the form
   asks for another event or the branch removed before it saves.
+- **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
+  **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
+  `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no
+  other route, no docs, no token or cookie logic, no forwarded header), and publishes it with **Tailscale Funnel** on `CLARA_EVENTS_PORT`
+  (new, 8443 or 10000, not the port of `tailscale serve`). With `CLARA_EVENTS=off` nothing changes: no second listener, no new command.
+  The door takes the route's own limits (64 KB, 60 events a minute, 1,000 waiting, 5,000 kept, wrong proofs counted per source id and never
+  per address) and adds its own: 64 connections at once, a 15-second deadline per request (uvicorn has none), 2-second keep-alive, no
+  `Server` header, no access log and no traffic-log line. A port that is taken is a start-up error that names it.
+- **The Funnel guard changes, it does not go.** With the door on, Funnel is allowed on exactly one port, `CLARA_EVENTS_PORT`, and only while
+  it maps `/` to the door and to nothing else; on Clara's own port, on that port mapped elsewhere, or on any other port that maps to her
+  main listener or to the door, she refuses to start or turns it off and raises the `funnel` alert, as she did for her own port. Clara
+  makes the mapping herself (`tailscale funnel --bg --https=<port> http://127.0.0.1:<local port>`), re-checks it every minute, removes only
+  that mapping when she stops (`tailscale funnel --https=<port> off`; never `funnel reset`, never another port), and raises the new **`events`
+  alert** when Tailscale refuses (add `funnel` to the `nodeAttrs` of your tailnet policy); the listener then stays on 127.0.0.1.
+  `GET /v1/admin/status` has `events_door`, `/status` and `clara doctor` say the same.
+- **GitHub's webhook is an event source.** `POST /v1/event-sources` takes `{"kind": "github", "repo": "owner/name"}` (an optional `name`):
+  proof `github_hmac`, no fields, never trusted; the answer has the `address`, the `public_url` (when the door is published) and the secret,
+  shown once, which you paste in the repository's webhook settings with `application/json`. The delivery is checked by its
+  **`X-Hub-Signature-256`** (HMAC-SHA256 of the raw body, constant time, before anything is read); a wrong one is a 401 counted against that
+  source. `push` and `pull_request` become **`github.push` and `github.pull_request` with the same fields as the poll's** (one automation
+  works with either), the delivery id is the key (a redelivery is a `200 duplicate`), `ping` is answered, anything else is ignored, a
+  delivery for another repository is a 422, and the answer is sent once the event is stored, before anything runs. **A push over 64 KB is
+  refused (413).** **A repository that has a webhook is not polled**; revoking the webhook resumes the poll from that moment.
+  `GET /v1/connections` marks such a repository `webhook`. Schema version 37 adds the `repo` column and the check on `proof`.
+- **The web client makes GitHub webhooks and shows the door.** On the *Event sources* tab, **New source** asks first: *A program of mine* (as
+  before) or *A GitHub repository (webhook)*, one field, `owner/name`, checked on the spot and suggested from the Connections page. The
+  panel shown once gives the **Payload URL** (or a warning, in the warning colours, that the door is not public yet), the secret in its own
+  field only, and the steps for GitHub's *Add webhook* (content type `application/json`, **Pushes** and **Pull requests**), with the 64 KB
+  note. A GitHub source's card names the repository and its two kinds, shows its public URL and its signature proof, and has no Trusted
+  box and no test event (*Redeliver* in GitHub is the test); **Revoke** says that the poll of the repository resumes.
+- **A line for the events door at the top of the Event sources tab**, read-only: off, on and not public (with the reason), or public at its
+  address, with the steps to turn it on. The Connections page tags a repository that has a webhook « webhook: poll off ».
+- **Not tried on a real Funnel, a real GitHub or a TCP port** (stand-ins, and uvicorn on a UNIX socket in the tests): the live check is in
+  `docs/OPERATIONS.md`, « The events door ».
+
+**School events and feeds.**
+
 - **School events: an automation can wait for something at Moodle or Auriga.** Six new kinds: `moodle.quiz_opens` and
   `moodle.quiz_closes` (`course`, `quiz`, `opens`, `closes`), `moodle.activity_added` (`course`, `section`, `name`, `type`),
   `moodle.grade_posted` (`course`, `item`, `grade`, `range`), `auriga.grade_posted` (`code`, `title`, `value`, `kind`) and
@@ -258,10 +248,9 @@ answers one more field, `lapses`.
   can read the list only. The banner « Nothing to look at » now covers feeds (no feed is followed), with a link to the tab.
 - **The `feed_follow` request reads as it is written** (its title, address and latest items on separate lines) and the chat's tool line
   says « Followed a feed ».
-- **An address inside an event is no longer one you wrote** (every kind of event: a feed item, a mail, a GitHub text, a source). In a run
-  an automation started, only the addresses of the automation's own prompt and documents are read by `web_fetch` without asking; one in the
-  `<event>` block asks in a tainted run, and so does one in what the server said earlier in the run's conversation. A message you type is
-  unchanged. The `feed_follow` card no longer offers « Approve all next » (`POST /v1/approvals/{id}/grant` answers 422 for it).
+
+**Skills.**
+
 - **Skills: instructions you add, run from a chat command** (the server; the page of the skills and the `/` menu are the last item below). A **skill** is a
   folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code) that you add by pasting the text or sending a zip.
   **`POST /v1/skills/preview`** reads it and stores nothing (the files with their size and kind, the text of `SKILL.md`, the warnings, every
@@ -311,40 +300,110 @@ answers one more field, `lapses`.
   same tags as any call when it was refused, failed or is waiting for permission; opened, it shows her arguments). The instructions she was
   given are not drawn: no « You » bubble, no Edit or Ask again, and the answer after them stays in her reply under the question that was asked. The
   two requests keep the line break before « Arguments: … » and a long argument wraps; there is no « Approve all next » on a request to switch a pack on.
-- **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
-  **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
-  `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no
-  other route, no docs, no token or cookie logic, no forwarded header), and publishes it with **Tailscale Funnel** on `CLARA_EVENTS_PORT`
-  (new, 8443 or 10000, not the port of `tailscale serve`). With `CLARA_EVENTS=off` nothing changes: no second listener, no new command.
-  The door takes the route's own limits (64 KB, 60 events a minute, 1,000 waiting, 5,000 kept, wrong proofs counted per source id and never
-  per address) and adds its own: 64 connections at once, a 15-second deadline per request (uvicorn has none), 2-second keep-alive, no
-  `Server` header, no access log and no traffic-log line. A port that is taken is a start-up error that names it.
-- **The Funnel guard changes, it does not go.** With the door on, Funnel is allowed on exactly one port, `CLARA_EVENTS_PORT`, and only while
-  it maps `/` to the door and to nothing else; on Clara's own port, on that port mapped elsewhere, or on any other port that maps to her
-  main listener or to the door, she refuses to start or turns it off and raises the `funnel` alert, as she did for her own port. Clara
-  makes the mapping herself (`tailscale funnel --bg --https=<port> http://127.0.0.1:<local port>`), re-checks it every minute, removes only
-  that mapping when she stops (`tailscale funnel --https=<port> off`; never `funnel reset`, never another port), and raises the new **`events`
-  alert** when Tailscale refuses (add `funnel` to the `nodeAttrs` of your tailnet policy); the listener then stays on 127.0.0.1.
-  `GET /v1/admin/status` has `events_door`, `/status` and `clara doctor` say the same.
-- **GitHub's webhook is an event source.** `POST /v1/event-sources` takes `{"kind": "github", "repo": "owner/name"}` (an optional `name`):
-  proof `github_hmac`, no fields, never trusted; the answer has the `address`, the `public_url` (when the door is published) and the secret,
-  shown once, which you paste in the repository's webhook settings with `application/json`. The delivery is checked by its
-  **`X-Hub-Signature-256`** (HMAC-SHA256 of the raw body, constant time, before anything is read); a wrong one is a 401 counted against that
-  source. `push` and `pull_request` become **`github.push` and `github.pull_request` with the same fields as the poll's** (one automation
-  works with either), the delivery id is the key (a redelivery is a `200 duplicate`), `ping` is answered, anything else is ignored, a
-  delivery for another repository is a 422, and the answer is sent once the event is stored, before anything runs. **A push over 64 KB is
-  refused (413).** **A repository that has a webhook is not polled**; revoking the webhook resumes the poll from that moment.
-  `GET /v1/connections` marks such a repository `webhook`. Schema version 37 adds the `repo` column and the check on `proof`.
-- **The web client makes GitHub webhooks and shows the door.** On the *Event sources* tab, **New source** asks first: *A program of mine* (as
-  before) or *A GitHub repository (webhook)*, one field, `owner/name`, checked on the spot and suggested from the Connections page. The
-  panel shown once gives the **Payload URL** (or a warning, in the warning colours, that the door is not public yet), the secret in its own
-  field only, and the steps for GitHub's *Add webhook* (content type `application/json`, **Pushes** and **Pull requests**), with the 64 KB
-  note. A GitHub source's card names the repository and its two kinds, shows its public URL and its signature proof, and has no Trusted
-  box and no test event (*Redeliver* in GitHub is the test); **Revoke** says that the poll of the repository resumes.
-- **A line for the events door at the top of the Event sources tab**, read-only: off, on and not public (with the reason), or public at its
-  address, with the steps to turn it on. The Connections page tags a repository that has a webhook « webhook: poll off ».
-- **Not tried on a real Funnel, a real GitHub or a TCP port** (stand-ins, and uvicorn on a UNIX socket in the tests): the live check is in
-  `docs/OPERATIONS.md`, « The events door ».
+- **The scripts of a skill run in the sandbox.** `ws_run` has a new optional parameter `skill` (the name of a skill Clara may run): the skill's files, `SKILL.md` included, are mounted read-only at `/skill` (`ro,noexec,nosuid,nodev`, so a script goes through an interpreter: `bash /skill/scripts/check.sh`) beside the workspace, which stays the only writable mount. The classes are still `run` and `run_network`, with the new target `skill:<name>` (a mode line can name one skill; it never covers the network). A skill never gets the network by itself: `network: true` and its card are the only way. The files are written from the database into a temporary folder for that run and removed when it ends, whatever way it ends; the run's log has a `# skill:` line. No new tool, no migration. Scripts run only then: not on `/name` or `skill_run`. A line of a mode that names a skill is now judged on the skill alone, not on the folder a run works in, and a refusal of the mode for the same run (its folder, its class) always stands, whatever such a line says. The skill's folder is private to the user (0700, 0600).
+- **Skills on Discord: `/skill`.** One command with `name` (suggested as you type, from the skills of the conversation's project) and `arguments`
+  (optional): it sends `/<name> <arguments>` to the conversation of the thread you are in, as if you had typed it, and the answer comes in the
+  thread. The server expands it; a skill added later needs no new registration; typing `/name arguments` as plain text still works.
+
+**Moodle and Auriga: sign-in, grades, documents.**
+
+- **Clara can sign in to Auriga again by herself, if you keep your school password.** After a good `clara auriga connect`, it asks « Keep your
+  school email and password so Clara can sign in again by herself? » (email in the open, password hidden; both encrypted in the secrets
+  `auriga_email` and `auriga_password`, never shown again). When Keycloak refuses the refresh token, Clara signs in again alone, the way the
+  student app Chrysalide does (Keycloak's own login form, posted once; the redirect is read, not followed; it takes 30 seconds at most and
+  talks only to Keycloak), and the call that asked goes on. **Once per lapse:** if that fails (a changed password, an extra step, an error),
+  there is no other fallback and no second try: the `auriga` alert says why and Auriga stays off until you sign in yourself. The password is
+  set only at that hidden prompt, and removed by `clara auriga forget-password`, `clara auriga disconnect`, **Disconnect**, or
+  `/school forget-password` (a token that may answer every request). Nothing shows it back: `/school` says only « school password kept » or
+  « not kept ». The threat model has a row for it (it is a bigger secret than a token). Tested against stand-ins only: the real Keycloak
+  was not asked by this code. No migration.
+
+**Moodle and Auriga, after the first real use (2026-11-11).** No new tool, route, setting or migration; `POST /v1/connections/auriga/finish`
+answers one more field, `lapses`.
+
+- **Synthèse grades are shown.** Every line used to read « (no average yet) »: the value was read from the wrong cell. A line shows the
+  final average; when there is none yet, the average before the RATT retake, with a label that says so; when both are empty, « (no average
+  yet) ». A mark that is not a number (AB) is quoted, and the result of `school_grades` says it must not be interpreted.
+- **The Auriga sign-in says when it lapses.** It ends on a fixed date about a day after you sign in, and using it does not push that back.
+  `clara auriga connect`, `/school` and the Connections answer now say « lapses on <date> » (read from the token); « until it has been idle
+  for a month » was wrong. Nothing warns you before the date. Clara can now sign in again alone, if you keep your school password (above).
+- **Teachers, titles and exams in the calendar.** The teachers of a class are shown; an entry with no pedagogical unit has a title (no more
+  « (untitled) »); an exam is recognised by its activity type, so the `[exam]` mark appears; the kind is the long caption (« Travaux dirigés »).
+- **A quiz close is shown once.** Moodle's Timeline already carries it: the list of quizzes now adds only the opening.
+- **Moodle text is clean.** Names and grade cells no longer show `{mlang}` blocks, `&amp;` or links: every language of a block is kept, joined
+  with « / », tags are dropped and entities are read.
+- **The course list is honest.** « 0% done » is shown only for a course that tracks its progress, and the result says how many courses are
+  hidden from Moodle's overview (they are in none of the in-progress, past and future lists; `all` marks them).
+- **A strange answer is no longer read as « nothing ».** A site answer that is not the shape expected is an error, not « no courses » or an
+  empty calendar; what was left out (a line, a row, a planning entry that could not be read, pages not read) is counted in a note before the
+  lines; one odd planning entry no longer blanks the whole Auriga calendar; a missing page count no longer stops the grades after one page.
+- **Smaller fixes:** a pasted Auriga address that cannot be read gives a message, not a server error; a parameter can no longer replace the
+  Moodle function that was checked; a call that worked no longer clears the alert of a sign-in marked as lapsed; the school year takes ASCII
+  digits only; `moodle_file_save` takes its file id as text and its error notes no longer end with two periods; the request to save a Moodle
+  document names the document, as a mail's and a Drive file's do, and shows the path as it will be written; the reconnect text has no backticks;
+  Moodle entries outside the period asked for are not shown.
+- **A Moodle document can no longer pass for a lapsed sign-in.** Only a small JSON answer to a download (4 KB at most, typed as JSON) is
+  read as Moodle's error. A file whose bytes are the `invalidtoken` answer is saved as a document: it no longer marks the sign-in as lapsed
+  or raises the `moodle` alert.
+- **A document has limits on time, memory and pages.** A download takes 120 seconds at most (past that nothing is saved); the text part of
+  a Word file may unpack to 10 MB at most (it was 30 MB, and a 29 MB one took 750 MB of memory); a PDF is read up to 500 pages. A Word file
+  or a PDF over its limit is saved without its text copy, and the answer says which limit it met. The Word and PDF limits apply to every
+  file Clara reads (attachments, project files, mail and Drive files, fetched pages), so a PDF of more than 500 pages is refused there too.
+- **Clara is told not to store text quoted from the school sites with `remember`** (a course name, an assignment title, a file name, a
+  grade comment, a teacher name): she writes the fact in her own words. It is a rule of the prompt while the Moodle/Auriga pack is on,
+  not a gate.
+- **The threat model has a row for the school sites** (Moodle and Auriga): what a hostile course text or document can do, and what
+  holds.
+
+**The quarantined reader and the settings.**
+
+- **The reader no longer quotes a hostile text.** When the quarantined reader says that a text is addressed to an AI, any run of
+  about 30 characters that its answer or its facts copied from the text is removed. A question such as « the lines that contain
+  X » can no longer make it print a hostile line or the address an order asks to write. A report that does not flag the text is
+  left as it is.
+- **An item of a list cannot forge another.** A `[number]`, or the id of an item, written inside the text of a search result, a
+  mail or a hook event is removed before the list reaches the reader, so it cannot take the place of the next item's id.
+- **`ws_search` gives no number of matches for a file that came from outside.** It says the file is marked and sends you to
+  `ws_read` (the reader's report); it shows no line and no count, so the hidden text cannot be probed one query at a time.
+- **The text cleaner removes more hidden characters:** the C1 controls (U+0080 to U+009F), the Arabic letter mark, the Hangul,
+  Khmer and Mongolian fillers and selectors, the rest of the invisible format characters, the variation selectors (not the emoji
+  one, U+FE0F) and the whole Unicode tag block. French accents, CJK, Arabic, Hebrew, Devanagari and emoji sequences are unchanged.
+- **The threat model now says what a mail trash does.** The default mode asks for it, in every turn; a mode that approves it runs it even after a mail was read (a trashed mail can be taken back from the Trash). The gate is unchanged: only the sentence was wrong.
+- **A failed read says why, and says when not to try again.** When the quarantined reader cannot read, the tool now gives the
+  provider's id, the HTTP status and a short phrase (`HTTP 404 from opencode-go: the model was not found`), never what the
+  provider answered. A wrong or unknown model, a refused key or any other lasting refusal says that trying again is useless and
+  names `reader_model`; a passing one (a limit, a busy provider, a timeout) says it may work later, and not to loop.
+- **A new alert, `reader`, while the reader's model fails.** It shows on the Admin page and in `#alerts`, names the status and
+  the setting to check, repeats at most every 6 hours, and ends with the next good read.
+- **`reader_model` and `reader_max_chars` are checked when you save them.** A model must be `provider:model` with both parts
+  filled (or empty); `opencode-go:`, `:model`, a list and `null` are refused, for `default_model`, `upkeep_model` and `fallbacks`
+  too. The size must be a whole number from 1,000 to 400,000. A refusal names the setting, the rule and an example.
+- **The Admin page says what happens when you change a setting.** A value that is not JSON, or that is refused, is shown in the
+  dialog (which stays open on what you typed) instead of the browser's raw error, and a good save says so. The size's description
+  now gives its range and its default.
+- **A very long line can be read to its end.** A text with a line longer than the reader's window (a minified file, one huge
+  paragraph) is numbered in pieces, so `start_line` goes on inside it; the report says so. A cut that has no line to go on from
+  says that too.
+- **A setting typed as invalid JSON keeps the dialog open with a message.** The dialog used to close on its own and save nothing, so
+  the « Not saved. That is not JSON » line never showed. The dialog now stays open on what was typed.
+
+**The chat and the web site.**
+
+- **The chat shows when a conversation read outside content:** an **Outside content** tag in the header (**Outside** on a phone), with
+  the sentence « Anything that writes outside Clara asks first » (a hover, or a tap on a phone). `GET /v1/conversations/{id}` has a new field,
+  `tainted`.
+- **A call that did not go as asked says so before it is opened:** a refused, failed, skipped or waiting tool call has a tag on its line
+  and no longer reads « Saved… »; a run counts them. A reader's `WARNING:` line is no longer cut off at the bottom of a long result.
+- **The mail tools have readable names** on the chat's tool lines.
+- **The alert badge goes away when the alert is resolved:** the web site now receives the `alert_resolved` event (it was for the
+  Discord bot only).
+- **The « Waiting for you » badge and the waiting list follow a card that a chat waits on at once**, not a minute later (the web
+  site is told of the request when the chat asks).
+- **An error toast no longer covers the box you write in on a phone** (it sits at the top of the screen).
+- **Connections:** a form that fails writes its error under it, tied to its field; a long account address is cut with an ellipsis;
+  after **Connect** on Moodle or Auriga the focus goes to the section's button; the Auriga card and its « connected » message say when the
+  sign-in lapses, when the server sends it.
+- **The Library says when it shows the raw text of a file that came from outside.**
 
 ## v1.5.1 — 04/11/2026
 
@@ -384,7 +443,7 @@ hook's allow-list. No existing automation is given the pack.
 only. A new tool, `present`, hands a file over as a card under her answer. The Discord channels no longer keep what stopped being
 true: settled requests, ended alerts and lines whose thread is gone are deleted. GitHub becomes a pack, as Mail is. A run of an
 automation shows Discord only where it came from. **The Moodle/Auriga pack had not been tried against the real sites when this version
-came out** (see below); it was on 2026-11-11, and what that found is fixed under « Unreleased ».
+came out** (see below); it was on 2026-11-11, and what that found is fixed under v1.6.0.
 
 **Moodle and Auriga, read only.**
 
@@ -406,7 +465,7 @@ came out** (see below); it was on 2026-11-11, and what that found is fixed under
   raised, and the tools say how to sign in again.
 - **Reading these sites does not taint the turn** (your choice, unlike Mail, GitHub and Drive): their text reaches the
   conversation as written, with no quarantined reader.
-- **Not tried live when it came out (tried on 2026-11-11, see « Unreleased »):** the tests ran against stand-ins built from what was read of the two sites on 1 and 2 November. The shapes
+- **Not tried live when it came out (tried on 2026-11-11, see v1.6.0):** the tests ran against stand-ins built from what was read of the two sites on 1 and 2 November. The shapes
   Auriga's planning and grades answers have are the likeliest to differ; a line that does not fit is left out, so a wrong guess
   shows as missing lines, not as a crash. The first real use is the check; [TODO.md](TODO.md) lists what to look at.
 
