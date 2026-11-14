@@ -11,7 +11,9 @@
 * every CLARA_MAIL_POLL_SECONDS (0: never): new mail in the connected mailboxes, when `mail_notify` is on. This loop
   waits for the mail providers, so the watchdog does not count it;
 * every CLARA_GITHUB_POLL_SECONDS (0: never): pull requests and pushes in the repositories you added, while an automation waits
-  for them. Same reason, same exception for the watchdog.
+  for them. Same reason, same exception for the watchdog;
+* every CLARA_SCHOOL_POLL_SECONDS (0: never): quizzes, activities, grades and the planning at Moodle and Auriga, while an
+  automation waits for them. Same reason, same exception for the watchdog.
 """
 
 from __future__ import annotations
@@ -66,6 +68,13 @@ class Upkeep:
                     name="upkeep-github",
                 )
             )
+        if self.s.settings.school_poll_seconds > 0:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._loop("school", float(self.s.settings.school_poll_seconds), self.school, watched=False),
+                    name="upkeep-school",
+                )
+            )
         interval = watchdog_seconds()
         if interval:
             self._tasks.append(asyncio.create_task(self._watchdog(interval), name="watchdog"))
@@ -102,6 +111,10 @@ class Upkeep:
     async def github(self) -> None:
         if self.s.connectors is not None:
             await self.s.connectors.github_watch.poll()
+
+    async def school(self) -> None:
+        if self.s.connectors is not None:
+            await self.s.connectors.school_watch.poll()
 
     def every_minute(self) -> None:
         s = self.s

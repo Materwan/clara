@@ -752,9 +752,13 @@ class Automations(DueLoop):
             )
         return verdict, "The trigger does not match."
 
-    def ingest(self, events: list[SourceEvent], also: Callable[[], None] | None = None) -> int:
+    def ingest(
+        self, events: list[SourceEvent], also: Callable[[], None] | None = None, stale_after: timedelta | None = None
+    ) -> int:
         """Store the events that are new, plan the runs of the automations that want them, and call `also` (a source moving its
-        place forward), all in one transaction. Returns the runs planned."""
+        place forward), all in one transaction. Returns the runs planned. An event found more than `stale_after` (default
+        STALE_AFTER) after it happened is a backlog: a source that looks every so often gives the interval, so an event found at its first look
+        after it happened is never one."""
         now = self._clock()
         planned, overflowed = 0, []
         with self.db.transaction():
@@ -794,7 +798,7 @@ class Automations(DueLoop):
                 for event, why in refused:
                     self._insert(automation.id, event.occurred_at, [event.id], "skipped", why)
                 if mine:
-                    count, overflow = self._plan(automation, mine, now)
+                    count, overflow = self._plan(automation, mine, now, stale_after)
                     planned += count
                     if overflow:
                         overflowed.append(automation)
@@ -855,10 +859,12 @@ class Automations(DueLoop):
             self.close_waiting(automation.id)
         return "queued"
 
-    def _plan(self, automation: Automation, events: list[StoredEvent], now: datetime) -> tuple[int, bool]:
+    def _plan(
+        self, automation: Automation, events: list[StoredEvent], now: datetime, stale_after: timedelta | None = None
+    ) -> tuple[int, bool]:
         """The runs these events make for this automation. Returns (runs queued, whether the queue was full)."""
         events = sorted(events, key=lambda event: (parse_iso(event.occurred_at), event.id))
-        stale = [event for event in events if now - parse_iso(event.occurred_at) > STALE_AFTER]
+        stale = [event for event in events if now - parse_iso(event.occurred_at) > (stale_after or STALE_AFTER)]
         fresh = [event for event in events if event not in stale]
         groups: list[list[StoredEvent]] = []
         skipped: list[tuple[list[StoredEvent], str]] = []

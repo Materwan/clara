@@ -1,8 +1,8 @@
 """What happened (an event) and the kinds of event that exist.
 
-A *source* (the mailboxes, polled by connectors/mail_watch.py; GitHub repositories, polled by connectors/github_watch.py)
-finds events and hands them to `Automations.ingest`. An event is stored once: (source, key) is unique, so the same one seen
-twice, after a restart or a replay, is one event.
+A *source* (the mailboxes, polled by connectors/mail_watch.py; GitHub repositories, polled by connectors/github_watch.py; Moodle
+and Auriga, polled by connectors/school_watch.py) finds events and hands them to `Automations.ingest`. An event is stored once:
+(source, key) is unique, so the same one seen twice, after a restart or a replay, is one event.
 
 A kind declares its own fields (what a filter may look at), the tools a run may use when the automation lists none, the text
 of a notification, and whether what it carries is tainted (written by someone else). The engine knows no kind by name: a
@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class SourceEvent:
-    source: str  # mail, github
+    source: str  # mail, github, moodle, auriga
     kind: str  # mail.received, github.pull_request
     key: str  # stable inside the source: gmail:<message id>, owner/repo#12:opened:<time>
     occurred_at: str  # when it happened, ISO UTC (the time a mail was received)
@@ -109,6 +109,56 @@ KINDS: dict[str, EventKind] = {
         ("github_read",),
         "{repo} {branch}: {author} pushed {message}",
         noun="a push",
+    ),
+    # School (connectors/school_watch.py): every field is text written by other people (a course, a teacher, a teacher's comment).
+    # Reading the school sites with the tools does not taint a turn (DECISIONS.md), but an event that starts a run does.
+    "moodle.quiz_opens": EventKind(
+        "moodle.quiz_opens",
+        "A Moodle quiz opens (at its opening time, in a course in progress)",
+        {"course": "text", "quiz": "text", "opens": "text", "closes": "text"},
+        ("school_calendar", "moodle_courses"),
+        "Quiz {quiz} ({course}) opens at {opens}",
+        noun="a quiz opening",
+    ),
+    "moodle.quiz_closes": EventKind(
+        "moodle.quiz_closes",
+        "A Moodle quiz closes (at its closing time, in a course in progress)",
+        {"course": "text", "quiz": "text", "opens": "text", "closes": "text"},
+        ("school_calendar", "moodle_courses"),
+        "Quiz {quiz} ({course}) closes at {closes}",
+        noun="a quiz closing",
+    ),
+    "moodle.activity_added": EventKind(
+        "moodle.activity_added",
+        "A new activity or file appears in a Moodle course in progress",
+        {"course": "text", "section": "text", "name": "text", "type": "text"},
+        ("moodle_files", "moodle_courses"),
+        "{course}: new {type} “{name}” in {section}",
+        noun="a new Moodle activity",
+    ),
+    "moodle.grade_posted": EventKind(
+        "moodle.grade_posted",
+        "A grade appears or changes in a Moodle course in progress",
+        {"course": "text", "item": "text", "grade": "text", "range": "text"},
+        ("school_grades", "moodle_courses"),
+        "{course}: {item}: {grade}",
+        noun="a Moodle grade",
+    ),
+    "auriga.grade_posted": EventKind(
+        "auriga.grade_posted",
+        "An average or a mark appears or changes on Auriga (this school year)",
+        {"code": "text", "title": "text", "value": "text", "kind": "text"},
+        ("school_grades",),
+        "{code} {title}: {value}",
+        noun="an Auriga grade",
+    ),
+    "auriga.planning_changed": EventKind(
+        "auriga.planning_changed",
+        "A class on Auriga's planning is added, moved, changes room or teachers, or is cancelled (the next four weeks)",
+        {"date": "text", "title": "text", "change": "text", "details": "text"},
+        ("school_calendar",),
+        "{date} {title}: {change} ({details})",
+        noun="a change of planning",
     ),
 }
 NOTIFY = "notify"

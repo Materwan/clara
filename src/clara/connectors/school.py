@@ -38,6 +38,11 @@ class Event:
     title: str
     details: tuple[str, ...] = ()  # the room, the teacher, the course
     flags: tuple[str, ...] = ()  # exam, overdue
+    # what the watcher (school_watch.py) follows in an Auriga planning entry: the site's id for it, and its rooms and teachers
+    # (every one, sorted, each once), which `details` shows cut and in the site's order
+    ident: str = ""
+    room: str = ""
+    teachers: str = ""
 
 
 class Noted(list):

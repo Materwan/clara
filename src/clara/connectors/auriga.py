@@ -516,7 +516,9 @@ class Auriga:
             if part
         )
         exam = is_exam(item.get("activityType")) or item.get("isExam") is True
-        return Event(start, end, "auriga", kind, title, details, ("exam",) if exam else ())
+        room, people = (", ".join(sorted(dict.fromkeys(name for name in names if name))) for names in (rooms, teachers))
+        flags = ("exam",) if exam else ()
+        return Event(start, end, "auriga", kind, title, details, flags, str(item.get("id") or ""), room, people)
 
     # ------------------------------------------------------------------
     # The grades

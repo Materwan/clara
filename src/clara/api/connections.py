@@ -76,6 +76,7 @@ def status(request: Request) -> dict:
         "gmail": _mailbox_state(s, connectors, "gmail", connectors.google_auth() is not None),
         "moodle": _school_state(s, connectors, "moodle"),
         "auriga": _school_state(s, connectors, "auriga"),
+        "school": {"poll_seconds": s.settings.school_poll_seconds},
         "mail": {
             "notify": s.runtime.get("mail_notify"),
             "senders": s.runtime.get("mail_notify_senders"),

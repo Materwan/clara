@@ -207,6 +207,26 @@ answers one more field, `lapses`.
 - **Send a test event is a real event:** it is stored and any automation that waits for the source may start a run; the dialog says so.
 - **An automation that waits for a revoked source says so** on its row and in its form, with a *Source revoked* tag, and the form
   asks for another event or the branch removed before it saves.
+- **School events: an automation can wait for something at Moodle or Auriga.** Six new kinds: `moodle.quiz_opens` and
+  `moodle.quiz_closes` (`course`, `quiz`, `opens`, `closes`), `moodle.activity_added` (`course`, `section`, `name`, `type`),
+  `moodle.grade_posted` (`course`, `item`, `grade`, `range`), `auriga.grade_posted` (`code`, `title`, `value`, `kind`) and
+  `auriga.planning_changed` (`date`, `title`, `change`, `details`). Neither site can call Clara, so a watcher looks, with your own tokens and
+  only to read, every **`CLARA_SCHOOL_POLL_SECONDS`** (new, 900; `0` never; 60 at least), only while an enabled automation waits for one of
+  the kinds, one pass per site and call after call. The first look only notes where things stand, so a new automation never replays
+  history. Schema version 34 adds `school_cursors`; it keeps no grade, only a hash of each grade line.
+- **A quiz opens or closes at its time.** The event is stored when the time the site gave has come, dated that time, not when the watcher
+  saw it; a time that passed in a long gap is found once, late (a backlog for `catch_up`). A quiz that was moved opens at its new time.
+- **A change of planning is told in words.** An Auriga class that moved, changed room or teachers, is new, or disappeared is an event
+  (`change`: `moved`, `room`, `teachers`, `added`, `cancelled`), with what it was and what it is in one line; a title written otherwise is
+  not a change. It looks at the next 28 days.
+- **Every school event is tainted.** Course names, grade comments and teachers' names are written by other people, so a run an event starts is
+  tainted from its first word and has only the read tools of its kind (`school_calendar`, `school_grades`, `moodle_courses`,
+  `moodle_files`) and `notify` by default. Reading the sites with the tools still does not taint a turn.
+- **A site that is not connected or whose sign-in lapsed is skipped without a second alert,** and the watcher never signs in again by
+  itself: the one try the kept Auriga password gets per lapse is not spent by it. Another failure is logged once and tried at the next poll,
+  and a failing site does not stop the other.
+- **The Automation page says « Nothing to look at »** for an automation on school events when neither Moodle nor Auriga is connected, and
+  « School polling is off » when `CLARA_SCHOOL_POLL_SECONDS` is `0`. `GET /v1/connections` carries `school.poll_seconds`.
 
 ## v1.5.1 — 04/11/2026
 

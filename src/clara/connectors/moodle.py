@@ -156,6 +156,17 @@ class GradeItem:
     percentage: str
     feedback: str
     graded: int
+    id: int = 0  # the grade item's id in the course: the watcher follows a line by it
+
+
+@dataclass(frozen=True)
+class Quiz:
+    id: int
+    course: str
+    name: str
+    opens: datetime | None
+    closes: datetime | None
+    limit: int  # seconds, 0: none
 
 
 # Moodle's own text: a name may hold `{mlang en}…{mlang}{mlang fr}…{mlang}` blocks (every language is kept, joined with " / "),
@@ -439,9 +450,8 @@ class Moodle:
             )
         return found, dropped
 
-    async def quizzes(self, courses: list[Course], start: datetime, end: datetime) -> Noted:
-        """When the quizzes of these courses open. Only that: the Timeline (`events`) already carries the close of a quiz, and
-        adding it from here showed it twice."""
+    async def quiz_times(self, courses: list[Course]) -> Noted:
+        """The quizzes of these courses with the time each one opens and closes (None: it has none)."""
         found = Noted()
         if not courses:
             return found
@@ -451,18 +461,30 @@ class Moodle:
         for quiz in raw:
             if not isinstance(quiz, dict):
                 continue
-            where = (names.get(number(quiz.get("course")), ""),)
-            limit = number(quiz.get("timelimit"))
-            more = (f"time limit {limit // 60} min",) if limit else ()
-            stamp = seconds(quiz.get("timeopen"))
-            if stamp and start <= when(stamp) < end:
-                found.append(
-                    Event(
-                        when(stamp), None, "moodle", "quiz opens", moodle_text(quiz.get("name"), 200), (*where, *more)
-                    )
+            opens, closes = seconds(quiz.get("timeopen")), seconds(quiz.get("timeclose"))
+            found.append(
+                Quiz(
+                    number(quiz.get("id")) or number(quiz.get("coursemodule")),
+                    names.get(number(quiz.get("course")), ""),
+                    moodle_text(quiz.get("name"), 200),
+                    when(opens) if opens else None,
+                    when(closes) if closes else None,
+                    number(quiz.get("timelimit")),
                 )
-        if sum(isinstance(quiz, dict) for quiz in raw) < len(raw):
+            )
+        if len(found) < len(raw):
             found.notes.append("Some quizzes Moodle sent could not be read and are left out.")
+        return found
+
+    async def quizzes(self, courses: list[Course], start: datetime, end: datetime) -> Noted:
+        """When the quizzes of these courses open. Only that: the Timeline (`events`) already carries the close of a quiz, and
+        adding it from here showed it twice."""
+        quizzes = await self.quiz_times(courses)
+        found = Noted(notes=quizzes.notes)
+        for quiz in quizzes:
+            if quiz.opens and start <= quiz.opens < end:
+                more = (f"time limit {quiz.limit // 60} min",) if quiz.limit else ()
+                found.append(Event(quiz.opens, None, "moodle", "quiz opens", quiz.name, (quiz.course, *more)))
         return found
 
     # ------------------------------------------------------------------
@@ -535,6 +557,7 @@ class Moodle:
                 # one line: a teacher's text adds none
                 line(html_to_text(languages(str(item.get("feedback") or "")[:MAX_RAW_TEXT])), 300),
                 seconds(item.get("gradedategraded")),
+                number(item.get("id")),
             )
             for item in items
         )

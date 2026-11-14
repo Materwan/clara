@@ -372,12 +372,13 @@ ACTIVITY_TYPES = {"CM": "Cours magistral", "TD": "Travaux dirigés", "TP": "Trav
 
 
 def intervention(start: str, end: str, caption: str | None, kind: str = "CM", room: str = "B101", exam: bool = False,
-                 teacher: tuple[str, str] | None = ("Grace", "Hopper"), activity: str = "") -> dict:
+                 teacher: tuple[str, str] | None = ("Grace", "Hopper"), activity: str = "", ident: int | None = None) -> dict:
     """A planning entry as the real site gives it: the activity type is an object (its code and its long caption), `isExam` is
     false even for an `EX` activity, a teacher is a `person` with a current first and last name, and an entry may have no
     pedagogical unit at all (`caption` None): its words are then in the activity."""
     units = [{"pedagogicalUnit": {"code": "2627_I_INF_X", "caption": {"fr": caption, "en": caption}}}] if caption else []
     return {
+        **({"id": ident} if ident is not None else {}),  # the watcher follows an entry by the site's id for it
         "startDateTime": start,
         "endDateTime": end,
         "activityType": {"code": kind, "caption": {"fr": ACTIVITY_TYPES.get(kind, kind), "en": kind}},
@@ -394,6 +395,23 @@ def synthese(n: int, final: str | None = "12.5", pre: str | None = None, year: s
     average before the RATT retake (a string, null on most lines), the component code, its title, and the final average (a
     string, null on a line with none yet). The query's `content.columns` has four entries: the code and the title are one column."""
     return [n, pre, f"{year}_I_INF_{n:03d}", title or {"fr": f"Matière {n}", "en": f"Course {n}"}, final]
+
+
+def quiz(ident: int, course: int, name: str, opens: int = 0, closes: int = 0, limit: int = 0) -> dict:
+    """A quiz of `mod_quiz_get_quizzes_by_courses`: its times are seconds since 1970, 0 when it has none."""
+    return {"id": ident, "coursemodule": 1000 + ident, "course": course, "name": name, "timeopen": opens, "timeclose": closes, "timelimit": limit}
+
+
+def module(ident: int, name: str, kind: str = "resource", visible: bool = True) -> dict:
+    return {"id": ident, "modname": kind, "name": name, "uservisible": visible, "contents": []}
+
+
+def section(number: int, name: str, *modules: dict) -> dict:
+    return {"id": 100 + number, "name": name, "section": number, "modules": list(modules)}
+
+
+def grade_item(ident: int, name: str | None, grade: str, kind: str = "mod", rng: str = "0–20") -> dict:
+    return {"id": ident, "itemname": name, "itemtype": kind, "itemmodule": "quiz" if kind == "mod" else "", "gradeformatted": grade, "rangeformatted": rng}
 
 
 def keep_password(services, world: World) -> None:

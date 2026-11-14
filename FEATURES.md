@@ -525,11 +525,12 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **On time:** the due loops sleep until the next due instant (30 s at most); something that fires more than
   `CLARA_LATE_ALERT_SECONDS` (300 s) late raises a `late:` alert.
 
-### Automations on an event: mail and GitHub
+### Automations on an event: mail, GitHub and school
 
 An automation can wait for something that happens outside. Today that is a new message in the inbox of a connected Gmail mailbox
-(`mail.received`), a pull request opened, merged or closed in a GitHub repository you added (`github.pull_request`) and a push to
-one of its branches (`github.push`). A **kind of event** declares its fields (what a filter may look at), the tools a run may use
+(`mail.received`), a pull request opened, merged or closed in a GitHub repository you added (`github.pull_request`), a push to
+one of its branches (`github.push`) and, at Moodle and Auriga, a quiz that opens or closes, a new activity, a grade and a change of
+planning (the six school kinds below). A **kind of event** declares its fields (what a filter may look at), the tools a run may use
 when none are listed, the text of a notification, a noun for the sentences and whether what it carries is tainted: a new source
 adds a kind and nothing else changes (the engine knows no kind by name).
 
@@ -563,6 +564,43 @@ adds a kind and nothing else changes (the engine knows no kind by name).
     tool by tool; the default mode refuses `github_write` in a normal turn and a tainted one).
   - A run reads the rest with `github_read` (its `diff` action shows what a pull request or a commit changes); with no tools
     listed it has `github_read` and `notify` only.
+- **School (Moodle and Auriga).** Neither site can call Clara, so she looks, with your own tokens and only to read: every
+  `CLARA_SCHOOL_POLL_SECONDS` (900), at each site that is connected and whose sign-in works, and only for the streams an enabled
+  automation waits for (a quiz time asks Moodle for the courses in progress and their quizzes; a planning asks Auriga for one
+  call). One pass per site, call after call (never several at once), the courses in progress only (30 at most), the whole poll
+  stopped after 300 seconds; what it had not finished is tried at the next poll. Like the mail and GitHub polls, the **first look of
+  a stream only notes where things stand** (a new automation never replays history, and a course seen for the first time, or a new
+  school year, is noted, not announced), the place moves in the same transaction as the events and the runs they plan, and with no
+  automation waiting for a stream its place is forgotten (and a site's, when you disconnect it or connect another account). A site
+  that is not connected, or whose sign-in lapsed, is skipped without a word: its alert (`moodle`, `auriga`) already tells you, no
+  second one is raised, and the poll never signs in again by itself, so the one try the kept Auriga password gets per lapse is not
+  spent by it; a refusal that the poll itself meets is marked and alerted as a tool's call would. Any other failure is logged once and
+  tried again at the next poll, and a failing site does not stop the other. The place of a stream keeps **no grade and no title of
+  a course**, only a hash of each grade line (with the line it belongs to), the ids of the activities seen, the time of the last look at
+  the quizzes, and, for the planning, each entry's start, end, room, teachers and title (what an event says as before and after).
+  Every event is **tainted** (course names, grade comments and teachers' names are written by other people), so a run it starts is
+  tainted from its first word and has only the read tools of its kind and `notify` by default; reading these sites with the tools
+  still does not taint a turn (section 8). The kinds, with their fields (all text) and their default read tools:
+  - `moodle.quiz_opens` and `moodle.quiz_closes` (`course`, `quiz`, `opens`, `closes`; `school_calendar`, `moodle_courses`): a quiz
+    opens or closes at a time the site gives in advance, so the event is stored when that time has come and **dated that time**, not
+    when the poll saw it; a time that passed during a long gap is an event too, once, found late (a backlog for `catch_up`); one found at the first look after it came is on time, not a backlog. A time
+    already past at the first look is not an event. The times are read again at each look, so a quiz that was moved opens at its new
+    time; a quiz that left the courses in progress or was deleted before its time is not found.
+  - `moodle.activity_added` (`course`, `section`, `name`, `type`; `moodle_files`, `moodle_courses`): a visible activity or file that
+    was not in the course at the last look (a label is not one; one a teacher makes visible is one).
+  - `moodle.grade_posted` (`course`, `item`, `grade`, `range`; `school_grades`, `moodle_courses`): a grade line that gets a grade or
+    whose grade changes, in each course in progress (the totals of a course or a category included); a grade taken away or a
+    line with no grade yet is not one. A mark that is not a number (AB) is quoted as it is.
+  - `auriga.grade_posted` (`code`, `title`, `value`, `kind`; `school_grades`): a line of « Mes notes (synthèse) » or « Mes notes
+    (éval) » of the current school year that appears with a value or whose value changes (`kind` is the type of a mark; for a synthèse
+    line, « before RATT » when the value is not the final average yet).
+  - `auriga.planning_changed` (`date`, `title`, `change`, `details`; `school_calendar`): in the next 28 days, an entry (found by the
+    site's id for it) whose start or end moved (`moved`), whose room (`room`) or teachers (`teachers`) changed, that is new
+    (`added`) or that disappeared before it began (`cancelled`); `details` says what, before and after, on one line. A new title
+    or unit wording is not a change. A class that moves and changes room at once is two events. An entry that only comes in sight at
+    the far end of the 28 days is not new, and an empty answer, or one with entries left out, is not taken for a cancelled week.
+  The Automation page says « Nothing to look at » when an automation waits for school events and neither Moodle nor Auriga is
+  connected, and « School polling is off » when the setting is `0`.
 - **Making one.** You write it (`/automations`, `POST /v1/automations`), or Clara does with the **Automations** pack of a chat
   (`automation_create`, `automation_update`, `automation_delete`: the gate asks you first, refuses it unattended and asks again
   after untrusted content whatever the mode approves, so a message cannot make an automation you did not read; an automation's own
@@ -875,7 +913,8 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   or « not kept »), not a log, an alert, an error, an audit line or a prompt; `PUT /v1/admin/secrets/{name}`, `/secrets set` and `clara secrets set`
   refuse these two names, and the model has no tool that reaches them. A site whose sign-in is refused is marked « sign in again » on the
   Connections page, raises its alert (`moodle` or `auriga`), is not asked again, and the tools say how to sign in again; the alert is over when
-  the site works again.
+  the site works again. **School events:** a watcher of the two sites starts automations by itself (section 5, « Automations on an event »);
+  this loop, every `CLARA_SCHOOL_POLL_SECONDS`, is not counted by the systemd watchdog either.
   **Reading these sites does not taint the turn** (the owner's choice, unlike Mail, GitHub and Drive): their text is data in the answers, with no
   quarantined reader, so a course page or a document that carries sentences meant for an AI is read as it is. The school calendar is Auriga's
   planning (classes, tutorials, exams, with room and teacher; an exam is known by its activity type) and Moodle's dates (assignments and activities to
@@ -1456,6 +1495,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_GOOGLE_PROJECT_NUMBER` | — | Google Cloud project number (the Picker) |
 | `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
 | `CLARA_GITHUB_POLL_SECONDS` | `120` | How often the added repositories are looked at for automations on pull requests and pushes (only while one waits for them); `0` never; 30 at least |
+| `CLARA_SCHOOL_POLL_SECONDS` | `900` | How often Moodle and Auriga are looked at for automations on school events (only while one waits for them, only a connected site whose sign-in works); `0` never; 60 at least |
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
 | `CLARA_TAILSCALE_BIN` | tailscale | The tailscale binary |
@@ -1689,7 +1729,7 @@ keep-alive every 15 s.
 | `POST /v1/workspace/trust` | Trust a marked file (or every marked file of a folder) as it is now (a token that may answer every request) |
 | `DELETE /v1/workspace/trust` | Take your trust back |
 | `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
-| `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each), files; the mail notification settings |
+| `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each), files; the mail notification settings; the school poll interval (`school.poll_seconds`) |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |

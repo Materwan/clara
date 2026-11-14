@@ -97,11 +97,6 @@ What the owner decided:
     bearer secret, their address and the local callers are built (`automations/sources.py`; the `proof` column is ready for it).
   - **GitHub webhooks** (an adapter for the kinds that exist: `github.push`, `github.pull_request`, same fields, `ping` answered, the delivery
     id as the key, an answer within 10 seconds, so the body is stored and `202` sent before anything runs).
-- **B. School events**, by a watcher of the Moodle and Auriga connectors (the owner has tried them several times and they work): kinds
-  `moodle.quiz_opens`, `moodle.quiz_closes`, `moodle.activity_added`, `moodle.grade_posted`, `auriga.grade_posted` and
-  `auriga.planning_changed`. A quiz opens or closes at a time known in advance (`timeopen`, `timeclose`), so its event is ingested when that
-  time comes, with that time as `occurred_at`, not when the watcher saw it. Setting `CLARA_SCHOOL_POLL_SECONDS` (like the mail and GitHub
-  ones; `0` never, only while an automation waits for one of these kinds), and a first look that only notes where things stand.
 - **C. Feeds** (`feed.item`, RSS and Atom, fields `feed`, `title`, `author`, `link`, `summary`) for what is not covered above: YouTube
   channels (`youtube.com/feeds/videos.xml?channel_id=…`), blogs, podcasts, arXiv. Not GitHub (it has its own kinds). Feeds are fetched with
   the same guard as `web_fetch` (public addresses only, redirects checked, size and time capped), read with a parser that does not expand
@@ -120,8 +115,8 @@ What the owner decided:
 
 What I corrected or added to the owner's plan:
 
-- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): the school watcher (B) and feeds (C); the event sources
-  with bearer secrets and the local callers (A, minus the public door) are built. Phase 2: the second listener, Funnel, and the GitHub
+- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): feeds (C); the event sources
+  with bearer secrets and the local callers (A, minus the public door) and the school watcher are built. Phase 2: the second listener, Funnel, and the GitHub
   webhook adapter. Of everything above, only a service of the Internet that calls Clara needs Phase 2.
 - **A webhook and the poll of the same repository would both produce an event** (their keys differ: the poll's is
   `owner/repo#12:opened:<time>`, a delivery's is its id). When a repository has a GitHub webhook, its poll is turned off, or the two keys
@@ -137,12 +132,10 @@ What I corrected or added to the owner's plan:
   Funnel before this is relied on.
 - **A GitHub webhook needs a step of yours:** adding it in the repository's settings with its address and secret. The token Clara has
   does not need the right to create one. Funnel itself needs `funnel` in your tailnet's ACL (`nodeAttrs`), which only you can set.
-- **Quiz times, not relevé times:** see B. Without it « the quiz opens » would arrive up to a polling interval late.
 
 Not decided:
 
-- The kinds and fields of B beyond the names above, the polling interval of each source (the defaults), and the Auriga notice of a change of
-  planning (which entry fields count as a change).
+- The polling interval of the feeds (the default).
 - How `automation_create` carries a feed (a source of events is chosen with the same `when` as any kind, and `automation_list` names the ones that exist: built; the gate asks first, as it does today).
 - The look of the feeds (their preview, and the form that adds one: a third tab of the Automation page, beside Event sources): the owner will
   see a design first. The event sources have theirs (the second tab of the Automation page: built).
@@ -155,7 +148,7 @@ What the current design already sets:
 - `ClaraServer` (`app.py`) is one `uvicorn.Server`; a second listener is a second server on the same event loop and the same `Services`,
   with its own middleware that accepts only event secrets.
 - New tables, kinds, routes, settings (`CLARA_EVENTS`,
-  `CLARA_EVENTS_PORT`, `CLARA_EVENTS_LOCAL_PORT`, `CLARA_SCHOOL_POLL_SECONDS`, `CLARA_FEEDS_POLL_SECONDS`), an alert and a console command must
+  `CLARA_EVENTS_PORT`, `CLARA_EVENTS_LOCAL_PORT`, `CLARA_FEEDS_POLL_SECONDS`), an alert and a console command must
   be named in `FEATURES.md` (the docs test), with a migration whose number is taken at merge and a dated entry in `docs/DECISIONS.md` that
   supersedes « poll not webhook » for the repositories that have a webhook.
 
@@ -249,8 +242,8 @@ hostile runs, which had none, are the clean ones.
 What the real-site run settled (the assumptions this section used to list): the Moodle token and its seven read functions; the Auriga
 offline token, its 60-second access token and the rotation of the refresh token; the room, the activity type and the unit caption of
 a planning entry; the `…Z` timestamps (true UTC) and the inclusive local `startDate` and `endDate`; the layout of an éval line; the saved
-queries 1144 / 1198 and 1036 / 945 with the year filter; `totalPages` as an integer; `GET /api/me`. Item B of « New kinds of event »
-says the owner has tried the connectors and they work: that holds for signing in and for most reads, not for the synthèse grades (D1)
+queries 1144 / 1198 and 1036 / 945 with the year filter; `totalPages` as an integer; `GET /api/me`. When asking for school events, the
+owner said they had tried the connectors and they work: that holds for signing in and for most reads, not for the synthèse grades (D1)
 or the teachers (D3).
 
 What the owner decided:

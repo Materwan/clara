@@ -29,6 +29,7 @@ TAILSCALE_PORTS = (443, 8443, 10000)
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
 MAIL_POLL_MIN = 30
 GITHUB_POLL_MIN = 30
+SCHOOL_POLL_MIN = 60  # two sites that are read call by call (a dozen calls a poll): gentler than the others
 
 
 class SettingsError(ValueError):
@@ -136,6 +137,7 @@ class Settings:
     google_project_number: str = ""
     mail_poll_seconds: int = 120
     github_poll_seconds: int = 120
+    school_poll_seconds: int = 900
 
     # --- operations -----------------------------------------------------------------------------------------
     tailscale: str = "serve"
@@ -376,6 +378,12 @@ def load_settings(
             f"CLARA_GITHUB_POLL_SECONDS={github_poll_seconds} must be 0 (never) or at least {GITHUB_POLL_MIN}."
         )
         github_poll_seconds = 120
+    school_poll_seconds = r.integer("CLARA_SCHOOL_POLL_SECONDS", 900, 0, 86_400)
+    if 0 < school_poll_seconds < SCHOOL_POLL_MIN:
+        r.problems.append(
+            f"CLARA_SCHOOL_POLL_SECONDS={school_poll_seconds} must be 0 (never) or at least {SCHOOL_POLL_MIN}."
+        )
+        school_poll_seconds = 900
     waiting_remind_at = r.text("CLARA_WAITING_REMIND_AT", "09:00")
     if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", waiting_remind_at):
         r.problems.append(f"CLARA_WAITING_REMIND_AT={waiting_remind_at!r} must be HH:MM.")
@@ -468,6 +476,7 @@ def load_settings(
         google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),
         mail_poll_seconds=mail_poll_seconds,
         github_poll_seconds=github_poll_seconds,
+        school_poll_seconds=school_poll_seconds,
         tailscale=r.choice("CLARA_TAILSCALE", "serve", ("serve", "off")),
         tailscale_port=tailscale_port,
         tailscale_bin=r.text("CLARA_TAILSCALE_BIN", "tailscale"),

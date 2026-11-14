@@ -173,8 +173,11 @@ used as a window). Nothing is on until you make one, and the model cannot make o
 are being rebuilt for automations: until then make and watch them with the console, as below, or the API.) The mail poll runs
 every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while an automation (or the notifications) listens. GitHub cannot call Clara,
 so an automation on `github.pull_request` or `github.push` is found by a poll too, every `CLARA_GITHUB_POLL_SECONDS` (120), of the
-repositories added on the Connections page and only for the kinds an automation waits for. The run an event starts is untrusted,
-so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
+repositories added on the Connections page and only for the kinds an automation waits for. Moodle and Auriga cannot call Clara either:
+an automation on a school kind (`moodle.quiz_opens`, `moodle.quiz_closes`, `moodle.activity_added`, `moodle.grade_posted`,
+`auriga.grade_posted`, `auriga.planning_changed`) is found by a poll of the connected sites every `CLARA_SCHOOL_POLL_SECONDS` (900),
+again only while one waits; a site that is not connected or whose sign-in lapsed is skipped (its alert tells you). The run an event starts
+is untrusted, so each change it makes on GitHub asks you first; to see what it wants, open the approvals.
 
 ```text
 /automations add invoices '{"when": {"type": "and", "of": [

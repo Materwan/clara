@@ -26,6 +26,7 @@ from .school import SITES as SCHOOL_SITES
 from .school import SchoolError
 from .school_tools import NEEDED as SCHOOL_NEEDED
 from .school_tools import reconnect_help, school_tools
+from .school_watch import SchoolWatch
 from .seen import Seen
 from .store import Connections
 from .tools import drive_tools, github_tools, web_tools
@@ -66,6 +67,7 @@ class Connectors:
         self._relogin = asyncio.Lock()  # one sign-in with the kept password at a time
         self.watch = MailWatch(s)
         self.github_watch = GitHubWatch(s)
+        self.school_watch = SchoolWatch(s)
         self.seen = Seen()  # the subjects and names a conversation was shown, for its requests (connectors/seen.py)
 
     # ------------------------------------------------------------------
@@ -198,6 +200,9 @@ class Connectors:
 
     def school_connect(self, site: str, secret: str, account: str) -> None:
         """Keep the token of a site (once the site has accepted it) and the account it is for."""
+        before = self.s.connections.get(site)
+        if before and before["account"] != account:
+            self.school_watch.forget(site)  # another account's grades and classes are not this one's to compare with
         self.s.secrets.set(SCHOOL_SECRETS[site], secret)
         self.s.connections.set(site, account)
         self.s.alerts.clear(site)
@@ -208,6 +213,7 @@ class Connectors:
             removed = self.school_password_forget() or removed
         removed = self.s.connections.remove(site) or removed
         self.s.alerts.clear(site)
+        self.school_watch.forget(site)
         return removed
 
     def school_failed(self, site: str, error: SchoolError) -> None:

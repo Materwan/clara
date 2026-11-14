@@ -43,9 +43,10 @@
     { value: 'follow', label: 'The Admin setting', hint: 'automation_keep_last (none at first).' },
     { value: 'own', label: 'Its own count', hint: 'Only the latest ones are kept.' },
   ];
-  const SOURCES: Record<string, { label: string; missing: string; setting: string }> = {
-    mail: { label: 'Mail', missing: 'An automation on new mail has nothing to look at. Connect Gmail on the', setting: 'CLARA_MAIL_POLL_SECONDS' },
-    github: { label: 'GitHub', missing: 'An automation on GitHub has nothing to look at. Connect GitHub and add a repository on the', setting: 'CLARA_GITHUB_POLL_SECONDS' },
+  const SOURCES: Record<string, { label: string; prefixes: string[]; missing: string; setting: string }> = {
+    mail: { label: 'Mail', prefixes: ['mail'], missing: 'An automation on new mail has nothing to look at. Connect Gmail on the', setting: 'CLARA_MAIL_POLL_SECONDS' },
+    github: { label: 'GitHub', prefixes: ['github'], missing: 'An automation on GitHub has nothing to look at. Connect GitHub and add a repository on the', setting: 'CLARA_GITHUB_POLL_SECONDS' },
+    school: { label: 'School', prefixes: ['moodle', 'auriga'], missing: 'An automation on school events has nothing to look at. Connect Moodle or Auriga on the', setting: 'CLARA_SCHOOL_POLL_SECONDS' },
   };
   const TIME_TYPES = [{ value: 'once', label: 'Once' }, { value: 'window', label: 'Window' }, { value: 'cron', label: 'Cron (advanced)' }];
   const CONDITION_TYPES = TIME_TYPES.filter((item) => item.value !== 'once');
@@ -69,7 +70,7 @@
   let packs = $state<any[]>([]);
   let models = $state<any>({ models: [], default: '' });
   let toolNames = $state<string[]>([]);
-  let sources = $state<Record<string, { ready: boolean; poll: number }>>({ mail: { ready: true, poll: 120 }, github: { ready: true, poll: 120 } });
+  let sources = $state<Record<string, { ready: boolean; poll: number }>>({ mail: { ready: true, poll: 120 }, github: { ready: true, poll: 120 }, school: { ready: true, poll: 900 } });
   let form = $state(empty());
   let open = $state(false);
   let checked = $state(false); // a save was tried: every mistake is shown where it is
@@ -163,8 +164,8 @@
     };
   });
 
-  const watched = (source: string): boolean =>
-    (open && formKinds.some((kind) => kind.split('.')[0] === source)) || items.some((item) => item.enabled && item.kinds.some((kind: string) => kind.split('.')[0] === source));
+  const watched = (prefixes: string[]): boolean =>
+    (open && formKinds.some((kind) => prefixes.includes(kind.split('.')[0]))) || items.some((item) => item.enabled && item.kinds.some((kind: string) => prefixes.includes(kind.split('.')[0])));
 
   async function load(): Promise<void> {
     const data = await api.get('/v1/automations');
@@ -178,6 +179,7 @@
       sources = {
         mail: { ready: connections.gmail.connected, poll: connections.mail.poll_seconds },
         github: { ready: connections.github.connected && connections.github.repos.length > 0, poll: connections.github.poll_seconds },
+        school: { ready: connections.moodle.connected || connections.auriga.connected, poll: connections.school?.poll_seconds ?? 900 },
       };
     }
     await loadMemory();
@@ -516,10 +518,10 @@
       onclick={() => (open ? closeForm() : openForm())}><Icon name="plus" size={18} />New automation</button>
   </div>
   {#each Object.entries(SOURCES) as [source, info] (source)}
-    {#if watched(source) && !sources[source].ready}
+    {#if watched(info.prefixes) && !sources[source].ready}
       <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Nothing to look at</span>
         <span class="small">{info.missing} <a href="#/connections">Connections</a> page.</span></p>
-    {:else if watched(source) && sources[source].poll === 0}
+    {:else if watched(info.prefixes) && sources[source].poll === 0}
       <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />{info.label} polling is off</span>
         <span class="small"><code>{info.setting}</code> is 0 on the server, so no automation will start from it.</span></p>
     {/if}
