@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .runtime import RuntimeSettings
     from .secrets import SecretsStore
     from .settings import Settings
+    from .skills import Skills
     from .timekeeping import DeferredCalls, Reminders, Tasks
     from .tools.base import Toolbox
     from .tools.folder_tools import FolderGrants
@@ -65,6 +66,7 @@ class Services:
     tasks: Tasks
     automations: Automations
     event_sources: EventSources
+    skills: Skills
     deferred: DeferredCalls
     gate: Gate
     modes: Modes

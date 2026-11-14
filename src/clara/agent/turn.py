@@ -46,6 +46,7 @@ from ..knowledge.attachments import Attached, Image, without_documents
 from ..knowledge.projects import READ_CHARS_LIMIT
 from ..llm import Choice, NoModel, ToolCall
 from ..memory.conversations import Conversation, StoredMessage, TurnRow
+from ..skills.store import split_summary, with_skills
 from ..timeutil import zone
 from ..tools.base import CallResult, Dispatch, ToolContext, TurnState
 from ..tools.folder_tools import TOOL_FOLDERS, FolderRequest
@@ -181,8 +182,9 @@ class ChatRequest:
     # event carries (a link, a summary, a mail's gist, a GitHub text) was written by someone else.
     trusted_text: str | None = None
     ref: str = ""  # the question's id on Discord, when it came from there (the mirror does not post it again)
-    # What the Discord mirror shows in place of the message (an automation run's origin). The model is given, and the
-    # conversation stores, the whole message: this changes what is displayed, not what Clara reads.
+    # What a client shows in place of the message: an automation run's origin, or the `/skill arguments` the person typed (the skill
+    # command is expanded by api/chat.py). The model is given, and the conversation stores, the whole message: this changes what
+    # is displayed, not what Clara reads.
     shown: str = ""
     mirror_thread: str = ""  # a new conversation started in a Discord forum post: its thread
     folder: FolderRequest | None = None  # a folder on the person's computer, opened in this web chat (folder tools)
@@ -1280,7 +1282,8 @@ class Agent:
         old, kept = self._split_recent(rows, keep)
         if not old:
             raise NothingToCompact("nothing older than the turns kept")
-        summary = conversation.summary
+        summary, carried = split_summary(conversation.summary)  # the summariser gets the text; the skills line is made again below
+        skills = self.s.skills.run_in(conversation_id, conversation.project_id, carried)
         for chunk in chunk_messages(old, transcript_budget(summariser.window)):
             transcript = build_transcript(chunk)
             if transcript:
@@ -1299,11 +1302,14 @@ class Agent:
                 if not text.strip():
                     raise RuntimeError("the model returned an empty summary")
                 summary = text.strip()
-            self.s.conversations.set_summary(conversation_id, summary, chunk[-1].id, conversation.context_tokens)
+            self.s.conversations.set_summary(
+                conversation_id, with_skills(summary, skills), chunk[-1].id, conversation.context_tokens
+            )
         measured = estimate_tokens(conversation.summary) + sum(
             estimate_stored(row.content, row.prefix, row.tool_calls) for row in rows
         )
         fixed = max(0, conversation.context_tokens - measured)
+        summary = with_skills(summary, skills)
         after_tokens = (
             fixed + estimate_tokens(summary) + sum(estimate_stored(r.content, r.prefix, r.tool_calls) for r in kept)
         )

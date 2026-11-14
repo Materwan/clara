@@ -59,10 +59,17 @@ def message_line(role: str, content: str, tool_calls: list | None = None, tool_n
     return f"Person: {_clip(content, MESSAGE_CHARS)}"
 
 
+def _said(message) -> str:
+    """What a message says in the transcript. A skill command is only the words typed (`/review-pr 12`): the skill's own text is
+    not kept in a summary, the line naming the skills that were run is (agent/turn.py)."""
+    shown = getattr(message, "shown", "")
+    return shown if message.role == "user" and shown.startswith("/") else message.content
+
+
 def build_transcript(messages: list) -> str:
     """Stored messages (anything with role, content, tool_calls, tool_name) as plain text for the summariser."""
     return "\n".join(
-        line for line in (message_line(m.role, m.content, m.tool_calls, m.tool_name) for m in messages) if line
+        line for line in (message_line(m.role, _said(m), m.tool_calls, m.tool_name) for m in messages) if line
     )
 
 
@@ -72,7 +79,7 @@ def chunk_messages(messages: list, budget: int = MAX_TRANSCRIPT_CHARS) -> list[l
     current: list = []
     used = 0
     for message in messages:
-        size = len(message_line(message.role, message.content, message.tool_calls, message.tool_name))
+        size = len(message_line(message.role, _said(message), message.tool_calls, message.tool_name))
         size = size + 1 if size else 0
         if current and used + size > budget:
             chunks.append(current)

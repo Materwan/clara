@@ -258,6 +258,36 @@ answers one more field, `lapses`.
   an automation started, only the addresses of the automation's own prompt and documents are read by `web_fetch` without asking; one in the
   `<event>` block asks in a tainted run, and so does one in what the server said earlier in the run's conversation. A message you type is
   unchanged. The `feed_follow` card no longer offers « Approve all next » (`POST /v1/approvals/{id}/grant` answers 422 for it).
+- **Skills: instructions you add, run from a chat command** (the server; the page of the skills and the `/` menu are the last item below). A **skill** is a
+  folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code) that you add by pasting the text or sending a zip.
+  **`POST /v1/skills/preview`** reads it and stores nothing (the files with their size and kind, the text of `SKILL.md`, the warnings, every
+  problem); **`POST /v1/skills`** reads it again and stores it (`scope`: global, or reserved for projects; `replace` to add it again under
+  its name); `GET /v1/skills` (`?project=<id>|none` for the skills of one conversation), `GET /v1/skills/{name}`,
+  `GET /v1/skills/{name}/status` (the packs it needs, on or off in a conversation) and `DELETE /v1/skills/{name}`. Only a token that may
+  answer every request previews, adds, replaces or removes one: a script and the Discord bot get 403, and Clara has no tool for skills. At most
+  30 skills of 1 MB each (`SKILL.md` 100 KB, 50 files). Schema version 36 adds `skills`, `skill_projects` and `skill_files`, so the skills are in
+  the backups.
+- **A skill is text, and grants no right.** Only `SKILL.md` is read; the other files are stored as bytes and never run, served or put in a
+  prompt. `allowed-tools` is ignored (the gate still decides every call by the conversation's mode), the frontmatter's own field `packs`
+  lists the packs the skill needs (shown, never switched on by the server), and `name` cannot be a command of the terminal, Discord or the
+  console. The frontmatter is read as a strict subset of YAML, and a line that is not in it is refused by its number.
+- **A zip is read as a hostile document:** a symbolic link or special entry, an absolute path, `..`, an encrypted entry and two paths that are the
+  same once normalised are refused; the bytes are counted as they are unpacked, not the sizes in the headers; the archive, the entries and the
+  total are capped.
+- **`/name arguments` in a chat runs a skill.** The server (every client of `/v1/chat`) replaces the message by the skill's instructions,
+  `$ARGUMENTS` and `$1` to `$9` filled in (arguments go on a last line when the text has no `$ARGUMENTS`), up to 120,000 bytes. Only a skill
+  visible to the conversation's project is run: one reserved for another project, an unknown word and a reserved name are plain text. The
+  expansion is your own text, not outside content: it does not taint the turn. The stored question shows what you typed:
+  `GET /v1/conversations/{id}/messages` gives it as `shown`, and the conversation list's `preview` and the Discord mirror show it too.
+- **A summary names the skills that were run** (« Skills run in this conversation: review-pr, weekly-report »), written by the server from
+  the stored commands; the text of a skill is not kept in the summary.
+- **Skills on the web site.** A **Skills** page in Settings, next to Modes: your skills (name, description, the packs each needs, where it
+  applies, files and size, **Delete**), and **Add a skill** by pasting a `SKILL.md` or sending a zip, always through a **preview** (every file
+  with its text, the text of `SKILL.md`, the warnings and problems, whether it replaces a skill) before anything is added, and a choice of
+  **Everywhere** or **only in these projects**. In a chat, typing `/` at the start of the box opens a menu of the skills the conversation can
+  run (Up and Down, Enter or Tab to choose, Escape to close), and once the first word is a skill a line under the box shows its arguments and
+  the packs it needs: a click on an off pack switches it on for the conversation (the server never does). A skill command is shown in the
+  history as you typed it, and **Edit** and **Ask again** send it again as typed.
 
 ## v1.5.1 — 04/11/2026
 

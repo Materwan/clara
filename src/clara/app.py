@@ -46,6 +46,7 @@ from .api import modes as modes_api
 from .api import packs as packs_api
 from .api import projects as projects_api
 from .api import retention as retention_api
+from .api import skills as skills_api
 from .api import time as time_api
 from .api import vault as vault_api
 from .api import web as web_api
@@ -98,6 +99,7 @@ from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
 from .settings import Settings, SettingsError, load_settings
+from .skills import Skills
 from .timekeeping import DeferredCall, DeferredCalls, Reminders, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
 from .timeutil import parse_iso, zone
@@ -217,6 +219,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
         automations=automations,
         event_sources=EventSources(db, secrets, automations, audit),
+        skills=Skills(db, audit),
         deferred=DeferredCalls(db, events, home),
         gate=Gate(modes, vault_push=settings.vault_push),
         modes=modes,
@@ -416,6 +419,7 @@ def create_app(s: Services) -> FastAPI:
     app.include_router(workspace_api.router)
     app.include_router(automations_api.router)
     app.include_router(retention_api.router)
+    app.include_router(skills_api.router)
     app.include_router(connections_api.router)
     app.include_router(feeds_api.router)
     app.include_router(vault_api.router)

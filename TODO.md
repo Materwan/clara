@@ -136,72 +136,30 @@ What the current design already sets:
   be named in `FEATURES.md` (the docs test), with a migration whose number is taken at merge and a dated entry in `docs/DECISIONS.md` that
   supersedes « poll not webhook » for the repositories that have a webhook.
 
-## Skills: instructions you add, run from a chat command
+## Skills: what is left
 
-The owner asked for skills, as other agents have them: folders with a `SKILL.md` (instructions, and a description of the arguments)
-that the owner adds, and that are run from a command in the chat (`/name`), with a preview of the expected arguments. Today Clara has
-nothing like it: the web chat has no commands (the box sends on Enter), the terminal and Discord each have their own, and the persona and a
-project's instructions are the only standing instructions.
+Phase 1 of the skills is built, on the server and on the web site (`docs/DECISIONS.md`, « Skills (owner's decision, 2026-11-13) »; `FEATURES.md`,
+section 3 and the Skills page of the web site): a skill is a `SKILL.md` and the files of its folder, added by a token with the approval scope `all` from
+a pasted text or a zip, after a preview; it is stored in the database (so it is in the backups), global or reserved for projects; `/name arguments` in a
+chat is expanded by the server, `messages.shown` carries what was typed, and a summary names the skills that were run. The web site has the Skills page
+(Settings), the `/` menu of the box you write in and, under the box, the argument hint and the packs a skill needs (a click switches one on). A skill
+grants no right (`allowed-tools` is ignored) and its `packs` are for display. What the owner decided and is not built yet:
 
-What the owner decided:
-
-- **A skill** is a folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code), which the owner adds on a web page by
-  pasting a `SKILL.md` or sending a zip of the folder, with a preview of every file before it is accepted.
-- **Run by the owner:** `/name` in the web chat, with the skill's `argument-hint` shown before the message is sent. The web site only at
-  first; the terminal and Discord come later.
-- **Run by Clara:** through a tool. Every skill is visible to her except one that says `disable-model-invocation: true` (the field of
-  Claude Code). After untrusted content, her run of a skill asks for the owner's agreement.
-- **Packs:** a skill lists the packs it needs, shown before it is sent. When Clara runs a skill whose pack is off (Mail, for example), an
-  approval request offers to switch it on for the conversation.
-- **Scope:** a skill is global (every conversation, projects included) or reserved for one or several projects, and then does not exist,
-  for Clara or in the menu, in any other conversation.
-- **Volume:** about ten skills.
-- **Who may change them:** only a token with the approval scope `all` adds, changes or removes a skill. A script's token and the model
-  cannot.
-- **Backups:** the skills are in Clara's backups, as the database and the workspace are.
-- **Three phases**, each usable alone: (1) the command in the web chat, the arguments, the packs and the project scope; (2) Clara runs a
-  skill; (3) the scripts of a skill, in the sandbox.
-- **Left out of this item:** schedules and hooks do not run a skill.
-
-What I corrected or added to the owner's plan:
-
-- **A skill grants no right:** `allowed-tools` is ignored. The packs a skill lists are for display and for the approval request; the gate
-  still decides every call.
-- **Reserved names:** `/tools`, `/new`, `/model` and the other commands of the terminal and Discord cannot be skill names, so that adding
-  those clients later breaks nothing.
-- **A skill Clara runs stays in the conversation:** only the last 5 tool results stay in later prompts (`docs/DECISIONS.md`), so the text is
-  stored as a message, not as a tool result.
-- **The approval request to switch a pack on** is one more action at the gate, with its tainted case. It shows the skill and the pack, and
-  only a client can answer it.
-- **An archive is read strictly:** no links, no `..`, real bytes counted (`knowledge/ingest.py`).
-- **Scripts** stay in the sandbox, with its limits and no network unless approved. Running them needs a read-only mount of the skill's
-  folder, which is a change to the sandbox (only the workspace is mounted today).
-
-Not decided:
-
-- Does a skill file that changes after it was added need to be confirmed again (a digest, as the workspace's « trust » has)?
-- How a skill that was loaded survives the compaction of a long conversation (does the summary name it so that it can be loaded again)?
-- Which client comes after the web site, and in what form (Discord's native commands have a limit and must be registered).
-- Schedules and hooks running a skill, later.
-- The scripts of a skill: its gate class (that of `ws_run`, or its own), and whether a skill may ask for the network.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The page of the skills, the `/` menu and the line that shows the arguments.
-- The storage and how it is backed up, the migration, the name of the frontmatter field that lists the packs.
-- The tool Clara uses to run a skill, and the one for its scripts.
-
-What the current design already sets:
-
-- The prompt must stay identical from one turn to the next (`agent/prompt.py`), so the list of skills goes in the context block.
-- `messages.shown` (migration 0028) lets a message show `/name args` while the model gets the expanded text.
-- The model has no tool to read or change rules or levels (`docs/THREAT-MODEL.md`); it gets none for skills.
-- It depends on the modes (built): the tools of a skill get a normal verdict and a verdict when tainted in a mode, and
-  only a token with the approval scope `all` changes a mode.
-- `docs/NON-GOALS.md` excludes « Arbitrary MCP servers or plug-ins »: a dated entry in `docs/DECISIONS.md` must say that a skill is text, and
-  that its scripts run in the existing sandbox and add no server code.
-- `FEATURES.md` is tested against the code: every tool, route and action class added is named there, and the line « N tools. » is updated.
-- A migration number is taken when the branch is merged (the highest today is `0030`).
+- **Phase 2, Clara runs a skill through a tool.** Every skill is visible to her except one that says `disable-model-invocation: true` (the field is
+  stored). After untrusted content, her run of a skill asks for the owner's agreement. When the skill's pack is off (Mail, for example), an
+  approval request offers to switch it on for the conversation: one more action at the gate, with its tainted case, showing the skill and the pack,
+  which only a client can answer. A skill she runs stays in the conversation as a message, not as a tool result (only the last 5 tool results stay in
+  later prompts, `docs/DECISIONS.md`). The list of skills goes in the context block, never in the prompt itself, which must stay identical from one
+  turn to the next (`agent/prompt.py`). The summary already names the skills that were run, so that she can ask for one again. The model still has no
+  tool to add, change or remove a skill.
+- **Phase 3, the scripts of a skill, in the sandbox.** They stay in the sandbox, with its limits and no network unless approved; running them needs a
+  read-only mount of the skill's folder, which is a change to the sandbox (only the workspace is mounted today), and no server code: the files are
+  already stored, as bytes. Their gate class (that of `ws_run`, or its own) and whether a skill may ask for the network are not decided. They need
+  their own row in `docs/THREAT-MODEL.md`.
+- **Which client after the web site:** the terminal, then Discord (decided). The form is not: Discord's native commands have a limit and must be
+  registered. The names of their commands are already reserved.
+- **Schedules and hooks running a skill:** later; the owner left them out of this item.
+- **Not decided here:** whether a skill that Clara ran may be switched to « ask » in a mode of its own (it depends on phase 2's gate action).
 
 ## Moodle and Auriga: what is left
 

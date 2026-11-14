@@ -34,6 +34,7 @@ EVENT_ADDRESS = re.compile(rf"^/v1/events/{ID_PATTERN}$")
 LIMITS: tuple[tuple[re.Pattern[str], int], ...] = (
     (EVENT_ADDRESS, EVENT_BODY_LIMIT),
     (re.compile(r"^/v1/event-sources/[^/]+/fire$"), EVENT_BODY_LIMIT),
+    (re.compile(r"^/v1/skills(/preview)?$"), 2 * MEGABYTE),
     (re.compile(r"^/v1/projects/\d+/files$"), 90 * MEGABYTE),
     (re.compile(r"^/v1/workspace/upload$"), 110 * MEGABYTE),
     (re.compile(r"^/v1/documents/extract$"), 41 * MEGABYTE),

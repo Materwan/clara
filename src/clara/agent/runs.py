@@ -104,7 +104,7 @@ class Runs:
         state = plan.state
         if state.conversation_id and self.of(state.conversation_id) is not None:
             raise AlreadyRunning(state.conversation_id)
-        run = Run(state, request.message, [file.name for file in request.files])
+        run = Run(state, request.shown or request.message, [file.name for file in request.files])
         self._runs[run.turn_id] = run
         run.task = asyncio.ensure_future(self._drive(run, self._open(request, plan), fail))
         return run

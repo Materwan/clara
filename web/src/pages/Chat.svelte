@@ -10,6 +10,8 @@
   import PlusMenu from '../components/PlusMenu.svelte';
   import PresentCard from '../components/PresentCard.svelte';
   import SidePanel from '../components/SidePanel.svelte';
+  import SkillHint from '../components/SkillHint.svelte';
+  import SkillMenu from '../components/SkillMenu.svelte';
   import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
@@ -17,6 +19,7 @@
     import { markdown } from '../lib/markdown';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
+  import { type Chip, type Skill, chipsFor, filterSkills, hintSkill, insertSkill, isCommand, menuKey, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, type Outcome, OUTCOME_TAGS, note, problems, summary, withoutWarnings } from '../lib/tools';
   import { splitTurns } from '../lib/turns';
@@ -34,6 +37,7 @@
     role: 'user' | 'assistant';
     content: string; // the message as it is stored: what you wrote, and the documents in it (a reply's text is in its parts)
     shown?: string; // your words alone: what the bubble draws (the documents are chips)
+    command?: boolean; // a skill command the server expanded: `content` is the instructions it became, `shown` what you typed (sent again as typed)
     quiz?: { label: string; body: string }; // an answer sent from the QCM panel: drawn as a label and what was answered
     documents?: Document[]; // the documents of a stored message, kept to put them back when you edit it
     attachments: { name: string; chars?: number }[];
@@ -54,10 +58,12 @@
 
   let keys = 0;
   const blank = (role: Message['role'], content = ''): Message => ({ key: ++keys, role, content, attachments: [], parts: [], presented: [], notes: [] });
-  /** Your message as the site draws it: your words in the bubble, a chip for each document in it. */
-  function yours(content: string): Message {
-    const sent = unpack(content);
+  /** Your message as the site draws it: your words in the bubble, a chip for each document in it. `said`: what the server says you typed, for a skill command. */
+  function yours(content: string, said?: string): Message {
+    const command = isCommand(said);
+    const sent = command ? typedCommand(said, content) : unpack(content);
     const message = blank('user', content);
+    message.command = command;
     message.quiz = quizMessage(content) ?? undefined;
     message.shown = sent.text;
     message.documents = sent.documents;
@@ -382,7 +388,7 @@
     let answer: Message | null = null;
     for (const item of history) {
       if (item.role === 'user') {
-        const message = yours(item.content);
+        const message = yours(item.content, item.shown);
         Object.assign(message, { id: item.id, versions: item.versions, version: item.version });
         shown.push(message);
         answer = null;
@@ -781,7 +787,7 @@
     const stored = question.id !== undefined; // a stored question carries its documents in its content: none sent again
     const at = messages.findIndex((item) => item.key === question.key);
     if (!stored && at >= 0) messages = messages.slice(0, at);
-    await send(question.content, question.id ?? null, stored ? [] : (question.upload ?? []));
+    await send(resendOf(question), question.id ?? null, stored ? [] : (question.upload ?? []));
   }
 
   async function switchVersion(message: Message, step: number): Promise<void> {
@@ -877,7 +883,102 @@
 
   const packLabel = (id: string): string => packList.find((pack) => pack.id === id)?.label ?? id;
 
+  // ---- the "/" menu and the line under the box (lib/skills.ts) ------------------------------------------------------------------
+  let skills = $state<Skill[]>([]); // what this conversation can run: the global skills and those reserved for its project
+  let box = $state<HTMLTextAreaElement>();
+  let caret = $state(0);
+  let menuAt = $state(0);
+  let menuShut = $state(false); // Escape, or the box lost the focus: shut until you type again
+  let hintPacks = $state<Chip[]>([]); // the packs the skill under the box needs, as the server says they stand in this conversation
+  let hintCalls = 0;
+  let hintFor = ''; // the skill the chips belong to: another skill clears them at once, the same one keeps them while they are read again
+  // the project whose skills the menu lists (null: a conversation that is still loading does not know its project yet)
+  const skillsFor = $derived(conversationId && !conversation ? null : String(projectId ?? 'none'));
+  const slash = $derived(slashWord(draft, caret));
+  const rows = $derived(slash && !menuShut ? filterSkills(skills, slash.query) : []);
+  const at = $derived(Math.min(menuAt, rows.length - 1));
+  const hinted = $derived(hintSkill(draft, skills));
+  const chips = $derived(chipsFor(hintPacks, activePacks, !!conversationId));
+  // the box is a combobox only while a "/word" can be completed, so that it stays the plain text box it was the rest of the time
+  const combo = $derived(!!slash && skills.length > 0);
+
+  async function loadSkills(): Promise<void> {
+    const where = skillsFor;
+    if (where === null) return;
+    try {
+      const found = (await api.get('/v1/skills', { project: where })).skills;
+      if (where === skillsFor) skills = found;
+    } catch {
+      /* the menu is a convenience: the box still sends what you type */
+    }
+  }
+
+  // Once per conversation (per project, which is what decides what it can run); again when the page gets the focus back (a skill may have been added elsewhere)
+  $effect(() => {
+    void skillsFor;
+    skills = [];
+    untrack(loadSkills);
+  });
+
+  // The packs of the skill under the box: read again when the skill, a pack or the mode changes (a click on an off chip changes a pack)
+  $effect(() => {
+    const skill = hinted;
+    const where = skillsFor;
+    void activePacks.join(',');
+    void mode.mode;
+    untrack(() => {
+      const mine = ++hintCalls;
+      if (hintFor !== (skill?.name ?? '')) {
+        hintFor = skill?.name ?? '';
+        hintPacks = [];
+      }
+      if (!skill?.packs.length || where === null) {
+        hintPacks = [];
+        return;
+      }
+      api.get(`/v1/skills/${encodeURIComponent(skill.name)}/status`, conversationId ? { conversation: conversationId } : { project: where })
+        .then((found) => { if (mine === hintCalls) hintPacks = found.packs; })
+        .catch(() => { if (mine === hintCalls) hintPacks = []; });
+    });
+  });
+
+  /** An off pack of the skill is switched on for this conversation, as the "+" menu does: the server never does it by itself. */
+  function switchOn(id: string): void {
+    if (!activePacks.includes(id)) void togglePack(id);
+  }
+
+  function pickSkill(skill: Skill): void {
+    const next = insertSkill(draft, skill.name);
+    draft = next.text;
+    caret = next.caret;
+    menuAt = 0;
+    tick().then(() => {
+      box?.focus();
+      box?.setSelectionRange(next.caret, next.caret);
+    });
+  }
+
+  const moved = (): void => {
+    caret = box?.selectionStart ?? draft.length;
+  };
+
+  function typed(): void {
+    moved();
+    menuAt = 0;
+    menuShut = false;
+  }
+
   function keydown(event: KeyboardEvent): void {
+    if (rows.length && !event.isComposing) {
+      const key = menuKey(event.key, event.shiftKey, rows.map((row) => row.name), at, slash?.query ?? '');
+      if (key) {
+        event.preventDefault();
+        if ('to' in key) menuAt = key.to;
+        else if ('pick' in key) pickSkill(rows[key.pick]);
+        else menuShut = true;
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       send();
@@ -926,7 +1027,7 @@
 </script>
 
 <!-- Escape closes the panel when it is a drawer over the page (a phone) and the keys are in it -->
-<svelte:window onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
+<svelte:window onfocus={loadSkills} onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
 
 {#snippet callDetail(call: Shown)}
   {@const read = call.result === undefined ? null : withoutWarnings(call.result)}
@@ -1048,7 +1149,7 @@
                       <button class="ghost" aria-label="Next version" onclick={() => switchVersion(message, 1)} disabled={message.version === message.versions.length}><Icon name="chevron" size={16} /></button>
                     {/if}
                     {#if message.id && !busy}
-                      <button class="ghost" title="Ask again" aria-label="Ask again" onclick={() => send(message.content, message.id!)}><Icon name="refresh" size={16} /></button>
+                      <button class="ghost" title="Ask again" aria-label="Ask again" onclick={() => send(resendOf(message), message.id!)}><Icon name="refresh" size={16} /></button>
                       <button class="ghost" title="Edit" aria-label="Edit" onclick={() => { editing = message.id!; editText = message.shown ?? message.content; }}><Icon name="edit" size={16} /></button>
                     {/if}
                   </div>
@@ -1149,6 +1250,7 @@
         {/key}
       {:else}
       <div class="composer-inner">
+        {#if rows.length}<SkillMenu {rows} {at} projects={projectList} onPick={pickSkill} />{/if}
         {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
           <div class="chips" aria-label="Tools of this conversation">
             {#each activePacks.filter((id) => id !== 'web') as id (id)}
@@ -1177,8 +1279,12 @@
             </span>
           </div>
         {/if}
-        <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft}
-          onkeydown={keydown} onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
+        <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft} bind:this={box}
+          role={combo ? 'combobox' : undefined} aria-autocomplete={combo ? 'list' : undefined} aria-haspopup={combo ? 'listbox' : undefined}
+          aria-expanded={combo ? rows.length > 0 : undefined} aria-controls={rows.length ? 'skill-menu' : undefined}
+          aria-activedescendant={rows.length ? optionId(rows[at].name) : undefined}
+          onkeydown={keydown} onkeyup={moved} onclick={moved} oninput={typed} onfocus={() => (menuShut = false)} onblur={() => (menuShut = true)}
+          onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
         <div class="composer-bar">
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} disabled={!!loadError} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
@@ -1196,8 +1302,9 @@
           {/if}
         </div>
       </div>
+      {#if hinted && (hinted.argument_hint || chips.length)}<SkillHint hint={hinted.argument_hint} {chips} onOn={switchOn} />{/if}
       {/if}
-      <p class="composer-hint">Enter sends, Shift+Enter starts a new line. Drop or paste files to attach them (4 at most).</p>
+      <p class="composer-hint">Enter sends, Shift+Enter starts a new line.{skills.length ? ' Type / to run a skill.' : ''} Drop or paste files to attach them (4 at most).</p>
     </div>
   </div>
   <GrantBar />

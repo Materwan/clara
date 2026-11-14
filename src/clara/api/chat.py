@@ -21,8 +21,9 @@ from pydantic import BaseModel, Field
 from ..agent.runs import AlreadyRunning, Run
 from ..agent.turn import ChatRequest
 from ..knowledge import ingest
-from ..knowledge.attachments import MAX_ATTACHMENTS, Attached, FileError, prepare
+from ..knowledge.attachments import MAX_ATTACHMENTS, Attached, FileError, prepare, shown_name
 from ..knowledge.ingest import IngestError
+from ..skills import SkillError
 from ..tools.folder_tools import FolderRequest
 from .common import (
     ApiError,
@@ -99,13 +100,30 @@ def _files(body: ChatBody) -> tuple[Attached, ...]:
     return tuple(files)
 
 
+def _skill_command(body: ChatBody, request: Request, files: tuple[Attached, ...]) -> tuple[str, str]:
+    """The message the model gets and the text the conversation shows for it. A message that starts with `/<skill>`, a skill of the
+    conversation's project, is the skill's instructions with the arguments put in (and shows what was typed); any other message,
+    an unknown or reserved word and a skill reserved for another project included, is plain text and stays as it is."""
+    s = services(request)
+    conversation = s.conversations.get(body.conversation) if body.conversation else None
+    try:
+        found = s.skills.expand(body.message, conversation.project_id if conversation else body.project)
+    except SkillError as error:
+        raise ApiError(error.status, str(error)) from None
+    if found is None:
+        return body.message, ""
+    attached = f"\n\n(Attached: {', '.join(shown_name(item.name) for item in files)})" if files else ""
+    return found.text, found.shown + attached
+
+
 def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
     who = caller(request)
     files = _files(body)
     if not body.message.strip() and not files:
         raise ApiError(422, "The message is empty.")
+    message, shown = _skill_command(body, request, files)
     try:
-        prepared = prepare(body.message, files)
+        prepared = prepare(message, files)
     except FileError as error:
         raise ApiError(422, str(error)) from None
     if body.project is not None and services(request).projects.get(body.project) is None:
@@ -131,6 +149,7 @@ def chat_request(body: ChatBody, request: Request, wait: bool) -> ChatRequest:
         conversation_mode=conversation_mode,
         wait_for_approvals=wait,
         ref=body.ref,
+        shown=shown,
         mirror_thread=body.mirror_thread,
         can_answer_questions=who.may_answer_questions,
         folder=FolderRequest(body.folder.id, body.folder.name, body.folder.budget_bytes) if body.folder else None,

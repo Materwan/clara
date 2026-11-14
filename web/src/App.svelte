@@ -17,6 +17,7 @@
   import Library from './pages/Library.svelte';
   import Connections from './pages/Connections.svelte';
   import Modes from './pages/Modes.svelte';
+  import Skills from './pages/Skills.svelte';
   import Models from './pages/Models.svelte';
   import Usage from './pages/Usage.svelte';
   import Admin from './pages/Admin.svelte';
@@ -35,6 +36,7 @@
     { path: '/memory', label: 'Memory', icon: 'memory', page: Memory },
     { path: '/connections', label: 'Connections', icon: 'plug', page: Connections },
     { path: '/modes', label: 'Modes', icon: 'shield', page: Modes },
+    { path: '/skills', label: 'Skills', icon: 'sparkle', page: Skills },
     { path: '/models', label: 'Models', icon: 'chip', page: Models },
     { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
     { path: '/admin', label: 'Admin', icon: 'server', page: Admin },

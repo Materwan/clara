@@ -725,7 +725,7 @@ details.setup > summary:hover { color: var(--text); }
 /* the composer is as wide as the conversation */
 .composer { padding: var(--sp-4) var(--sp-24) calc(var(--sp-16) + var(--safe-b)); flex: none; }
 .composer-frame { max-width: var(--column); margin: 0 auto; }
-.composer-inner { background: var(--raised); border: 1px solid var(--line-strong); border-radius: var(--r-lg); padding: var(--sp-8) var(--sp-8) var(--sp-8); transition: border-color var(--dur-fast); }
+.composer-inner { position: relative; background: var(--raised); border: 1px solid var(--line-strong); border-radius: var(--r-lg); padding: var(--sp-8) var(--sp-8) var(--sp-8); transition: border-color var(--dur-fast); }
 .composer-inner:focus-within { border-color: var(--text); outline: 1px solid var(--text); }
 .composer.drop .composer-inner { border-color: var(--accent); border-style: dashed; background: var(--accent-soft); }
 .composer .chips { padding: var(--sp-4) var(--sp-4) var(--sp-8); }

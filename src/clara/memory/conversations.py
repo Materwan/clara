@@ -99,6 +99,7 @@ class StoredMessage:
     client: str
     turn_id: str | None
     created_at: str
+    shown: str = ""  # what a client shows in place of a question (a skill command as typed, an automation run's origin)
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,7 @@ def _message(row) -> StoredMessage:
         row["client"],
         row["turn_id"],
         row["created_at"],
+        row["shown"],
     )
 
 
@@ -309,7 +311,7 @@ class Conversations:
             )
             params += [like, like] + ([match] if match else [])
         rows = self.db.all(
-            "SELECT c.*, (SELECT substr(m.content, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
+            "SELECT c.*, (SELECT substr(CASE WHEN m.shown LIKE '/%' THEN m.shown ELSE m.content END, 1, ?) FROM messages m WHERE m.conversation_id = c.id"
             " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
             f" {self._AUTOMATION} AS automation_id,"
             f" (SELECT a.name FROM automations a WHERE a.id = {self._AUTOMATION}) AS automation_name,"
@@ -669,6 +671,8 @@ class Conversations:
             }
             if message.role == "user":
                 entry["client"] = message.client
+                if message.shown:
+                    entry["shown"] = message.shown
                 if message.id in versions:
                     entry["versions"] = versions[message.id]
                     entry["version"] = versions[message.id].index(message.id) + 1
