@@ -66,6 +66,10 @@ KNOWN_SECRETS: dict[str, str] = {
 # Admin page, the console or `clara secrets set` (a value typed there would be seen), and read only by the Auriga sign-in
 LOGIN_SECRETS = ("auriga_email", "auriga_password")
 
+# The secret of an event source (automations/sources.py) is `event_source_<id>`: its name holds the source's address, so it is
+# kept out of every listing, and the Admin page and the console do not unset it (revoke the source instead).
+EVENT_SOURCE_PREFIX = "event_source_"
+
 # Set by a connection flow after you confirm the account, never by hand (an unconfirmed account must not be attachable)
 CONNECTION_TOKENS = frozenset(
     {"google_refresh_token", "gmail_refresh_token", "moodle_token", "auriga_refresh_token", *LOGIN_SECRETS}
@@ -252,7 +256,11 @@ class SecretsStore:
     def status(self) -> list[dict]:
         """Every known secret and every stored one: set or not, and when it changed, the group it belongs to, the page
         where its value is made, and whether it can be set by hand. Never the value."""
-        stored = {row["name"]: row["updated_at"] for row in self.db.all("SELECT name, updated_at FROM secrets")}
+        stored = {
+            row["name"]: row["updated_at"]
+            for row in self.db.all("SELECT name, updated_at FROM secrets")
+            if not row["name"].startswith(EVENT_SOURCE_PREFIX)
+        }
         names = [*SECRET_SOURCES, *(n for n in KNOWN_SECRETS if n not in SECRET_SOURCES)]
         names += sorted(set(stored) - set(names))
         listing = []

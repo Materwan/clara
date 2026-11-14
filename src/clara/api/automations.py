@@ -225,7 +225,9 @@ def test_automation(automation_id: int, body: Probe, request: Request) -> dict:
         if service.kind(kind) is None:
             raise ApiError(422, f"{kind!r} is not a kind of event.")
         event = SourceEvent(
-            source=kind.split(".")[0],
+            source=kind
+            if kind.startswith("custom.")
+            else kind.split(".")[0],  # a source's events are stored with its kind as source
             kind=kind,
             key="sample",
             occurred_at=str(sample.get("occurred_at", "")),

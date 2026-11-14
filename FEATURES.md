@@ -64,7 +64,7 @@ you point at them and can be dismissed (an error stays 8 seconds; on a phone the
 | Conversations list | In the rail under the pages, on every page: one list shared by every client, searchable; pinned ones first, then the **projects** and the **automations** that are switched on, each a group that opens on its conversations (the latest 5, then "Show more"; open or closed is remembered in the browser), then the loose conversations, newest first; pin, rename, delete. A project or an automation shows its conversations here only when its **Show in history** button is on (all start off); a search looks through all of them, and a pinned conversation stays in Pinned whatever its group. A switch in the account menu, **Discord conversations** (on at first, kept in the browser), leaves out of the list what Discord started; a search and the pinned ones still show them. A conversation made by an automation's run belongs to that automation even when it has a project |
 | Memory (Settings) | The global memory's facts: live, unconfirmed, expired, superseded, all; search; add, edit, pin, confirm, forget; source and dates shown. The memory of a project or an automation is on its own page |
 | Tasks & reminders | Tasks with sub-tasks, due dates and reminders (list and calendar views); reminders to come; add and cancel; the **Booked calls** tab: the tool calls Clara booked to run later (what each does, when, and how it ended), with **Cancel** for one that still waits |
-| Automation | One page for what Clara does by herself, unattended. One list (the name, the trigger in one line, the next time or the kinds of event, the last run and its status) and one form. **The form:** the name and what Clara does (**Run Clara** or **Only notify me**); **When: it starts a run when any of these happens**, a tree editor whose top is an Or of branches: **+ Event** (a kind of event, then a filter added field by field: a regular expression with the ticks *must not match* and *case-sensitive*, up to 5 conditions on a field with **+ condition**, a Yes/No control for a yes-or-no field), **+ Time** (*Once*: a date and time; *Window*: from, to, the weekdays; *Cron*, the advanced choice, with the engine's message on save) and **+ All of group** (one event with conditions of time, a window or a cron: a second event is refused on the spot, « An All of group holds at most one event: put two events in separate branches of the Or. »); the time zone; the tools and packs (without a list, a run started by a time can only notify you; an event gives its own read tools), the project, the model, documents, *Local only*; the result (a short notice to every client, Discord included, **Show in history**, **Tell me when a run ends**); and an **Advanced** fold (if a time was missed, the answers offered follow the tree: *digest* needs an event; if the last run is not over; the pace; cleaning up). The editor is flat: a trigger saved with an Or inside an All of group, or a date inside one (from a chat or the API), is shown in words and kept as it is until you replace it. **Test** (a button on each automation) opens a dialog that tries the trigger on a stored event or on a moment and shows, node by node, whether it holds and why, whether a run would start, the message Clara would receive, the tools and whether the run is tainted. **Runs** lists its runs (events, status, what happened, skipped ones included); **Run now**, **Pause**/**Resume**, **Close it** and **Answer** for a run that waits. Each item has a **Mode** selector, the mode its runs have (empty: its project's, else the default mode), and a **Memory** button that opens the facts it keeps (the scope `automation:<id>`); deleting an item says how many facts go with it. Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, with the trigger written in words, and the tool has no mode field, so she cannot give an automation a mode: it gets the default mode, or its project's |
+| Automation | One page for what Clara does by herself, unattended, with two tabs: **Automations** (what follows) and **Event sources** (see *Event sources*; `#/automation?tab=sources` opens it). One list (the name, the trigger in one line, the next time or the kinds of event, the last run and its status) and one form. **The form:** the name and what Clara does (**Run Clara** or **Only notify me**); **When: it starts a run when any of these happens**, a tree editor whose top is an Or of branches: **+ Event** (a kind of event, then a filter added field by field: a regular expression with the ticks *must not match* and *case-sensitive*, up to 5 conditions on a field with **+ condition**, a Yes/No control for a yes-or-no field), **+ Time** (*Once*: a date and time; *Window*: from, to, the weekdays; *Cron*, the advanced choice, with the engine's message on save) and **+ All of group** (one event with conditions of time, a window or a cron: a second event is refused on the spot, « An All of group holds at most one event: put two events in separate branches of the Or. »); the time zone; the tools and packs (without a list, a run started by a time can only notify you; an event gives its own read tools), the project, the model, documents, *Local only*; the result (a short notice to every client, Discord included, **Show in history**, **Tell me when a run ends**); and an **Advanced** fold (if a time was missed, the answers offered follow the tree: *digest* needs an event; if the last run is not over; the pace; cleaning up). The editor is flat: a trigger saved with an Or inside an All of group, or a date inside one (from a chat or the API), is shown in words and kept as it is until you replace it. **Test** (a button on each automation) opens a dialog that tries the trigger on a stored event or on a moment and shows, node by node, whether it holds and why, whether a run would start, the message Clara would receive, the tools and whether the run is tainted. **Runs** lists its runs (events, status, what happened, skipped ones included); **Run now**, **Pause**/**Resume**, **Close it** and **Answer** for a run that waits. Each item has a **Mode** selector, the mode its runs have (empty: its project's, else the default mode), and a **Memory** button that opens the facts it keeps (the scope `automation:<id>`); deleting an item says how many facts go with it. An automation that waits for an event source that was revoked says so on its line and in its form (a *Source revoked* tag; its kind is listed as *(revoked)* in the event select, and the form asks you to choose another event or remove the branch before it saves). Clara can do the same from a chat when its **Automations** special tool is on (the "+" menu): each change she makes is an approval request you read first, with the trigger written in words, and the tool has no mode field, so she cannot give an automation a mode: it gets the default mode, or its project's |
 | Projects | **New project** opens a stepped form like an automation's: *Basics* (name, description, instructions), *Content* (a card for each way to start: upload files, a folder, a GitHub repository, or start empty), *Tools* (a card for each special tool: the ones its new conversations start with) and *Review*; the project and its files are made when you confirm. On a project's page: upload files and archives, add a GitHub repository snapshot, sync or remove it, read files, set instructions, and the **Special tools** panel (a card per tool, **Save the tools**); the **Mode** of the conversations that follow the project; **Show in history** lists its conversations in the rail. Its card in the list says which tools beyond web search it starts with and how many facts it remembers (and how many wait for you). Its **Memory** panel is the same list of facts as the Memory page, for this project only: add, edit, pin, confirm (a fact Clara saved after reading outside content waits there, hidden from every conversation, until you confirm it) and forget; deleting the project says how many facts go with it |
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs). A file marked as coming from outside and not trusted is shown with its raw text and a note that says so (« This is the raw text of a file that came from outside. Clara reads it through a quarantined reader. ») |
@@ -123,6 +123,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/secrets [list] \| set <name> <value> \| unset <name>` | The encrypted secrets store |
 | `/school [status] \| disconnect <moodle\|auriga> \| forget-password` | Moodle and Auriga: who is connected, whether a sign-in lapsed, when the Auriga one lapses and whether a school password is kept (yes or no, never what it is), forget a site's token (Auriga's also forgets the password), or `forget-password`, which only a token that may answer every request can do. Signing in, and keeping the password, is the Connections page or `clara moodle connect`, `clara auriga connect` (the console never sets or shows the password) |
 | `/automations [list] \| show \| add \| edit \| on \| off \| run \| del \| test \| runs \| events` | Automations: what Clara does when a trigger holds (a mail arrives, a time comes); `add <name> '<json>'` takes `when`, the trigger tree, and the other fields |
+| `/sources [list] \| fire <source> [field=value ...]` | The event sources (programs that tell Clara something happened; made with `POST /v1/event-sources`): list them, or fire an event of one with your token |
 | `/trust [list] \| <path> \| untrust <path>` | Workspace files that came from outside or were written after untrusted content: list them, trust one (Clara reads it as your own) or take it back; scope `all` only |
 | `/mode [list] \| show <name\|default> \| conversation\|project\|automation <id> [<name>\|follow] \| new <name> [<pack,pack>] \| packs <name> <pack,pack> \| delete <name> [<conversations> <automation conversations> <automations> <projects>] \| verdict <name> <approve\|ask\|refuse> [tool=…] [class=…] [target=…] [tainted=<verdict>] \| unverdict <name> [tool=…] [class=…] [target=…] \| test <tool> <json> [mode=<name>] [tainted] \| import-legacy` | The modes: list them, show one (the default mode too), set the mode of a conversation, project or automation (or `follow`), make one, set its packs, delete one (the first call says how many conversations, automation conversations, automations and projects use it and the line to confirm with those numbers), set or remove a verdict line, test a call, or print a `default-mode.toml` made from the old levels and rules (`import-legacy`, see Operations); everything but `list`, `show` and `test` needs a token that may answer every request (scope `all`) |
 | `/approvals [list] \| allow\|refuse <id>` | Pending approval requests |
@@ -599,6 +600,84 @@ adds a kind and nothing else changes (the engine knows no kind by name).
   event of a kind it waits for, or a moment (`at`, an instant), whether the trigger holds **branch by branch and why**, the exact
   message Clara would get, her tools and whether the run would be tainted, without running anything. The runs
   are recorded (section above) and tell you how they ended with a `schedule` event.
+
+### Event sources: programs of yours that tell Clara something happened
+
+A script, a home-automation hub or another machine of yours can start automations by calling Clara. Each is an **event source**, a
+record you make (`POST /v1/event-sources`, or **New source** on the *Event sources* tab, below): a **name**, which is also the slug of its kind (`custom.<name>`:
+lower-case letters, digits and `-`, 30 at most; `Front door` is `custom.front-door`, and a name cannot be changed), the **fields** an
+event of it may carry (`text` or `bool`, at most 12, named like `state`, never `key`, `title`, `actor`, `data` or `occurred_at`), how
+it **proves itself** (a bearer secret; the table has a `proof` column for later ones) and whether it is **trusted**. 50 sources at
+most. Making one gives its **address**, `/v1/events/<id>` (the id is `k` and 32 random hex characters: 128 bits), and its **secret**
+(`evt_` and 43 characters), shown once. The secret is held only in the encrypted store, under `event_source_<id>`: not in the table, not in
+`.env`, not in any listing (the Admin page, `/secrets` and `clara secrets list` leave these names out, and the Admin page and `/secrets
+unset` refuse them: revoke the source instead). It works on its own address and nowhere else, and no API token works there.
+
+- **The call.** `POST /v1/events/<id>` with `Authorization: Bearer <secret>`, `Content-Type: application/json` and a body of at most
+  64 KB: `{"key"?, "title"?, "occurred_at"?, "actor"?, "data": {the declared fields}}`. One shape only: a field left out of `data` is
+  empty, a field that is not declared or a name outside those five is a 422, a `bool` field must be `true` or `false`, a `text`
+  field must be text and is cut to 2,000 characters, `title` to 300, `actor` to 200, `key` is 1 to 200 characters. `occurred_at` is
+  an ISO date and time (default: now) and may not be more than a day ahead. Without a `title` the event is called by the source's
+  name and its first text field that has a value (`door: open`), which is also the default text of a notification. An event is stored **once** by
+  `(source, key)`: with no `key` the key is a hash of the body, so send a `key` (or an `occurred_at`) when the same data may happen
+  twice. A new event is answered `202 {"id": <event id>}` once it is stored (the automations are matched in the same step); a repeat is
+  `200 {"duplicate": true}` and starts nothing.
+- **What an outsider can make it do.** An **address nobody was given is a plain 404**: no secret is read, nothing is counted, no
+  state is made, no log line is written and no alert raised (the id has 128 bits, and the traffic log writes the route as
+  `/v1/events/{id}`). A **wrong or missing secret** is `401 Not authorized.` with no detail, counted against **that source** (never
+  against an address; `failures` and `last_failure_at` are kept for the page), and **10 in a minute make that source answer 429 for
+  a minute**, even with the right secret and with no other source or token affected. The secret is compared in constant time. The
+  middleware lets this one path through with no API token (`POST` only, the id's exact shape) and the handler checks the secret;
+  `POST /v1/events/ack` and every other route still need a token. A body over **64 KB is a 413** (the length declared, or the
+  bytes counted when none is), anything but `application/json` a 415, a body that is not JSON a 400, a source takes **60 events a
+  minute** (429 beyond), **no more than 1,000 events waiting** for a run of an automation (429 until they are handled), and **no more
+  than 5,000 events kept**: past that the oldest that no queued or running run holds are deleted as the new one is stored, and the
+  key of a deleted event can be sent again as a new event. This slice
+  opens no public door: the main listener is still loopback, and the tailnet through `tailscale serve`.
+- **The kind.** A source's kind exists while its record does: its fields are what a filter looks at, it has **no read tools** (a run it
+  starts has `notify` alone unless the automation lists tools: never more than the trigger that fired), its noun is `an event of “<name>”`
+  and its notification text is the title. The `when` of an automation (the API, `/automations`, Clara's tools) accepts `custom.<name>` for
+  a source that exists and refuses one that does not. **Revoking** a source deletes its record, its secret and the events no run
+  waits for, and touches no other source and no token; an automation that waited for it stays and never fires, and says so (`when_words`:
+  « a source that was revoked », `missing_kinds`). A new source with the same name takes such automations up again. Clara has **no tool**
+  to make, change, rotate or revoke a source; `automation_list` names the sources that exist with their fields, so she can choose one.
+- **Trusted.** What the body says was written by whoever holds the secret. The events of a source that is not **trusted** are shown as
+  they were inside the untrusted `<event>` block and taint the run from its first word, as GitHub events do (the `(if tainted)` verdicts
+  apply, approvals are pushed, nothing is waited for). A **trusted** source's events do not taint the run: for a program whose output
+  you write yourself. Only a token that may answer every request (scope `all`) makes a source, ticks that box, changes a secret or revokes
+  one; the flag is possible only for a source whose proof is a bearer secret (a source made for the GitHub adapter, a feed or school
+  events can never be trusted: the table refuses it too). Taking trust back, or revoking the source, taints what still waits.
+- **Local callers.** The same route reached on the main listener, inside the tailnet, is one (it needs the secret). `clara event fire
+  <source> [field=value ...] [--key K] [--title T] [--actor A]` (on your machine, with the token file the other clients read, `--url`,
+  `--token-file`) and `/sources fire <source> [field=value ...]` fire an event with **your API token** instead, through
+  `POST /v1/event-sources/{source}/fire`, which stores and handles it exactly like the public route; each fire is a new event unless
+  you give `--key`. Any token may fire an event of a source that is not trusted; **for a trusted source the token must be able to answer
+  every request (scope `all`)**, because its run is not tainted: a script or the Discord bot gets a 403 (or `Error:` in the console). `/sources [list]` lists the sources.
+- **Looking.** `GET /v1/event-sources` lists the sources (id, name, kind, fields, proof, trusted, whether it can be, address, events,
+  waiting, wrong secrets, last event and last wrong secret; never a secret) and `GET /v1/event-sources/{source}/events` the latest
+  events of one, so the *Test* dry run of an automation (`POST /v1/automations/{automation_id}/test`) works on a stored event of a source
+  like any other. Making, trusting, rotating and revoking leave a line in the audit log (names only).
+- **The page.** The **Event sources** tab of the Automation page (`#/automation?tab=sources`) has a card per source: its name, its kind
+  (`custom.<name>`), its **address as a full URL** (the origin of the page and `/v1/events/<id>`, with **Copy**), « Bearer secret, kept
+  encrypted (shown only when made) », its fields (`state (text)`, `open (yes/no)`), when its last event came, how many events it keeps
+  and how many wait for a run, and a note when wrong secrets were counted. Each card has a **Trusted** box in the warning colours
+  (« Trusted: its events do not taint a run. Tick only for what you write yourself. Needs a token that may answer everything. »;
+  disabled for a token without scope `all` and for a source that can never be trusted; ticking asks first and repeats the warning,
+  unticking does not), and the buttons **Send a test event**, **Latest events**, **New secret** and **Revoke** (the last two ask first
+  and say what stops at once). **New source** takes a name, whose kind it shows as you type, and the fields (a name and *text* or
+  *yes/no* each; the pattern, 12 at most, the names of the event itself and a name used twice are refused on the spot, as the server
+  does); there is no trusted option there. **The address and the secret of a new source, or of a new secret, are shown once**, in a
+  panel that stays until you press **I have copied them**, with a `curl` example made from the real address, the fields and the
+  placeholder `<secret>`: the secret is in no second place, and it is dropped from the page when the panel is closed, when you leave the
+  tab or the page, or when the source is revoked. **Send a test event** asks a value for each field (text, or yes/no) and an optional
+  title, and sends `POST /v1/event-sources/{source}/fire` with a key of its own each time: **it is a real event** (stored, matched, and
+  any automation that waits for the source may start a run, as the dialog says), not the dry run of an automation's *Test*; it answers
+  with the event's id or « stored before », and shows the server's 403 for a trusted source and a token without scope `all`.
+  **Latest events** lists the latest 20 of a source, with a note that their text was written by the sender. A token without scope `all`
+  can look and send a test event to a source that is not trusted; **New source**, **New secret**, **Revoke** and the box are disabled for
+  it, with a line that says why.
+- **Not built yet:** the second listener and Funnel, the GitHub webhook adapter (the HMAC proof), school events and feeds, and a
+  longer retention of the events of a source than the 30 days every event has (and at most 5,000 of them).
 
 ## 6. Knowledge
 
@@ -1187,8 +1266,8 @@ The threat model is in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md); what is sto
   the `tailscale` alert.
 - **Tokens:** one per client, `clara_<id>_<secret>` (256 random bits), stored as a hash, compared in constant time,
   revocable at once without a restart, with a last-used time. Every route needs one except `GET /health` (which
-  answers `{"status": "ok"}` and nothing else), the web sign-in, and Google's redirect (which only forwards to the
-  signed-in site).
+  answers `{"status": "ok"}` and nothing else), the web sign-in, Google's redirect (which only forwards to the
+  signed-in site) and `POST /v1/events/<source id>`, which an event source proves with its own secret (see *Event sources*).
 - **Failure limiter:** 10 wrong tokens in a minute block the address for 5 minutes; forwarded addresses are trusted
   only from 127.0.0.1 (tailscale serve).
 - **Web:** cookie plus `X-Clara-Web` header (another site cannot post to Clara); no CORS; strict CSP; `nosniff`,
@@ -1452,6 +1531,8 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `restic_password` | Password of the restic repository |
 | `release_token` | Optional GitHub token for release downloads |
 
+The secret of an event source is not in this table: it is made with the source, held under `event_source_<id>`, shown once and never listed (see *Event sources*).
+
 ## 15. HTTP API
 
 Everything is under `/v1`, needs `Authorization: Bearer <token>` (or the web cookie with `X-Clara-Web: 1`), may carry
@@ -1516,6 +1597,14 @@ keep-alive every 15 s.
 | `GET /v1/events/stream` | Live events (after your cursor) |
 | `GET /v1/events` | Events you missed |
 | `POST /v1/events/ack` | Move your cursor |
+| `POST /v1/events/{source_id}` | An event from a program: **the one route with no API token**; it proves itself with the secret of that event source (`Authorization: Bearer <secret>`) and nothing else opens it. 202 `{"id"}`, 200 `{"duplicate": true}`; 404 for an address nobody was given, 401, 413 (64 KB), 415, 400, 422, 429 (see *Event sources*) |
+| `GET /v1/event-sources` | The event sources (never their secrets) |
+| `POST /v1/event-sources` | Make one: `name`, `fields` (`{"state": "text", "open": "bool"}`), `trusted`; 201 with `source`, its `address` and its `secret`, shown once (scope `all` only) |
+| `PATCH /v1/event-sources/{source}` | `trusted` is the only thing that changes (scope `all` only; refused for a source that does not prove itself with a bearer secret); `{source}` is the id, the name or the kind |
+| `DELETE /v1/event-sources/{source}` | Revoke it: the record, the secret and the events no run waits for (scope `all` only) |
+| `POST /v1/event-sources/{source}/rotate` | A new secret, shown once; the old one stops at once (scope `all` only) |
+| `POST /v1/event-sources/{source}/fire` | An event from this machine, with your API token and no secret; the same body, answers and limits as the public route, stored and handled the same way. For a **trusted** source only a token with scope `all` (403 otherwise) |
+| `GET /v1/event-sources/{source}/events` | The latest events of a source (`limit`) |
 | `POST /v1/notifications` | Notify yourself |
 | `GET /v1/projects` | Projects |
 | `POST /v1/projects` | Create one (`packs`: the special tools its new conversations start with, web search by default) |
@@ -1643,6 +1732,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Booked calls | 50 waiting; a date from one minute to 366 days ahead; arguments 64,000 characters, and the whole request (the call and its arguments) at most 24,000, or the call is not booked; kept 30 days once ended |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Automations | 150; a name of 100 characters; a prompt of 20,000 characters; documents 150,000 characters; a trigger of 40 nodes in 6 levels; a filter of 10 fields with 5 conditions each, a pattern of 500 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each for events, 31 for instants; 2 automations running at once; events kept 30 days |
+| Event sources | 50; a name of 30 characters; 12 fields; a body of 64 KB; a text field 2,000 characters, a title 300, an actor 200, a key 200; an `occurred_at` at most a day ahead; 60 events a minute, 1,000 waiting for a run and 5,000 kept, for each source; 10 wrong secrets in a minute block that source for a minute |
 | Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on an automation |
 | Approval requests waiting per conversation | 10 |
 | Notifications | 3 per turn from Clara; 10 a minute from clients |

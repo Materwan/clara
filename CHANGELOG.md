@@ -174,6 +174,39 @@ answers one more field, `lapses`.
   `(if tainted)` verdict is `ask`.
 - **A booked call is no longer asked again at the due time by a mode's `ask`;** a mode that now refuses it, the floor and the
   local-only rule still stop it.
+- **Event sources: programs of yours can tell Clara something happened.** An event source is a record you make (`POST /v1/event-sources`):
+  a name (the slug of its kind `custom.<name>`), the fields an event may carry (text or yes/no, 12 at most), and a **secret** held in the
+  encrypted store (`event_source_<id>`, shown once, never listed). A program calls `POST /v1/events/<id>` with `Authorization: Bearer
+  <secret>` and a JSON body (at most 64 KB); the event is stored once by its key and matched against every automation like a mail or a
+  push. The address has 128 random bits: **an address nobody was given is a plain 404** that reads no secret, counts nothing and logs
+  nothing; a wrong secret is a 401 with no detail, counted per source, and ten in a minute block that source for a minute; a source takes 60
+  events a minute and 1,000 waiting for a run. The secret opens only its own address, no API token opens it, and the path is the only
+  one the authentication middleware lets through. Schema version 33 adds the table `event_sources`; **this opens no public door** (the
+  second listener and Funnel come later).
+- **A source's kind exists while its record does.** `custom.<name>` is accepted in a trigger (the API, `/automations`, Clara's tools) while
+  the source exists and refused after; an automation that waits for a revoked source stays, says « a source that was revoked » and never
+  fires. A run it starts has `notify` alone unless the automation lists tools. `automation_list` names the sources that exist.
+- **Trusted sources.** The events of a source you did not trust taint the run from its first word, as GitHub events do; a **trusted**
+  source's do not. Only a token that may answer every request makes, trusts, rotates or revokes a source (a script and the Discord bot
+  cannot, and Clara has no tool for it), and a source whose proof is not a bearer secret can never be trusted.
+- **Local callers.** `clara event fire <source> [field=value …]` and `/sources fire` fire an event with your API token through
+  `POST /v1/event-sources/{source}/fire` (no secret needed), stored and handled like the public route's. `GET /v1/event-sources`
+  and `GET /v1/event-sources/{source}/events` list the sources and their latest events; the *Test* dry run works on a stored event of a source.
+  Firing an event of a **trusted** source this way takes a token that may answer every request (a script or the Discord bot gets a 403).
+- **A source keeps at most 5,000 events.** Past that the oldest ones that no queued or running run holds are deleted as a new event is
+  stored (the same transaction); a deleted event's key can be sent again as a new event.
+- **The Automation page has two tabs: Automations and Event sources** (`#/automation?tab=sources`). The new tab has a card per source with
+  its address as a full URL (**Copy**), its fields, the time of its last event, the events kept and waiting, a note for wrong secrets,
+  and **Send a test event**, **Latest events**, **New secret** and **Revoke**. **New source** takes a name and the fields (the server's
+  rules are checked on the page). The Automations tab is as it was.
+- **The address and the secret of a new source are shown once**, in a panel that stays until you press **I have copied them**, with a
+  `curl` example made with the real address and `<secret>` in the place of the secret (it is in no second place, and goes with the panel).
+  **New secret** shows its new one the same way.
+- **A Trusted box on each card**, in the warning colours: ticking asks first and repeats that the events of a source do not taint a run;
+  disabled for a token that cannot answer everything and for a source that can never be trusted.
+- **Send a test event is a real event:** it is stored and any automation that waits for the source may start a run; the dialog says so.
+- **An automation that waits for a revoked source says so** on its row and in its form, with a *Source revoked* tag, and the form
+  asks for another event or the branch removed before it saves.
 
 ## v1.5.1 — 04/11/2026
 

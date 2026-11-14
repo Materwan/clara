@@ -187,28 +187,6 @@ def summary_of(reply: str) -> str:
     return text if len(text) <= MAX_SUMMARY else text[: MAX_SUMMARY - 1] + "…"
 
 
-def tools_for(automation: Automation, events: list[StoredEvent]) -> tuple[str, ...]:
-    """The only tools a run may use; () means every tool of the packs it has. Its list, else its packs; and when it lists none,
-    those of the trigger that started the run (the read tools of the events' kinds, and `notify`: an instant has `notify`
-    alone), never more than that trigger."""
-    if automation.action != "run":
-        return ()
-    if automation.tools:
-        return automation.tools
-    if automation.packs:
-        return ()
-    found: list[str] = []
-    for kind in dict.fromkeys(event.kind for event in events):
-        if kind in KINDS:
-            found += KINDS[kind].read_tools
-    return (*dict.fromkeys(found), NOTIFY)
-
-
-def is_tainted(events: list[StoredEvent]) -> bool:
-    """A run is tainted for what started it: an event whose kind carries what a stranger wrote. An instant is not."""
-    return any(KINDS[event.kind].tainted for event in events if event.kind in KINDS)
-
-
 Runner = Callable[
     [Automation, int, datetime, list[StoredEvent]], Awaitable[str]
 ]  # (automation, run id, due, events) -> answer
@@ -275,6 +253,8 @@ class Automations(DueLoop):
         self.home_zone = home_zone
         self.projects = projects
         self.tool_names = tool_names
+        # the kinds of the event sources that exist (automations/sources.py keeps it)
+        self.custom: dict[str, EventKind] = {}
         self.runner: Runner | None = None
         self.closer: Closer | None = None
         self.waiting: Waiting = lambda conversation_id: 0
@@ -304,9 +284,34 @@ class Automations(DueLoop):
     def tz(self, automation: Automation):
         return zone(self.zone_name(automation))
 
-    @staticmethod
-    def kind(name: str) -> EventKind | None:
-        return KINDS.get(name)
+    def kind(self, name: str) -> EventKind | None:
+        """A kind of event that exists: the built-in ones, and the sources of events you made (one that was revoked is none)."""
+        return KINDS.get(name) or self.custom.get(name)
+
+    def tools_for(self, automation: Automation, events: list[StoredEvent]) -> tuple[str, ...]:
+        """The only tools a run may use; () means every tool of the packs it has. Its list, else its packs; and when it lists none,
+        those of the trigger that started the run (the read tools of the events' kinds, and `notify`: an instant has `notify`
+        alone), never more than that trigger."""
+        if automation.action != "run":
+            return ()
+        if automation.tools:
+            return automation.tools
+        if automation.packs:
+            return ()
+        found: list[str] = []
+        for name in dict.fromkeys(event.kind for event in events):
+            kind = self.kind(name)
+            found += kind.read_tools if kind else ()
+        return (*dict.fromkeys(found), NOTIFY)
+
+    def is_tainted(self, events: list[StoredEvent]) -> bool:
+        """A run is tainted for what started it: an event whose kind carries what a stranger wrote (a source you trust does not;
+        a kind nobody knows any more, a source that was revoked, is taken as untrusted). An instant is not."""
+        return any((kind := self.kind(event.kind)) is None or kind.tainted for event in events)
+
+    def template(self, name: str) -> str:
+        kind = self.kind(name)
+        return kind.template if kind else "{title}"
 
     def wants(self, kind: str) -> bool:
         """Is any enabled automation waiting for this kind of event? (A source need not look if none is.)"""
@@ -622,8 +627,9 @@ class Automations(DueLoop):
         if automation.packs:
             return ()
         found: list[str] = []
-        for kind in automation.kinds:
-            found += KINDS[kind].read_tools if kind in KINDS else ()
+        for name in automation.kinds:
+            kind = self.kind(name)
+            found += kind.read_tools if kind else ()
         return (*dict.fromkeys(found), NOTIFY)
 
     def words(self, automation: Automation) -> str:
@@ -652,6 +658,8 @@ class Automations(DueLoop):
             "when": automation.tree,
             "when_words": self.words(automation),
             "kinds": list(automation.kinds),
+            # the sources it waits for that were revoked
+            "missing_kinds": [kind for kind in automation.kinds if self.kind(kind) is None],
             "timezone": self.zone_name(automation),
             "action": automation.action,
             "prompt": automation.prompt,
@@ -703,8 +711,9 @@ class Automations(DueLoop):
                 "fields": kind.fields,
                 "read_tools": list(kind.read_tools),
                 "tainted": kind.tainted,
+                "custom": kind.kind in self.custom,
             }
-            for kind in KINDS.values()
+            for kind in (*KINDS.values(), *self.custom.values())
         ]
 
     # ------------------------------------------------------------------
@@ -1181,10 +1190,10 @@ class Automations(DueLoop):
         if not events:
             title, text = automation.name, automation.prompt or automation.name
         elif len(events) == 1:
-            template = automation.prompt or KINDS[events[0].kind].template
+            template = automation.prompt or self.template(events[0].kind)
             title, text = automation.name, fill(template, {"title": events[0].title, **events[0].data})
         else:
-            template = automation.prompt or KINDS[events[0].kind].template
+            template = automation.prompt or self.template(events[0].kind)
             title = f"{automation.name}: {len(events)} events"
             text = "\n".join(fill(template, {"title": event.title, **event.data}) for event in events[:10])
             text += f"\n…and {len(events) - 10} more." if len(events) > 10 else ""
@@ -1405,15 +1414,14 @@ class Automations(DueLoop):
             "tree": verdict.describe(),
             "action": automation.action,
             "message": message,
-            "tools": list(tools_for(automation, events) or self.effective_tools(automation)),
-            "tainted": is_tainted(events) and automation.action == "run",
+            "tools": list(self.tools_for(automation, events) or self.effective_tools(automation)),
+            "tainted": self.is_tainted(events) and automation.action == "run",
         }
 
-    @staticmethod
-    def _notify_text(automation: Automation, event: StoredEvent | None) -> str:
+    def _notify_text(self, automation: Automation, event: StoredEvent | None) -> str:
         if event is None:
             return automation.prompt or automation.name
-        return fill(automation.prompt or KINDS[event.kind].template, {"title": event.title, **event.data})
+        return fill(automation.prompt or self.template(event.kind), {"title": event.title, **event.data})
 
     def prune(self, retention_days: int) -> None:
         """Old events (30 days) not wanted by a run still waiting, and old runs (the audit retention) that no conversation

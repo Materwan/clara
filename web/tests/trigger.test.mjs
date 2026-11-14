@@ -63,6 +63,10 @@ test('a window alone, an empty field, a window that ends where it starts and a m
   assert.equal(check([newTime('once')], kinds)[0].id, 'tr-b0-at');
   assert.equal(check([newTime('cron')], kinds)[0].id, 'tr-b0-expr');
   assert.equal(check([newEvent()], kinds)[0].id, 'tr-b0-kind');
+  // a kind that is not listed (an event source that was revoked) says so, and stays an error on the same field
+  const revoked = check([newEvent('custom.door')], kinds);
+  assert.equal(revoked[0].id, 'tr-b0-kind');
+  assert.match(revoked[0].message, /custom\.door no longer exists/);
   assert.equal(check([{ type: 'group', of: [push(), { type: 'window', from: '10:00', to: '10:00', days: [1] }] }], kinds)[0].id, 'tr-b0-n1-to');
   assert.equal(check([push([text('branch', { pattern: 'x'.repeat(501), not: false, caseSensitive: false })])], kinds)[0].id, 'tr-b0-f0-0');
   assert.deepEqual(check([push(), { type: 'cron', expr: '0 9 * * *' }], kinds), []);

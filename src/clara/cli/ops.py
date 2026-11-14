@@ -8,6 +8,7 @@ clara secrets rotate --new-key-file <path>  re-encrypt every secret under a new 
 clara moodle connect | disconnect           sign in to Moodle (paste back the link of the mobile sign-in), or forget the token
 clara auriga connect | disconnect           sign in to Auriga (paste back the address of the page you land on), or forget it
 clara auriga forget-password                forget the school email and password kept to sign in to Auriga again
+clara event fire <source> [field=value ...] fire an event of an event source from this machine, with your API token (a trusted source: scope `all`)
 clara doctor [--pull]                       check what Clara needs (rootless Podman, Tailscale, providers…)
 clara backup [init-remote]                  a backup now (and the remote copy), or create the restic repository
 clara restore --verify <file>               open a backup, check it, count its rows
@@ -247,6 +248,40 @@ def school(args: argparse.Namespace) -> int:
     print(f"{LABELS[site]}: connected as {account}. {note}")
     if site == "auriga":
         print(_keep_login(store))
+    return 0
+
+
+def event(args: argparse.Namespace) -> int:
+    """Fire an event of an event source from this machine. It goes through the running server and your API token (the file the
+    other clients read: `clara-admin --save-token`), so no source secret is needed: this machine and this token are the proof."""
+    from uuid import uuid4
+
+    from ..automations.sources import SourceError, convert
+    from .common import Api, ClientError, read_token, token_file
+
+    try:
+        api = Api(args.url, read_token(token_file(args.token_file)), "cli")
+        found = next(
+            (
+                item
+                for item in api.get("/v1/event-sources")["sources"]
+                if args.source in (item["id"], item["name"], item["kind"])
+            ),
+            None,
+        )
+        if found is None:
+            raise ClientError(f"No event source {args.source!r}: `clara-admin /sources` lists them.")
+        body: dict = {"key": args.key or f"cli-{uuid4().hex[:12]}", "data": convert(found["fields"], args.fields)}
+        body |= {name: value for name in ("title", "actor") if (value := getattr(args, name))}
+        answer = api.post(f"/v1/event-sources/{found['id']}/fire", body)
+    except (ClientError, SourceError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(
+        "Already stored: nothing started."
+        if answer.get("duplicate")
+        else f"Event #{answer['id']} of {found['kind']}: stored and matched."
+    )
     return 0
 
 
@@ -498,6 +533,18 @@ def main(argv: list[str] | None = None) -> int:
     back.add_argument("file")
     back.add_argument("--verify", action="store_true")
     back.set_defaults(run=restore)
+    fired = commands.add_parser("event")
+    fired.add_argument("action", choices=("fire",))
+    fired.add_argument("source", help="the name of the source (door), its kind (custom.door) or its id")
+    fired.add_argument(
+        "fields", nargs="*", metavar="field=value", help="the fields of the event (a yes/no field takes yes or no)"
+    )
+    fired.add_argument("--key", help="events with the same key are one event (default: a new one each time)")
+    fired.add_argument("--title")
+    fired.add_argument("--actor")
+    fired.add_argument("--url", default=os.getenv("CLARA_URL", "http://127.0.0.1:8765"))
+    fired.add_argument("--token-file")
+    fired.set_defaults(run=event)
     modes = commands.add_parser("mode")
     modes.add_argument("action", choices=("import-legacy",))
     modes.set_defaults(run=mode)

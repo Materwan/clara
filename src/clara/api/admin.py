@@ -21,6 +21,7 @@ from ..ops.status import set_debug, status
 from ..ops.upkeep import DISCORD_SILENCE
 from ..runtime import KNOBS
 from ..secrets import CONNECTION_TOKENS, KNOWN_SECRETS, SecretError
+from ..secrets.store import EVENT_SOURCE_PREFIX
 from .common import ApiError, caller, event_stream, services, sse, with_keepalive
 
 router = APIRouter(prefix="/v1", tags=["admin"])
@@ -106,6 +107,10 @@ def set_secret(name: str, body: SecretValue, request: Request) -> dict:
 @router.delete("/admin/secrets/{name}")
 def unset_secret(name: str, request: Request) -> dict:
     s = services(request)
+    if name.startswith(
+        EVENT_SOURCE_PREFIX
+    ):  # the secret of an event source goes with its source (DELETE /v1/event-sources/{source})
+        raise ApiError(404, f"Unknown secret {name}.")
     removed = s.secrets.unset(name)
     console.secret_changed(s, name)
     return {"name": name, "set": False, "removed": removed}

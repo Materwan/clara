@@ -2,7 +2,9 @@
 
 **Authentication** is checked here, before any route runs, so a new route is protected by default. Every `/v1` path
 needs a token, except signing the browser in (which checks the token itself) and the page Google redirects to after a
-Drive consent (it only shows a page that finishes the flow from the signed-in browser). `/health` answers
+Drive consent (it only shows a page that finishes the flow from the signed-in browser). One more path is let through, and only for
+POST: `/v1/events/<source id>` (an id is `k` and 32 random hex characters), whose handler checks the secret of that event source
+itself (api/event_sources.py); a secret of a source works nowhere else, and no API token works there. `/health` answers
 `{"status": "ok"}` to anyone and nothing more. `/docs` and the OpenAPI file exist only with CLARA_DEBUG.
 """
 
@@ -17,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..auth import COOKIE, Blocked, client_address
 from ..auth.web import HEADER
+from ..automations.sources import BODY_LIMIT as EVENT_BODY_LIMIT
+from ..automations.sources import ID_PATTERN
 from .common import Caller, client_label, error_body
 
 if TYPE_CHECKING:
@@ -24,7 +28,12 @@ if TYPE_CHECKING:
 
 MEGABYTE = 1_000_000
 DEFAULT_LIMIT = 16 * MEGABYTE
+# The one path an outsider may call with no API token: `POST /v1/events/<source id>`, which proves itself with its source's secret
+# (api/event_sources.py). The id is 128 random bits: nothing else under /v1 is opened, and `/v1/events/ack` is not this shape.
+EVENT_ADDRESS = re.compile(rf"^/v1/events/{ID_PATTERN}$")
 LIMITS: tuple[tuple[re.Pattern[str], int], ...] = (
+    (EVENT_ADDRESS, EVENT_BODY_LIMIT),
+    (re.compile(r"^/v1/event-sources/[^/]+/fire$"), EVENT_BODY_LIMIT),
     (re.compile(r"^/v1/projects/\d+/files$"), 90 * MEGABYTE),
     (re.compile(r"^/v1/workspace/upload$"), 110 * MEGABYTE),
     (re.compile(r"^/v1/documents/extract$"), 41 * MEGABYTE),
@@ -33,6 +42,10 @@ LIMITS: tuple[tuple[re.Pattern[str], int], ...] = (
 )
 OPEN_PATHS = frozenset({"/health", "/v1/auth/web-login", "/v1/connections/google/callback"})
 DEBUG_PATHS = ("/docs", "/openapi.json", "/redoc")
+
+
+def size_words(limit: int) -> str:
+    return f"{limit // MEGABYTE} MB" if limit >= MEGABYTE else f"{limit // 1024} KB"
 
 
 def limit_for(path: str) -> int:
@@ -75,7 +88,11 @@ class AuthMiddleware:
         if path.startswith(DEBUG_PATHS) and not self.s.settings.debug:
             await _json(send, 404, error_body(404, "Not found."))
             return
-        if not path.startswith("/v1/") or path in OPEN_PATHS:
+        if (
+            not path.startswith("/v1/")
+            or path in OPEN_PATHS
+            or (scope["method"] == "POST" and EVENT_ADDRESS.match(path))
+        ):
             await self.app(scope, receive, send)
             return
         headers = _headers(scope)
@@ -144,7 +161,7 @@ class BodyLimitMiddleware:
                 await _json(send, 400, error_body(400, "Bad Content-Length."))
                 return
             if size > limit:
-                await _json(send, 413, error_body(413, f"This request is too big: at most {limit // MEGABYTE} MB."))
+                await _json(send, 413, error_body(413, f"This request is too big: at most {size_words(limit)}."))
                 return
         seen = 0
         started = refused = False
@@ -158,7 +175,7 @@ class BodyLimitMiddleware:
                     refused = True
                     if not started:
                         await _json(
-                            send, 413, error_body(413, f"This request is too big: at most {limit // MEGABYTE} MB.")
+                            send, 413, error_body(413, f"This request is too big: at most {size_words(limit)}.")
                         )
                     return {"type": "http.disconnect"}
             return message
@@ -207,27 +224,29 @@ class TrafficMiddleware:
             await self.app(scope, counted, watched)
         finally:
             caller = scope.get("state", {}).get("caller")
-            self.s.traffic.record(
-                "http",
-                method=scope["method"],
-                path=_route(scope["path"]),
-                status=status,
-                ms=int((time.monotonic() - begun) * 1000),
-                client=caller.name if caller else None,
-                label=caller.client if caller else None,
-                bytes_in=received,
-                bytes_out=sent,
-            )
-            if caller is not None and self.s.traffic.debugging:
-                self.s.traffic.content(
+            # an address nobody was given costs nothing: no line in the log either
+            if not (status == 404 and scope["method"] == "POST" and EVENT_ADDRESS.match(scope["path"])):
+                self.s.traffic.record(
                     "http",
                     method=scope["method"],
-                    path=scope["path"],
-                    query=scope.get("query_string", b"").decode("latin-1"),
+                    path=_route(scope["path"]),
+                    status=status,
+                    ms=int((time.monotonic() - begun) * 1000),
+                    client=caller.name if caller else None,
+                    label=caller.client if caller else None,
+                    bytes_in=received,
+                    bytes_out=sent,
                 )
+                if caller is not None and self.s.traffic.debugging:
+                    self.s.traffic.content(
+                        "http",
+                        method=scope["method"],
+                        path=scope["path"],
+                        query=scope.get("query_string", b"").decode("latin-1"),
+                    )
 
 
-_ID = re.compile(r"/(?:c[0-9a-f]{16}|\d+|[0-9a-f]{32})(?=/|$)")
+_ID = re.compile(rf"/(?:c[0-9a-f]{{16}}|\d+|[0-9a-f]{{32}}|{ID_PATTERN})(?=/|$)")
 
 
 def _route(path: str) -> str:

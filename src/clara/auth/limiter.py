@@ -54,6 +54,11 @@ class FailureLimiter:
             return
         raise Blocked(int(until - now) + 1)
 
+    def forget(self, address: str) -> None:
+        """Drop what is known of one address (a source that was revoked, or whose secret changed)."""
+        self._failures.pop(address, None)
+        self._blocked.pop(address, None)
+
     def fail(self, address: str) -> None:
         now = self._clock()
         failures = self._failures.setdefault(address, deque())

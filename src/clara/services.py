@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
     from .automations import Automations
+    from .automations.sources import EventSources
     from .connectors.asks import Questions
     from .connectors.quizzes import Quizzes
     from .db import Database
@@ -63,6 +64,7 @@ class Services:
     reminders: Reminders
     tasks: Tasks
     automations: Automations
+    event_sources: EventSources
     deferred: DeferredCalls
     gate: Gate
     modes: Modes

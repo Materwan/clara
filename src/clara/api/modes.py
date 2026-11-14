@@ -38,11 +38,15 @@ router = APIRouter(prefix="/v1", tags=["modes"])
 Verdict = Literal["approve", "ask", "refuse"]
 
 
-def settled_by_you(request: Request) -> None:
+MODES_REFUSAL = "This token may not change modes: they decide what runs without your answer."
+
+
+def settled_by_you(request: Request, refusal: str = MODES_REFUSAL) -> None:
     """Who may change modes: a token that may answer every request. A mode lets calls run without a card, so changing one is
-    answering in advance: a script (scope `none`) and the Discord bot (`safe`) never may."""
+    answering in advance: a script (scope `none`) and the Discord bot (`safe`) never may. The same guard is used for what else
+    is an answer given in advance (the event sources: api/event_sources.py)."""
     if caller(request).token.approvals != "all":
-        raise ApiError(403, "This token may not change modes: they decide what runs without your answer.")
+        raise ApiError(403, refusal)
 
 
 def _failed(error: Exception) -> ApiError:

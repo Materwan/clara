@@ -136,7 +136,8 @@ const CLOCK = /^([01]?\d|2[0-3]):[0-5]\d$/;
 function checkEvent(node: EventBranch, id: string, kinds: KindInfo[], found: Problem[]): void {
   const info = kinds.find((item) => item.kind === node.kind);
   if (!info) {
-    found.push({ id: `${id}-kind`, message: 'Choose what happens.' });
+    // a kind that is not listed any more: the event source it named was revoked
+    found.push({ id: `${id}-kind`, message: node.kind ? `${node.kind} no longer exists: choose another event, or remove this branch.` : 'Choose what happens.' });
     return;
   }
   if (node.filters.length > MAX_FILTER_FIELDS) found.push({ id: `${id}-kind`, message: `At most ${MAX_FILTER_FIELDS} fields in a filter.` });

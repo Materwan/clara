@@ -35,6 +35,7 @@ from .api import chat as chat_api
 from .api import connections as connections_api
 from .api import conversations as conversations_api
 from .api import discord as discord_api
+from .api import event_sources as event_sources_api
 from .api import events as events_api
 from .api import forms as forms_api
 from .api import gate as gate_api
@@ -53,6 +54,7 @@ from .api.middleware import AuthMiddleware, BodyLimitMiddleware, SecurityHeaders
 from .auth import FailureLimiter, Tokens, WebSessions
 from .automations import Automations
 from .automations.setup import install as automations_install
+from .automations.sources import EventSources
 from .connectors import setup as connectors_setup
 from .connectors.asks import Questions
 from .connectors.mail_tools import mail_tools
@@ -183,6 +185,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         log.warning("%s", note)
     modes = Modes(db, default, lambda: s.toolbox.names | static)
     home = settings.timezone
+    automations = Automations(db, events, home)
     s = Services(
         settings=settings,
         db=db,
@@ -209,7 +212,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         ),
         reminders=Reminders(db, events, home),
         tasks=Tasks(db, events, home, max_reminders=settings.task_max_reminders),
-        automations=Automations(db, events, home),
+        automations=automations,
+        event_sources=EventSources(db, secrets, automations, audit),
         deferred=DeferredCalls(db, events, home),
         gate=Gate(modes, vault_push=settings.vault_push),
         modes=modes,
@@ -403,6 +407,7 @@ def create_app(s: Services) -> FastAPI:
         modes_api.router,
         models_api.router,
         admin_api.router,
+        event_sources_api.router,  # after events_api: `POST /v1/events/ack` is matched first
     ):
         app.include_router(router)
     app.include_router(workspace_api.router)

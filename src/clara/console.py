@@ -21,6 +21,7 @@ from .gate.modes import NeedsConfirmation
 from .llm import NoModel, ProviderError, split_ref
 from .memory.conversations import ConversationError
 from .secrets import KNOWN_SECRETS, LOGIN_SECRETS, SecretError
+from .secrets.store import EVENT_SOURCE_PREFIX
 
 if TYPE_CHECKING:
     from .services import Services
@@ -199,6 +200,8 @@ def _secrets(s: Services, args: list[str], token: TokenInfo) -> str:
             f"{item['name']:<24} {'set' if item['set'] else '-':<4} {item['purpose']}" for item in s.secrets.status()
         )
     if args[0] == "unset" and len(args) == 2:
+        if args[1].startswith(EVENT_SOURCE_PREFIX):  # the secret of an event source goes with its source
+            return f"Unknown secret {args[1]}."
         removed = s.secrets.unset(args[1])
         secret_changed(s, args[1])
         return f"{args[1]}: {'removed' if removed else 'was not set'}"
@@ -275,7 +278,7 @@ def _automation_line(s: Services, item) -> str:
 
 
 def _automations(s: Services, args: list[str], token: TokenInfo) -> str:
-    from .automations import KINDS, AutomationError
+    from .automations import AutomationError
 
     usage = (
         "Usage: /automations [list] | show <id|name> | add <name> '<json>' | edit <id|name> '<json>' | on|off <id|name> | "
@@ -283,7 +286,7 @@ def _automations(s: Services, args: list[str], token: TokenInfo) -> str:
     )
     if not args or args[0] == "list":
         return "\n".join(_automation_line(s, item) for item in s.automations.listing()) or (
-            f"(no automation) Kinds of event: {', '.join(KINDS)}. {usage}"
+            f"(no automation) Kinds of event: {', '.join(kind['kind'] for kind in s.automations.kinds_listing())}. {usage}"
         )
     action, *rest = args
     try:
@@ -351,6 +354,36 @@ def _automations(s: Services, args: list[str], token: TokenInfo) -> str:
             )
     except (AutomationError, ValueError) as error:
         return f"Error: {error}"
+    return usage
+
+
+def _sources(s: Services, args: list[str], token: TokenInfo) -> str:
+    from uuid import uuid4
+
+    from .automations.sources import TRUSTED_FIRE, SourceError, convert
+
+    usage = "Usage: /sources [list] | fire <source> [field=value ...]   (made and revoked on the Event sources page)"
+    if not args or args[0] == "list":
+        return (
+            "\n".join(
+                f"{item['name']:<20} {item['kind']:<28} {'trusted' if item['trusted'] else 'not trusted':<12} "
+                f"{item['events']} event(s), {item['waiting']} waiting, {item['failures']} wrong secret(s)"
+                for item in s.event_sources.listing()
+            )
+            or "(no event source)"
+        )
+    if args[0] == "fire" and len(args) >= 2:
+        found = s.event_sources.find(args[1])
+        if found is None:
+            return f"No event source {args[1][:60]!r}."
+        if found.trusted and token.approvals != "all":  # as for the API: a trusted source starts an untainted run
+            return f"Error: {TRUSTED_FIRE}"
+        try:
+            body = {"key": f"console-{uuid4().hex[:12]}", "data": convert(found.fields, args[2:])}
+            event_id, _ = s.event_sources.accept(found, json.dumps(body).encode())
+        except SourceError as error:
+            return f"Error: {error}"
+        return f"Event #{event_id} of {found.kind}: stored and matched."
     return usage
 
 
@@ -668,6 +701,12 @@ COMMANDS: list[Command] = [
         "/automations [list] | show | add | edit | on | off | run | del | test | runs | events",
         "Automations: what Clara does when a trigger holds (a mail arrives, a time comes).",
         _automations,
+    ),
+    Command(
+        "sources",
+        "/sources [list] | fire <source> [field=value ...]",
+        "The event sources (programs that tell Clara something happened): list them, or fire an event of one.",
+        _sources,
     ),
     Command("approvals", "/approvals [list] | allow|refuse <id>", "Pending approval requests.", _approvals),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),

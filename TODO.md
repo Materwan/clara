@@ -93,12 +93,8 @@ is tainted, and the trigger counts (`EventKind.tainted`, built).
 What the owner decided:
 
 - **A. External events** (webhooks and local callers), made of three parts:
-  - **An event source** is a record you make (name, kind `custom.<name>`, its declared fields, text or bool, how it proves itself, a
-    secret held in `secrets/`). It is reached at `POST /v1/events/<source id>`, the id being random, so that an unknown address is a
-    plain 404 that costs nothing and counts nothing. A source proves itself with a bearer secret or, for GitHub, with the HMAC-SHA256 of
-    the body (`X-Hub-Signature-256`). Revoking a source touches no other.
-  - **Local callers** (`clara event fire <source> …`, or the same route on the main listener, inside the tailnet): scripts and machines
-    of the owner, with no public door.
+  - **An event source proving itself with the HMAC-SHA256 of the body** (`X-Hub-Signature-256`), for GitHub: phase 2. The sources with a
+    bearer secret, their address and the local callers are built (`automations/sources.py`; the `proof` column is ready for it).
   - **GitHub webhooks** (an adapter for the kinds that exist: `github.push`, `github.pull_request`, same fields, `ping` answered, the delivery
     id as the key, an answer within 10 seconds, so the body is stored and `202` sent before anything runs).
 - **B. School events**, by a watcher of the Moodle and Auriga connectors (the owner has tried them several times and they work): kinds
@@ -116,15 +112,6 @@ What the owner decided:
   serve` stay as they are, inside the tailnet. Off by default (`CLARA_EVENTS=off`): an installation that does not turn it on is
   exactly as it is today.
 
-- **Making a source:** **New source** on a page of event sources generates its address (`/v1/events/<random id>`) and its secret, shown once.
-  The sender (a script, a home-automation hub, a GitHub repository) is given both. What identifies a source, and what a source's trust rests on,
-  is its id and its secret (or the HMAC signature): not a URL of the sender, which a webhook does not carry, and not its IP address, which
-  is not reliable behind Funnel. Only you make a source: it holds a secret, so Clara cannot create or revoke one; in an automation she
-  may only choose one that exists.
-- **A trusted source:** the page has a **Trusted** box per source (a warning, and only a token with the approval scope `all` may tick it).
-  The events of a trusted source do not taint the run. A signature proves who sent a body, not that its text is harmless, so the box is
-  offered only for the sources whose content you control (your own scripts, your home automation): never for the GitHub adapter (a title is
-  written by a stranger), feeds or school events.
 - **Adding a feed:** by pasting the address of the feed, or the address of a page (a YouTube channel, a blog): Clara finds the feed once, when
   you add it, and keeps its address. Before you confirm she shows the feed's title and its latest items. She may also propose a feed from a
   chat (« follow this channel »): that is an approval card that shows the feed she found and its latest titles, so a page cannot make her
@@ -133,16 +120,12 @@ What the owner decided:
 
 What I corrected or added to the owner's plan:
 
-- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): the event sources with bearer secrets
-  and local callers (A, minus the public door), the school watcher (B) and feeds (C). Phase 2: the second listener, Funnel, and the GitHub
+- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): the school watcher (B) and feeds (C); the event sources
+  with bearer secrets and the local callers (A, minus the public door) are built. Phase 2: the second listener, Funnel, and the GitHub
   webhook adapter. Of everything above, only a service of the Internet that calls Clara needs Phase 2.
-- **A local caller is not a variant of a GitHub webhook:** it is the same route reached from the tailnet, with no Funnel. It has its own
-  line so that it does not wait for Phase 2.
 - **A webhook and the poll of the same repository would both produce an event** (their keys differ: the poll's is
   `owner/repo#12:opened:<time>`, a delivery's is its id). When a repository has a GitHub webhook, its poll is turned off, or the two keys
   are made equal; the polling stays for the repositories that have no webhook.
-- **A source is a record with its own secret and its own address, not one shared token.** One token for every source would be revoked all at
-  once and would give a leaked script the power of a leaked GitHub secret. The events token never works on any other route.
 - **Funnel is not on for the whole app, and the guard changes, it does not go.** Today Clara refuses to start while Funnel is on for her port and
   turns it off if it appears. After: Funnel is allowed only on `CLARA_EVENTS_PORT` and only when it maps to the events listener; on any
   other port, or mapped elsewhere, it is refused and turned off as today, with the `funnel` alert. `docs/NON-GOALS.md`
@@ -160,9 +143,9 @@ Not decided:
 
 - The kinds and fields of B beyond the names above, the polling interval of each source (the defaults), and the Auriga notice of a change of
   planning (which entry fields count as a change).
-- How `automation_create` carries a source and a feed (the gate asks first, as it does today).
-- The look of the pages (the list of sources with its address, a *Test* button and the **Trusted** box; the feeds with their preview) and of
-  the form: the owner will see a design first.
+- How `automation_create` carries a feed (a source of events is chosen with the same `when` as any kind, and `automation_list` names the ones that exist: built; the gate asks first, as it does today).
+- The look of the feeds (their preview, and the form that adds one: a third tab of the Automation page, beside Event sources): the owner will
+  see a design first. The event sources have theirs (the second tab of the Automation page: built).
 
 What the current design already sets:
 
@@ -171,7 +154,7 @@ What the current design already sets:
   would poll the real accounts: set the new intervals to `0` there, as for the others (`CLAUDE.md`).
 - `ClaraServer` (`app.py`) is one `uvicorn.Server`; a second listener is a second server on the same event loop and the same `Services`,
   with its own middleware that accepts only event secrets.
-- New tables, kinds (events are dynamic for `custom.*`, because `KINDS` is a fixed dict today), routes, settings (`CLARA_EVENTS`,
+- New tables, kinds, routes, settings (`CLARA_EVENTS`,
   `CLARA_EVENTS_PORT`, `CLARA_EVENTS_LOCAL_PORT`, `CLARA_SCHOOL_POLL_SECONDS`, `CLARA_FEEDS_POLL_SECONDS`), an alert and a console command must
   be named in `FEATURES.md` (the docs test), with a migration whose number is taken at merge and a dated entry in `docs/DECISIONS.md` that
   supersedes « poll not webhook » for the repositories that have a webhook.

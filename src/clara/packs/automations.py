@@ -208,7 +208,7 @@ def _creation(context: ToolContext, values: dict) -> str:
         raise ToolError(str(error)) from None
     lines = [f"Create the automation “{' '.join(str(name).split())}”", f"when: {_words(context, tree)}"]
     if values.get("action", "run") == "run" and not values.get("tools") and not values.get("packs"):
-        found = [tool for kind in trees.kinds_of(tree) for tool in KINDS[kind].read_tools]
+        found = [tool for name in trees.kinds_of(tree) for tool in s.automations.kind(name).read_tools]
         lines.append(f"tools: by default {', '.join((*dict.fromkeys(found), NOTIFY))}")
     shown = {**values, "project": project if project != "none" else None}
     for key in ORDER:
@@ -349,7 +349,15 @@ def _list(context: ToolContext, id: Any = None) -> str:
     s = context.services
     if id not in (None, ""):
         return json.dumps(_hidden(context, _current(context, _number(id))), ensure_ascii=False, indent=2, default=str)
-    return "\n".join(_line(s.automations.describe(item)) for item in s.automations.listing()) or "No automation."
+    found = "\n".join(_line(s.automations.describe(item)) for item in s.automations.listing()) or "No automation."
+    sources = [
+        f"{kind.kind} (fields: {', '.join(f'{name} {type_}' for name, type_ in kind.fields.items()) or 'none'})"
+        for kind in s.automations.custom.values()
+    ]
+    # the sources you made are kinds of event too: she may choose one that exists, never make one
+    return found + (
+        f"\nEvent sources you made, usable as the kind of an event: {'; '.join(sources)}." if sources else ""
+    )
 
 
 def _switched(context: ToolContext, number: int, before: bool, after: bool) -> None:
@@ -415,7 +423,7 @@ WHEN = (
     "mail, a push, a pull request, a cron instant, a date): join two events with OR, and put windows beside one event in an "
     'AND. Example, a push on main between 18:00 and 20:00, or every morning at 9: {"type":"or","of":[{"type":"and","of":'
     '[{"type":"window","from":"18:00","to":"20:00"},{"type":"event","kind":"github.push","filter":{"branch":"^main$"}}]},'
-    '{"type":"cron","expr":"0 9 * * *"}]}. An event outside a window is ignored (recorded as skipped). '
+    '{"type":"cron","expr":"0 9 * * *"}]}. An event outside a window is ignored (recorded as skipped). A source of events the person made has its own kind, custom.<name> (automation_list names them with their fields); you cannot make one. '
 )
 
 

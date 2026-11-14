@@ -13,7 +13,7 @@ from ..llm.retry import retryable
 from ..timeutil import zone
 from .events import StoredEvent
 from .message import CLOSING, DIGEST_SHOWN, instructions_of, message_of, shown_of
-from .service import Automation, Stopping, is_tainted, tools_for
+from .service import Automation, Stopping
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -64,7 +64,7 @@ async def run_automation(
     trigger gives it, tainted when what started it is. The run remembers its conversation, which is where your answer comes back
     when it asks something. A run is tried again when the model was busy or unreachable and the attempt had stored nothing."""
     zone_name = automation.timezone or s.settings.timezone
-    only_tools = tools_for(automation, events)
+    only_tools = s.automations.tools_for(automation, events)
     packs = _packs(s, automation, only_tools)
     if automation.per_run:
         if events:
@@ -122,7 +122,7 @@ async def run_automation(
         kind="hook" if events else "schedule",  # the kinds the usage figures have always had
         quiet=True,
         model=automation.model or None,
-        tainted=is_tainted(events),
+        tainted=s.automations.is_tainted(events),
         only_tools=only_tools,
     )
     attempt = 1
@@ -178,9 +178,9 @@ def limits_of(s: Services, conversation_id: str) -> dict:
         return {}
     events = s.automations.events_of(row)
     found: dict = {}
-    if is_tainted(events):
+    if s.automations.is_tainted(events):
         found["tainted"] = True
-    if tools := tools_for(automation, events):
+    if tools := s.automations.tools_for(automation, events):
         found["only_tools"] = tools
     return found
 

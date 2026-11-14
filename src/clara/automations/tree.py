@@ -91,6 +91,10 @@ def _node(raw: object, kind_of: KindOf, tz: ZoneInfo, depth: int, count: list[in
     if type_ == "event":
         kind = kind_of(str(raw.get("kind") or ""))
         if kind is None:
+            if str(raw.get("kind") or "").startswith("custom."):
+                raise TreeError(
+                    f"{raw.get('kind')!r} is not a kind of event: no event source has this name (it was never made, or it was revoked)."
+                )
             raise TreeError(f"{raw.get('kind')!r} is not a kind of event.")
         try:
             filter_ = matching.check(kind, raw.get("filter"))
@@ -365,6 +369,8 @@ def words(node: dict, kind_of: KindOf | None = None, *, top: bool = True) -> str
     if type_ == "event":
         kind = kind_of(node["kind"]) if kind_of else None
         text = kind.noun if kind else node["kind"]
+        if kind is None and kind_of is not None and node["kind"].startswith("custom."):
+            text += " (a source that was revoked)"  # the automation stays, and never fires
         return f"{text} where {matching.words(node['filter'])}" if node["filter"] else text
     if type_ == "cron":
         return f"at cron “{node['expr']}”" if node.get("as") != "condition" else f"while cron “{node['expr']}” matches"

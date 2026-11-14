@@ -7,15 +7,17 @@
   import Icon from '../components/Icon.svelte';
   import ModeSelect from '../components/ModeSelect.svelte';
   import ModelField from '../components/ModelField.svelte';
+  import Segmented from '../components/Segmented.svelte';
   import { api, fileToBase64, when } from '../lib/api';
   import { ATTEMPTS, RETRY_HELP, excerpt, inWords } from '../lib/automation';
   import { confirmDialog } from '../lib/dialog.svelte';
   import { keptNote } from '../lib/memory';
-  import { conversations, live, toast } from '../lib/state.svelte';
+  import { conversations, live, route, toast } from '../lib/state.svelte';
   import {
     MAX_CONDITIONS, MAX_FILTER_FIELDS, WEEK, catchUpFor, catchUpOptions, check, fieldLabel, fromWhen, hasEvent, newCond, newEvent, newGroup,
     newTime, toWhen, type Branch, type EventBranch, type TimeBranch,
   } from '../lib/trigger';
+  import EventSources from './EventSources.svelte';
 
   // What Clara does without being asked, in one list and one form: an automation starts a run when any branch of its trigger holds.
   // A branch is an event (a mail, a push…), a time (a date, a cron expression, a window) or an All of group (one event with conditions
@@ -47,6 +49,11 @@
   };
   const TIME_TYPES = [{ value: 'once', label: 'Once' }, { value: 'window', label: 'Window' }, { value: 'cron', label: 'Cron (advanced)' }];
   const CONDITION_TYPES = TIME_TYPES.filter((item) => item.value !== 'once');
+
+  // Two tabs: the automations (the list and the form below) and the event sources that can start them (`#/automation?tab=sources`).
+  type Tab = 'automations' | 'sources';
+  const TABS = [{ value: 'automations' as Tab, label: 'Automations' }, { value: 'sources' as Tab, label: 'Event sources' }];
+  let tab = $state<Tab>(route.query.get('tab') === 'sources' ? 'sources' : 'automations');
 
   const empty = () => ({
     id: 0, name: '', action: 'run', prompt: '', branches: [] as Branch[], keepWhen: null as any, unsupported: '', timezone: '',
@@ -91,6 +98,8 @@
   const runsClaude = $derived(form.action === 'run');
   const withEvent = $derived(hasEvent(form.branches));
   const formKinds = $derived(form.branches.flatMap((branch) => (branch.type === 'group' ? branch.of : [branch])).filter((node) => node.type === 'event').map((node) => (node as EventBranch).kind));
+  // the sources the trigger waits for that no longer exist (an event source that was revoked)
+  const formMissing = $derived([...new Set(formKinds.filter((kind) => kind && !kinds.some((item) => item.kind === kind)))]);
   const catchUps = $derived(catchUpOptions(form.branches, !form.id));
   const shownTools = $derived(toolNames.filter((name) => name.includes(toolFilter.trim().toLowerCase())));
   const readTools = $derived([...new Set([...formKinds.flatMap((kind) => kinds.find((item) => item.kind === kind)?.read_tools ?? []), 'notify'])]);
@@ -395,6 +404,11 @@
   </li>
 {/snippet}
 
+{#snippet revokedLine(missing: string[])}
+  <span class="tag warn"><Icon name="warn" size={14} />Source revoked</span>
+  <span class="small">Waits for a source that was revoked: {missing.join(', ')}. It starts again when a source with the same name exists.</span>
+{/snippet}
+
 {#snippet conditionRow(row: any, cond: any, index: number, id: string)}
   <div class="cond" role="group" aria-label={`${fieldLabel(row.field)}, condition ${index + 1}`}>
     <input id={id} class="grow value" aria-label="Regular expression" placeholder="regular expression, e.g. ^invoice" bind:value={cond.pattern}
@@ -415,6 +429,7 @@
       aria-describedby={errorOf(`${id}-kind`) ? `${id}-kind-error` : undefined}>
       <option value="" disabled>Choose…</option>
       {#each kinds as kind (kind.kind)}<option value={kind.kind}>{cap(kind.label)}</option>{/each}
+      {#if node.kind && !kinds.some((kind) => kind.kind === node.kind)}<option value={node.kind} disabled>{node.kind} (revoked)</option>{/if}
     </select>
     {#if errorOf(`${id}-kind`)}<span class="field-error" id={`${id}-kind-error`} role="alert">{errorOf(`${id}-kind`)}</span>{/if}
   </label>
@@ -491,6 +506,8 @@
 {/snippet}
 
 <div class="page stack">
+  <div><Segmented label="Section" options={TABS} bind:value={tab} /></div>
+  {#if tab === 'automations'}
   <div class="row start">
     <p class="intro grow">Clara does things by herself, unattended, when something you describe happens: a new mail, a push, a date, a time
       of day, or a combination. A run that would change something outside (send a mail, write to GitHub or Drive) asks you first, and an action
@@ -529,6 +546,7 @@
 
       <section class="block stack" aria-labelledby="af-when">
         <h3 id="af-when">When: it starts a run when any of these happens</h3>
+        {#if formMissing.length}<p class="row" role="status">{@render revokedLine(formMissing)}</p>{/if}
         {#if form.unsupported}
           <p class="row" role="status"><span class="tag warn"><Icon name="warn" size={14} />Shown in words</span> <span class="small">{form.unsupported}</span></p>
           <p>{items.find((item) => item.id === form.id)?.when_words}</p>
@@ -735,6 +753,7 @@
             {#if item.in_history}<span class="tag"><Icon name="chat" size={14} />in history</span>{/if}
             {#if remembered(item).waiting}<span class="tag warn">{remembered(item).waiting} {remembered(item).waiting === 1 ? 'fact waits' : 'facts wait'} for you</span>{/if}
             <br /><span class="small">{cap(item.when_words)}</span>
+            {#if item.missing_kinds.length}<br />{@render revokedLine(item.missing_kinds)}{/if}
             <br /><span class="muted small" title={item.next_local ? `${item.next_local} (${item.timezone})` : undefined}>{#if item.next_local}Next {item.next_local}{:else if item.kinds.length}On {inWords(item.kinds.map(labelOfKind))}{/if}{#if item.model} · {item.model}{/if}{#if item.packs.length} · {item.packs.map(packLabel).join(' · ')}{/if}</span>
             {#if item.action === 'run'}
               <br /><ModeSelect small label={`Mode of ${item.name}`} value={item.mode} effective={item.mode ?? 'default'}
@@ -815,6 +834,9 @@
         </tbody>
       </table>
     </div>
+  {/if}
+  {:else}
+    <EventSources />
   {/if}
 </div>
 
