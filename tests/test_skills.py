@@ -184,7 +184,7 @@ def test_a_zip_of_a_folder_gives_its_files_and_the_folder_names_the_skill():
     found = read_skill(zip_base64=b64(raw))
     assert found.errors == [] and found.name == "weekly-report"
     assert [(f.path, f.kind) for f in found.files] == [("logo.png", "binary"), ("notes/ref.md", "text"), ("scripts/run.sh", "text")]
-    assert "scripts are not run" in found.files[2].note and "never read or run" in found.files[1].note
+    assert "through ws_run with this skill" in found.files[2].note and "at /skill" in found.files[1].note
     top = read_skill(zip_base64=b64(make_zip({"SKILL.md": md(), "a.txt": "x"})))  # SKILL.md at the top of the archive
     assert top.errors == [] and top.name == "review-pr" and [f.path for f in top.files] == ["a.txt"]
 
@@ -282,7 +282,7 @@ async def test_a_preview_stores_nothing_and_says_what_would_happen(client, servi
     assert preview["ignored"] == ["allowed-tools"] and any("allowed-tools is ignored" in w for w in preview["warnings"])
     assert [(f["path"], f["kind"]) for f in preview["files"]] == [("pic.png", "binary"), ("scripts/go.py", "text")]
     assert preview["files"][1]["text"] == "print(1)" and preview["files"][0]["text"] is None
-    assert "scripts are not run" in preview["files"][1]["note"] and preview["skill_md_text"].startswith("---\nname: review-pr")
+    assert "through ws_run with this skill" in preview["files"][1]["note"] and preview["skill_md_text"].startswith("---\nname: review-pr")
     assert any("nope" in e for e in preview["errors"])
     assert services.skills.count() == 0 and services.db.value("SELECT COUNT(*) FROM skill_files", (), 0) == 0
     good = (await client.post("/v1/skills/preview", json={"skill_md": md()})).json()

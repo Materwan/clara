@@ -3,7 +3,9 @@
 Each run gets: no network (unless the run asks and the gate allows it), a read-only root filesystem, every capability
 dropped, `no-new-privileges`, the user Clara runs as (mapped with `--userns=keep-id`), limits on processes, memory and
 CPU, a wall-clock timeout, and an **empty environment** (no secret, token or host path; not even the host's proxy
-variables). Only the workspace is mounted, read-write, and an empty read-only tmpfs hides its `.git`.
+variables). Only the workspace is mounted, read-write, and an empty read-only tmpfs hides its `.git`. A run of a skill's
+scripts (`ws_run` with `skill`) also gets that skill's files, read-only, at `/skill`: written from the database into a fresh
+folder of the host for this run, and removed when it ends, whatever way it ends (`skill_mount`).
 
 The model gets the exit code and the first 64 KB of output; the whole log (up to 10 MB) is kept in the workspace under
 `runs/`, committed with whatever the run changed. There is **no fallback** to a plain process: when rootless Podman does
@@ -22,6 +24,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,9 +59,18 @@ class RunResult:
 
 
 def podman_args(
-    settings: Settings, image: str, workspace: str, workdir: str, network: bool, timeout: int, name: str
+    settings: Settings,
+    image: str,
+    workspace: str,
+    workdir: str,
+    network: bool,
+    timeout: int,
+    name: str,
+    skill_dir: str = "",
 ) -> list[str]:
     uid, gid = os.getuid(), os.getgid()
+    # noexec: nothing in a skill is run by itself, a script goes through an interpreter (`bash /skill/x.sh`)
+    skill = [f"--volume={skill_dir}:/skill:ro,noexec,nosuid,nodev"] if skill_dir else []
     return [
         settings.podman,
         "run",
@@ -80,6 +92,7 @@ def podman_args(
         "--env=HOME=/tmp",
         "--env=LANG=C.UTF-8",
         f"--volume={workspace}:/workspace:rw",
+        *skill,
         # notmpcopyup: podman would otherwise copy the host .git into this tmpfs, which fails ("crun: write: No space
         # left on device") once that copy needs more than 64k, and would put the repository inside the container.
         "--tmpfs=/workspace/.git:ro,size=64k,mode=000,notmpcopyup",
@@ -99,6 +112,40 @@ def _probe_workspace() -> str:
     git.mkdir()
     (git / "canary").write_bytes(b"x" * CANARY_BYTES)
     return root
+
+
+@contextlib.contextmanager
+def skill_mount(files: Sequence[tuple[str, bytes]]) -> Iterator[str]:
+    """A fresh folder of the host holding a skill's files, for `/skill`: private to the user Clara runs as (folders 0700,
+    files 0600; the container is that same user, `--userns=keep-id`), nothing executable, links never made. It is removed
+    when the block ends, however it ends (done, failed, timed out, cancelled). A stored path is data from a database that a
+    bug could have damaged, so each is checked again here and nothing is written outside the folder."""
+    root = tempfile.mkdtemp(prefix="clara-skill-")
+    try:
+        _write_skill(root, files)
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _write_skill(root: str, files: Sequence[tuple[str, bytes]]) -> None:
+    try:
+        for path, data in files:
+            parts = path.split("/")
+            if not path or "\\" in path or "\x00" in path or any(part in ("", ".", "..") for part in parts):
+                raise WorkspaceError(f"The skill holds a path that cannot be mounted: {path[:80]!r}.")
+            target = Path(root, *parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # O_EXCL: the same path twice is refused; O_NOFOLLOW: nothing here is a link, and nothing may become one
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+        for folder, _, names in os.walk(root):  # the umask of the server is not ours to guess
+            os.chmod(folder, 0o700)
+            for name in names:
+                os.chmod(os.path.join(folder, name), 0o600)
+    except OSError as error:
+        raise WorkspaceError(f"The skill's files could not be put in place ({type(error).__name__}).") from None
 
 
 class Sandbox:
@@ -214,8 +261,18 @@ class Sandbox:
     # A run
     # ------------------------------------------------------------------
     async def run(
-        self, command: str, workdir: str, timeout: int, network: bool, *, conversation_id: str | None, turn_id: str
+        self,
+        command: str,
+        workdir: str,
+        timeout: int,
+        network: bool,
+        *,
+        conversation_id: str | None,
+        turn_id: str,
+        skill: str = "",
+        skill_files: Sequence[tuple[str, bytes]] = (),
     ) -> RunResult:
+        """`skill` and `skill_files` (the skill's name, and its files as `path, bytes`) mount that skill at `/skill`."""
         if not self.ready:
             raise WorkspaceError(f"Scripts cannot run: {self.problem}.")
         if not command.strip():
@@ -224,6 +281,20 @@ class Sandbox:
         folder = clean(workdir)
         if folder and not resolve(self.workspace.root, folder, must_exist=True).is_dir():
             raise WorkspaceError(f"{folder} is not a folder.")
+        with skill_mount(skill_files) if skill else contextlib.nullcontext("") as skill_dir:
+            return await self._run(command, folder, timeout, network, conversation_id, turn_id, skill, skill_dir)
+
+    async def _run(
+        self,
+        command: str,
+        folder: str,
+        timeout: int,
+        network: bool,
+        conversation_id: str | None,
+        turn_id: str,
+        skill: str,
+        skill_dir: str,
+    ) -> RunResult:
         digest = hashlib.sha256(command.encode()).hexdigest()[:32]
         run_id = self.db.insert(
             "INSERT INTO ws_runs (started_at, command_digest, workdir, network, conversation_id, turn_id)"
@@ -233,17 +304,18 @@ class Sandbox:
         stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
         log_name = f"runs/{stamp}-{run_id}.log"
         name = f"clara-run-{run_id}-{uuid.uuid4().hex[:6]}"
-        args = podman_args(self.settings, self.image, str(self.workspace.root), folder, network, timeout, name) + [
-            command
-        ]
+        args = podman_args(
+            self.settings, self.image, str(self.workspace.root), folder, network, timeout, name, skill_dir
+        ) + [command]
         begun = time.monotonic()
         async with self._slots:
             exit_code, captured, total, timed_out = await self._spawn(args, timeout + 15, name)
         seconds = time.monotonic() - begun
         timed_out = timed_out or (exit_code not in (0, None) and seconds >= timeout)  # podman's own --timeout killed it
+        about_skill = f"# skill: {skill}  (its files are mounted at /skill, read-only)\n" if skill else ""
         header = (
             f"$ {command}\n# workdir: /workspace/{folder}  network: {'on' if network else 'off'}  "
-            f"timeout: {timeout}s\n# exit: {exit_code}{'  (timed out)' if timed_out else ''}  "
+            f"timeout: {timeout}s\n{about_skill}# exit: {exit_code}{'  (timed out)' if timed_out else ''}  "
             f"took: {seconds:.1f}s  output: {total} bytes{' (log cut at 10 MB)' if total > LOG_MAX_BYTES else ''}\n\n"
         )
         log_path = resolve(self.workspace.root, log_name)

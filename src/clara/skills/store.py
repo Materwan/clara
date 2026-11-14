@@ -2,7 +2,8 @@
 
 A skill is text. It lives in the database (`skills`, `skill_projects`, `skill_files`), so it is in Clara's backups. Nothing changes
 in it after it was added: adding it again under its name, with `replace`, writes it anew in one transaction. Only `SKILL.md` is ever
-read; the other files are stored as bytes and are never run, served or put in a prompt.
+read; the other files are stored as bytes and are never served or put in a prompt. They are run only when Clara calls `ws_run` with
+`skill` (`files_of` gives them): the sandbox mounts them read-only at `/skill` for that run.
 
 **A command in a chat** (`/review-pr 123`): the message the model gets is the skill's instructions with the arguments put in, the
 stored message shows what you typed (`messages.shown`). The text is yours, as the skill is: it is not outside content and it
@@ -292,6 +293,15 @@ class Skills:
         arguments = arguments.strip()
         shown = f"{RAN}{name}{' ' + arguments if arguments else ''}"
         return self._expansion(name, row["body"], arguments, shown, row["packs"])
+
+    def files_of(self, name: str) -> list[tuple[str, bytes]]:
+        """What a run of this skill's scripts mounts at /skill: `SKILL.md` and the other files, as stored (path, bytes). Whether Clara
+        may run `name` is the caller's question (`runnable`): nothing is checked here."""
+        row = self.db.one("SELECT skill_md FROM skills WHERE name = ?", (name,))
+        if row is None:
+            raise SkillError(f"No skill named {name[:60]!r}.", 404)
+        files = self.db.all("SELECT path, data FROM skill_files WHERE skill = ? ORDER BY path", (name,))
+        return [("SKILL.md", row["skill_md"].encode()), *((item["path"], bytes(item["data"])) for item in files)]
 
     def prompt_block(self, project: int | None) -> str:
         """The skills Clara may run, for the context of her prompt: one line each (name, argument hint, description cut short), by

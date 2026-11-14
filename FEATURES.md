@@ -363,7 +363,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 ### Skills: instructions you add, run from a chat command
 
 A **skill** is text: a folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code) that you add and run with `/name arguments`
-in a chat, and that Clara runs herself with the tool `skill_run` (below). The scripts of a skill are not built; the web site has the page of the skills
+in a chat, and that Clara runs herself with the tool `skill_run` (below). The scripts of a skill run only in the sandbox, when Clara calls `ws_run` with
+`skill` (*Scripts of a skill*, below); the web site has the page of the skills
 (Settings) and the `/` menu of the chat (see *On the web site*). A skill is **not** an MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is):
 it adds no code and no tool.
 
@@ -394,8 +395,9 @@ it adds no code and no tool.
   link or other special entry, no absolute path, no `..`, no encrypted entry, no two paths that are the same once normalised and folded to lower
   case; the bytes are counted as they are unpacked, never the sizes in the headers; nothing is written to a disk and a zip inside the zip is
   just bytes. `__MACOSX`, `.git`, `.DS_Store` and `Thumbs.db` are left out and said. Every file is stored as bytes (kind `text` or `binary`);
-  **only `SKILL.md` is ever read**: the other files are never run, never served and never put in a prompt, and a file that looks like a script
-  (`scripts/`, a script's extension, a `#!` line) gets the note « scripts are not run in this version ».
+  **only `SKILL.md` is ever read**: the other files are never served and never put in a prompt, and run only as *Scripts of a skill* says; a file
+  that looks like a script (`scripts/`, a script's extension, a `#!` line) gets the note « it runs only in the sandbox, when Clara runs it through
+  `ws_run` with this skill », any other file « only a script of the skill can read it, at /skill in the sandbox ».
 - **Reserved names:** the commands of the terminal client, of the Discord bot and of the console (`RESERVED` in `skills/parse.py`, which a test keeps
   complete), and `skills`, `skill`, `clear`, `compact`, `config`, `settings`, `memory`, `init`, `login` and `logout`: none can be a skill, and one that is
   somehow stored is never expanded.
@@ -437,6 +439,27 @@ it adds no code and no tool.
     instructions are stored at once, before the short follow-up turn that tells her how it ended, so the next turn reads them.
   - **Summaries:** the line « Skills run in this conversation: … » also names the skills she ran; the summariser is told `Clara: [ran the skill
     /name args]` and never the text.
+- **Scripts of a skill: `ws_run` with `skill`.** Running one is the tool `ws_run` (section 7, *Scripts*) with the optional parameter `skill`, the name
+  of a skill. **The classes are `ws_run`'s own, `run` and `run_network`** (no new class and no new tool); the action's targets gain `skill:<name>`, after
+  the folder it runs in (`ws:<workdir>`) and `net` when `network` is true, and the request says « Run: … , with the files of the skill NAME mounted at /skill ».
+  **A skill never gets the network by itself:** nothing in a skill (its text, its frontmatter) asks for it; `network: true` in the call and the class
+  `run_network` are the only way, and the conversation's mode decides it as for any run (the default mode refuses it, a mode that lets it ask shows a card,
+  and after untrusted content it is still a card). **Which skills:** exactly those `skill_run` may run in the conversation
+  (visible to its project, not `disable-model-invocation`); any other name is a plain error, « No such skill: … », with no request and no run, the same for
+  a skill of another project, a skill for you alone and a name that is none. For a run with `skill`, **the skill's files are mounted at `/skill`**, read-only
+  (`ro,noexec,nosuid,nodev`), `SKILL.md` and the other files under the paths the skill gave them, beside the workspace (still the only writable mount);
+  they are not executable, so a script is run through an interpreter: `bash /skill/scripts/check.sh`, `python3 /skill/tool.py`. The files are written from the
+  database into a fresh temporary folder of the server for that run alone (folders 0700, files 0600: private to the user the server runs as, which is the user the container runs as; nothing executable, no link, each stored path checked again),
+  and **the folder is removed when the run ends**, whether it succeeded, failed, timed out or was cancelled. Everything else is the sandbox as it was: its
+  limits (`CLARA_RUN_TIMEOUT`, memory, CPUs, processes), 64 KB of output, no network, an empty environment; the 1 MB limit of a skill bounds the mount. The
+  log of the run (`runs/…`) has a header line `# skill: <name>`, and the audit log names the target `skill:<name>`. **Scripts run only then**: not on `/name`,
+  not on `skill_run` (whose instructions may tell her to call `ws_run` with `skill`), not at any other time; the server reads nothing else of a skill.
+  A mode line whose target is `skill:<name>` (a glob works) applies to a run of that skill's scripts as it does to `skill_run`: it is judged over the
+  `skill:` target alone, not over the run's folder, so `ask` for `skill:review-pr` asks for each of its runs; **a line about a skill never covers the
+  network** (`net`): a run with `network` is still decided by the lines for `run_network`. **A refusal always stands:** if the same run, without its
+  `skill:` target (its folder, its `net`), would be refused by a line of the mode (a refusal on the folder, on the class, or one that only applies
+  after untrusted content), it is refused, whatever a line about the skill says; a line about the skill can only decide what the rest of the mode leaves
+  open. `skill_run`, which has no other target, is decided as before (a mode may refuse its class and approve one skill).
 - **Where `shown` reaches a client:** `GET /v1/conversations/{id}/messages` gives a question a `shown` field when it has one (a skill command as
   typed; the first message of an automation run also has one, its origin, which Discord shows); the conversation list's `preview` is `shown`
   for a command; the `resume` event of a kept answer carries `shown` as its `message`; the Discord mirror shows it.
@@ -1073,7 +1096,9 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 - **Scripts (`ws_run`):** one rootless Podman container per run, removed afterwards: no network (`--network=none`;
   with `network=true`, Podman's user-mode network, and the gate asks), read-only root, all capabilities dropped,
   `no-new-privileges`, your user mapped in (`keep-id`), `--pids-limit`, memory and CPU limits, a wall-clock timeout,
-  an empty tmpfs over `.git`, no host proxy variables, an **empty environment**. Only the workspace is mounted.
+  an empty tmpfs over `.git`, no host proxy variables, an **empty environment**. Only the workspace is mounted, read-write;
+  with `skill` (the name of a skill Clara may run, see *Skills*) the files of that skill are also mounted, read-only and not
+  executable, at `/skill`, for that run alone.
 - **Script limits:** `CLARA_RUN_TIMEOUT` (120 s; `CLARA_RUN_MAX_TIMEOUT` 900 s), `CLARA_RUN_MEMORY` (1g),
   `CLARA_RUN_CPUS` (2), `CLARA_RUN_PIDS` (256), `CLARA_RUN_SLOTS` (2 at once, apart from the model slots). The model
   gets the exit code and the first `CLARA_RUN_OUTPUT` (64 KB) of output; the full log (10 MB at most) is kept.
@@ -1496,7 +1521,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `ws_move` | Rename or move inside the workspace | ws_write / write; ws_destroy / destructive when the target exists |
 | `ws_delete` | Delete a file or folder (undoable) | ws_destroy / destructive |
 | `present` | Hand a file over to you at the end of her answer, as a card under it. She names it as a workspace path (`reports/plan.md`), `vault:<note>` (a note of the second brain, once it is open in the conversation) or `drive:<file id>` (a Google Drive file she may use: an **Open in Drive** link on Google's own address, made from the id; no download through this server). The file is not read and its content never reaches the model, nor does a name that came from Drive. A workspace file may be one she wrote in the conversation, or any regular file of the workspace once the **Files created** pack is on for the conversation (that pack is the grant); a folder, a link or a file over `CLARA_WORKSPACE_MAX_FILE` is refused. 5 per answer | read (target `ws:<path>` or `vault:<note>`, so a line of a mode on a path applies as it does to `ws_read` and `vault_read`); drive_read for a Drive file (target `drive:<id>`) |
-| `ws_run` | Run a command in the sandbox (`network` optional) | run / write; run_network / write with network |
+| `ws_run` | Run a command in the sandbox (`network` optional; `skill` optional: the name of a skill whose files are mounted read-only at `/skill`, see *Skills*) | run / write; run_network / write with network; targets `ws:<workdir>`, `net`, `skill:<name>` |
 | `web_search` | Search the web (Brave, else SearXNG); the results are gists by the quarantined reader — untrusted | web_search / read |
 | `web_fetch` | Read a web page: a quarantined reader's report of it (`focus`: what to look for) — untrusted. An address counts as one you wrote (`fetch_trusted`) when it is in your message, or, in a run an automation started, in the automation's own prompt and documents: **an address inside an event's block (a feed item's link or summary, a mail's snippet, a GitHub text, what a source sent) is `fetch_other`** | fetch_trusted or fetch_other / read |
 | `github_read` | Look at a connected repository: a folder, a file, code search, branches, issues, pull requests, a thread, the changes of a pull request or a commit (`diff`) — untrusted (pack GitHub) | github_read / read |

@@ -11,7 +11,7 @@ Targets name what is touched, with a prefix:
     school:moodle          Moodle or Auriga (read)   school:auriga
     domain:<host>      a web address's host        net                      a script that asks for the network
     folder:<path>      a path in the folder you opened on your computer (a web chat; the empty path is its top)
-    skill:<name>       a skill Clara runs (a line of a mode may name one skill)
+    skill:<name>       a skill Clara runs, or whose files a script run mounts (a line of a mode may name one skill)
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server

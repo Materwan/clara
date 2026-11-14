@@ -6,7 +6,7 @@
     ws_edit                               write                              ws_write
     ws_move                               write; destructive when the target exists    ws_write / ws_destroy
     ws_delete                             destructive                        ws_destroy
-    ws_run                                write; `network: true` is its own target `net`   run / run_network
+    ws_run                                write; `network: true` is its own target `net`, `skill` is the target `skill:<name>`   run / run_network
 
 A markdown file written under `notes/` is announced with a `file` event (Discord uploads it; the web site draws nothing for it).
 `present` is how Clara hands a file over: a card for any file she chooses (workspace/present.py).
@@ -318,29 +318,43 @@ async def _present(context: ToolContext, path: str) -> str:
 # ----------------------------------------------------------------------
 # Running
 # ----------------------------------------------------------------------
+def _skill(context: ToolContext, value: Any) -> str:
+    """The skill whose files a run mounts at /skill ("" for none): only one Clara may run (`skill_run`'s rule), and for any other
+    name the same plain answer, so that it does not tell a skill of another project, or one for you alone, from none."""
+    name = str(value or "").strip()
+    if name and name not in {item["name"] for item in context.services.skills.runnable(context.turn.project_id)}:
+        raise ToolError(f"No such skill: {name[:60]!r}.")
+    return name
+
+
 @acts_as("run", "run_network")
 def _describe_run(context: ToolContext, arguments: dict) -> Action:
     command = str(arguments.get("command") or "")
     workdir = _path(arguments.get("workdir"))
+    skill = _skill(context, arguments.get("skill"))
     first = command.strip().splitlines()[0][:120] if command.strip() else "(empty)"
+    with_skill = f", with the files of the skill {skill} mounted at /skill" if skill else ""
+    targets = ("ws:" + workdir, f"skill:{skill}") if skill else ("ws:" + workdir,)
     if flag(arguments.get("network")):
         return Action(
             "",
             "write",
             "run_network",
-            ("net", "ws:" + workdir),
-            f"Run with network: {first}",
+            ("net", *targets),
+            f"Run with network: {first}{with_skill}",
             tuple(secret_kinds(command)),
         )
-    return Action("", "write", "run", ("ws:" + workdir,), f"Run: {first}")
+    return Action("", "write", "run", targets, f"Run: {first}{with_skill}")
 
 
 async def _ws_run(
-    context: ToolContext, command: str, workdir: str = "", timeout: Any = None, network: Any = False
+    context: ToolContext, command: str, workdir: str = "", timeout: Any = None, network: Any = False, skill: Any = ""
 ) -> str:
     sandbox = context.services.sandbox
     if sandbox is None:
         raise ToolError("Scripts are not available.")
+    name = _skill(context, skill)
+    mounted = {"skill": name, "skill_files": context.services.skills.files_of(name)} if name else {}
     try:
         result = await sandbox.run(
             str(command),
@@ -349,6 +363,7 @@ async def _ws_run(
             flag(network),
             conversation_id=context.turn.conversation_id or None,
             turn_id=context.turn.turn_id,
+            **mounted,
         )
     except (WorkspaceError, PathError) as error:
         raise ToolError(str(error)) from None
@@ -496,7 +511,10 @@ def workspace_tools() -> list[Tool]:
             "ws_run",
             "Run a shell command in an isolated container with the workspace as its folder: Python, bash and "
             "common tools are there. No network unless network=true (which needs the person's approval). You get the "
-            "exit code and the start of the output; the whole log is kept under runs/.",
+            "exit code and the start of the output; the whole log is kept under runs/. With skill=<name> (a skill you may "
+            "run) the files of that skill are there too, read-only at /skill, SKILL.md included, under the paths the skill "
+            "gives them; they cannot be executed directly: run them through an interpreter (`bash /skill/scripts/check.sh`, "
+            "`python3 /skill/tool.py`).",
             _ws_run,
             _describe_run,
             {
@@ -504,6 +522,10 @@ def workspace_tools() -> list[Tool]:
                 "workdir": {**path, "description": "Optional folder to run in."},
                 "timeout": {"type": "integer", "description": "Seconds (default 120)."},
                 "network": {"type": "boolean", "description": "Ask for network access (needs approval)."},
+                "skill": {
+                    "type": "string",
+                    "description": "Optional: the name of a skill whose files are mounted read-only at /skill.",
+                },
             },
             ("command",),
         ),

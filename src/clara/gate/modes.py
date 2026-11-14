@@ -6,6 +6,8 @@ more permissive than the first). A line names a tool (a name or a glob), an acti
 target (a glob), at least one of them. A call is decided by the most specific line that matches it: more fields set,
 then the longer literal target, then the longer literal tool; on a tie the stricter verdict. A call a mode has no line
 for is decided by the **default mode**.
+A run of a skill's script names the skill besides its folder: a line about the skill decides what the rest of the mode leaves open,
+never a refusal of the same run (`Modes.verdict`).
 
 The default mode is the only predefined one. It is a TOML file the server reads at start (`CLARA_DEFAULT_MODE_FILE`,
 root-owned: neither the server, a script nor any token can change it; changing it takes a restart). With no file the
@@ -132,7 +134,11 @@ class Line:
             return False
         if self.target:
             pattern = _regex(normal_target(self.target))
-            hits = [bool(pattern.match(target)) for target in action.targets]
+            targets = action.targets
+            if self.target.startswith("skill:"):
+                # a run of a skill's script has the folder it works in as a target too: that is not what the line is about
+                targets = tuple(target for target in targets if not target.startswith("ws:"))
+            hits = [bool(pattern.match(target)) for target in targets]
             if not hits:
                 return False
             # a refusal needs one target to match, an approval or a question every one (a move: from and to)
@@ -434,7 +440,21 @@ class Modes:
         return found
 
     def verdict(self, action: Action, situation: Situation) -> tuple[Mode, Line | None, str]:
-        """(the mode that decided, its line, the verdict): the conversation's mode first, else the default mode."""
+        """(the mode that decided, its line, the verdict): the conversation's mode first, else the default mode.
+
+        A run of a skill's script names the skill besides the folder it works in (and `net`). A line about the skill can ask or
+        approve what the rest of the mode leaves open, but never loosens a refusal: if the run without its `skill:` target is
+        refused, by any line, it stays refused. An action with no other target (`skill_run`) is not touched."""
+        found = self._verdict(action, situation)
+        rest = tuple(target for target in action.targets if not target.startswith("skill:"))
+        if found[2] != "refuse" and rest and len(rest) != len(action.targets):
+            without = self._verdict(replace(action, targets=rest), situation)
+            # only a line's refusal stands, not the fall-back that refuses when no line covers the run at all
+            if without[1] is not None and without[2] == "refuse":
+                return without
+        return found
+
+    def _verdict(self, action: Action, situation: Situation) -> tuple[Mode, Line | None, str]:
         named = self.get(situation.mode_name)
         for mode in (named, self.default):
             if mode is not None:

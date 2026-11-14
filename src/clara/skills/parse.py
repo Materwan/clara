@@ -11,7 +11,8 @@ takes a comma list, `a, b`). Anything else (an indented line, a block scalar, a 
 **An archive is hostile until read**: entries are checked before any is opened (no link or other special entry, no absolute path, no
 `..`, no encrypted entry, no duplicate path once normalised and folded to lower case), the bytes are counted as they are decompressed
 (`knowledge/ingest.py: read_capped`, never the sizes in the headers), and the whole archive, the number of entries and the unpacked
-total are capped. Nothing is written to a disk.
+total are capped. Nothing is written to a disk here (a run of a skill's scripts writes the stored files to a temporary folder:
+`workspace/sandbox.py`, `skill_mount`).
 """
 
 from __future__ import annotations
@@ -66,8 +67,10 @@ JUNK_FOLDERS = frozenset({"__macosx", ".git"})
 SCRIPT_EXTENSIONS = frozenset(
     {"sh", "bash", "zsh", "fish", "py", "pyw", "js", "mjs", "cjs", "ts", "ps1", "bat", "cmd", "rb", "pl", "php", "lua", "exe"}
 )  # fmt: skip
-SCRIPT_NOTE = "A script: scripts are not run in this version."
-STORED_NOTE = "Stored with the skill; never read or run in this version."
+SCRIPT_NOTE = (
+    "A script: it runs only in the sandbox, when Clara runs it through ws_run with this skill (a request, as any run)."
+)
+STORED_NOTE = "Stored with the skill; only a script of the skill can read it, at /skill in the sandbox."
 
 
 class SkillFormatError(ValueError):
