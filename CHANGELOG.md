@@ -306,6 +306,10 @@ answers one more field, `lapses`.
   no line for takes the built-in one); `deploy/default-mode.toml` has the two new lines. Her list of skills (name, argument hint, description cut to
   160 characters, sorted, at most 4,000 characters) is a block of her context, never of the persona. A summary names the skills she ran. A request
   answered after its turn ended still leaves the instructions in the conversation. No migration; no new setting.
+- **The web site shows a skill Clara ran as a line.** Her call of `skill_run` is a line of the run of calls (« Ran the skill review-pr », with the
+  same tags as any call when it was refused, failed or is waiting for permission; opened, it shows her arguments). The instructions she was
+  given are not drawn: no « You » bubble, no Edit or Ask again, and the answer after them stays in her reply under the question that was asked. The
+  two requests keep the line break before « Arguments: … » and a long argument wraps; there is no « Approve all next » on a request to switch a pack on.
 - **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
   **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
   `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no

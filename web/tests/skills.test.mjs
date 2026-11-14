@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { repack } from '../src/lib/documents.ts';
 import {
-  MAX_ZIP, addBody, cap, chipsFor, filterSkills, held, hintSkill, insertSkill, isCommand, menuKey, previewSource, resendOf, scopeLabel, scopeProblem,
+  MAX_ZIP, addBody, cap, chipsFor, filterSkills, held, hintSkill, insertSkill, isCommand, isRan, menuKey, previewSource, resendOf, scopeLabel, scopeProblem,
   slashWord, typedCommand, zipProblem,
 } from '../src/lib/skills.ts';
 
@@ -99,6 +99,17 @@ test('only a shown that starts with a slash is drawn in place of the question', 
   assert.equal(isCommand('Automation: weekly'), false);
   assert.equal(isCommand(''), false);
   assert.equal(isCommand(undefined), false);
+});
+
+test('the instructions of a skill Clara ran are told by their shown, and a command you typed is not one', () => {
+  assert.equal(isRan('Clara ran /review-pr 12 security'), true);
+  assert.equal(isRan('Clara ran /weekly-report'), true); // no arguments
+  assert.equal(isRan('/review-pr 1'), false); // typed by you: drawn as you typed it
+  assert.equal(isCommand('Clara ran /review-pr 1'), false); // and it is no command of yours either
+  assert.equal(isRan('Clara ran a script'), false); // the slash is part of the prefix
+  assert.equal(isRan('Automation: weekly'), false);
+  assert.equal(isRan(''), false);
+  assert.equal(isRan(undefined), false);
 });
 
 test('a stored command is drawn as typed, its files as chips, and sent again as typed', () => {

@@ -31,3 +31,25 @@ test('replies before any question form a first exchange of their own', () => {
 test('an empty history has no exchanges', () => {
   assert.deepEqual(splitTurns([]), []);
 });
+
+const ran = { role: 'user', shown: 'Clara ran /review-pr 12' };
+
+test('the instructions of a skill Clara ran, between her tool result and her answer, are no exchange: the answer stays with the real question', () => {
+  const history = [
+    { id: 1, role: 'user', shown: '/review-pr 12' }, // a command you typed is a question
+    { id: 2, role: 'assistant' }, // her call of skill_run
+    { id: 3, role: 'tool' },
+    { id: 4, ...ran },
+    { id: 5, role: 'assistant' },
+    { id: 6, role: 'user' },
+    { id: 7, role: 'assistant' },
+  ];
+  assert.deepEqual(splitTurns(history).map((turn) => turn.map((row) => row.id)), [[1, 2, 3, 5], [6, 7]]);
+  assert.deepEqual(splitTurns([...history, { id: 8, role: 'tool' }, { id: 9, ...ran }, { id: 10, role: 'assistant' }]).at(-1)?.map((row) => row.id), [6, 7, 8, 10]);
+});
+
+test('a skill row that opens the history, or follows another one, starts nothing', () => {
+  assert.deepEqual(splitTurns([{ id: 1, ...ran }, { id: 2, role: 'assistant' }]).map((turn) => turn.map((row) => row.id)), [[2]]);
+  const twice = [{ id: 1, role: 'user' }, { id: 2, ...ran }, { id: 3, ...ran }, { id: 4, role: 'assistant' }];
+  assert.deepEqual(splitTurns(twice).map((turn) => turn.map((row) => row.id)), [[1, 4]]);
+});

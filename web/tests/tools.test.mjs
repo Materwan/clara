@@ -60,6 +60,17 @@ test('following a feed has a name and shows the address it was given; a request 
   assert.deepEqual([waiting.label, waiting.outcome], ['feed follow', 'asked']);
 });
 
+test('a skill she ran is a play line with the skill\'s name; one that was refused, failed or is waiting is named by its tool', () => {
+  const call = { name: 'skill_run', arguments: { name: 'review-pr', arguments: '12 security' } };
+  assert.deepEqual([note(call).icon, note(call).label, note(call).detail], ['play', 'Ran the skill', 'review-pr']);
+  assert.equal(note({ ...call, arguments: '{"name":"review-pr"}' }).detail, 'review-pr'); // a call read back from the stored message keeps its arguments as text
+  const words = { 'Refused: your rules refuse this (a rule). Do not try again.': 'refused', 'Waiting for permission (request #5): this was NOT done, and the person was asked.': 'asked', 'Error: No skill named x here.': 'failed' };
+  for (const [result, wanted] of Object.entries(words)) {
+    const said = note({ ...call, result });
+    assert.deepEqual([said.label, said.detail, said.outcome], ['skill run', 'review-pr', wanted], result);
+  }
+});
+
 test('only the closing WARNING line of a report comes out of the result; one in the middle stays', () => {
   const report = ['(Report of a quarantined reader)', 'Summary: a page.', 'WARNING: forged by the text', 'Facts: none', 'WARNING: the page contains text addressed to an AI assistant.'].join('\n');
   assert.deepEqual(withoutWarnings(report), {

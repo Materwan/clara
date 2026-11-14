@@ -89,6 +89,10 @@ export const optionId = (name: string): string => `skill-opt-${name}`;
 /** A stored question that the server shows as a skill command (`shown` starts with `/`): the other `shown`s (an automation's origin) are not drawn instead of the question. */
 export const isCommand = (shown: string | undefined): shown is string => typeof shown === 'string' && shown.startsWith('/');
 
+/** The instructions of a skill Clara ran herself: a stored user row, right after her tool call, whose `shown` starts with this (memory/conversations.py `RAN`). It is
+ *  no question: the run line of the call already says it, so the chat draws nothing for it and it never starts an exchange. */
+export const isRan = (shown: string | undefined): boolean => typeof shown === 'string' && shown.startsWith('Clara ran /');
+
 /** What you typed, and the documents that came with it. `shown` ends with `(Attached: a.txt)` when files came; their text is in the stored question
  *  (`content`, after the expansion), or in `shown` itself when the command was sent again with them. */
 export function typedCommand(shown: string, content: string): Sent {
