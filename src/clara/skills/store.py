@@ -7,6 +7,10 @@ read; the other files are stored as bytes and are never run, served or put in a 
 **A command in a chat** (`/review-pr 123`): the message the model gets is the skill's instructions with the arguments put in, the
 stored message shows what you typed (`messages.shown`). The text is yours, as the skill is: it is not outside content and it
 does not taint the turn. A skill that is not visible to the conversation's project is not a skill there: the message is plain text.
+
+**Clara runs one** (`skill_run`, skills/tools.py): the same instructions, put in the conversation as a user message after her tool
+call, whose `shown` is `Clara ran /name arguments` (so it is told from a command you typed). A skill that says
+`disable-model-invocation` is for you alone, and the list she is given (`prompt_block`) leaves it out.
 """
 
 from __future__ import annotations
@@ -18,11 +22,15 @@ from dataclasses import dataclass
 
 from ..db import Database
 from ..gate import Action, Audit, Decision, Situation
+from ..memory.conversations import RAN
 from ..timeutil import now_iso
 from .parse import MAX_PROJECTS, MAX_SKILLS, RESERVED, Parsed, note_for
 
 MAX_EXPANDED = 120_000  # bytes of the text a command expands to, arguments included
 SUMMARY_LINE = "Skills run in this conversation: "
+MAX_LISTED = 4_000  # characters of the list of skills Clara is given: the rest is counted, not shown
+LIST_DESCRIPTION = 160  # characters of a skill's description in that list
+MORE = "({} more skills are not listed here to keep this short: skill_run runs one by its exact name, if the person gives it.)"
 COMMAND = re.compile(r"^/([a-z0-9][a-z0-9-]{0,39})(?=\s|$)")
 WORDS = re.compile(r"\"([^\"]*)\"|'([^']*)'|(\S+)")  # simple quoting: "a b" and 'a b' are one word, no escapes
 ARGUMENTS = re.compile(r"\$ARGUMENTS(?![A-Za-z0-9_])")
@@ -46,7 +54,14 @@ class SkillError(ValueError):
 class Expansion:
     name: str
     text: str  # what the model gets
-    shown: str  # what the conversation shows: `/name arguments` as typed
+    shown: str  # what the conversation shows: `/name arguments` as typed, or `Clara ran /name arguments`
+    packs: tuple[str, ...] = ()  # the packs the skill says it needs
+
+
+def command_name(shown: str) -> str | None:
+    """The skill a `shown` names: a command you typed (`/name args`) or one Clara ran (`Clara ran /name args`)."""
+    found = COMMAND.match(shown[len(RAN) - 1 :] if shown.startswith(RAN) else shown)  # RAN ends with the slash
+    return found[1] if found else None
 
 
 def substitute(body: str, arguments: str) -> str:
@@ -64,6 +79,11 @@ def substitute(body: str, arguments: str) -> str:
     if arguments and not ARGUMENTS.search(body):
         text += f"\n\nArguments: {arguments}"
     return text
+
+
+def _cut(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def split_summary(summary: str) -> tuple[str, list[str]]:
@@ -232,24 +252,87 @@ class Skills:
         )
         if row is None:
             return None
-        text = substitute(row["body"], message[found.end() :].strip())
+        return self._expansion(name, row["body"], message[found.end() :].strip(), message.strip())
+
+    @staticmethod
+    def _expansion(name: str, body: str, arguments: str, shown: str, packs: str = "[]") -> Expansion:
+        text = substitute(body, arguments)
         if len(text.encode()) > MAX_EXPANDED:
             raise SkillError(
                 f"/{name} with these arguments makes {len(text.encode()):,} bytes of instructions: at most {MAX_EXPANDED:,}.",
                 413,
             )
-        return Expansion(name, text, message.strip())
+        return Expansion(name, text, shown, tuple(json.loads(packs)))
+
+    # ------------------------------------------------------------------
+    # Clara runs one (skills/tools.py)
+    # ------------------------------------------------------------------
+    def runnable(self, project: int | None) -> list[dict]:
+        """The skills Clara may run in a conversation of that project: the visible ones, except those that say
+        `disable-model-invocation` (for you alone)."""
+        return [item for item in self.listing(project=project) if not item["disable_model_invocation"]]
+
+    def run(self, name: str, arguments: str, project: int | None) -> Expansion:
+        """What a skill is when Clara runs it: the instructions with her arguments put in, as for a command, and what the conversation
+        shows for it. SkillError when there is no such skill for this project (a skill reserved for another project does not exist
+        here) or when it is for you alone."""
+        row = None
+        if name not in RESERVED:
+            row = self.db.one(
+                f"SELECT s.body, s.packs, s.disable_model_invocation FROM skills s WHERE s.name = ? AND {VISIBLE}",
+                (name, -1 if project is None else project),
+            )
+        if row is None:
+            raise SkillError(f"No skill named {name[:60]!r} here.", 404)
+        if row["disable_model_invocation"]:
+            raise SkillError(
+                f"The skill {name} is for the person to run: you may not. If it would help, tell them to type /{name}.",
+                403,
+            )
+        arguments = arguments.strip()
+        shown = f"{RAN}{name}{' ' + arguments if arguments else ''}"
+        return self._expansion(name, row["body"], arguments, shown, row["packs"])
+
+    def prompt_block(self, project: int | None) -> str:
+        """The skills Clara may run, for the context of her prompt: one line each (name, argument hint, description cut short), by
+        name, so that it is the same text from one turn to the next until a skill changes. At most `MAX_LISTED` characters: what does not fit
+        is counted, and she is told `skill_run` still runs a skill by its name. "" when there is none."""
+        found = self.runnable(project)
+        if not found:
+            return ""
+        head = (
+            "## Skills you may run\nThe person's own saved instructions, each under a name. When what they ask matches one, run it "
+            "with skill_run(name, arguments): its instructions then arrive as the next message and are the person's words, to follow. "
+            "Give the arguments its hint asks for, and never invent a name.\n"
+        )
+        entries = []
+        for item in found:
+            hint = f" {item['argument_hint']}" if item["argument_hint"] else ""
+            entries.append(" ".join(f"- {item['name']}{hint}: {_cut(item['description'], LIST_DESCRIPTION)}".split()))
+        if len(head) + sum(len(entry) + 1 for entry in entries) <= MAX_LISTED:
+            return head + "\n".join(entries)
+        lines: list[str] = []
+        used = len(head) + len(MORE.format(len(entries)))  # room for the note that counts what is left out
+        for entry in entries:
+            if used + len(entry) + 1 > MAX_LISTED:
+                break
+            lines.append(entry)
+            used += len(entry) + 1
+        lines.append(MORE.format(len(entries) - len(lines)))
+        return head + "\n".join(lines)
 
     def run_in(self, conversation_id: str, project: int | None, carried: Sequence[str] = ()) -> list[str]:
         """The skills run in a conversation, in the order they were first run: the names an earlier summary gave (`carried`) and
-        those of its messages whose `shown` starts with `/<name>`. Only a skill that exists now and is visible to the project."""
+        those of its messages whose `shown` starts with `/<name>` (you typed it) or `Clara ran /<name>` (she ran it). Only a skill
+        that exists now and is visible to the project."""
         known = {item["name"] for item in self.listing(project=project)}
         names = list(carried)
         for row in self.db.all(
-            "SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user' AND active = 1 AND shown LIKE '/%' ORDER BY id",
+            "SELECT shown FROM messages WHERE conversation_id = ? AND role = 'user' AND active = 1"
+            f" AND (shown LIKE '/%' OR shown LIKE '{RAN}%') ORDER BY id",
             (conversation_id,),
         ):
-            found = COMMAND.match(row["shown"])
-            if found and found[1] in known and found[1] not in names:
-                names.append(found[1])
+            name = command_name(row["shown"])
+            if name in known and name not in names:
+                names.append(name)
         return [name for name in dict.fromkeys(names) if name in known]

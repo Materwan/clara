@@ -24,6 +24,10 @@ from .facts import AUTOMATION, PROJECT, fts_query, scope_name
 
 MAX_TITLE = 100
 PREVIEW = 300
+# The `shown` of a user row that is not a question: the instructions of a skill Clara ran, stored after her tool call (skills/store.py).
+# It is not a turn: it is left out of the turn counts, it is not a question to ask again, and the Discord mirror does not post it.
+RAN = "Clara ran /"
+NOT_RAN = f"shown NOT LIKE '{RAN}%'"
 ANY = "any"
 NONE = "none"
 
@@ -111,6 +115,7 @@ class TurnRow:
     tool_calls: list | None = None
     tool_name: str | None = None
     thinking: str | None = None
+    shown: str = ""  # a user row after a tool call: the skill Clara ran (RAN)
 
 
 def _packs(text: str) -> tuple[str, ...]:
@@ -440,7 +445,7 @@ class Conversations:
     def history(self, conversation_id: str, turns: int, after_id: int = 0) -> list[StoredMessage]:
         """The last `turns` turns of the path after `after_id`, oldest first."""
         start = self.db.one(
-            "SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1"
+            f"SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1 AND {NOT_RAN}"
             " ORDER BY id DESC LIMIT 1 OFFSET ?",
             (conversation_id, after_id, max(turns, 1) - 1),
         )
@@ -480,7 +485,7 @@ class Conversations:
     def turns_after(self, conversation_id: str, after_id: int = 0) -> int:
         return int(
             self.db.value(
-                "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1",
+                f"SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1 AND {NOT_RAN}",
                 (conversation_id, after_id),
                 0,
             )
@@ -532,7 +537,7 @@ class Conversations:
             for row in rows:
                 parent = tx.execute(
                     "INSERT INTO messages (conversation_id, parent_id, role, content, tool_calls, tool_name, thinking,"
-                    " turn_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " turn_id, created_at, shown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         conversation_id,
                         parent,
@@ -543,6 +548,7 @@ class Conversations:
                         row.thinking or None,
                         turn_id,
                         now,
+                        row.shown,
                     ),
                 ).lastrowid
             tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
@@ -554,7 +560,7 @@ class Conversations:
     # ------------------------------------------------------------------
     def question(self, conversation_id: str, message_id: int) -> StoredMessage | None:
         row = self.db.one(
-            f"{self._COLUMNS} WHERE conversation_id = ? AND id = ? AND active = 1 AND role = 'user'",
+            f"{self._COLUMNS} WHERE conversation_id = ? AND id = ? AND active = 1 AND role = 'user' AND {NOT_RAN}",
             (conversation_id, message_id),
         )
         return _message(row) if row else None
@@ -604,7 +610,7 @@ class Conversations:
         conversation = self.require(conversation_id)
         with self.db.transaction() as tx:
             target = tx.execute(
-                "SELECT id, parent_id FROM messages WHERE id = ? AND conversation_id = ? AND role = 'user'",
+                f"SELECT id, parent_id FROM messages WHERE id = ? AND conversation_id = ? AND role = 'user' AND {NOT_RAN}",
                 (message_id, conversation_id),
             ).fetchone()
             if target is None:

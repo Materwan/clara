@@ -101,6 +101,8 @@ from .secrets import SecretError, SecretsStore, load_key_material
 from .services import Services
 from .settings import Settings, SettingsError, load_settings
 from .skills import Skills
+from .skills.tools import offered as skill_offered
+from .skills.tools import skill_tools
 from .timekeeping import DeferredCall, DeferredCalls, Reminders, Tasks
 from .timekeeping.clara_jobs import ClaraJobs
 from .timeutil import parse_iso, zone
@@ -159,6 +161,7 @@ def static_tools() -> list[Tool]:
         *automation_tools(),
         *feed_tools(),
         *deferred_tools(),
+        *skill_tools(),
     ]
 
 
@@ -239,7 +242,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         db, s.conversations, runtime, answering=lambda conversation_id: s.agent.answering(conversation_id)
     )
     s.github_snapshots = GitHubSnapshots()
-    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools()
+    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools() + skill_tools()
     s.modes.audit = audit
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.automations.projects = s.projects
@@ -262,6 +265,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     s.reader = Reader(s)
     s.agent.tool_conditions["discord_say"] = can_say
     s.agent.tool_conditions["discord_forget"] = lambda state: False  # only an approved request runs it
+    s.agent.tool_conditions["skill_run"] = skill_offered(s)
     wire(s)
     s.lifecycle = Lifecycle(s, settings.drain_seconds)
     return s

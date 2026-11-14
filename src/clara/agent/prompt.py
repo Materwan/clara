@@ -64,6 +64,7 @@ class PromptParts:
     project: str = ""
     vault: str = ""
     connections: str = ""
+    skills: str = ""  # the skills Clara may run (only when she is offered `skill_run`)
     files: str = ""
     workspace: str = ""
     facts: list[str] = field(default_factory=list)
@@ -91,7 +92,7 @@ def render(persona: str, parts: PromptParts) -> str:
     sections = [persona, "\n".join(context) + "\n"]
     if parts.instructions.strip():
         sections.append(f"## Instructions from the client ({parts.client})\n{parts.instructions.strip()}\n")
-    for block in (parts.project, parts.vault, parts.connections, parts.workspace, parts.files):
+    for block in (parts.project, parts.vault, parts.connections, parts.skills, parts.workspace, parts.files):
         if block.strip():
             sections.append(block.strip() + "\n")
     if not parts.incognito:

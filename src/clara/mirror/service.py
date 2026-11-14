@@ -19,7 +19,7 @@ from typing import Any
 
 from ..db import Database
 from ..events.store import Events
-from ..memory.conversations import Conversations
+from ..memory.conversations import NOT_RAN, RAN, Conversations
 from ..timeutil import now_iso
 from ..workspace.present import PRESENT, presented
 from . import text
@@ -313,9 +313,10 @@ class Mirror:
         }
 
     def _turns(self, conversation_id: str) -> list[dict]:
+        # the instructions of a skill Clara ran (a user row after her tool call) are no question: they open no turn of their own
         rows = self.db.all(
             "SELECT id, role, content, shown, turn_id, ref, tool_calls, tool_name FROM messages"
-            " WHERE conversation_id = ? AND active = 1 AND (role IN ('user', 'assistant')"
+            f" WHERE conversation_id = ? AND active = 1 AND {NOT_RAN} AND (role IN ('user', 'assistant')"
             " OR (role = 'tool' AND tool_name = ?)) ORDER BY id",
             (conversation_id, PRESENT),
         )
@@ -492,7 +493,7 @@ class Mirror:
         row = self.db.one(
             "SELECT m.id, m.conversation_id FROM messages m WHERE m.ref = ? AND m.role = 'user' AND m.active = 1"
             " AND NOT EXISTS (SELECT 1 FROM messages n WHERE n.conversation_id = m.conversation_id AND n.role = 'user'"
-            " AND n.active = 1 AND n.id > m.id)",
+            f" AND n.active = 1 AND n.id > m.id AND n.shown NOT LIKE '{RAN}%')",
             (message_ref,),
         )
         return (row["conversation_id"], row["id"]) if row else None

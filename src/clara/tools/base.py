@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ..gate.grants import Grants
     from ..knowledge.attachments import Image
     from ..services import Services
+    from ..skills.store import Expansion
     from .folder_tools import FolderGrant
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class TurnState:
     private: PrivateText = field(default_factory=PrivateText)
     counts: dict[str, int] = field(default_factory=dict)
     pictures: list[Image] = field(default_factory=list)
+    # skills Clara ran this turn (`skill_run`): the turn puts their instructions in the conversation as messages after the round's
+    # tool results, and offers the tools of the packs a skill switched on from its next round
+    skills_run: list[Expansion] = field(default_factory=list)
+    packs_on: list[str] = field(default_factory=list)
     files_written: list[dict] = field(default_factory=list)  # workspace notes changed this turn (chat cards)
     stop_reason: str = ""  # who cut the turn short, for the note stored with what it had said ("" : the client left)
     folder: FolderGrant | None = None  # the folder open on the person's computer in this web chat (folder tools)

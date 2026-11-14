@@ -11,6 +11,7 @@ Targets name what is touched, with a prefix:
     school:moodle          Moodle or Auriga (read)   school:auriga
     domain:<host>      a web address's host        net                      a script that asks for the network
     folder:<path>      a path in the folder you opened on your computer (a web chat; the empty path is its top)
+    skill:<name>       a skill Clara runs (a line of a mode may name one skill)
     memory, reminders, tasks, notify, forms        Clara's own records
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server
@@ -103,14 +104,27 @@ CLASSES: dict[str, tuple[str, str, str]] = {
         "all",
         "Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat",
     ),
+    "skill_run": (
+        "trusted_read",
+        "trusted_read",
+        "Run a skill: its instructions (your own words) join the conversation as a message; the request shows the skill "
+        "and every argument Clara chose",
+    ),
+    "skill_pack": (
+        "any_read",
+        "all",
+        "Run a skill that needs a tool pack that is off here: the request shows the skill, the pack and every argument, "
+        "and allowing it switches the pack on for the conversation",
+    ),
 }
 # Classes of a web chat only: a run nobody watches has no browser to answer them, so no mode opens them
 CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
 # Classes an approval card may allow for the rest of its conversation ("Allow for this conversation")
 FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
 # Classes whose card never offers "Approve all next": what the request shows (a feed, with its latest titles) is chosen by a page, so
-# each one must be read; a grant would let a page have the next ones followed unseen
-NOT_GRANTABLE = frozenset({"feed_follow"})
+# each one must be read; a grant would let a page have the next ones followed unseen. A skill that switches a pack on: a grant on
+# `skill_run` (the same tool) must not carry over to the call that opens a pack, so each one is read
+NOT_GRANTABLE = frozenset({"feed_follow", "skill_pack"})
 # Classes whose requests are not published as events: their summary names a file of the person's computer, which must
 # not reach Discord's #approval or another client; the web chat shows them on its turn
 NOT_PUBLISHED = frozenset({"folder_sensitive"})
@@ -128,6 +142,9 @@ RAISED_WHEN_TAINTED = frozenset(
         "automation",
         "deferred",
         "feed_follow",
+        # Clara chose the arguments after reading outside content; the instructions are yours, but what they are told to work on is not
+        "skill_run",
+        "skill_pack",
         # an address neither the person wrote nor a search returned: its host and path can carry text out (2026-10-31)
         "fetch_other",
     }
@@ -167,7 +184,7 @@ LEAVES_MACHINE = OUTSIDE | frozenset(
     }
 )
 
-PREFIXES = ("ws:", "github:", "drive:", "mail:", "school:", "vault:", "domain:", "folder:")
+PREFIXES = ("ws:", "github:", "drive:", "mail:", "school:", "vault:", "domain:", "folder:", "skill:")
 SPECIAL_TARGETS = (
     "net",
     "search",

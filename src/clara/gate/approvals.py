@@ -54,10 +54,20 @@ RESULT_SHOWN = 300
 SUMMARY_SHOWN = 500
 # classes whose request shows everything that would leave (the text of an email), be made (the prompt of an automation), be run
 # later (a booked call) or be followed (a feed, with its address and its latest titles)
-SUMMARY_FULL = {"mail_send": 8_000, "automation": 24_000, "deferred": 24_000, "feed_follow": 2_000}
+# (a skill: the arguments Clara chose after reading outside content, whole: skills/tools.py caps them to fit)
+SUMMARY_FULL = {
+    "mail_send": 8_000,
+    "automation": 24_000,
+    "deferred": 24_000,
+    "feed_follow": 2_000,
+    "skill_run": 2_000,
+    "skill_pack": 2_000,
+}
 FREE_TEXT = (
     "mail_send",
     "automation",
+    "skill_run",
+    "skill_pack",
 )  # classes whose summary is a text Clara wrote, not a line ending in someone's words
 # the turn of a booked call's run starts with this (app.run_deferred): nobody is in its conversation when it is answered
 BOOKED_TURN = "deferred-"

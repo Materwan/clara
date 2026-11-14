@@ -294,6 +294,18 @@ answers one more field, `lapses`.
 - **The terminal runs skills.** In `clara-chat`, `/name arguments` sends a skill of the conversation as typed (the server expands it), `/skills`
   lists the skills one line each, and Tab completes the commands and the skill names where `readline` exists (not on Windows). A terminal
   command always wins over a skill, and a list that cannot be read only means no skill is offered.
+- **Clara runs a skill herself: `skill_run(name, arguments)`.** A 91st tool, in no pack, offered only in a chat (never in an automation, a reminder or
+  a follow-up) that has a skill she may run; every skill visible to the conversation's project, except one with `disable-model-invocation: true`
+  (refused plainly) and one reserved for another project (it does not exist for her). The instructions are put in the conversation **as a
+  message** (a user row right after her tool results, `shown` « Clara ran /name arguments »), not as a tool result, so they stay when the older
+  results are left out; the text is your words and does not taint. **Two new action classes**: `skill_run` (approved, **asks after untrusted
+  content**, target `skill:<name>`) and `skill_pack` (when a pack the skill names is off and can be used: **always asks**, names the skill and
+  the pack, never covered by « Approve all next »; allowing it switches the pack on for the conversation and its tools are offered in the same
+  turn). Both requests show the arguments whole (at most 1,500 characters). A pack that is off and cannot be used (no mailbox) asks nothing and the
+  result says why. A line of a mode may name one skill (`skill:review-pr`, a glob works). `/etc/clara/default-mode.toml` needs no edit (a class it has
+  no line for takes the built-in one); `deploy/default-mode.toml` has the two new lines. Her list of skills (name, argument hint, description cut to
+  160 characters, sorted, at most 4,000 characters) is a block of her context, never of the persona. A summary names the skills she ran. A request
+  answered after its turn ended still leaves the instructions in the conversation. No migration; no new setting.
 - **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
   **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
   `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no

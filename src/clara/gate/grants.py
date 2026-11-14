@@ -11,7 +11,8 @@ It covers any tool the button is pressed on, and answers the plain « ask » of 
 where the mode refuses, or approves, there is nothing to answer, and in a tainted turn it only answers a tool whose
 `(if tainted)` verdict is `ask` (the gate has already chosen that verdict when the grant is asked). It never covers the
 secret check (content that looks like a secret leaving the machine), only a turn from the web, never an unattended
-run, and never a request of a class in NOT_GRANTABLE (a feed to follow). It writes no rule. Every call it lets
+run, and never a request of a class in NOT_GRANTABLE (a feed to follow, a skill that switches a pack on: a tool of two classes
+has a grant for the one that may be granted only). It writes no rule. Every call it lets
 through is in the audit log with the grant's number, and the web site still prints the tool call.
 """
 
@@ -132,8 +133,8 @@ class Grants:
     def cover(self, action: Action, situation: Situation, conversation_id: str, client: str) -> Grant | None:
         """The grant that lets this `ask` through, counted as one call; None if none does. The caller has already
         left alone what the secret check raised."""
-        if situation.mode != "interactive" or client != CLIENT or not conversation_id:
-            return None
+        if situation.mode != "interactive" or client != CLIENT or not conversation_id or action.klass in NOT_GRANTABLE:
+            return None  # a grant is for a tool: a call of that tool of a class that is read each time is not covered
         self._expire()
         grant = self._active.get((conversation_id, action.tool))
         if grant is None:

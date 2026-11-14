@@ -99,20 +99,15 @@ external events and GitHub's webhook). All of it is built on the server (`docs/D
 
 ## Skills: what is left
 
-Phase 1 of the skills is built, on the server and on the web site (`docs/DECISIONS.md`, « Skills (owner's decision, 2026-11-13) »; `FEATURES.md`,
+Phases 1 and 2 of the skills are built (`docs/DECISIONS.md`, « Skills (owner's decision, 2026-11-13) », with the rows of 2026-11-14; `FEATURES.md`,
 section 3 and the Skills page of the web site): a skill is a `SKILL.md` and the files of its folder, added by a token with the approval scope `all` from
 a pasted text or a zip, after a preview; it is stored in the database (so it is in the backups), global or reserved for projects; `/name arguments` in a
 chat is expanded by the server, `messages.shown` carries what was typed, and a summary names the skills that were run. The web site has the Skills page
-(Settings), the `/` menu of the box you write in and, under the box, the argument hint and the packs a skill needs (a click switches one on). A skill
-grants no right (`allowed-tools` is ignored) and its `packs` are for display. What the owner decided and is not built yet:
+(Settings), the `/` menu of the box you write in and, under the box, the argument hint and the packs a skill needs (a click switches one on). **Clara
+runs a skill herself** with the tool `skill_run` (2026-11-14): in a chat only, with her list of skills in her context, the instructions kept in the
+conversation as a message (`shown` « Clara ran /name arguments »), the gate classes `skill_run` (asks after untrusted content) and `skill_pack` (asks
+to switch a pack on). A skill grants no right (`allowed-tools` is ignored). What the owner decided and is not built yet:
 
-- **Phase 2, Clara runs a skill through a tool.** Every skill is visible to her except one that says `disable-model-invocation: true` (the field is
-  stored). After untrusted content, her run of a skill asks for the owner's agreement. When the skill's pack is off (Mail, for example), an
-  approval request offers to switch it on for the conversation: one more action at the gate, with its tainted case, showing the skill and the pack,
-  which only a client can answer. A skill she runs stays in the conversation as a message, not as a tool result (only the last 5 tool results stay in
-  later prompts, `docs/DECISIONS.md`). The list of skills goes in the context block, never in the prompt itself, which must stay identical from one
-  turn to the next (`agent/prompt.py`). The summary already names the skills that were run, so that she can ask for one again. The model still has no
-  tool to add, change or remove a skill.
 - **Phase 3, the scripts of a skill, in the sandbox.** They stay in the sandbox, with its limits and no network unless approved; running them needs a
   read-only mount of the skill's folder, which is a change to the sandbox (only the workspace is mounted today), and no server code: the files are
   already stored, as bytes. Their gate class (that of `ws_run`, or its own) and whether a skill may ask for the network are not decided. They need
@@ -121,7 +116,7 @@ grants no right (`allowed-tools` is ignored) and its `packs` are for display. Wh
   them, Tab completes them where `readline` exists. Discord: one native command `/skill` with `name` (autocomplete) and `arguments`, the server
   expanding (`docs/DECISIONS.md`, « Skills »).
 - **Schedules and hooks running a skill:** later; the owner left them out of this item.
-- **Not decided here:** whether a skill that Clara ran may be switched to « ask » in a mode of its own (it depends on phase 2's gate action).
+- **Answered by phase 2:** a mode can refuse or ask a skill Clara runs, by class (`skill_run`, `skill_pack`) or for one skill (a line with the target `skill:<name>`).
 
 ## Moodle and Auriga: what is left
 

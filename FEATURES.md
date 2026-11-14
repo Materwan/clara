@@ -363,9 +363,9 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 ### Skills: instructions you add, run from a chat command
 
 A **skill** is text: a folder with a `SKILL.md` (frontmatter and instructions, the format of Claude Code) that you add and run with `/name arguments`
-in a chat. It is the first phase of the work (the command in a chat, the arguments, the packs and the project scope); a tool for Clara to run a
-skill and the scripts of a skill are not built; the web site has the page of the skills (Settings) and the `/` menu of the chat (see *On the web site*). A skill is **not** an
-MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is): it adds no code and no tool.
+in a chat, and that Clara runs herself with the tool `skill_run` (below). The scripts of a skill are not built; the web site has the page of the skills
+(Settings) and the `/` menu of the chat (see *On the web site*). A skill is **not** an MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is):
+it adds no code and no tool.
 
 - **Adding one:** `POST /v1/skills/preview` reads a pasted `SKILL.md` (`skill_md`) or a base64 zip of the folder (`zip_base64`), stores nothing and answers
   with what would be added (name, description, argument hint, packs, the files with their size, kind and a note, the text of `SKILL.md`, whether it would
@@ -373,7 +373,7 @@ MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is): it adds no code an
   trusted), adds it in one transaction (`scope`: `"global"`, or `{"projects": [ids]}`; `replace`: true to replace a skill of the same name) and
   answers 201 (200 for a replace). A skill never changes after it was added: adding it again is how it changes. `DELETE /v1/skills/{name}` removes it.
   Only a token with the approval scope `all` previews, adds, replaces or removes; a script (`none`) and the Discord bot (`safe`) get 403, and
-  the model has **no tool** for skills (none of the `PACKS` holds one). Each change is an audit line (outcome `skill`, the name only).
+  the model has **no tool to add, change or remove** a skill (`skill_run` only runs one, and is in no pack). Each change is an audit line (outcome `skill`, the name only).
 - **Reading them:** `GET /v1/skills?project=<id>` lists the skills of a conversation in that project (the global ones, and those reserved for it),
   `?project=none` those of a conversation outside any project, and no `project` lists every skill with the `projects` each is reserved for (the
   page of the skills). Each has `name`, `description`, `argument_hint`, `packs` (ids), `disable_model_invocation`, `scope` (`global` or `projects`),
@@ -407,13 +407,43 @@ MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is): it adds no code an
   The stored question is the expansion (so the next turns replay what the model read) and its `shown` is what you typed, `/name args` (with
   `(Attached: …)` under it when files came with it). The expansion is yours, as the skill is: it does not taint the turn, and its addresses are
   ones you wrote. It is at most 120,000 bytes, else the message is refused with 413. Any other `/word`, a reserved name, and a skill reserved for
-  another project are plain text. Skills are not offered to the model in the prompt, and schedules and hooks do not run them.
+  another project are plain text. Schedules and hooks do not run skills.
+- **Clara runs one: `skill_run(name, arguments)`** (`arguments` is optional text of at most 1,500 characters). It is **not part of any pack**, and
+  it is offered only in a **chat** (never in a run nobody watches: an automation, a reminder, a follow-up) whose project has a skill she may run:
+  every skill visible to the conversation's project, except one that says `disable-model-invocation: true` (that one is for you alone: `skill_run`
+  on it answers a plain refusal with no request, and it is not in her list). A skill reserved for another project does not exist for her
+  (« No skill named … here »). It reads the database and nothing else (no network, no file), and a booked call cannot book it.
+  - **Her list:** a block « Skills you may run » in the context of her prompt (never in the persona, which stays the same text from one turn to the
+    next): one line per skill, `- name [argument hint]: description` (the description cut to 160 characters, newlines made spaces), sorted by name, so
+    it is the same text until a skill changes. At most 4,000 characters: when they do not all fit, the block ends with « (N more skills are not
+    listed here …: `skill_run` runs one by its exact name, if the person gives it) », and `skill_run` does run an unlisted skill by name. The block is
+    there only when the tool is offered, and says the skills are the person's own words, to run when a request matches.
+  - **Its two action classes** (section 9; the default mode is shown there). **`skill_run`** (target `skill:<name>`, level `read`) is approved in a
+    normal turn and **asks after untrusted content**, and the request shows the skill and **every argument** she chose (they come from what she
+    read). **`skill_pack`** (level `write`) is the same call when a pack the skill names (`packs`) is **off in this conversation and can be switched
+    on now**: it **always asks**, also in a normal turn, the card names the skill, the pack and the arguments, **« Approve all next » is never
+    offered for it** (and a grant pressed on a `skill_run` card does not cover a `skill_pack` call), and allowing it switches the pack on for the
+    conversation (the Mail pack, for example) and runs the skill; the pack's tools are offered **in the same turn**, from the round after the call. Only
+    a client answers a card, as always. A pack that is off **and cannot be used** (no mailbox connected, no vault) asks nothing: the skill runs and the
+    result says which pack is missing and why. A mode can refuse or ask either class (that is the off switch for a mode), per skill with a line whose
+    target is `skill:<name>` (a glob works: `skill:weekly-*`).
+  - **The instructions are a message, not a tool result.** The tool result is short (« Skill NAME is loaded: its instructions follow. », with a note
+    for a pack switched on or missing). The instructions (the frontmatter removed, `$ARGUMENTS` and `$1` to `$9` put in as for a command, at most
+    120,000 bytes) are stored as a **user message right after the round's tool results**, whose `shown` is **`Clara ran /name arguments`** (a command you
+    typed has `shown` `/name arguments`), so they stay in later prompts when the older tool results are left out (only the last 5 stay). It is not a
+    turn: it is left out of the turn counts, it cannot be asked again or edited, and the Discord mirror does not post it. Like a command, the text is
+    your words and **does not taint** the turn; but the arguments are hers, so **the addresses in a skill she ran are not « yours »** for `web_fetch`
+    (only a command you type makes them so). If her request was answered after her turn ended (nothing held it: `decide` runs the call), the
+    instructions are stored at once, before the short follow-up turn that tells her how it ended, so the next turn reads them.
+  - **Summaries:** the line « Skills run in this conversation: … » also names the skills she ran; the summariser is told `Clara: [ran the skill
+    /name args]` and never the text.
 - **Where `shown` reaches a client:** `GET /v1/conversations/{id}/messages` gives a question a `shown` field when it has one (a skill command as
   typed; the first message of an automation run also has one, its origin, which Discord shows); the conversation list's `preview` is `shown`
   for a command; the `resume` event of a kept answer carries `shown` as its `message`; the Discord mirror shows it.
 - **Summaries:** when a conversation is summarised, its summary ends with a line « Skills run in this conversation: review-pr, weekly-report »,
   made by the server (not asked of the model) from the stored `shown` of its messages and from the line an earlier summary carried; only skills
-  that exist now and are visible to its project are named. The summariser is shown `/name args`, never the skill's text.
+  that exist now and are visible to its project are named (those you typed, `/name args`, and those Clara ran, `Clara ran /name args`). The summariser
+  is shown the command, never the skill's text.
 - **On the web site:** the **Skills** page (Settings, `#/skills`, see the table of pages) adds, previews and removes skills. In a chat, when the text of the box
   starts with `/` and the caret is still in that first word, a **menu** opens just above the box: the skills this conversation can run (the global ones and
   those reserved for its project, `GET /v1/skills?project=<id>|none`, read once for the conversation and again when the page gets the focus back, and
@@ -1193,7 +1223,7 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
 ## 9. The gate and the modes
 
 Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `destructive`), its targets
-(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `school:moodle`, `school:auriga`, `vault:<note>`, `domain:<host>`, or `net`, `search`, `memory`,
+(`ws:<path>`, `github:<owner/repo>`, `drive:<id>`, `mail:gmail`, `mail:to:<address>`, `school:moodle`, `school:auriga`, `vault:<note>`, `domain:<host>`, `skill:<name>`, or `net`, `search`, `memory`,
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`, `deferred`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change a mode, and no tool answers a request.
 
@@ -1284,7 +1314,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
   added still decides it; the server says so in its log.
 - **The built-in copy** (and the shipped file): each class decided as its thresholds were at level 3, and the classes the tainted-turn
   rule raised (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`, `run_network`,
-  `automation`, `deferred`, `feed_follow`, `fetch_other`) get an `(if tainted)` verdict of at least `ask`:
+  `automation`, `deferred`, `feed_follow`, `skill_run`, `skill_pack`, `fetch_other`) get an `(if tainted)` verdict of at least `ask`:
 
 | Action class | Normal turn | When tainted |
 | --- | --- | --- |
@@ -1319,6 +1349,8 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 | `discord_forget`: Delete a conversation, a project or an automation because its Discord thread or forum was deleted | refuse | same |
 | `folder_read`: Read a folder on your computer (a web chat): list, find, search, or read a file that is not hidden or ignored | approve | same |
 | `folder_sensitive`: Read a hidden or ignored file of a folder on your computer, or search them: a card can allow it for the chat | ask | same |
+| `skill_run`: Run a skill: its instructions (your own words) join the conversation as a message; the request shows the skill and every argument Clara chose | approve | ask |
+| `skill_pack`: Run a skill that needs a tool pack that is off here: the request shows the skill, the pack and every argument, and allowing it switches the pack on for the conversation | ask | same |
 
 ### What no mode changes
 
@@ -1350,7 +1382,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
   tainted too (also after a marked file of the workspace, or a script that ran with the network, was read), and each tool gets the
   `(if tainted)` verdict of its line. The default mode asks at least for outside-world writes (`github_write`, `drive_write`,
   `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked scripts (`run_network`), changes to your automations
-  (`automation`), booked calls (`deferred`), a feed to follow (`feed_follow`) and the fetch of an address nobody gave (`fetch_other`) then; to run one with no card after
+  (`automation`), booked calls (`deferred`), a feed to follow (`feed_follow`), a skill she runs (`skill_run`, and `skill_pack`, which asks in any turn) and the fetch of an address nobody gave (`fetch_other`) then; to run one with no card after
   outside content, give that tool the `(if tainted)` verdict `approve` in a mode, one tool at a time.
 
 ### The test box
@@ -1404,8 +1436,9 @@ a comment. It writes nothing: you read it and install it (docs/OPERATIONS.md).
   pressed on, any number of calls, and needs no page to stay open. It answers the plain `ask` of the conversation's mode and nothing
   else: where the mode refuses a call it does nothing (a refusal is final), where it approves there is nothing to answer, and in a
   tainted turn it only answers a tool whose `(if tainted)` verdict is `ask`. It never covers the secret check (content that looks
-  like a secret leaving the machine), only turns of the web, never an unattended run, never a request of the class `feed_follow` (the
-  card has no button and `POST /v1/approvals/{approval_id}/grant` answers 422: each feed is read), and it writes no rule. A banner at the foot
+  like a secret leaving the machine), only turns of the web, never an unattended run, never a request of the class `feed_follow` or `skill_pack` (the
+  card has no button and `POST /v1/approvals/{approval_id}/grant` answers 422: each feed, and each skill that switches a pack on, is read; a grant
+  pressed on a `skill_run` card does not cover a later `skill_pack` call of the same tool), and it writes no rule. A banner at the foot
   of the page shows the tool, the time left and **Stop**; it ends after `approve_all_minutes` (the Admin page,
   Settings tab), on **Stop**, or when the server restarts. Pressing it in another conversation never carries it over. The page reads
   what is on and what ended with `GET /v1/conversations/{id}/grants`.
@@ -1419,7 +1452,7 @@ the arguments (never the arguments themselves), the effect, the outcome and a de
 
 ## 10. Tools
 
-90 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+91 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -1505,6 +1538,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `deferred_list` | The booked calls that wait and the latest ones that ended, with their numbers; the summary of a local-only call is shown only to a local-only conversation (pack Booked calls) | read |
 | `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; automation runs only, and not offered to a run in a forum thread: its thread is the forum's) | discord / write |
+| `skill_run` | Run one of your skills by name, with optional text arguments (at most 1,500 characters): its instructions join the conversation as a message (not a tool result). Not in any pack; offered in a chat that has a skill she may run, never in an unattended run; a skill with `disable-model-invocation` and a skill of another project are refused. Asks after untrusted content, and always when it must switch a pack on (the request shows the skill, the pack and every argument) | skill_run / read (target `skill:<name>`), skill_pack / write when a pack the skill names is off and can be switched on |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
 | `vault_search` | Search notes | read |
 | `vault_read` | Read a note, with line numbers | read |
@@ -1862,7 +1896,7 @@ keep-alive every 15 s.
 | `GET /v1/conversations/{conversation_id}` | One conversation, with its context, `answering`, `tainted` (it read outside content, so its next turn starts tainted: a tool that taints ran in it, or a marked file or a script's network output was read), files and waiting approvals |
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
 | `DELETE /v1/conversations/{conversation_id}` | Delete it, with its files |
-| `GET /v1/conversations/{conversation_id}/messages` | Its messages (the chosen versions); a question has `shown` when a client shows other words than were sent (a skill command as typed) |
+| `GET /v1/conversations/{conversation_id}/messages` | Its messages (the chosen versions); a question has `shown` when a client shows other words than were sent (a skill command as typed); a user message whose `shown` starts with `Clara ran /` is the instructions of a skill Clara ran (after her `skill_run` call: not a question you asked) |
 | `GET /v1/conversations/{conversation_id}/run` | Follow the answer being given in it (a kept one), from its first event; 404 when there is none |
 | `DELETE /v1/conversations/{conversation_id}/run` | Stop that answer; what was said is kept, marked interrupted |
 | `POST /v1/conversations/{conversation_id}/compact` | Summarise it now |

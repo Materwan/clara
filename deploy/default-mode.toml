@@ -175,3 +175,14 @@ verdict = "approve"
 [[verdict]]
 class = "folder_sensitive"
 verdict = "ask"
+
+# Run a skill: its instructions (your own words) join the conversation as a message; the request shows the skill and every argument Clara chose
+[[verdict]]
+class = "skill_run"
+verdict = "approve"
+tainted = "ask"
+
+# Run a skill that needs a tool pack that is off here: the request shows the skill, the pack and every argument, and allowing it switches the pack on for the conversation
+[[verdict]]
+class = "skill_pack"
+verdict = "ask"

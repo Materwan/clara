@@ -358,9 +358,11 @@ async def test_a_script_and_the_discord_bot_cannot_change_skills_but_may_read_th
     assert services.skills.count() == 1
 
 
-def test_the_model_has_no_tool_for_skills(services):
-    assert not [name for name in services.toolbox.names if "skill" in name]
+def test_no_tool_adds_changes_or_removes_a_skill_and_the_one_that_runs_one_is_in_no_pack(services):
+    """The model may run a skill (`skill_run`, tests/test_skill_run.py) and has no tool to add, change or remove one."""
+    assert [name for name in services.toolbox.names if "skill" in name] == ["skill_run"]
     assert not [pack.id for pack in PACKS if "skill" in pack.id or any("skill" in tool for tool in pack.tools)]
+    assert set(services.toolbox.get("skill_run").parameters) == {"name", "arguments"}  # it names a skill: it does not give one
 
 
 # ----------------------------------------------------------------------

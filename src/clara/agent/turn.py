@@ -45,7 +45,7 @@ from ..connectors.forms import CLIENTS as FORM_CLIENTS
 from ..knowledge.attachments import Attached, Image, without_documents
 from ..knowledge.projects import READ_CHARS_LIMIT
 from ..llm import Choice, NoModel, ToolCall
-from ..memory.conversations import Conversation, StoredMessage, TurnRow
+from ..memory.conversations import RAN, Conversation, StoredMessage, TurnRow
 from ..skills.store import split_summary, with_skills
 from ..timeutil import zone
 from ..tools.base import CallResult, Dispatch, ToolContext, TurnState
@@ -121,6 +121,15 @@ class NothingToTitle(Exception):
 
 class NoSuchConversation(LookupError):
     pass
+
+
+class Instructions(dict):
+    """A user message of the prompt that is no question: the instructions of a skill Clara ran. Cutting an overlong prompt keeps it
+    with the turn it belongs to, and never takes it for the question of the turn."""
+
+
+def _asks(message: dict) -> bool:
+    return message["role"] == "user" and not isinstance(message, Instructions)
 
 
 def clean_title(text: str) -> str:
@@ -510,7 +519,11 @@ class Agent:
 
     def _replay(self, stored: list[StoredMessage], window: int, readable: Mapping[str, int]) -> list[dict]:
         recent = self._recent_tool_rows(stored, window)
-        questions = [index for index, message in enumerate(stored) if message.role == "user"]
+        questions = [
+            index
+            for index, message in enumerate(stored)
+            if message.role == "user" and not message.shown.startswith(RAN)
+        ]
         whole = set(questions[-(DOCUMENT_TURNS - 1) :]) if DOCUMENT_TURNS > 1 else set()
         messages: list[dict] = []
         for index, message in enumerate(stored):
@@ -519,7 +532,8 @@ class Agent:
                     message.content if index in whole or not readable else without_documents(message.content, readable)
                 )
                 content = f"{message.prefix}\n\n{text}" if message.prefix else text
-                messages.append({"role": "user", "content": content})
+                said = {"role": "user", "content": content}
+                messages.append(Instructions(said) if message.shown.startswith(RAN) else said)
             elif message.role == "assistant":
                 entry: dict = {"role": "assistant", "content": message.content}
                 if message.tool_calls:
@@ -573,6 +587,7 @@ class Agent:
             files = (
                 self._files_context(conversation.id) if conversation and CONVERSATION_FILE_TOOLS - plan.hidden else ""
             )
+            skills = "" if "skill_run" in plan.hidden else self.s.skills.prompt_block(state.project_id)
             parts = PromptParts(
                 today=now,
                 client=request.client,
@@ -584,6 +599,7 @@ class Agent:
                     block for block in (blocker(state) for blocker in self.context_blocks) if block
                 ),
                 files=files,
+                skills=skills,
                 facts=facts,
                 omitted_facts=omitted,
                 scoped_facts=scoped,
@@ -716,8 +732,8 @@ class Agent:
         if conversation is not None:
             for message in self.s.conversations.history(conversation.id, 30, conversation.summary_upto):
                 if message.role == "user":
-                    if of_a_run and message.client == "server":
-                        continue
+                    if (of_a_run and message.client == "server") or message.shown.startswith(RAN):
+                        continue  # not your words: the server's, or a skill Clara ran with arguments she chose
                     state.trusted_urls |= urls_in(message.content)
                     state.private.allow(message.content)
                 elif message.role == "tool" and not self._public_tool(message.tool_name):
@@ -828,6 +844,21 @@ class Agent:
                         messages.append(output)
                         latest_outputs.append(output)
                         rows.append(TurnRow("tool", results[call_id], tool_name=call.name))
+                    for ran in state.skills_run:  # skills she ran: their instructions are messages, not tool results
+                        messages.append(Instructions({"role": "user", "content": ran.text}))
+                        rows.append(TurnRow("user", ran.text, shown=ran.shown))
+                    state.skills_run.clear()
+                    if (
+                        state.packs_on and conversation
+                    ):  # a skill switched packs on: their tools are offered from the next round
+                        state.packs_on.clear()
+                        fresh = self.s.conversations.get(conversation.id)
+                        plan.hidden = self._hidden(request, fresh, state, choice)
+                        schemas, names = self._offered(request, plan)
+                        if self.vault_prompt is not None and fresh is not None and fresh.vault_open:
+                            messages[0]["content"] = messages[0]["content"].replace(
+                                self.vault_closed_block, self.vault_prompt()
+                            )
                     if state.pictures:
                         messages.append(self._pictures_message(state.pictures, choice))
                         state.pictures.clear()
@@ -1201,19 +1232,17 @@ class Agent:
 
     @staticmethod
     def _drop_oldest_turn(messages: list[dict]) -> bool:
-        newest = max((i for i, m in enumerate(messages) if m["role"] == "user"), default=-1)
+        newest = max((i for i, m in enumerate(messages) if _asks(m)), default=-1)
         first = 1 if messages and messages[0]["role"] == "system" else 0
         if newest <= first:
             return False
-        end = next((i for i in range(first + 1, newest) if messages[i]["role"] == "user"), newest)
+        end = next((i for i in range(first + 1, newest) if _asks(messages[i])), newest)
         del messages[first:end]
         return True
 
     @staticmethod
     def _omit_oldest_output(messages: list[dict]) -> bool:
-        newest_user = max(
-            (i for i, m in enumerate(messages) if m["role"] == "user" and not m.get("images")), default=-1
-        )
+        newest_user = max((i for i, m in enumerate(messages) if _asks(m) and not m.get("images")), default=-1)
         last_call = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
         for index in range(newest_user + 1, last_call):
             message = messages[index]
@@ -1262,7 +1291,7 @@ class Agent:
 
     @staticmethod
     def _split_recent(rows: list[StoredMessage], keep: int) -> tuple[list[StoredMessage], list[StoredMessage]]:
-        user_rows = [index for index, row in enumerate(rows) if row.role == "user"]
+        user_rows = [index for index, row in enumerate(rows) if row.role == "user" and not row.shown.startswith(RAN)]
         if keep <= 0 or len(user_rows) <= keep:
             return rows, []
         boundary = user_rows[-keep]
@@ -1282,7 +1311,9 @@ class Agent:
         old, kept = self._split_recent(rows, keep)
         if not old:
             raise NothingToCompact("nothing older than the turns kept")
-        summary, carried = split_summary(conversation.summary)  # the summariser gets the text; the skills line is made again below
+        summary, carried = split_summary(
+            conversation.summary
+        )  # the summariser gets the text; the skills line is made again below
         skills = self.s.skills.run_in(conversation_id, conversation.project_id, carried)
         for chunk in chunk_messages(old, transcript_budget(summariser.window)):
             transcript = build_transcript(chunk)

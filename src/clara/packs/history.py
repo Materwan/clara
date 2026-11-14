@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
+from ..memory.conversations import NOT_RAN
 from ..timekeeping import DONE, OPEN
 from ..timeutil import iso, parse_iso, resolve_local, zone
 
@@ -226,7 +227,7 @@ class HistoryReader:
         tools: Counter = Counter()
         clients: list[str] = []
         for message in s.db.all(
-            "SELECT role, content, tool_name, client, created_at FROM messages WHERE conversation_id = ? AND active = 1"
+            f"SELECT role, content, tool_name, client, created_at FROM messages WHERE conversation_id = ? AND active = 1 AND {NOT_RAN}"
             " AND created_at >= ? AND created_at < ? ORDER BY id",
             (cid, iso(start), iso(end)),
         ):
@@ -248,7 +249,7 @@ class HistoryReader:
             started = parse_iso(first).astimezone(tz).strftime("%d/%m")
             earlier = s.db.all(
                 "SELECT role, content FROM messages WHERE conversation_id = ? AND active = 1 AND created_at < ?"
-                " AND role IN ('user', 'assistant') AND content != '' ORDER BY id DESC LIMIT ?",
+                f" AND role IN ('user', 'assistant') AND content != '' AND {NOT_RAN} ORDER BY id DESC LIMIT ?",
                 (cid, iso(start), BEFORE_EXCHANGES * 2),
             )
             before = [
@@ -351,7 +352,7 @@ class HistoryReader:
         if row is None or not self.can_read(conversation_id, viewer_local_only):
             raise ValueError(f"No conversation {conversation_id} you may read.")
         tz = zone(tz_name)
-        sql = "SELECT id, role, content, tool_name, created_at FROM messages WHERE conversation_id = ? AND active = 1 AND id > ?"
+        sql = f"SELECT id, role, content, tool_name, created_at FROM messages WHERE conversation_id = ? AND active = 1 AND id > ? AND {NOT_RAN}"
         params: list = [conversation_id, after]
         if day is not None:
             start, end = day_bounds(day, tz_name)
