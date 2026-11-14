@@ -1,4 +1,4 @@
-"""Adds the operations to a server: Tailscale publishing, backups, the updater, the Discord bot."""
+"""Adds the operations to a server: Tailscale publishing, the events door, backups, the updater, the Discord bot."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 
 from .backups import Backups
 from .discord_bot import DiscordBot
-from .tailscale import Tailscale
+from .door import EventsDoor
+from .tailscale import Tailscale, door_of
 from .updater import Updater
 
 if TYPE_CHECKING:
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 def install(s: Services) -> None:
     settings = s.settings
+    if settings.events == "on":
+        s.events_door = EventsDoor(s)  # served by the main server's lifespan, published by Tailscale when it serves
     if settings.tailscale == "serve":
         s.tailscale = Tailscale(
             settings.tailscale_port,
@@ -22,6 +25,8 @@ def install(s: Services) -> None:
             settings.tailscale_bin,
             alert=s.alerts.raise_,
             clear=s.alerts.clear,
+            door=door_of(settings),
+            door_up=lambda: s.events_door is not None and s.events_door.up,
         )
     s.backups = Backups(s)
     s.updater = Updater(s)

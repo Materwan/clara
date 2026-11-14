@@ -146,17 +146,19 @@ def test_trusted_is_impossible_for_a_source_that_does_not_prove_itself_with_a_be
     assert services.event_sources.set_trusted(source, True, "tester").trusted is True
     assert services.automations.kind("custom.mine").tainted is False
     services.event_sources.set_trusted(source, False, "tester")
-    # a source of another proof (the GitHub adapter, a feed, school events: later slices) is never trusted, in the code ...
-    services.db.execute("UPDATE event_sources SET proof = 'hmac' WHERE id = ?", (source.id,))
+    # a source of another proof (the GitHub adapter) is never trusted, in the code ...
+    services.db.execute("UPDATE event_sources SET proof = 'github_hmac', repo = 'o/r' WHERE id = ?", (source.id,))
     services.event_sources.reload()
     other = services.event_sources.by_id[source.id]
-    assert other.proof == "hmac" and services.event_sources.describe(other)["can_trust"] is False
+    assert other.proof == "github_hmac" and services.event_sources.describe(other)["can_trust"] is False
     with pytest.raises(SourceError, match="cannot be trusted"):
         services.event_sources.set_trusted(other, True, "tester")
-    assert services.event_sources.by_id[source.id].trusted is False and services.automations.kind("custom.mine").tainted is True
-    # ... and in the table, which refuses both ways round
+    assert services.event_sources.by_id[source.id].trusted is False and services.automations.kind("custom.mine") is None
+    # ... and in the table, which refuses both ways round (and any proof the code does not know)
     with pytest.raises(sqlite3.IntegrityError):
         services.db.execute("UPDATE event_sources SET trusted = 1 WHERE id = ?", (source.id,))
+    with pytest.raises(sqlite3.IntegrityError):
+        services.db.execute("UPDATE event_sources SET proof = 'github_hmac', repo = 'o/q' WHERE id = ?", (trusted.id,))
     with pytest.raises(sqlite3.IntegrityError):
         services.db.execute("UPDATE event_sources SET proof = 'hmac' WHERE id = ?", (trusted.id,))
 

@@ -1357,8 +1357,12 @@ class Automations(DueLoop):
         row = self.db.one("SELECT * FROM trigger_events WHERE id = ?", (event_id,))
         return _stored(row) if row else None
 
-    def recent_events(self, limit: int = 20, kind: str = "") -> list[StoredEvent]:
-        if kind:
+    def recent_events(self, limit: int = 20, kind: str = "", source: str = "") -> list[StoredEvent]:
+        if source:
+            rows = self.db.all(
+                "SELECT * FROM trigger_events WHERE source = ? ORDER BY id DESC LIMIT ?", (source, limit)
+            )
+        elif kind:
             rows = self.db.all("SELECT * FROM trigger_events WHERE kind = ? ORDER BY id DESC LIMIT ?", (kind, limit))
         else:
             rows = self.db.all("SELECT * FROM trigger_events ORDER BY id DESC LIMIT ?", (limit,))

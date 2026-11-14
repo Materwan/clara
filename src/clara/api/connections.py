@@ -61,7 +61,11 @@ def status(request: Request) -> dict:
             "status": github["status"] if github else "",
             "poll_seconds": s.settings.github_poll_seconds,
             "repos": [
-                {**r.describe(), "watching": connectors.github_watch.watching(r.locator)}
+                {
+                    **r.describe(),
+                    "watching": connectors.github_watch.watching(r.locator),
+                    "webhook": r.locator.lower() in s.event_sources.webhook_repos(),  # GitHub calls Clara: no poll
+                }
                 for r in s.connections.resources("github_repo")
             ],
         },

@@ -42,6 +42,15 @@ def _uptime(seconds: float) -> str:
     return f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
 
 
+def _door_line(door: dict) -> list[str]:
+    """The events door, when it is on: public (its address), or on 127.0.0.1 only and why."""
+    if door["published"]:
+        return [
+            f"Events door: PUBLIC at {door['url']} (listener on 127.0.0.1:{door['local_port']}; POST /v1/events/<id> only)"
+        ]
+    return [f"Events door: on 127.0.0.1:{door['local_port']} only, NOT public: {door['problem'] or 'starting…'}"]
+
+
 async def _status(s: Services, args: list[str], token: TokenInfo) -> str:
     from .ops.status import status
 
@@ -54,6 +63,7 @@ async def _status(s: Services, args: list[str], token: TokenInfo) -> str:
         f"disk {info['storage']['disk_percent']}% used",
         f"Scripts: {'ready' if info['workspace']['run_ready'] else 'off (' + info['workspace']['run_problem'] + ')'}",
         f"Tailscale: {info['tailscale']}",
+        *(_door_line(info["events_door"]) if info["events_door"]["on"] else []),
         f"Backups: last {info['backups']['last'] or 'never'}{'; remote: ' + info['backups']['remote'] if info['backups']['remote'] else ''}",
         f"Event listeners: {info['events']['listeners']}; Discord bot: {info['clients'].get('discord', 'not seen')}",
     ]

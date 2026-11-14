@@ -1,8 +1,8 @@
 """Event sources: programs of yours that tell Clara something happened (a script, a home-automation hub, a machine).
 
 A **source** is a record you make: a name, which is also the slug of its kind (`custom.<name>`), the fields an event of it may
-carry (text or yes/no, at most 12), how it proves itself (`bearer`: a secret in the `Authorization` header; the table has room
-for other proofs), and a secret held in the encrypted store under `event_source_<id>`, never in the table. It is reached at
+carry (text or yes/no, at most 12), how it proves itself (`bearer`: a secret in the `Authorization` header; `github_hmac`: see
+below), and a secret held in the encrypted store under `event_source_<id>`, never in the table. It is reached at
 `POST /v1/events/<id>`; the id is 128 random bits, so an address nobody was given is a plain 404 that looks nothing up and
 counts nothing. An event goes to `Automations.ingest` like a mail or a push: stored once by `(source, key)`, matched against
 every automation, planned as runs.
@@ -10,6 +10,13 @@ every automation, planned as runs.
 What the body carries was written by whoever holds the secret. Unless the source is **trusted** (only a token that may answer
 every request sets it, and only for a source whose proof is a bearer secret), a run its events start is tainted from its first
 word, as a GitHub event's is. A source has no read tools: a run it starts has `notify` alone unless the automation lists more.
+
+A **GitHub source** (`github_hmac`) belongs to one repository, `owner/name`, and is the address of that repository's webhook: GitHub signs
+the raw body with the source's secret (`X-Hub-Signature-256`), which is checked in constant time before anything is read from the body.
+Its events are not a custom kind: `X-GitHub-Event` `push` and `pull_request` become `github.push` and `github.pull_request`, the same
+two events with the same fields as the poll makes (connectors/github_events.py), with the delivery id for their key; `ping` is
+answered and starts nothing, any other event is ignored, and an event of another repository is refused. It can never be trusted.
+While it exists the poll of that repository is off (connectors/github_watch.py).
 
 The limits live here, per source (never per address): ten wrong secrets in a minute and the source answers 429 for a minute,
 60 events a minute, 1,000 events waiting for a run.
@@ -30,6 +37,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from ..auth import Blocked, FailureLimiter
+from ..connectors.github_events import Ignored, Refused, from_webhook, repository_of, short
 from ..db import Database
 from ..gate import Action, Audit, Decision, Situation
 from ..secrets import SecretsStore
@@ -50,8 +58,10 @@ MAX_KEPT = 5000  # events of a source kept: past this the oldest that no queued 
 RATE_PER_MINUTE = 60
 BODY_LIMIT = 64 * 1024
 MAX_AHEAD = timedelta(days=1)  # an event may not claim to be from further in the future than this
-PROOFS = ("bearer",)
+PROOFS = ("bearer", "github_hmac")
 TYPES = ("text", "bool")
+REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+SIGNATURE = re.compile(r"sha256=([0-9a-fA-F]{64})")  # X-Hub-Signature-256: the hex of an HMAC-SHA256, either case
 ID_PATTERN = r"k[0-9a-f]{32}"  # the address: 128 random bits; the middleware lets exactly this shape through
 FIELD_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 ENVELOPE = frozenset(
@@ -81,10 +91,22 @@ class Source:
     trusted: bool
     created_at: str
     created_by: str
+    repo: str = ""  # a GitHub source: the repository (owner/name) its webhook is for
+
+    @property
+    def github(self) -> bool:
+        return self.proof == "github_hmac"
 
     @property
     def kind(self) -> str:
-        return KIND_PREFIX + self.name
+        """`custom.<name>`; a GitHub source has no kind of its own, its events are `github.*`."""
+        return "github" if self.github else KIND_PREFIX + self.name
+
+    @property
+    def origin(self) -> str:
+        """The `source` its events are stored under: its kind, or for a GitHub source one that says webhook and which repository
+        (the poll's events are `github`, and a repository has one webhook source at most)."""
+        return f"github-webhook:{self.repo.lower()}" if self.github else self.kind
 
     @property
     def address(self) -> str:
@@ -192,12 +214,16 @@ class EventSources:
                     bool(row["trusted"]),
                     row["created_at"],
                     row["created_by"],
+                    row["repo"],
                 )
             )
 
     def _register(self, source: Source) -> None:
-        """The source exists, and so does its kind (its fields drive the filters; no read tools; tainted unless trusted)."""
+        """The source exists, and so does its kind (its fields drive the filters; no read tools; tainted unless trusted). A GitHub
+        source adds none: `github.push` and `github.pull_request` are there already, and tainted."""
         self.by_id[source.id] = source
+        if source.github:
+            return
         self.automations.custom[source.kind] = EventKind(
             source.kind,
             f"An event your source “{source.name}” receives",
@@ -214,7 +240,18 @@ class EventSources:
         if ref in self.by_id:
             return self.by_id[ref]
         name = ref.removeprefix(KIND_PREFIX)
-        return next((source for source in self.by_id.values() if source.name == name), None)
+        return next(
+            (
+                source
+                for source in self.by_id.values()
+                if source.name == name or (source.github and source.repo.lower() == ref.lower())
+            ),
+            None,
+        )
+
+    def webhook_repos(self) -> set[str]:
+        """The repositories (lower case) that have a webhook: GitHub tells Clara of them, so the poll leaves them alone."""
+        return {source.repo.lower() for source in self.by_id.values() if source.github}
 
     def describe(self, source: Source) -> dict:
         row = self.db.one(
@@ -224,12 +261,13 @@ class EventSources:
             "id": source.id,
             "name": source.name,
             "kind": source.kind,
+            "repo": source.repo,
             "fields": dict(source.fields),
             "proof": source.proof,
             "trusted": source.trusted,
             "can_trust": source.proof == "bearer",
             "address": source.address,
-            "events": int(self.db.value("SELECT COUNT(*) FROM trigger_events WHERE source = ?", (source.kind,), 0)),
+            "events": int(self.db.value("SELECT COUNT(*) FROM trigger_events WHERE source = ?", (source.origin,), 0)),
             "waiting": self.waiting(source),
             "failures": row["failures"] if row else 0,
             "last_failure_at": row["last_failure_at"] if row else None,
@@ -247,7 +285,7 @@ class EventSources:
             self.db.value(
                 "SELECT COUNT(DISTINCT e.value) FROM automation_runs r, json_each(r.event_ids) e"
                 " JOIN trigger_events t ON t.id = e.value WHERE r.status = 'queued' AND t.source = ?",
-                (source.kind,),
+                (source.origin,),
                 0,
             )
         )
@@ -267,22 +305,41 @@ class EventSources:
     # ------------------------------------------------------------------
     # Making, changing, revoking (the routes allow only a token that may answer every request)
     # ------------------------------------------------------------------
-    def create(self, name: str, fields: object, *, trusted: bool = False, by: str = "") -> tuple[Source, str]:
-        """A new source and its secret, which is returned once and kept only in the encrypted store."""
-        slug = slug_of(name)
+    def create(
+        self, name: str, fields: object, *, trusted: bool = False, by: str = "", repo: str = ""
+    ) -> tuple[Source, str]:
+        """A new source and its secret, which is returned once and kept only in the encrypted store. With a `repo` (owner/name) it is a
+        GitHub source: its name defaults to `github-<owner>-<name>`, it has no fields, and it can never be trusted."""
+        if repo:
+            repo = repo.strip()
+            if not REPO.match(repo):
+                raise SourceError("A GitHub source takes a repository as owner/name.")
+            if trusted:
+                raise SourceError(
+                    "This source cannot be trusted: only a source whose sender you control (a bearer secret) can."
+                )
+            if fields:
+                raise SourceError("A GitHub source has no fields: its events are github.push and github.pull_request.")
+            if repo.lower() in self.webhook_repos():
+                raise SourceError(f"{repo} has a webhook source already.", 409)
+            slug = slug_of(name or "github " + repo.replace("/", " "))
+            found: dict[str, str] = {}
+        else:
+            slug = slug_of(name)
+            found = check_fields(fields)
         if not slug:
             raise SourceError("A source needs a name with letters or digits in it.")
-        found = check_fields(fields)
         if len(self.by_id) >= MAX_SOURCES:
             raise SourceError(f"At most {MAX_SOURCES} sources: revoke one first.", 409)
         if any(source.name == slug for source in self.by_id.values()):
             raise SourceError(f"A source named {slug} exists already.", 409)
-        source = Source("k" + token_source.token_hex(16), slug, found, "bearer", trusted, now_iso(), by[:40])
+        proof = "github_hmac" if repo else "bearer"
+        source = Source("k" + token_source.token_hex(16), slug, found, proof, trusted, now_iso(), by[:40], repo)
         secret = "evt_" + token_source.token_urlsafe(32)
         with self.db.transaction():
             self.db.execute(
-                "INSERT INTO event_sources (id, name, fields, proof, trusted, created_at, created_by)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO event_sources (id, name, fields, proof, trusted, created_at, created_by, repo)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source.id,
                     source.name,
@@ -291,11 +348,13 @@ class EventSources:
                     int(trusted),
                     source.created_at,
                     source.created_by,
+                    source.repo,
                 ),
             )
             self.secrets.set(secret_name(source.id), secret)
         self._register(source)
-        self._audit(f"{by or 'someone'} made the event source {slug}{' (trusted)' if trusted else ''}")
+        detail = f" (the GitHub webhook of {repo})" if repo else " (trusted)" if trusted else ""
+        self._audit(f"{by or 'someone'} made the event source {slug}{detail}")
         return source, secret
 
     def rotate(self, source: Source, by: str = "") -> str:
@@ -319,48 +378,94 @@ class EventSources:
 
     def revoke(self, source: Source, by: str = "") -> None:
         """Delete the source, its secret and the events no run still waits for. No other source and no token is touched; an
-        automation that waits for its kind stays, and never fires."""
+        automation that waits for its kind stays, and never fires. A GitHub source also hands its repository back to the poll, which
+        starts from this moment: what the webhook delivered is not found again."""
         with self.db.transaction():
             self.db.execute("DELETE FROM event_sources WHERE id = ?", (source.id,))
             self.secrets.unset(secret_name(source.id))
             self.db.execute(
                 "DELETE FROM trigger_events WHERE source = ? AND id NOT IN ("
                 "SELECT e.value FROM automation_runs r, json_each(r.event_ids) e WHERE r.status IN ('queued', 'running'))",
-                (source.kind,),
+                (source.origin,),
             )
+            if source.github:
+                self._resume_poll(source.repo)
         self.by_id.pop(source.id, None)
-        self.automations.custom.pop(source.kind, None)
+        if not source.github:
+            self.automations.custom.pop(source.kind, None)
         self.limiter.forget(source.id)
         self._sent.pop(source.id, None)
         self._audit(f"{by or 'someone'} revoked the event source {source.name}")
 
+    def _resume_poll(self, repo: str) -> None:
+        """The repository is polled again from now: the place of its pull request stream is this moment (the first look of a stream
+        would reach back STALE_AFTER, and find what the webhook delivered). A repository that is not one you added has no poll."""
+        row = self.db.one(
+            "SELECT locator FROM resources WHERE kind = 'github_repo' AND lower(locator) = lower(?)", (repo,)
+        )
+        if row is not None:
+            now = now_iso()
+            self.db.execute(
+                "INSERT INTO github_cursors (repo, stream, state, etag, updated_at) VALUES (?, 'pulls', ?, '', ?)"
+                " ON CONFLICT (repo, stream) DO UPDATE SET state = excluded.state, etag = '', updated_at = excluded.updated_at",
+                (row["locator"], json.dumps({"since": now, "from": now}), now),
+            )
+
     # ------------------------------------------------------------------
     # A call arrives
     # ------------------------------------------------------------------
-    def admit(self, source: Source, authorization: str | None) -> None:
-        """The call proves itself, or SourceError: 429 while this source is blocked, 401 (no detail) for a wrong or missing
-        secret, which counts against this source and no other. The comparison takes the same time whatever is sent."""
+    def check_open(self, source: Source) -> None:
+        """SourceError 429 while this source is blocked for wrong secrets or signatures (nothing of the call has been read)."""
         try:
             self.limiter.check(source.id)
         except Blocked as error:
             raise SourceError(
                 "Too many wrong secrets for this source: try again later.", 429, error.retry_after
             ) from None
+
+    def _refuse(self, source: Source) -> None:
+        """A call that did not prove itself: counted against this source and no other, answered 401 with no detail."""
+        self.limiter.fail(source.id)
+        self.db.execute(
+            "UPDATE event_sources SET failures = failures + 1, last_failure_at = ? WHERE id = ?",
+            (now_iso(), source.id),
+        )
+        raise SourceError("Not authorized.", 401)
+
+    def admit(self, source: Source, authorization: str | None) -> None:
+        """The call proves itself, or SourceError: 429 while this source is blocked, 401 (no detail) for a wrong or missing
+        secret, which counts against this source and no other. The comparison takes the same time whatever is sent."""
+        self.check_open(source)
         header = authorization or ""
         given = header[7:].strip() if header[:7].lower() == "bearer " else ""
         expected = self.secrets.get(secret_name(source.id)) or ""
         if not expected or not hmac.compare_digest(expected.encode(), given.encode()):
-            self.limiter.fail(source.id)
-            self.db.execute(
-                "UPDATE event_sources SET failures = failures + 1, last_failure_at = ? WHERE id = ?",
-                (now_iso(), source.id),
-            )
-            raise SourceError("Not authorized.", 401)
+            self._refuse(source)
+
+    def admit_signed(self, source: Source, signature: str | None, body: bytes) -> None:
+        """A GitHub call proves itself: `X-Hub-Signature-256` is `sha256=` and the HMAC-SHA256 of the raw body with the source's secret
+        (hex, either case). Checked before anything is read from the body, compared in constant time; a wrong, missing or malformed
+        signature is a 401 with no detail, counted against this source like a wrong bearer secret."""
+        self.check_open(source)
+        expected = self.secrets.get(secret_name(source.id)) or ""
+        found = SIGNATURE.fullmatch(signature or "")
+        if not expected or found is None:
+            self._refuse(source)
+            return
+        digest = hmac.new(expected.encode(), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(digest.encode(), found.group(1).lower().encode()):
+            self._refuse(source)
 
     def accept(self, source: Source, raw: bytes) -> tuple[int | None, bool]:
         """Check, store and match one event. (its id, False) for a new one, (None, True) for one already stored."""
+        if source.github:
+            raise SourceError(
+                "The events of a GitHub source come from GitHub (its webhook): there is nothing to send here."
+            )
         self._pace(source)
-        event = self._read(source, raw)
+        return self._keep(source, self._read(source, raw))
+
+    def _keep(self, source: Source, event: SourceEvent) -> tuple[int | None, bool]:
         if self.waiting(source) > MAX_WAITING:
             raise SourceError(
                 f"More than {MAX_WAITING} events of this source wait for a run: try again later.", 429, 60
@@ -374,17 +479,56 @@ class EventSources:
         self.db.execute("UPDATE event_sources SET last_event_at = ? WHERE id = ?", (now_iso(), source.id))
         return int(found["id"]), False
 
+    def accept_github(self, source: Source, event: str | None, delivery: str | None, raw: bytes) -> tuple[int, dict]:
+        """One delivery of a GitHub webhook whose signature was checked: (status, answer). `ping` is a 200 `pong`, an event that is not a
+        push or a pull request is ignored (202 `ignored`), a delivery of another repository is a 422, a delivery stored before is a 200
+        `duplicate` (its id is the key), and a new one is stored and matched, 202 with its id. Nothing slow happens here: the runs are
+        planned, and the loops start them."""
+        self._pace(source)
+        name = (event or "").strip()
+        if not name:
+            raise SourceError("X-GitHub-Event is missing.")
+        if name not in ("ping", "push", "pull_request"):
+            return 202, {"ignored": short(name, 40)}
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError):
+            raise SourceError("The body is not JSON.", 400) from None
+        if not isinstance(payload, dict):
+            raise SourceError("The body is a JSON object.")
+        named = repository_of(payload)
+        if named.lower() != source.repo.lower() and (named or name != "ping"):
+            raise SourceError(
+                f"This source takes the events of {source.repo}, not of {short(named, 100) or 'no repository'}."
+            )
+        if name == "ping":
+            return 200, {"pong": True}
+        key = delivery or ""
+        if not 1 <= len(key) <= MAX_KEY or _CONTROL.search(key):
+            raise SourceError(f"X-GitHub-Delivery is missing or is not a text of 1 to {MAX_KEY} characters.")
+        now = self._clock()
+        try:
+            found = from_webhook(name, payload, source.repo, source.origin, key, iso(now))
+            if parse_iso(found.occurred_at) > now + MAX_AHEAD:
+                raise Refused("The event is dated more than a day ahead.")
+        except Ignored as why:
+            return 202, {"ignored": str(why)}
+        except Refused as error:
+            raise SourceError(str(error)) from None
+        stored, duplicate = self._keep(source, found)
+        return (200, {"duplicate": True}) if duplicate else (202, {"id": stored})
+
     def _trim(self, source: Source) -> None:
         """A source keeps at most MAX_KEPT events: past that the oldest are deleted, except those a queued or running run holds.
         Done in the transaction of the ingest. The key of a deleted event can be accepted again as a new event."""
-        if int(self.db.value("SELECT COUNT(*) FROM trigger_events WHERE source = ?", (source.kind,), 0)) <= MAX_KEPT:
+        if int(self.db.value("SELECT COUNT(*) FROM trigger_events WHERE source = ?", (source.origin,), 0)) <= MAX_KEPT:
             return
         self.db.execute(
             "DELETE FROM trigger_events WHERE source = ?"
             " AND id NOT IN (SELECT id FROM trigger_events WHERE source = ? ORDER BY id DESC LIMIT ?)"
             " AND id NOT IN (SELECT e.value FROM automation_runs r, json_each(r.event_ids) e"
             " WHERE r.status IN ('queued', 'running'))",
-            (source.kind, source.kind, MAX_KEPT),
+            (source.origin, source.origin, MAX_KEPT),
         )
 
     def _pace(self, source: Source) -> None:

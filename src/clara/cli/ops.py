@@ -338,15 +338,30 @@ async def _doctor(settings: Settings, pull: bool) -> list[tuple[str, str, str]]:
     else:
         results.append(("sandbox", WARN, "CLARA_RUN=off: scripts are not offered"))
     if settings.tailscale == "serve":
-        from ..ops.tailscale import FunnelOn, check_funnel_now
+        from ..ops.tailscale import FunnelOn, check_funnel_now, door_of
 
+        door = door_of(settings)
         try:
-            check_funnel_now(settings.tailscale_bin, settings.tailscale_port)
-            results.append(("funnel", OK, f"off for port {settings.tailscale_port}"))
+            check_funnel_now(settings.tailscale_bin, settings.tailscale_port, door, settings.port)
+            only = (
+                f"; only the events port {door.public_port}, mapped to 127.0.0.1:{door.local_port}, may be on"
+                if door.on
+                else ""
+            )
+            results.append(("funnel", OK, f"off for port {settings.tailscale_port}{only}"))
         except FunnelOn as error:
             results.append(("funnel", FAIL, str(error)))
         found = shutil.which(settings.tailscale_bin)
         results.append(("tailscale", OK if found else FAIL, found or "tailscale not found"))
+    elif settings.events == "on":
+        results.append(
+            (
+                "events",
+                WARN,
+                f"CLARA_EVENTS=on with CLARA_TAILSCALE=off: the events listener answers on 127.0.0.1:{settings.events_local_port} "
+                "only, nothing is published",
+            )
+        )
     async with httpx.AsyncClient(timeout=5) as http:
         for host in settings.ollama_hosts:
             try:

@@ -288,6 +288,32 @@ answers one more field, `lapses`.
   run (Up and Down, Enter or Tab to choose, Escape to close), and once the first word is a skill a line under the box shows its arguments and
   the packs it needs: a click on an off pack switches it on for the conversation (the server never does). A skill command is shown in the
   history as you typed it, and **Edit** and **Ask again** send it again as typed.
+- **The events door: one public door for events, off by default.** New setting `CLARA_EVENTS` (`off`, `on`): with `on` Clara starts a
+  **second listener** on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`, 8766), in the same process and with the same services, that serves
+  `POST /v1/events/<source id>` and **nothing else** (every other path is a bare 404, every other method a bare 405: no site, no console, no
+  other route, no docs, no token or cookie logic, no forwarded header), and publishes it with **Tailscale Funnel** on `CLARA_EVENTS_PORT`
+  (new, 8443 or 10000, not the port of `tailscale serve`). With `CLARA_EVENTS=off` nothing changes: no second listener, no new command.
+  The door takes the route's own limits (64 KB, 60 events a minute, 1,000 waiting, 5,000 kept, wrong proofs counted per source id and never
+  per address) and adds its own: 64 connections at once, a 15-second deadline per request (uvicorn has none), 2-second keep-alive, no
+  `Server` header, no access log and no traffic-log line. A port that is taken is a start-up error that names it.
+- **The Funnel guard changes, it does not go.** With the door on, Funnel is allowed on exactly one port, `CLARA_EVENTS_PORT`, and only while
+  it maps `/` to the door and to nothing else; on Clara's own port, on that port mapped elsewhere, or on any other port that maps to her
+  main listener or to the door, she refuses to start or turns it off and raises the `funnel` alert, as she did for her own port. Clara
+  makes the mapping herself (`tailscale funnel --bg --https=<port> http://127.0.0.1:<local port>`), re-checks it every minute, removes only
+  that mapping when she stops (`tailscale funnel --https=<port> off`; never `funnel reset`, never another port), and raises the new **`events`
+  alert** when Tailscale refuses (add `funnel` to the `nodeAttrs` of your tailnet policy); the listener then stays on 127.0.0.1.
+  `GET /v1/admin/status` has `events_door`, `/status` and `clara doctor` say the same.
+- **GitHub's webhook is an event source.** `POST /v1/event-sources` takes `{"kind": "github", "repo": "owner/name"}` (an optional `name`):
+  proof `github_hmac`, no fields, never trusted; the answer has the `address`, the `public_url` (when the door is published) and the secret,
+  shown once, which you paste in the repository's webhook settings with `application/json`. The delivery is checked by its
+  **`X-Hub-Signature-256`** (HMAC-SHA256 of the raw body, constant time, before anything is read); a wrong one is a 401 counted against that
+  source. `push` and `pull_request` become **`github.push` and `github.pull_request` with the same fields as the poll's** (one automation
+  works with either), the delivery id is the key (a redelivery is a `200 duplicate`), `ping` is answered, anything else is ignored, a
+  delivery for another repository is a 422, and the answer is sent once the event is stored, before anything runs. **A push over 64 KB is
+  refused (413).** **A repository that has a webhook is not polled**; revoking the webhook resumes the poll from that moment.
+  `GET /v1/connections` marks such a repository `webhook`. Schema version 37 adds the `repo` column and the check on `proof`.
+- **Not tried on a real Funnel, a real GitHub or a TCP port** (stand-ins, and uvicorn on a UNIX socket in the tests): the live check is in
+  `docs/OPERATIONS.md`, « The events door ».
 
 ## v1.5.1 — 04/11/2026
 

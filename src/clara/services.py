@@ -96,6 +96,7 @@ class Services:
     connections: Any = None
     github_snapshots: Any = None
     tailscale: Any = None
+    events_door: Any = None  # the second listener for events from the internet (ops/door.py): only with CLARA_EVENTS=on
     backups: Any = None
     updater: Any = None
     discord: Any = None

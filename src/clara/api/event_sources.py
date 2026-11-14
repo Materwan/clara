@@ -2,13 +2,17 @@
 automations/sources.py and DECISIONS.md, « Event sources (2026-11-13) ».
 
     POST /v1/events/{source_id}                the call of a program: an event, proved by the source's secret
-                                               (`Authorization: Bearer <secret>`), NOT by an API token. The only route an
-                                               outsider reaches: the middleware lets this one shape of path through, and the
-                                               handler checks the secret. 404 for an address nobody was given (nothing is
-                                               looked up or counted), 401 with no detail for a wrong secret, 413 above 64 KB,
-                                               415 unless application/json, 422 for what is not declared, 429 over a limit
+                                               (`Authorization: Bearer <secret>`), NOT by an API token; for a GitHub source,
+                                               GitHub's webhook, proved by the HMAC of the body (`X-Hub-Signature-256`). The only
+                                               route an outsider reaches: the middleware lets this one shape of path through,
+                                               and the events door (api/door.py, the second listener) serves this route and
+                                               nothing else. The handler checks the proof. 404 for an address nobody was given
+                                               (nothing is looked up or counted), 401 with no detail for a wrong secret or
+                                               signature, 413 above 64 KB, 415 unless application/json, 422 for what is not
+                                               declared, 429 over a limit
     GET /v1/event-sources                      the sources: name, kind, fields, proof, trusted, address, counts (never a secret)
-    POST /v1/event-sources                     {name, fields?, trusted?}: make one; its address and secret come back once
+    POST /v1/event-sources                     {name, fields?, trusted?}: make one; its address and secret come back once.
+                                               {kind: "github", repo: "owner/name", name?}: the webhook of a repository
     PATCH /v1/event-sources/{source}           {trusted}: the only thing that changes (a name is the slug of the kind)
     DELETE /v1/event-sources/{source}          revoke it: its record, its secret and its waiting-for-nobody events go
     POST /v1/event-sources/{source}/rotate     a new secret, returned once; the old one stops working
@@ -22,6 +26,8 @@ automations/sources.py and DECISIONS.md, « Event sources (2026-11-13) ».
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -54,14 +60,32 @@ def _source(request: Request, ref: str) -> Source:
     return found
 
 
-async def _store(request: Request, source: Source) -> JSONResponse:
-    """Store one event (from the public route or from `fire`) and answer: 202 and its id, or 200 when it was stored before."""
-    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
-        raise ApiError(415, "Send the event as application/json.")
+def _json_type(request: Request) -> bool:
+    return request.headers.get("content-type", "").split(";")[0].strip().lower() == "application/json"
+
+
+async def _body(request: Request) -> bytes:
     try:
-        body = await request.body()
+        return await request.body()
     except ClientDisconnect:  # the body went past its limit (the middleware has answered 413) or the sender left
         raise ApiError(413, "The body is too big, or it was cut short.") from None
+
+
+def _public_url(request: Request, source: Source) -> str | None:
+    """The full address of a source on the public port, when the events door is published (ops/tailscale.py)."""
+    base = getattr(services(request).tailscale, "events_url", None)
+    return f"{base}{source.address}" if base else None
+
+
+def _shown(request: Request, source: Source) -> dict:
+    return {**services(request).event_sources.describe(source), "public_url": _public_url(request, source)}
+
+
+async def _store(request: Request, source: Source) -> JSONResponse:
+    """Store one event (from the public route or from `fire`) and answer: 202 and its id, or 200 when it was stored before."""
+    if not _json_type(request):
+        raise ApiError(415, "Send the event as application/json.")
+    body = await _body(request)
     try:
         found, duplicate = services(request).event_sources.accept(source, body)
     except SourceError as error:
@@ -80,6 +104,8 @@ async def receive(source_id: str, request: Request) -> JSONResponse:
     source = sources.by_id.get(source_id)
     if source is None:
         raise ApiError(404, "Not found.")  # the whole cost of an address nobody was given: no lookup, no count, no log
+    if source.github:
+        return await _deliver(request, source)
     try:
         sources.admit(source, request.headers.get("authorization"))
     except SourceError as error:
@@ -88,36 +114,77 @@ async def receive(source_id: str, request: Request) -> JSONResponse:
     return await _store(request, source)
 
 
+async def _deliver(request: Request, source: Source) -> JSONResponse:
+    """A delivery of GitHub's webhook: the signature is the proof and needs the body, so the order is: blocked? (429, nothing read),
+    the body (at most 64 KB, the middleware counts), the signature (401), then what was sent (415, 422), then the event. The answer is
+    sent once the event is stored and matched: nothing slow happens before it."""
+    sources = services(request).event_sources
+    try:
+        sources.check_open(source)
+        body = await _body(request)
+        sources.admit_signed(source, request.headers.get("x-hub-signature-256"), body)
+        refuse_when_stopping(request)
+        if not _json_type(request):
+            raise ApiError(415, "Set the webhook's content type to application/json.")
+        status, answer = sources.accept_github(
+            source, request.headers.get("x-github-event"), request.headers.get("x-github-delivery"), body
+        )
+    except SourceError as error:
+        raise _failed(error) from None
+    return JSONResponse(answer, status)
+
+
 # ----------------------------------------------------------------------
 # What you manage
 # ----------------------------------------------------------------------
 @router.get("/event-sources")
 def listing(request: Request) -> dict:
-    return {"sources": services(request).event_sources.listing()}
+    registry = services(request).event_sources
+    return {"sources": [_shown(request, source) for source in registry.by_id.values()]}
 
 
 class NewSource(BaseModel):
+    kind: Literal["custom", "github"] = Field(
+        default="custom",
+        description="github: the webhook of one repository (its events are github.push and github.pull_request)",
+    )
     name: str = Field(
-        min_length=1, max_length=60, description="Its kind is custom.<slug of the name>; it cannot be renamed"
+        default="",
+        max_length=60,
+        description="A custom source: its kind is custom.<slug of the name>, required; it cannot be renamed. A GitHub source: optional, github-<owner>-<name> by default",
     )
     fields: dict = Field(
-        default_factory=dict, description='What an event carries: {"state": "text", "open": "bool"}, 12 at most'
+        default_factory=dict,
+        description='What an event carries: {"state": "text", "open": "bool"}, 12 at most (custom only)',
     )
     trusted: bool = Field(
-        default=False, description="A run its events start is not tainted (a program whose output you write)"
+        default=False,
+        description="A run its events start is not tainted (a program whose output you write; custom only: a GitHub source is never trusted)",
     )
+    repo: str = Field(default="", max_length=201, description="kind github: the repository, owner/name")
 
 
 @router.post("/event-sources", status_code=201)
 async def make(body: NewSource, request: Request) -> JSONResponse:
     settled_by_you(request, BY_YOU)
     registry = services(request).event_sources
+    if (body.kind == "github") != bool(body.repo.strip()):
+        raise ApiError(422, "A GitHub source takes a repo (owner/name), and only a GitHub source does.")
     try:
-        source, secret = registry.create(body.name, body.fields, trusted=body.trusted, by=caller(request).name)
+        source, secret = registry.create(
+            body.name, body.fields, trusted=body.trusted, by=caller(request).name, repo=body.repo
+        )
     except SourceError as error:
         raise _failed(error) from None
     return JSONResponse(
-        {"source": registry.describe(source), "address": source.address, "secret": secret}, 201, headers=NO_STORE
+        {
+            "source": _shown(request, source),
+            "address": source.address,
+            "public_url": _public_url(request, source),
+            "secret": secret,
+        },
+        201,
+        headers=NO_STORE,
     )
 
 
@@ -151,7 +218,13 @@ async def rotate(source: str, request: Request) -> JSONResponse:
     found = _source(request, source)
     secret = registry.rotate(found, caller(request).name)
     return JSONResponse(
-        {"source": registry.describe(found), "address": found.address, "secret": secret}, headers=NO_STORE
+        {
+            "source": _shown(request, found),
+            "address": found.address,
+            "public_url": _public_url(request, found),
+            "secret": secret,
+        },
+        headers=NO_STORE,
     )
 
 
@@ -161,6 +234,10 @@ async def fire(source: str, request: Request) -> JSONResponse:
     same way (the source's own flag decides whether the run is tainted). Any token may fire an event of a source that is not
     trusted; one of a trusted source takes a token that may answer every request (scope `all`)."""
     found = _source(request, source)
+    if found.github:
+        raise ApiError(
+            422, "The events of a GitHub source come from GitHub (its webhook): there is nothing to fire here."
+        )
     if found.trusted:  # its run is not tainted: only a token that may answer every request starts one this way
         settled_by_you(request, TRUSTED_FIRE)
     refuse_when_stopping(request)
@@ -170,4 +247,5 @@ async def fire(source: str, request: Request) -> JSONResponse:
 @router.get("/event-sources/{source}/events")
 def latest(source: str, request: Request, limit: int = Query(20, ge=1, le=200)) -> dict:
     found = _source(request, source)
-    return {"events": [event.describe() for event in services(request).automations.recent_events(limit, found.kind)]}
+    recent = services(request).automations.recent_events(limit, source=found.origin)
+    return {"events": [event.describe() for event in recent]}

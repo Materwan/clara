@@ -84,6 +84,30 @@ def _from_disk_and_git(s: Services) -> dict:
     }
 
 
+def events_door(s: Services) -> dict:
+    """The events door (`CLARA_EVENTS`): off, or whether it listens and whether Tailscale publishes it, and why not."""
+    door, tailscale = s.events_door, s.tailscale
+    on = s.settings.events == "on"
+    listening = bool(door is not None and door.up)
+    published = bool(tailscale is not None and tailscale.events_url)
+    problem = ""
+    if on and not listening:
+        problem = (door.problem if door is not None else "") or "the events listener is not running"
+    elif on and tailscale is None:
+        problem = "CLARA_TAILSCALE is off: nothing is published, the listener answers on 127.0.0.1 only"
+    elif on and not published:
+        problem = tailscale.events_problem or "not published yet"
+    return {
+        "on": on,
+        "local_port": s.settings.events_local_port,
+        "public_port": s.settings.events_port,
+        "listening": listening,
+        "published": published,
+        "url": tailscale.events_url if published else "",
+        "problem": problem,
+    }
+
+
 async def status(s: Services) -> dict:
     sandbox = s.sandbox
     slow = await s.status_probe.read(lambda: _from_disk_and_git(s))
@@ -114,6 +138,7 @@ async def status(s: Services) -> dict:
         },
         "vault": slow["vault"],
         "tailscale": s.tailscale.describe() if s.tailscale else "off",
+        "events_door": events_door(s),
         "backups": slow["backups"],
         "events": {"listeners": s.events.listeners, "last_id": s.events.last_id()},
         "clients": {name: f"seen {int(time.monotonic() - seen)} s ago" for name, seen in s.clients.items()},

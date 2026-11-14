@@ -171,9 +171,10 @@ An automation is something you write: *when this trigger holds, run Clara with t
 AND and OR: an event (a mail, a push, a pull request) with a filter, a cron time, a date, and conditions of time (a window, a cron
 used as a window). Nothing is on until you make one, and the model cannot make one without your answer. (The web page and its form
 are being rebuilt for automations: until then make and watch them with the console, as below, or the API.) The mail poll runs
-every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while an automation (or the notifications) listens. GitHub cannot call Clara,
-so an automation on `github.pull_request` or `github.push` is found by a poll too, every `CLARA_GITHUB_POLL_SECONDS` (120), of the
-repositories added on the Connections page and only for the kinds an automation waits for. Moodle and Auriga cannot call Clara either:
+every `CLARA_MAIL_POLL_SECONDS` (120) and looks only while an automation (or the notifications) listens. GitHub cannot call Clara
+unless you turn the events door on (below), so an automation on `github.pull_request` or `github.push` is found by a poll, every
+`CLARA_GITHUB_POLL_SECONDS` (120), of the repositories added on the Connections page and only for the kinds an automation waits for; a
+repository that has a **webhook** (the door, below) is not polled. Moodle and Auriga cannot call Clara either:
 an automation on a school kind (`moodle.quiz_opens`, `moodle.quiz_closes`, `moodle.activity_added`, `moodle.grade_posted`,
 `auriga.grade_posted`, `auriga.planning_changed`) is found by a poll of the connected sites every `CLARA_SCHOOL_POLL_SECONDS` (900),
 again only while one waits; a site that is not connected or whose sign-in lapsed is skipped (its alert tells you). A feed (RSS or Atom: a
@@ -215,6 +216,77 @@ matter). Good habits:
 - **Upgrading from schedules and hooks.** The upgrade (schema 32) takes the automatic backup, then turns every schedule and hook into an
   automation (a schedule keeps its id, a hook gets the highest schedule id plus its own; the old tables stay as `legacy_*` copies).
   Check the list once: a hook that shared a name with a schedule is called `<name> (hook)`.
+
+### The events door (GitHub's webhook, and programs on the internet)
+
+By default nothing on the internet can reach Clara: the app is on your tailnet only, and Funnel is refused. **One door for events can be
+turned on**: a second listener, on 127.0.0.1 only, that serves `POST /v1/events/<source id>` and nothing else, and that Clara publishes
+with Tailscale Funnel on port **8443 or 10000**. It lets GitHub tell Clara of a repository's pull requests and pushes (instead of the poll),
+and lets a program of yours that is not on your tailnet post an event. What it exposes and what it does not: `docs/THREAT-MODEL.md`.
+Read that before you turn it on. It needs Tailscale 1.52 or newer (`tailscale funnel --bg`), `CLARA_TAILSCALE=serve`, and HTTPS
+certificates enabled for the tailnet (MagicDNS and HTTPS, as for `tailscale serve`).
+
+**Turn it on, step by step**
+
+1. **Allow Funnel for this machine, in your tailnet policy** (the access controls file at <https://login.tailscale.com/admin/acls>):
+   add `funnel` to the `nodeAttrs` for the machine (or the tag it has), for example
+   `"nodeAttrs": [{"target": ["autogroup:member"], "attr": ["funnel"]}]`. Only you can do this; Clara cannot. Without it Funnel is refused,
+   and Clara raises the `events` alert and keeps the listener on 127.0.0.1.
+2. In `/etc/clara/clara.env`: `CLARA_EVENTS=on`. Optional: `CLARA_EVENTS_PORT` (8443, or 10000: the **public** port; it must not be
+   `CLARA_TAILSCALE_PORT`, so with `CLARA_TAILSCALE_PORT=8443` set `CLARA_EVENTS_PORT=10000`) and `CLARA_EVENTS_LOCAL_PORT` (8766, on
+   127.0.0.1: it must not be `CLARA_PORT`). Clara refuses to start with a clear message for a port that is not allowed or is taken.
+3. `sudo systemctl restart clara`. Clara starts the listener, then publishes it herself: she runs
+   `tailscale funnel --bg --https=8443 http://127.0.0.1:8766` (the ports of your settings), as the user `clara` with the Tailscale operator
+   rights you gave at install (`tailscale set --operator=clara`). `/status` (or `clara doctor`, or the Admin status `events_door`) says
+   `Events door: PUBLIC at https://<machine>.<tailnet>.ts.net:8443`, or why it is not (`NOT public: …`). With `CLARA_TAILSCALE=off`
+   nothing is published: the listener answers on 127.0.0.1 only and the status says so.
+4. **Make the source.** For a repository's webhook: `curl -X POST -H "Authorization: Bearer <a token with scope all>"
+   -H "Content-Type: application/json" -d '{"kind": "github", "repo": "owner/name"}' https://<machine>.<tailnet>.ts.net/v1/event-sources`
+   (the Event sources tab of the Automation page for a source of your own; the GitHub form is a later step). The answer has the
+   `public_url` (`https://<machine>.<tailnet>.ts.net:8443/v1/events/k…`) and the `secret`, **shown once**: copy both.
+5. **Add the webhook in GitHub** (a step only you can do; Clara's token needs no right for it): the repository's *Settings → Webhooks →
+   Add webhook*. **Payload URL**: the `public_url`. **Content type**: `application/json` (not the default `application/x-www-form-urlencoded`,
+   which gets a 415). **Secret**: the `secret`. **Which events**: *Let me select individual events*, then **Pushes** and **Pull requests**
+   (the poll of this repository is off, so an event left out here is not found at all). **Active**. GitHub sends a `ping` at once: its
+   *Recent deliveries* shows `200` and `{"pong": true}`.
+6. **Make the automation** (`when` kind `github.push` or `github.pull_request`, a filter on `repo`, `branch`, `action`…). It works the same
+   as with the poll: the events have the same fields.
+7. **Check it from outside your tailnet** (a phone on mobile data, not on Tailscale): `curl -i https://<machine>.<tailnet>.ts.net:8443/`
+   answers `404` with no body; `curl -i https://<machine>.<tailnet>.ts.net:8443/v1/health` too; and the web site and the API are not
+   there. In GitHub, *Redeliver* a delivery: `200 {"duplicate": true}`. **Once, on your real Funnel**, look at the header that carries the
+   caller's address (Clara never records it, and nothing in her uses it, but the threat model says it was not checked): start a throwaway HTTP
+   server of your own that prints the headers it gets, on a local port that is neither Clara's nor the door's, publish *that* on the other public
+   port (`tailscale funnel --bg --https=10000 http://127.0.0.1:<its port>` when the door is on 8443), `curl` it from outside, and remove it with
+   `tailscale funnel --https=10000 off`. Clara leaves a Funnel on a port that maps to something that is not hers alone.
+
+**What to know**
+
+- **Big pushes are lost.** The door takes **64 KB** a body. GitHub sends up to 25 MB; a push of about fifty commits with their file lists is
+  more than 64 KB and gets a `413` (red in *Recent deliveries*). Clara is not told of it, and the poll of that repository is off while the
+  webhook exists. Revoke the webhook (the poll resumes) if you need every push of a repository that gets such pushes.
+- **Between making the source and adding the webhook** nothing finds the repository's events: the poll is off from the moment the source
+  exists. Make the source just before you add the webhook.
+- **A webhook and the poll never both run for one repository.** Revoke the source (`DELETE /v1/event-sources/<id>`) and the poll resumes
+  from that moment. Rotate the secret (`POST /v1/event-sources/<id>/rotate`, then paste the new one in GitHub) if it leaks.
+- **A bearer source is reachable on the door too** (a script of yours on the internet can call it with its secret): keep its secret as a
+  password.
+
+**Turn it off.** Set `CLARA_EVENTS=off` (or remove the line) and restart. Clara stops the listener and removes **only her own mapping**
+(`tailscale funnel --https=8443 off`; she never runs `tailscale funnel reset`, which would erase the `serve` mapping of Clara itself). If
+the mapping is still there after a crash (`tailscale serve status`), the next start with `CLARA_EVENTS=off` removes it too, or run that
+one command yourself. The GitHub webhook then fails (red deliveries) until you delete it in GitHub's settings or turn the door back on;
+revoke the source if you do not want it back (the poll resumes).
+
+**The alerts**
+
+- **`events`**: the door cannot be public or is down. *Tailscale would not publish it*: add `funnel` to the `nodeAttrs` of your policy
+  (step 1) and check HTTPS certificates are enabled (`tailscale cert` works); Clara tries again every minute and the alert clears itself.
+  *The listener stopped or did not start*: the log (`journalctl -u clara`) says why (a port taken, an error); restart Clara. While it is
+  on, nothing from outside reaches Clara: the listener is on 127.0.0.1.
+- **`funnel`**: Funnel was found where it must not be and Clara turned it off (or refused to start): on her own port; on the events port
+  mapped to anything but the door (including something of yours: pick the other of 8443 and 10000 for the door, with `CLARA_EVENTS_PORT`);
+  or on any other port that maps to her main listener or to the door. A Funnel of yours on a port that maps to another service is left alone.
+- **`tailscale`**: Tailscale is not serving Clara (the usual alert).
 
 ### The Obsidian vault
 
@@ -428,7 +500,7 @@ On the same machine (a broken database), or on a new machine after `deploy/insta
 ```bash
 systemctl disable --now clara clara-discord
 sudo systemctl --user -M clara@ disable --now searxng 2>/dev/null
-tailscale serve reset                       # if Clara's mapping is still there
+tailscale serve reset                       # if Clara's mapping is still there (this erases every mapping: do it only here, once Clara is gone)
 rm -rf /opt/clara /etc/clara /etc/systemd/system/clara*.service
 # the data, if you are sure: rm -rf /var/lib/clara /var/lib/clara-home /var/lib/clara-discord
 userdel clara

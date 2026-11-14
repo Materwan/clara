@@ -14,7 +14,7 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 | The relationship score | A hidden mood that changed tone was surprising, not useful | A fixed persona file |
 | Server-folder access (`res_*`) and the desktop "computer folders" | Folders on the server could hold Clara's own secrets | The workspace; a folder on your computer read in the browser, one per web conversation (DECISIONS.md, « Folders on your computer »); and `clara-chat --local-tools` for your own machine's files |
 | Embeddings and semantic search | Heavy, and FTS5 serves one person's notes | FTS5 for facts, messages and the vault |
-| Public exposure (Funnel, a public URL) | The tailnet is the perimeter | `tailscale serve`; Funnel is refused |
+| Public exposure of the app (Funnel, a public URL) | The tailnet is the perimeter: **the app is never public**. One door for events is, when you turn it on (`CLARA_EVENTS=on`, off by default): a second listener that serves `POST /v1/events/<source id>` and nothing else, published by Funnel on port 8443 or 10000 only | `tailscale serve` for the app; Funnel for the door alone, refused and turned off anywhere else (DECISIONS.md, « The events door and the GitHub webhook ») |
 | A shared GitHub token | Copying any private repository the token reached | Your fine-grained token and an explicit repository list |
 | Most vault tools (20 before) | Fewer, sharper tools | Seven, behind `open_second_brain` |
 | Migrating the old data | A clean start without people and credits in the schema | The old server stays readable for a few weeks |
@@ -31,8 +31,10 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 - **Arbitrary MCP servers or plug-ins.** Every tool is in this repository, with its gate class, and tested.
 - **Hook sources other than mail and GitHub** in 1.0 (Drive changes, files, GitHub issues and comments, workflow runs). The design
   takes them (`triggers/events.py`, a source hands events to `Triggers.ingest`); the mail source and GitHub pull requests and pushes exist.
-- **Receiving webhooks from the internet.** Clara is reachable on your tailnet only, so GitHub or Google cannot call her; sources are
-  polled. A script on your own tailnet is the one thing that could push (not built).
+- **Receiving webhooks from the internet for anything but events.** With the events door on (`CLARA_EVENTS=on`) GitHub can post a
+  repository's pull requests and pushes, and a program of yours can post an event, to the one route the door serves; no other service
+  calls Clara, and the rest (Gmail, Drive, Moodle, Auriga, feeds) is polled. A webhook of GitHub's other events (issues, comments,
+  workflow runs) is ignored, and a push over 64 KB is refused.
 - **Calendar and messaging connectors** in 1.0. Each would be a new outside-world class with its own defaults. (Email
   moved out of this list: Gmail is connected, with three classes of its own; see
   [DECISIONS.md](DECISIONS.md).)

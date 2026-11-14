@@ -6,7 +6,8 @@ your own, a small Windows island, an Android app (the last two are a separate, p
 writes files in her own workspace, runs scripts in isolated containers, and works with GitHub, Google Drive, your
 Gmail, your Obsidian vault and the web. Every action she takes goes through modes you set: allowed, asked, or refused.
 
-There are no accounts, no users, no credits and no public exposure: Clara 1.0 is a rewrite from zero of an earlier,
+There are no accounts, no users, no credits and no public exposure of the app (one optional door for events, off by default, serves a
+single route: [the threat model](docs/THREAT-MODEL.md)): Clara 1.0 is a rewrite from zero of an earlier,
 broader server, following [the rebuild plan](clara-rebuild-plan.md) and answering
 [its critical review](docs/REVIEW-RESPONSE.md).
 
@@ -29,7 +30,7 @@ broader server, following [the rebuild plan](clara-rebuild-plan.md) and answerin
        |               |                |                |                 |
        +---------------+--------- one token each --------+-----------------+
                                         |
-                  tailscale serve: HTTPS inside your tailnet only (Funnel refused)
+                  tailscale serve: HTTPS inside your tailnet only (Funnel refused, but for the events door: CLARA_EVENTS=on)
                                         |
   +-------------------------------------v----------------------------------------+
   | clara-server on 127.0.0.1, started by clara-launcher (updates and rollback)   |

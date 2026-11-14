@@ -26,6 +26,8 @@ PROVIDER_ID = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 HOSTED_PROVIDERS = ("cloud", "gemini", "deepseek", "mistral", "opencode-go")
 RESERVED_PROVIDER_IDS = frozenset(HOSTED_PROVIDERS)
 TAILSCALE_PORTS = (443, 8443, 10000)
+# the public ports Funnel offers besides 443, which is the one `tailscale serve` takes for Clara
+EVENTS_PORTS = (8443, 10000)
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*([kmg]?)b?$", re.IGNORECASE)
 MAIL_POLL_MIN = 30
 GITHUB_POLL_MIN = 30
@@ -145,6 +147,10 @@ class Settings:
     tailscale: str = "serve"
     tailscale_port: int = 443
     tailscale_bin: str = "tailscale"
+    # on: a second listener (127.0.0.1) takes events from the internet, and Funnel publishes it (ops/door.py)
+    events: str = "off"
+    events_port: int = 8443  # the public port of Funnel for it: 8443 or 10000
+    events_local_port: int = 8766  # where that listener answers, on 127.0.0.1
     traffic_log_days: int = 7
     backup_dir: Path | None = None
     backup_time: str = "03:30"
@@ -404,6 +410,27 @@ def load_settings(
     if tailscale_port not in TAILSCALE_PORTS:
         r.problems.append(f"CLARA_TAILSCALE_PORT must be one of {', '.join(map(str, TAILSCALE_PORTS))}.")
         tailscale_port = 443
+    tailscale = r.choice("CLARA_TAILSCALE", "serve", ("serve", "off"))
+    events = r.choice("CLARA_EVENTS", "off", ("off", "on"))
+    events_port = r.integer("CLARA_EVENTS_PORT", 8443)
+    if events_port not in EVENTS_PORTS:
+        r.problems.append(
+            f"CLARA_EVENTS_PORT={events_port} must be one of {', '.join(map(str, EVENTS_PORTS))}: the public ports of Tailscale "
+            "Funnel besides 443, which Clara's own address takes."
+        )
+        events_port = 8443
+    events_local_port = r.integer("CLARA_EVENTS_LOCAL_PORT", 8766, 1, 65_535)
+    port = r.integer("CLARA_PORT", 8765, 1, 65_535)
+    if events == "on":
+        if events_local_port == port:
+            r.problems.append(
+                f"CLARA_EVENTS_LOCAL_PORT={events_local_port} is the port of CLARA_PORT: the events listener needs a port of its own."
+            )
+        if tailscale == "serve" and events_port == tailscale_port:
+            r.problems.append(
+                f"CLARA_EVENTS_PORT={events_port} is the port of CLARA_TAILSCALE_PORT, where Clara is served inside your tailnet: "
+                "the public events port must be another one."
+            )
     run_timeout = r.integer("CLARA_RUN_TIMEOUT", 120, 1)
     run_max_timeout = r.integer("CLARA_RUN_MAX_TIMEOUT", 900, 1, 86_400)
     if run_timeout > run_max_timeout:
@@ -416,7 +443,7 @@ def load_settings(
 
     settings = Settings(
         data_dir=data_dir,
-        port=r.integer("CLARA_PORT", 8765, 1, 65_535),
+        port=port,
         timezone=timezone,
         persona_file=r.path("CLARA_PERSONA_FILE"),
         default_mode_file=r.path("CLARA_DEFAULT_MODE_FILE", Path("/etc/clara/default-mode.toml"))
@@ -486,9 +513,12 @@ def load_settings(
         github_poll_seconds=github_poll_seconds,
         school_poll_seconds=school_poll_seconds,
         feeds_poll_seconds=feeds_poll_seconds,
-        tailscale=r.choice("CLARA_TAILSCALE", "serve", ("serve", "off")),
+        tailscale=tailscale,
         tailscale_port=tailscale_port,
         tailscale_bin=r.text("CLARA_TAILSCALE_BIN", "tailscale"),
+        events=events,
+        events_port=events_port,
+        events_local_port=events_local_port,
         traffic_log_days=r.integer("CLARA_TRAFFIC_LOG_DAYS", 7, 0, 365),
         backup_dir=r.path("CLARA_BACKUP_DIR"),
         backup_time=backup_time,

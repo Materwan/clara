@@ -81,11 +81,12 @@ from .memory.retention import AutomationRetention
 from .mirror.service import Mirror
 from .ops import setup as ops_setup
 from .ops.alerts import Alerts
+from .ops.door import DoorError
 from .ops.lifecycle import Lifecycle
 from .ops.logstream import LogHub
 from .ops.private import check_private, harden_tree, private_dir
 from .ops.systemd import notify
-from .ops.tailscale import FunnelOn, check_funnel_now
+from .ops.tailscale import FunnelOn, check_funnel_now, door_of
 from .ops.traffic import TrafficLog
 from .ops.upkeep import Upkeep, late_alert
 from .ops.usage import UsageLog
@@ -349,7 +350,8 @@ def create_app(s: Services) -> FastAPI:
         upkeep = Upkeep(s)
         upkeep.start()
         s.monitors = upkeep
-        for part in (s.tailscale, s.backups, s.vault, s.sandbox, s.discord):
+        # the events door first: Tailscale publishes it only once it listens
+        for part in (s.events_door, s.tailscale, s.backups, s.vault, s.sandbox, s.discord):
             starter = getattr(part, "start", None)
             if starter is not None:
                 try:
@@ -375,7 +377,8 @@ def create_app(s: Services) -> FastAPI:
             for task in tasks:
                 task.cancel()
             await upkeep.stop()
-            for part in (s.discord, s.tailscale, s.backups, s.vault, s.sandbox, s.updater):
+            # Tailscale first: its Funnel mapping goes before the listener behind it does
+            for part in (s.discord, s.tailscale, s.events_door, s.backups, s.vault, s.sandbox, s.updater):
                 stopper = getattr(part, "stop", None)
                 if stopper is not None:
                     with contextlib.suppress(Exception):
@@ -501,7 +504,7 @@ def prepare(settings: Settings) -> tuple[Database, InstanceLock]:
             raise StartError("Files that must be private are not:\n" + "\n".join(f"- {p}" for p in problems))
     if settings.tailscale == "serve":
         try:
-            check_funnel_now(settings.tailscale_bin, settings.tailscale_port)
+            check_funnel_now(settings.tailscale_bin, settings.tailscale_port, door_of(settings), settings.port)
         except FunnelOn as error:
             raise StartError(str(error)) from None
     private_dir(settings.data_dir)
@@ -552,6 +555,14 @@ def main(argv: list[str] | None = None) -> int:
         lock.release()
         return 0
     extend(services)
+    if services.events_door is not None:
+        try:
+            services.events_door.bind()  # the port is taken before anything is served: a taken port is a start-up error
+        except DoorError as error:
+            log.error("%s", error)
+            db.close()
+            lock.release()
+            return 3
     recover(services)
     seed_daily_note(services)
     services.logs.attach()
@@ -576,6 +587,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         server.run()
     finally:
+        if services.events_door is not None and services.events_door.sock is not None:
+            services.events_door.sock.close()  # the main server never came up, or it did not stop the door
         services.logs.detach()
         services.traffic.close()
         db.close()

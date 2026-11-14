@@ -16,7 +16,8 @@ Contents: [1. Who it is for](#1-who-it-is-for) · [2. Clients](#2-clients) · [3
 
 ## 1. Who it is for
 
-One person, on one Linux machine, reachable only from that person's own devices over Tailscale. There are no
+One person, on one Linux machine, reachable only from that person's own devices over Tailscale (one door for events from
+the internet exists when you turn it on: *Event sources*, « The events door »). There are no
 accounts, users, passwords, roles, credits or quotas: every client token has the same power, and every conversation,
 fact, task and file belongs to the same person. Clara is an agent: she remembers, keeps time, reads and writes files
 in her own workspace, runs scripts in isolated containers, and reaches GitHub, Google Drive and the web, each action
@@ -114,7 +115,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 
 | Command | Does |
 | --- | --- |
-| `/status` | Version, state, models, storage, Tailscale, backups, alerts |
+| `/status` | Version, state, models, storage, Tailscale, the events door (when it is on), backups, alerts |
 | `/provider [list] \| enable\|disable\|check <id>` | Model providers |
 | `/model [provider:model]` | Show or set the default model |
 | `/models [refresh] \| show\|hide <ref>...` | The catalogue; `*` marks models shown in pickers; a model that does not work says why |
@@ -621,7 +622,9 @@ adds a kind and nothing else changes (the engine knows no kind by name).
   the moment the repository began to be waited for (the later of its being added and an automation's being made, at most 15 minutes back),
   so what happens before the poll gets round to it is not lost; a push cannot be told from before the first look. The Connections
   page says, for each repository, since when its pull requests and pushes are looked for. An answer carries an etag, so
-  « nothing changed » costs no rate limit.
+  « nothing changed » costs no rate limit. **A repository that has a webhook is not polled** (see *Event sources*, « GitHub
+  webhook »): GitHub tells Clara, and the same two kinds, with the same fields, are made from what it posts (`webhook` is true on the
+  repository in `GET /v1/connections`).
   - `github.pull_request` (fields `repo`, `action`, `title`, `author`, `branch`, `base`, `snippet`, `draft`, `from_fork`): a
     pull request **opened**, **merged** or **closed** (a merged one is not also closed), found by comparing the times GitHub
     gives with the time the poll had reached; the most recently updated 300 pull requests are looked at in a poll. The event
@@ -725,7 +728,7 @@ A script, a home-automation hub or another machine of yours can start automation
 record you make (`POST /v1/event-sources`, or **New source** on the *Event sources* tab, below): a **name**, which is also the slug of its kind (`custom.<name>`:
 lower-case letters, digits and `-`, 30 at most; `Front door` is `custom.front-door`, and a name cannot be changed), the **fields** an
 event of it may carry (`text` or `bool`, at most 12, named like `state`, never `key`, `title`, `actor`, `data` or `occurred_at`), how
-it **proves itself** (a bearer secret; the table has a `proof` column for later ones) and whether it is **trusted**. 50 sources at
+it **proves itself** (`bearer`: a secret; `github_hmac`: GitHub's signature, below) and whether it is **trusted**. 50 sources at
 most. Making one gives its **address**, `/v1/events/<id>` (the id is `k` and 32 random hex characters: 128 bits), and its **secret**
 (`evt_` and 43 characters), shown once. The secret is held only in the encrypted store, under `event_source_<id>`: not in the table, not in
 `.env`, not in any listing (the Admin page, `/secrets` and `clara secrets list` leave these names out, and the Admin page and `/secrets
@@ -750,8 +753,8 @@ unset` refuse them: revoke the source instead). It works on its own address and 
   bytes counted when none is), anything but `application/json` a 415, a body that is not JSON a 400, a source takes **60 events a
   minute** (429 beyond), **no more than 1,000 events waiting** for a run of an automation (429 until they are handled), and **no more
   than 5,000 events kept**: past that the oldest that no queued or running run holds are deleted as the new one is stored, and the
-  key of a deleted event can be sent again as a new event. This slice
-  opens no public door: the main listener is still loopback, and the tailnet through `tailscale serve`.
+  key of a deleted event can be sent again as a new event. Reached on the main listener, inside the tailnet (it needs the secret),
+  or, when `CLARA_EVENTS=on`, on **the events door** below, which serves this route and nothing else.
 - **The kind.** A source's kind exists while its record does: its fields are what a filter looks at, it has **no read tools** (a run it
   starts has `notify` alone unless the automation lists tools: never more than the trigger that fired), its noun is `an event of “<name>”`
   and its notification text is the title. The `when` of an automation (the API, `/automations`, Clara's tools) accepts `custom.<name>` for
@@ -794,8 +797,55 @@ unset` refuse them: revoke the source instead). It works on its own address and 
   **Latest events** lists the latest 20 of a source, with a note that their text was written by the sender. A token without scope `all`
   can look and send a test event to a source that is not trusted; **New source**, **New secret**, **Revoke** and the box are disabled for
   it, with a line that says why.
-- **Not built yet:** the second listener and Funnel, the GitHub webhook adapter (the HMAC proof), and a longer retention of the
-  events of a source than the 30 days every event has (and at most 5,000 of them).
+- **GitHub webhook.** `POST /v1/event-sources` with `{"kind": "github", "repo": "owner/name"}` (and an optional `name`, `github-<owner>-<name>`
+  by default) makes the source of one repository's webhook: proof `github_hmac`, **no fields and no kind of its own** (its events are
+  `github.push` and `github.pull_request`, tainted, written by strangers), and **never trusted** (the code, the `PATCH` route and the
+  table all refuse it). One webhook source per repository, whatever the case of its name. The answer has the `address`, the
+  `public_url` (the door's address when it is published, else `null`) and the `secret`, shown once: you paste the address as the
+  **Payload URL**, the secret as the **Secret** and `application/json` as the **Content type** in the repository's webhook settings
+  (Settings, Webhooks), and choose **Pushes** and **Pull requests** (the poll of that repository is off while the webhook exists, so
+  an event left out there is lost). GitHub signs the **raw body** with the secret: `X-Hub-Signature-256: sha256=<hex>`, which is checked
+  in constant time, before anything is read from the body, in either case of hex. A wrong, missing or malformed signature is `401 Not
+  authorized.` with no detail and counts against **that source** like a wrong bearer secret (10 in a minute: that source answers 429 for
+  a minute); what you sent is asked after who you are (415 for another content type, 422, 400). Then `X-GitHub-Event`:
+  `ping` is `200 {"pong": true}` (a ping of another repository is a 422) and stores nothing; `push` is `github.push` and
+  `pull_request` is `github.pull_request`, **with the same fields, title and text as the poll's**, so one automation works with either
+  (only `source` differs: `github-webhook:<owner/name>` against `github`); a pull request is told when it is `opened`, `closed` or
+  merged (`closed` with `merged`), and a push of a branch is told, but not a tag, a deleted branch, a new branch with nothing new,
+  nor an action the poll would not report (`edited`, `synchronize`, `labeled`, `reopened`…): any of these, and any other event
+  (`issues`, `star`, `workflow_run`…), is `202 {"ignored": "<event>"}` with nothing stored. **The delivery id (`X-GitHub-Delivery`) is the
+  key**: GitHub's *Redeliver* is `200 {"duplicate": true}` and starts nothing, a new delivery of the same push is a new event. A
+  delivery for another repository than the source's is a `422` and stores nothing (the case of the name does not matter). `202 {"id"}`
+  is sent once the event is stored and its runs planned, before anything runs (the loops start them): well within GitHub's 10 seconds.
+  **The body is limited to 64 KB: a push big enough to pass that (GitHub sends up to 25 MB, about fifty commits with their file lists
+  do) is a `413`, shown red in the webhook's deliveries, and is not told to Clara.** Nothing can be fired at a GitHub source from here
+  (`POST /v1/event-sources/{source}/fire` and `/sources fire` answer 422). Revoking it deletes its events no run waits for and its
+  secret, and **the poll of the repository resumes** from that moment (what the webhook had told is not found again).
+- **The events door** (`CLARA_EVENTS`, off by default). With `CLARA_EVENTS=on`, Clara starts a **second listener**, on `127.0.0.1`
+  only (`CLARA_EVENTS_LOCAL_PORT`, 8766; a start-up error that names the port when it is taken or equals `CLARA_PORT`), in the same
+  process, event loop and `Services` as the main one, once the main server is up and until it stops (the stop is the same drain: the
+  route answers 503 while Clara stops). It serves `POST /v1/events/<source id>` and **nothing else**: no other `/v1` route, no web
+  site, no console, no `/health`, no docs, no OpenAPI file, no static file; every other path is a bare `404` and every other method on
+  the route a bare `405` (`Allow: POST`), with no body and no header that says what answers (no `Server`, no cookie, no JSON), whether
+  or not the id exists. It reads no token and no cookie (an API token sent to it is a wrong secret) and **no forwarded header**; the route
+  is the one of the main listener, the same code, answers and limits: 64 KB a body (refused from the declared length before a byte is
+  read, otherwise by counting), 60 events a minute, 1,000 waiting, 5,000 kept, and wrong proofs counted **per source id**. It writes no
+  traffic-log line. Its own limits: 64 connections or requests at once (a 503 beyond), idle connections kept 2 seconds, request headers
+  of 16 KB, no access log, no `Server` header, no WebSocket, and **a deadline of 15 seconds per request** from the connection (or the
+  last answer) to its answer, after which the connection is dropped, so a client that sends nothing, or a byte at a time, cannot hold
+  it. With `CLARA_TAILSCALE=serve`, **Clara publishes it herself**: `tailscale funnel --bg --https=<CLARA_EVENTS_PORT>
+  http://127.0.0.1:<CLARA_EVENTS_LOCAL_PORT>` once the listener is up (`CLARA_EVENTS_PORT`: 8443 or 10000, never the port
+  `tailscale serve` uses for Clara), checks it every minute with the rest, and on stop removes **only that mapping**
+  (`tailscale funnel --https=<port> off`: never `tailscale funnel reset`, never another port's mapping). It needs `funnel` in the
+  `nodeAttrs` of your tailnet policy and HTTPS enabled; when Tailscale refuses she raises the `events` alert and the listener stays
+  on `127.0.0.1` only (nothing reaches it from outside). With `CLARA_TAILSCALE=off` nothing is published, and the status says so.
+  **The Funnel guard changes, it does not go** (section 12, « Network »). `GET /v1/admin/status` has `events_door`: `on`, `local_port`,
+  `public_port`, `listening`, `published`, `url` (the public address, when published) and `problem` (why it is not); `/status` and
+  `clara doctor` say the same. Who may reach it: whoever has a source's address **and** its secret or signature; an address nobody
+  was given costs nothing. The header Funnel sends for the caller's address has not been checked on a real Funnel, which is why
+  nothing here counts per address.
+- **Not built yet:** a longer retention of the events of a source than the 30 days every event has (and at most 5,000 of them), and a
+  check of the door on a real Funnel (`docs/OPERATIONS.md`, « The events door »).
 
 ### Feeds: what a channel, a blog or a podcast publishes
 
@@ -1468,13 +1518,22 @@ The threat model is in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md); what is sto
 - **Network:** the server listens on 127.0.0.1 only (`CLARA_PORT`, 8765). `tailscale serve` publishes it over HTTPS to
   your tailnet (`CLARA_TAILSCALE_PORT`: 443, 8443 or 10000). Clara refuses to start if Funnel is on for that port, and
   if Funnel appears while she runs, she turns it off and raises the `funnel` alert. If serving stops for 2 minutes:
-  the `tailscale` alert.
+  the `tailscale` alert. **The app is never public; one door for events is, when you turn it on** (`CLARA_EVENTS=on`, off by
+  default, port 8443 or 10000 only): a second listener on 127.0.0.1 (`CLARA_EVENTS_LOCAL_PORT`) that serves `POST /v1/events/<source id>`
+  and nothing else (*Event sources*, « The events door »). With it on, **Funnel is allowed on exactly one port, `CLARA_EVENTS_PORT`, and
+  only while that port maps `/` to the door and to nothing else**; Clara refuses to start, or turns it off and raises the `funnel`
+  alert, for Funnel on her own port, on the events port mapped anywhere else (or with more mounts), and on any other port that maps to
+  her main listener or to the door; a Funnel on a port that maps to something that is not Clara is not hers and is left alone. Clara
+  makes the events mapping herself and removes only that one (`tailscale funnel --https=<events port> off`), never `funnel reset`,
+  never another port's mapping. With `CLARA_EVENTS=off` none of this exists: the guard is the one in the sentences above.
 - **Tokens:** one per client, `clara_<id>_<secret>` (256 random bits), stored as a hash, compared in constant time,
   revocable at once without a restart, with a last-used time. Every route needs one except `GET /health` (which
   answers `{"status": "ok"}` and nothing else), the web sign-in, Google's redirect (which only forwards to the
   signed-in site) and `POST /v1/events/<source id>`, which an event source proves with its own secret (see *Event sources*).
 - **Failure limiter:** 10 wrong tokens in a minute block the address for 5 minutes; forwarded addresses are trusted
-  only from 127.0.0.1 (tailscale serve).
+  only from 127.0.0.1 (tailscale serve). **The events door never counts per address and believes no forwarded header**: wrong
+  secrets and signatures are counted per source id (10 in a minute: that source answers 429 for a minute), whatever address they
+  say they come from.
 - **Web:** cookie plus `X-Clara-Web` header (another site cannot post to Clara); no CORS; strict CSP; `nosniff`,
   `no-referrer`, `DENY` framing, same-origin opener, no camera, microphone or location.
 - **Request sizes:** 16 MB by default; chat 48 MB, document extraction 41 MB, client tool results 64 MB, project
@@ -1545,7 +1604,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   | `auriga` | Auriga's sign-in service refused the refresh token and no school password is kept, or signing in again with it failed (the text says why, in fixed words): sign in to Auriga again; over once Auriga accepts a call |
   | `reader` | The quarantined reader's model could not be used (a wrong model, a refused key, a limit, no answer): pages, mail and files from outside are not given to the chat until it works; check `reader_model` (the text says which status); over with the next good read |
   | `update` | An update was not installed, or was rolled back |
-  | `funnel` | Funnel was found on and turned off |
+  | `funnel` | Funnel was found on where it must not be (Clara's own port; with the events door on, any port but the door's, or the door's port mapped to anything else) and turned off |
+  | `events` | The events door cannot be public or is not up: Tailscale would not publish it (add `funnel` to the `nodeAttrs` of your tailnet policy, and enable HTTPS), or the listener stopped or did not start (the log says why); it stays on 127.0.0.1 only, so nothing reaches Clara; over once it is published |
   | `tailscale` | Tailscale has not been serving Clara for 2 minutes |
 
 - **Traffic log:** one line per request with metadata only (time, method, route with ids replaced, status, duration,
@@ -1562,10 +1622,10 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   `logs/debug-content.jsonl` (0600) for one hour, then switches itself off and deletes the file.
 - **`clara doctor`:** settings, permissions, the database, the secrets key, Podman (rootless, cgroups, subuid/subgid,
   the image, isolation: a test container started with the options of a real run; `--pull` pulls the image first, when its
-  name is a registry's), Funnel, Tailscale, each Ollama host, SearXNG, restic, the disk.
+  name is a registry's), Funnel (with the events door on: that only its port may be on), Tailscale, each Ollama host, SearXNG, restic, the disk.
 - **Status:** `/status`, the Admin page and `GET /v1/admin/status`: version and release, state, uptime, turns, models,
-  providers, storage, scripts, vault, Tailscale, backups, event listeners, clients seen, alerts, debug, today's usage,
-  pending approvals.
+  providers, storage, scripts, vault, Tailscale, the events door (`events_door`), backups, event listeners, clients seen, alerts,
+  debug, today's usage, pending approvals.
 - **Retention:** events are deleted once every active listener has read them (and they are a day old), at the latest
   after `CLARA_EVENTS_MAX_DAYS` (90); a token silent for 30 days stops holding them back. Usage rows and audit lines:
   `CLARA_RETENTION_DAYS` (400). Finished approval requests: 30 days. Incognito conversations: 24 h idle. The
@@ -1666,6 +1726,9 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_TAILSCALE` | serve | `serve` or `off` |
 | `CLARA_TAILSCALE_PORT` | 443 | 443, 8443 or 10000 |
 | `CLARA_TAILSCALE_BIN` | tailscale | The tailscale binary |
+| `CLARA_EVENTS` | off | `off` or `on`: `on` starts the events door, a second listener for events from the internet (*Event sources*), and publishes it with Tailscale Funnel when `CLARA_TAILSCALE` is `serve` (nothing is published with `off` there; the listener then answers on 127.0.0.1 only) |
+| `CLARA_EVENTS_PORT` | 8443 | The public port of Funnel for the events door: 8443 or 10000, and not `CLARA_TAILSCALE_PORT` |
+| `CLARA_EVENTS_LOCAL_PORT` | 8766 | Where the events listener answers, on 127.0.0.1; not `CLARA_PORT` |
 | `CLARA_TRAFFIC_LOG_DAYS` | 7 | Days of traffic log (0: none) |
 | `CLARA_BACKUP_DIR` | `<data>/backups` | Local backups |
 | `CLARA_BACKUP_TIME` | 03:30 | Nightly backup time (your zone) |
@@ -1804,13 +1867,13 @@ keep-alive every 15 s.
 | `GET /v1/events/stream` | Live events (after your cursor) |
 | `GET /v1/events` | Events you missed |
 | `POST /v1/events/ack` | Move your cursor |
-| `POST /v1/events/{source_id}` | An event from a program: **the one route with no API token**; it proves itself with the secret of that event source (`Authorization: Bearer <secret>`) and nothing else opens it. 202 `{"id"}`, 200 `{"duplicate": true}`; 404 for an address nobody was given, 401, 413 (64 KB), 415, 400, 422, 429 (see *Event sources*) |
-| `GET /v1/event-sources` | The event sources (never their secrets) |
-| `POST /v1/event-sources` | Make one: `name`, `fields` (`{"state": "text", "open": "bool"}`), `trusted`; 201 with `source`, its `address` and its `secret`, shown once (scope `all` only) |
+| `POST /v1/events/{source_id}` | An event from a program: **the one route with no API token**, also the only one the events door serves; it proves itself with the secret of that event source (`Authorization: Bearer <secret>`), or for a GitHub source with GitHub's signature (`X-Hub-Signature-256`), and nothing else opens it. 202 `{"id"}`, 200 `{"duplicate": true}` (a GitHub `ping`: 200 `{"pong": true}`; an event it ignores: 202 `{"ignored"}`); 404 for an address nobody was given, 401, 413 (64 KB), 415, 400, 422, 429 (see *Event sources*) |
+| `GET /v1/event-sources` | The event sources (never their secrets), each with its `public_url` (on the events door, when it is published) |
+| `POST /v1/event-sources` | Make one: `name`, `fields` (`{"state": "text", "open": "bool"}`), `trusted`; or `kind: "github"` and `repo` (`owner/name`) for a repository's webhook (no fields, never trusted); 201 with `source`, its `address`, its `public_url` and its `secret`, shown once (scope `all` only) |
 | `PATCH /v1/event-sources/{source}` | `trusted` is the only thing that changes (scope `all` only; refused for a source that does not prove itself with a bearer secret); `{source}` is the id, the name or the kind |
 | `DELETE /v1/event-sources/{source}` | Revoke it: the record, the secret and the events no run waits for (scope `all` only) |
-| `POST /v1/event-sources/{source}/rotate` | A new secret, shown once; the old one stops at once (scope `all` only) |
-| `POST /v1/event-sources/{source}/fire` | An event from this machine, with your API token and no secret; the same body, answers and limits as the public route, stored and handled the same way. For a **trusted** source only a token with scope `all` (403 otherwise) |
+| `POST /v1/event-sources/{source}/rotate` | A new secret (`source`, `address`, `public_url`, `secret`), shown once; the old one stops at once (scope `all` only) |
+| `POST /v1/event-sources/{source}/fire` | An event from this machine, with your API token and no secret; the same body, answers and limits as the public route, stored and handled the same way. For a **trusted** source only a token with scope `all` (403 otherwise); a GitHub source takes none (422) |
 | `GET /v1/event-sources/{source}/events` | The latest events of a source (`limit`) |
 | `POST /v1/skills/preview` | `skill_md` (a pasted SKILL.md) or `zip_base64`, and `name` when the frontmatter has none: what would be added, stored nowhere: `name`, `description`, `argument_hint`, `packs` (`id`, `label`, `known`), `disable_model_invocation`, `ignored`, `files` (`path`, `size`, `kind`, `note`, `text` for a text file), `size`, `warnings`, `errors`, `can_add`, `skill_md_text`, `would_replace`, `skills_held`, `skills_max`; a problem is in `errors` with a 200, not an HTTP error (scope `all` only) |
 | `POST /v1/skills` | The same body and `scope` (`"global"`, or `{"projects": [ids]}`) and `replace`: add the skill, read again; 201 with the skill, `replaced`, `warnings` and `ignored`, or 200 for a replace; 409 for a name that is taken without `replace` and for the 31st skill; 404 for an unknown project; 422 for what the preview lists in `errors` (scope `all` only) |
@@ -1949,7 +2012,7 @@ The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
 | Booked calls | 50 waiting; a date from one minute to 366 days ahead; arguments 64,000 characters, and the whole request (the call and its arguments) at most 24,000, or the call is not booked; kept 30 days once ended |
 | Tasks | 1,000 in all, 200 open, 50 sub-tasks each, 10 reminders each |
 | Automations | 150; a name of 100 characters; a prompt of 20,000 characters; documents 150,000 characters; a trigger of 40 nodes in 6 levels; a filter of 10 fields with 5 conditions each, a pattern of 500 characters; 20 runs an hour each by default (1 to 600); 500 runs waiting each for events, 31 for instants; 2 automations running at once; events kept 30 days |
-| Event sources | 50; a name of 30 characters; 12 fields; a body of 64 KB; a text field 2,000 characters, a title 300, an actor 200, a key 200; an `occurred_at` at most a day ahead; 60 events a minute, 1,000 waiting for a run and 5,000 kept, for each source; 10 wrong secrets in a minute block that source for a minute |
+| Event sources | 50; a name of 30 characters; 12 fields; a body of 64 KB (a GitHub push above it is a 413); a text field 2,000 characters, a title 300, an actor 200, a key 200; an `occurred_at` at most a day ahead; 60 events a minute, 1,000 waiting for a run and 5,000 kept, for each source; 10 wrong secrets or signatures in a minute block that source for a minute. The events door: 64 connections or requests at once, a request deadline of 15 seconds, headers of 16 KB, idle connections kept 2 seconds |
 | Skills | 30; 1 MB in all each (`SKILL.md` and the other files, counted as unpacked), `SKILL.md` 100 KB, 50 files, a path of 200 characters, a description of 1,024 characters and an argument hint of 200, a name of 40 characters; an archive of 1.4 MB and 1,000 entries; a skill reserved for 50 projects at most; a command expands to 120,000 bytes at most |
 | Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on an automation |
 | Approval requests waiting per conversation | 10 |

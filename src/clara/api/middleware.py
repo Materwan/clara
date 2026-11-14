@@ -4,7 +4,8 @@
 needs a token, except signing the browser in (which checks the token itself) and the page Google redirects to after a
 Drive consent (it only shows a page that finishes the flow from the signed-in browser). One more path is let through, and only for
 POST: `/v1/events/<source id>` (an id is `k` and 32 random hex characters), whose handler checks the secret of that event source
-itself (api/event_sources.py); a secret of a source works nowhere else, and no API token works there. `/health` answers
+itself (api/event_sources.py); a secret of a source works nowhere else, and no API token works there. The events door (api/door.py, a second listener that a public port may
+reach) is another application with none of this: it serves that one route and nothing else. `/health` answers
 `{"status": "ok"}` to anyone and nothing more. `/docs` and the OpenAPI file exist only with CLARA_DEBUG.
 """
 

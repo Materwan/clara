@@ -9,6 +9,7 @@ event tells the web site, which drops its alert badge, and the Discord bot, whic
     late:<what>          a reminder or schedule ran more than 5 min late
     backup               a backup (local or remote) failed             discord                the Discord bot is gone
     tailscale            Tailscale is not serving Clara                update                 an update rolled back
+    funnel               Funnel was on where it must not be            events                 the events door is down or not public
 """
 
 from __future__ import annotations

@@ -82,59 +82,26 @@ What the current design already sets:
 - A new tool needs a class, a level and a target in the gate, is named in FEATURES.md (the docs test checks it), and
   the tool count line is updated.
 
-## New kinds of event: external events, school, feeds
+## New kinds of event: what is left
 
-The owner asked for automations that start from more than mail and GitHub. This item adds **event sources** next to the mail and GitHub
-watchers (`automations/events.py`: a source hands `SourceEvent`s to `Automations.ingest`, an event is stored once by `(source, key)`, a kind is
-declared with its fields, its read tools and its notification text). The new kinds plug into the automations (built: `EventKind` in `automations/events.py`): their
-filters are regular expressions and they take part in the tree of AND and OR. Every one of them is outside content: an event of a source
-is tainted, and the trigger counts (`EventKind.tainted`, built).
+The owner asked for automations that start from more than mail and GitHub (event sources, the school watcher, feeds, a second port for
+external events and GitHub's webhook). All of it is built on the server (`docs/DECISIONS.md`: « Event sources », « School events »,
+« Feeds » and « The events door and the GitHub webhook »). What is left:
 
-What the owner decided:
-
-- **A. External events** (webhooks and local callers), made of three parts:
-  - **An event source proving itself with the HMAC-SHA256 of the body** (`X-Hub-Signature-256`), for GitHub: phase 2. The sources with a
-    bearer secret, their address and the local callers are built (`automations/sources.py`; the `proof` column is ready for it).
-  - **GitHub webhooks** (an adapter for the kinds that exist: `github.push`, `github.pull_request`, same fields, `ping` answered, the delivery
-    id as the key, an answer within 10 seconds, so the body is stored and `202` sent before anything runs).
-- **A second port for external events.** Clara starts a second listener on `127.0.0.1` (`CLARA_EVENTS_LOCAL_PORT`) that mounts
-  `POST /v1/events/<source id>` and nothing else: no `/v1` route, no web site, no console. `tailscale funnel` publishes only that
-  listener on a public port (`CLARA_EVENTS_PORT`: 8443 or 10000, never the port of `tailscale serve`). The main listener and `tailscale
-  serve` stay as they are, inside the tailnet. Off by default (`CLARA_EVENTS=off`): an installation that does not turn it on is
-  exactly as it is today.
-
-What I corrected or added to the owner's plan:
-
-- **Two phases, because only part of it needs the public port.** Phase 1 (no change of exposure): the event sources
-  with bearer secrets and the local callers (A, minus the public door), the school watcher and the feeds (C: the server side and the third tab of
-  the Automation page) are built. Phase 2: the second listener, Funnel, and the GitHub
-  webhook adapter. Of everything above, only a service of the Internet that calls Clara needs Phase 2.
-- **A webhook and the poll of the same repository would both produce an event** (their keys differ: the poll's is
-  `owner/repo#12:opened:<time>`, a delivery's is its id). When a repository has a GitHub webhook, its poll is turned off, or the two keys
-  are made equal; the polling stays for the repositories that have no webhook.
-- **Funnel is not on for the whole app, and the guard changes, it does not go.** Today Clara refuses to start while Funnel is on for her port and
-  turns it off if it appears. After: Funnel is allowed only on `CLARA_EVENTS_PORT` and only when it maps to the events listener; on any
-  other port, or mapped elsewhere, it is refused and turned off as today, with the `funnel` alert. `docs/NON-GOALS.md`
-  (« Public exposure ») and `docs/THREAT-MODEL.md` change to « the app is never public; one door for events is, when you turn it on ».
-- **The failure limiter cannot be trusted behind Funnel as it stands.** It counts failures per address from `X-Forwarded-For`, believed only
-  from `127.0.0.1`, and the threat model says nobody checked what `tailscale serve` sends. If Funnel does not pass the real address, a
-  scanner could get every caller blocked, the owner included. The public door counts failures **per source id**, never per address, and
-  has a body limit (64 KB), a rate per source, and a limit of events waiting. The header Funnel sends must be checked on a real
-  Funnel before this is relied on.
-- **A GitHub webhook needs a step of yours:** adding it in the repository's settings with its address and secret. The token Clara has
-  does not need the right to create one. Funnel itself needs `funnel` in your tailnet's ACL (`nodeAttrs`), which only you can set.
-
-What the current design already sets:
-
-- The mail watcher polls only while a listener exists and its first look starts from now; the GitHub poll is `CLARA_GITHUB_POLL_SECONDS`
-  (120); the due loops (`timekeeping/dueloop.py`) already fire what is due and sleep until the next. A dev server on the copy of the real data
-  would poll the real accounts: set the new intervals to `0` there, as for the others (`CLAUDE.md`).
-- `ClaraServer` (`app.py`) is one `uvicorn.Server`; a second listener is a second server on the same event loop and the same `Services`,
-  with its own middleware that accepts only event secrets.
-- New tables, kinds, routes, settings (`CLARA_EVENTS`,
-  `CLARA_EVENTS_PORT`, `CLARA_EVENTS_LOCAL_PORT`, `CLARA_FEEDS_POLL_SECONDS`), an alert and a console command must
-  be named in `FEATURES.md` (the docs test), with a migration whose number is taken at merge and a dated entry in `docs/DECISIONS.md` that
-  supersedes « poll not webhook » for the repositories that have a webhook.
+- **The web step for the webhook** (no server change is needed: `POST /v1/event-sources` takes `{"kind": "github", "repo": "owner/name"}`
+  and answers with `source`, `address`, `public_url` and `secret`; `GET /v1/event-sources` carries `repo` and `public_url`;
+  `GET /v1/connections` marks a repository `webhook`; `GET /v1/admin/status` has `events_door`): a GitHub choice on the **New source**
+  form of the Event sources tab (a repository, no fields, no Trusted box), the panel that shows the `public_url` and the secret once with
+  the three things to paste in GitHub (Payload URL, `application/json`, Secret; Pushes and Pull requests), a card that names the
+  repository and says the poll is off for it, a mark on the Connections page, and the door's line on the Admin page.
+- **The live check on a real Funnel is the owner's** (nothing here ran against a real Funnel, a real GitHub or a TCP port: the tests serve the door with the real uvicorn on a UNIX socket): `funnel` in the
+  `nodeAttrs` of the tailnet policy, `CLARA_EVENTS=on`, the webhook added in a repository, a `ping`, a push and a pull request,
+  a `curl` from outside that gets a bare 404 for everything else, and a look at the header Funnel sends for the caller's address
+  (`docs/OPERATIONS.md`, « The events door »). Until it is done the per-address behaviour of the limiter must not be relied on (the door
+  uses none).
+- **Not decided:** whether a bearer source should be public only when you say so (today every source is reachable on the door, as the route
+  is one); a bigger body limit for GitHub's pushes alone (64 KB today: a big push is a 413 and is lost); a longer retention of a source's
+  events than the 30 days every event has.
 
 ## Skills: what is left
 

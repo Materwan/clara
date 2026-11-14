@@ -15,7 +15,7 @@ This folder (`~/clara`) is the **development** copy of Clara: the git working tr
 | Data | `.dev/data` | `/var/lib/clara` |
 | Secret key | `.dev/key` | `/etc/clara/secret-key.cred` (a systemd credential) |
 | Process | `uv run clara-server`, started by hand | `clara.service`, user `clara`, started at boot |
-| Network | port 8800, `CLARA_TAILSCALE=off`, `CLARA_DISCORD_AUTOSTART=false` | port 8765, Tailscale on, the server starts the Discord bot |
+| Network | port 8800, `CLARA_TAILSCALE=off`, `CLARA_DISCORD_AUTOSTART=false` | port 8765, Tailscale on (Funnel only on port 8443 or 10000, and only when `CLARA_EVENTS=on`), the server starts the Discord bot |
 
 - Work here. Do not edit anything in `/opt/clara`, `/var/lib/clara` or `/etc/clara`, and do not stop, restart or reconfigure `clara.service` unless the owner asks. The tests build their own temporary data.
 - In the owner's shell `clara …` is an alias for **production** (top of [docs/OPERATIONS.md](docs/OPERATIONS.md)); `uv run clara …` in this folder is development.
@@ -77,7 +77,7 @@ CLARA_REQUIRE_SANDBOX=1 uv run pytest -q tests/test_workspace.py -k sees_no_netw
 
 **The workspace is a tree that sandboxed scripts write into, so the host treats it as untrusted.** `workspace/store.py` keeps it as a git repo with a commit per change; `workspace/paths.py` is the only door to files (no links, no `.git`, regular files only, reads capped at `CLARA_WORKSPACE_MAX_FILE`); every host git call passes `-c core.fsmonitor=false`. `workspace/sandbox.py` runs scripts in rootless Podman with an empty environment and no fallback to a plain process. Apply the same suspicion to anything else that reads files or archives a script or an attacker could shape (`knowledge/ingest.py` counts real bytes, not zip headers).
 
-**Processes.** systemd starts `clara-launcher` (`ops/launcher.py`), which runs the release the `current` link points to and handles updates and rollback through exit codes (75 = update ready, 76 = restart). `clara-server` binds 127.0.0.1 only (Tailscale serves it). The Discord bot (`src/clara_discord/`) is a separate process and an ordinary API client with its own token; the server can spawn it. Auth is enforced in `api/middleware.py` before routing, so a new `/v1` route is protected by default.
+**Processes.** systemd starts `clara-launcher` (`ops/launcher.py`), which runs the release the `current` link points to and handles updates and rollback through exit codes (75 = update ready, 76 = restart). `clara-server` binds 127.0.0.1 only (Tailscale serves it); with `CLARA_EVENTS=on` a second listener on 127.0.0.1 (`ops/door.py`, `api/door.py`) serves `POST /v1/events/<id>` and nothing else, and Funnel publishes only that one. The Discord bot (`src/clara_discord/`) is a separate process and an ordinary API client with its own token; the server can spawn it. Auth is enforced in `api/middleware.py` before routing, so a new `/v1` route is protected by default.
 
 ## Conventions that bite
 

@@ -1,7 +1,8 @@
 """A failure limiter: an address that sends too many wrong tokens is refused for a while, even with a right one.
 
 Every connection reaches the server from 127.0.0.1 (`tailscale serve` proxies it), so the address that counts is the
-one `tailscale serve` puts in `X-Forwarded-For`; that header is believed only from 127.0.0.1 / ::1.
+one `tailscale serve` puts in `X-Forwarded-For`; that header is believed only from 127.0.0.1 / ::1. (The events door, which Funnel
+publishes, does not use this limiter: wrong secrets there are counted per source id, and no forwarded header is read: api/door.py.)
 """
 
 from __future__ import annotations

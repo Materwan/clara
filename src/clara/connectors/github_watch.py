@@ -12,6 +12,11 @@ crash loses none and repeats none; the first look only notes where things stand 
 repository began to be waited for, which can be a poll earlier than the look), so a new automation never replays history; and with
 no automation waiting the place is forgotten. Each answer carries an etag, and "nothing changed" costs no rate limit.
 
+A repository that has a **webhook** (an event source of proof `github_hmac`, automations/sources.py) is not polled: GitHub tells Clara
+of its pull requests and pushes (connectors/github_events.py makes the same two events from the body it posts), and the two would be
+two events for one thing, their keys being different. Its place is forgotten while the webhook exists, and revoking the webhook
+sets the pull request place to the moment it is revoked, so polling resumes without finding again what the webhook delivered.
+
 Nothing here is Clara's own: the token is yours, so her commits and yours look the same and no event is `self_caused`. What
 keeps an automation from answering itself is the gate: an event's run is tainted, so every change it makes on GitHub asks you first.
 """
@@ -21,12 +26,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..automations.events import SourceEvent
 from ..automations.service import STALE_AFTER
 from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .github import PULLS_PAGE, GitHub, GitHubError
+from .github_events import pull_events, push_event
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -35,59 +41,7 @@ log = logging.getLogger(__name__)
 
 STREAMS = {"pulls": "github.pull_request", "branches": "github.push"}
 MAX_PAGES = 3  # pages of PULLS_PAGE pull requests looked at in one poll
-MAX_COMMITS = 10  # commits listed in a push event (its count is always given)
 SKEW = timedelta(seconds=10)  # GitHub's clock is not ours, and it rounds its times to the second
-SHORT = 300
-
-
-def short(value: Any, limit: int = SHORT) -> str:
-    """One line of someone else's text, cut."""
-    return " ".join(str(value or "").split())[:limit]
-
-
-def login_of(user: Any) -> str:
-    return str((user or {}).get("login") or "")
-
-
-def pull_events(repo: str, pr: dict, since: datetime) -> list[SourceEvent]:
-    """The events of one pull request at or after `since`: opened, and merged or closed. (A key names the moment, so seeing
-    the same one again, as the instant `since` itself is, is one event.)"""
-    moments = [("opened", pr.get("created_at"))]
-    if pr.get("merged_at"):
-        moments.append(("merged", pr["merged_at"]))
-    elif pr.get("closed_at"):
-        moments.append(("closed", pr["closed_at"]))
-    number, title, author = pr["number"], short(pr.get("title")), login_of(pr.get("user"))
-    head, base = pr.get("head") or {}, pr.get("base") or {}
-    found = []
-    for action, at in moments:
-        if not at or parse_iso(at) < since:
-            continue
-        found.append(
-            SourceEvent(
-                source="github",
-                kind="github.pull_request",
-                key=f"{repo}#{number}:{action}:{at}",
-                occurred_at=iso(parse_iso(at)),
-                actor=author,
-                title=f"{repo} #{number} {action}: {title}"[:SHORT],
-                data={
-                    "repo": repo,
-                    "number": number,
-                    "action": action,
-                    "title": title,
-                    "author": author,
-                    "branch": short(head.get("ref"), 200),
-                    "base": short(base.get("ref"), 200),
-                    "snippet": short(pr.get("body")),
-                    "draft": bool(pr.get("draft")),
-                    "from_fork": str((head.get("repo") or {}).get("full_name") or "").lower() != repo.lower(),
-                    "sha": str(head.get("sha") or ""),
-                    "url": str(pr.get("html_url") or ""),
-                },
-            )
-        )
-    return found
 
 
 class GitHubWatch:
@@ -122,7 +76,14 @@ class GitHubWatch:
         connectors = self.s.connectors
         client = connectors.github_client() if connectors is not None else None
         streams = [stream for stream, kind in STREAMS.items() if self.s.automations.wants(kind)]
-        repos = [resource.locator for resource in self.s.connections.resources("github_repo")] if client else []
+        # GitHub calls Clara for these: looking too would make every event twice
+        hooked = self.s.event_sources.webhook_repos()
+        repos = (
+            [r.locator for r in self.s.connections.resources("github_repo") if r.locator.lower() not in hooked]
+            if client
+            else []
+        )
+        # the place of a repository with a webhook is forgotten, so polling it again starts afresh
         self.keep(repos, streams)
         if client is None or not streams:
             return
@@ -267,34 +228,5 @@ class GitHubWatch:
             except GitHubError as error:
                 self._tolerate(error)
         forced = not created and status in ("diverged", "behind", "unknown")
-        last = commits[-1] if commits else {}
-        author = login_of(last.get("author")) or short((last.get("commit") or {}).get("author", {}).get("name"), 100)
-        message = short(((last.get("commit") or {}).get("message") or "").split("\n", 1)[0], 200)
-        return SourceEvent(
-            source="github",
-            kind="github.push",
-            key=f"{repo}:{branch}:{sha}",
-            occurred_at=checked,  # it happened after the last look; if that was long ago, it is a backlog
-            actor=author,
-            title=f"{repo} {branch}{' (new branch)' if created else ''}: {message}"[:SHORT],
-            data={
-                "repo": repo,
-                "branch": short(branch, 200),
-                "sha": sha,
-                "before": old or "",
-                "author": author,
-                "message": message,
-                "created": created,
-                "forced": forced,
-                "commit_count": len(commits),
-                "commits": [
-                    {
-                        "sha": str(item.get("sha") or "")[:7],
-                        "author": login_of(item.get("author")),
-                        "message": short(((item.get("commit") or {}).get("message") or "").split("\n", 1)[0], 200),
-                    }
-                    for item in commits[-MAX_COMMITS:]
-                ],
-                "url": str(last.get("html_url") or ""),
-            },
-        )
+        # it happened after the last look; if that was long ago, it is a backlog
+        return push_event(repo, branch, sha, old, created, forced, commits, checked)
