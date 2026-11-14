@@ -312,6 +312,14 @@ answers one more field, `lapses`.
   delivery for another repository is a 422, and the answer is sent once the event is stored, before anything runs. **A push over 64 KB is
   refused (413).** **A repository that has a webhook is not polled**; revoking the webhook resumes the poll from that moment.
   `GET /v1/connections` marks such a repository `webhook`. Schema version 37 adds the `repo` column and the check on `proof`.
+- **The web client makes GitHub webhooks and shows the door.** On the *Event sources* tab, **New source** asks first: *A program of mine* (as
+  before) or *A GitHub repository (webhook)*, one field, `owner/name`, checked on the spot and suggested from the Connections page. The
+  panel shown once gives the **Payload URL** (or a warning, in the warning colours, that the door is not public yet), the secret in its own
+  field only, and the steps for GitHub's *Add webhook* (content type `application/json`, **Pushes** and **Pull requests**), with the 64 KB
+  note. A GitHub source's card names the repository and its two kinds, shows its public URL and its signature proof, and has no Trusted
+  box and no test event (*Redeliver* in GitHub is the test); **Revoke** says that the poll of the repository resumes.
+- **A line for the events door at the top of the Event sources tab**, read-only: off, on and not public (with the reason), or public at its
+  address, with the steps to turn it on. The Connections page tags a repository that has a webhook « webhook: poll off ».
 - **Not tried on a real Funnel, a real GitHub or a TCP port** (stand-ins, and uvicorn on a UNIX socket in the tests): the live check is in
   `docs/OPERATIONS.md`, « The events door ».
 

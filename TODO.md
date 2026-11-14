@@ -88,12 +88,6 @@ The owner asked for automations that start from more than mail and GitHub (event
 external events and GitHub's webhook). All of it is built on the server (`docs/DECISIONS.md`: « Event sources », « School events »,
 « Feeds » and « The events door and the GitHub webhook »). What is left:
 
-- **The web step for the webhook** (no server change is needed: `POST /v1/event-sources` takes `{"kind": "github", "repo": "owner/name"}`
-  and answers with `source`, `address`, `public_url` and `secret`; `GET /v1/event-sources` carries `repo` and `public_url`;
-  `GET /v1/connections` marks a repository `webhook`; `GET /v1/admin/status` has `events_door`): a GitHub choice on the **New source**
-  form of the Event sources tab (a repository, no fields, no Trusted box), the panel that shows the `public_url` and the secret once with
-  the three things to paste in GitHub (Payload URL, `application/json`, Secret; Pushes and Pull requests), a card that names the
-  repository and says the poll is off for it, a mark on the Connections page, and the door's line on the Admin page.
 - **The live check on a real Funnel is the owner's** (nothing here ran against a real Funnel, a real GitHub or a TCP port: the tests serve the door with the real uvicorn on a UNIX socket): `funnel` in the
   `nodeAttrs` of the tailnet policy, `CLARA_EVENTS=on`, the webhook added in a repository, a `ping`, a push and a pull request,
   a `curl` from outside that gets a bare 404 for everything else, and a look at the header Funnel sends for the caller's address

@@ -3,7 +3,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MAX_FIELDS, addressUrl, ago, checkFields, checkName, curlExample, describeFields, fireBody, showData, slugOf, sourceBody } from '../src/lib/sources.ts';
+import {
+  GITHUB_KINDS, MAX_FIELDS, REPO, WEBHOOK_NOTES, addressUrl, ago, checkFields, checkName, checkRepo, curlExample, describeFields, doorLine, fireBody,
+  githubBody, proofText, showData, slugOf, sourceBody, webhookSteps,
+} from '../src/lib/sources.ts';
 
 const row = (name, type = 'text') => ({ name, type });
 
@@ -73,4 +76,73 @@ test('the words of a card: its fields, the data of an event, and how long ago', 
   assert.equal(ago('2026-11-13T11:55:00Z', now), '5 min ago');
   assert.equal(ago('2026-11-13T09:00:00Z', now), '3 h ago');
   assert.equal(ago('2026-11-10T12:00:00Z', now), '3 days ago');
+});
+
+test('a repository is checked with the server pattern, trimmed, and refused when its webhook exists (without case)', () => {
+  assert.equal(checkRepo('Materwan/clara.git-2_x', []), '');
+  assert.equal(checkRepo('  owner/name  ', []), ''); // the server trims it too
+  assert.match(checkRepo('', []), /owner\/name/);
+  for (const bad of ['owner', 'owner/', '/name', 'a/b/c', 'own er/name', 'owner/na me', 'owner/name\nx', 'ow$ner/name', `${'a'.repeat(101)}/b`, `a/${'b'.repeat(101)}`, 'https://github.com/o/n']) {
+    assert.match(checkRepo(bad, []), /letters, digits/, bad);
+  }
+  assert.equal(checkRepo(`${'a'.repeat(100)}/${'b'.repeat(100)}`, []), '');
+  assert.match(checkRepo('Owner/Name', ['owner/name']), /webhook source already/);
+  assert.equal(checkRepo('owner/other', ['owner/name']), '');
+  assert.ok(REPO.test('a/b') && !REPO.test('a b/c'));
+});
+
+test('the body of a GitHub source is its kind and its repository: no name, no fields, no trusted flag', () => {
+  assert.deepEqual(githubBody(' owner/name '), { kind: 'github', repo: 'owner/name' });
+  const body = githubBody('owner/name');
+  for (const key of ['name', 'fields', 'trusted']) assert.ok(!(key in body), key);
+  assert.deepEqual(GITHUB_KINDS, ['github.push', 'github.pull_request']);
+});
+
+test('the steps for GitHub name the repository and the three things to paste, and hold no address and no secret', () => {
+  const steps = webhookSteps('owner/name');
+  const text = steps.map((step) => `${step.label} ${step.text}`).join('\n');
+  assert.deepEqual(steps.map((step) => step.label), ['Open', 'Payload URL', 'Content type', 'Secret', 'Which events', 'Active']);
+  assert.match(text, /owner\/name on GitHub, then Settings → Webhooks → Add webhook/);
+  assert.match(text, /application\/json/);
+  assert.match(text, /Let me select individual events/);
+  assert.match(text, /Pushes/);
+  assert.match(text, /Pull requests/);
+  // the secret is in its own field of the panel and nowhere else: the builder is never given one, and points at the field instead
+  assert.ok(!/evt_/.test(text) && !/https?:/.test(text));
+  assert.deepEqual(webhookSteps('owner/name', false, 'evt_the-real-secret'), steps); // an extra argument is ignored, never printed
+  assert.ok(!/evt_|https?:/.test(WEBHOOK_NOTES.join('\n')));
+  assert.match(WEBHOOK_NOTES[0], /64 KB/);
+  assert.match(WEBHOOK_NOTES[0], /poll of this repository is off/);
+  assert.match(WEBHOOK_NOTES[1], /ping/);
+});
+
+test('a new secret for a webhook that exists says only where to paste it', () => {
+  const steps = webhookSteps('owner/name', true);
+  assert.deepEqual(steps.map((step) => step.label), ['Open', 'Secret']);
+  assert.ok(!steps.some((step) => /Add webhook|Payload URL/.test(step.text)));
+  assert.match(steps[1].text, /Update webhook/);
+});
+
+test('a card says how a source proves itself in a line', () => {
+  assert.match(proofText('bearer'), /^Bearer secret/);
+  assert.match(proofText('github_hmac'), /X-Hub-Signature-256/);
+  assert.equal(proofText('other'), 'Proof: other.');
+});
+
+test('the events door line: off is muted, public is ok, on without a public address is a warning with the reason', () => {
+  const door = { on: true, listening: true, published: false, url: '', problem: '' };
+  assert.deepEqual(doorLine({ ...door, on: false, listening: false }), { tone: 'muted', text: 'Events door: off', howTo: true });
+  assert.deepEqual(doorLine({ ...door, published: true, url: 'https://clara.tail1234.ts.net:8443' }),
+    { tone: 'ok', text: 'Events door: public at https://clara.tail1234.ts.net:8443', howTo: false });
+  assert.deepEqual(doorLine({ ...door, problem: 'not published yet' }),
+    { tone: 'warn', text: 'Events door: on, answering on 127.0.0.1 only, not public — not published yet', howTo: true });
+  assert.equal(doorLine(door).text, 'Events door: on, answering on 127.0.0.1 only, not public'); // no reason: no dash left hanging
+  // a listener that is down does not answer on 127.0.0.1 either
+  const down = doorLine({ ...door, listening: false, problem: 'the events listener is not running' });
+  assert.equal(down.tone, 'warn');
+  assert.equal(down.text, 'Events door: on, not answering — the events listener is not running');
+});
+
+test('no door line for an answer that is not a door: an older server, or a status that could not be read', () => {
+  for (const nothing of [null, undefined, {}, { on: 'yes' }]) assert.equal(doorLine(nothing), null);
 });

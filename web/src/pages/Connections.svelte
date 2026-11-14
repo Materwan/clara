@@ -256,6 +256,7 @@
         {@render problem('repo')}
         {#each info.github.repos as item (item.id)}
           <div class="row"><span class="grow">{item.locator}{item.branch ? ` (branch ${item.branch})` : ''}
+            {#if item.webhook}<span class="tag" title="GitHub calls Clara for this repository, so it is not polled: see Event sources">webhook: poll off</span>{/if}
             {#each Object.entries<string>(item.watching ?? {}) as [kind, since] (kind)}<span class="muted small">· {WATCHED[kind] ?? kind} since {when(since)} </span>{/each}</span><button class="small danger" onclick={() => removeResource(item.id)}>Remove</button></div>
         {:else}<div class="muted small">No repository yet: Clara can reach none.</div>{/each}
       {/if}
