@@ -5,6 +5,9 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 ## Unreleased
 
+- **Skills on Discord: `/skill`.** One command with `name` (suggested as you type, from the skills of the conversation's project) and `arguments`
+  (optional): it sends `/<name> <arguments>` to the conversation of the thread you are in, as if you had typed it, and the answer comes in the
+  thread. The server expands it; a skill added later needs no new registration; typing `/name arguments` as plain text still works.
 - **One kind of automation.** A schedule (at a time) and a hook (when something happens) are one **automation**: one list, one API
   (`/v1/automations`, replacing `/v1/schedules*` and `/v1/triggers*`), one console command (`/automations`, replacing `/triggers`),
   one memory (`automation:<id>`) and one Discord forum. Schema version 32 converts the ones that exist, after the automatic backup:

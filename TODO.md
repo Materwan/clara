@@ -117,9 +117,9 @@ grants no right (`allowed-tools` is ignored) and its `packs` are for display. Wh
   read-only mount of the skill's folder, which is a change to the sandbox (only the workspace is mounted today), and no server code: the files are
   already stored, as bytes. Their gate class (that of `ws_run`, or its own) and whether a skill may ask for the network are not decided. They need
   their own row in `docs/THREAT-MODEL.md`.
-- **Which client after the web site:** the terminal is built (`clara-chat` sends `/name arguments` as typed, `/skills` lists them, Tab completes
-  them where `readline` exists; 2026-11-14). Discord is next (decided). The form is not: Discord's native commands have a limit and must be
-  registered. The names of their commands are already reserved.
+- **Which client after the web site:** both are built (2026-11-14). The terminal: `clara-chat` sends `/name arguments` as typed, `/skills` lists
+  them, Tab completes them where `readline` exists. Discord: one native command `/skill` with `name` (autocomplete) and `arguments`, the server
+  expanding (`docs/DECISIONS.md`, « Skills »).
 - **Schedules and hooks running a skill:** later; the owner left them out of this item.
 - **Not decided here:** whether a skill that Clara ran may be switched to « ask » in a mode of its own (it depends on phase 2's gate action).
 

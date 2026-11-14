@@ -1392,3 +1392,249 @@ async def test_a_forum_thread_found_alive_is_not_asked_about_again_for_a_while(b
     bot.alive[222] -= bot_module.THREAD_RECHECK + 1
     threads_are(bot, monkeypatch, alive=set())  # and when Discord says it is gone, the line goes
     assert await bot.sweep_notification() == 1 and 222 not in bot.alive and notification.messages == []
+
+
+# ----------------------------------------------------------------------
+# /skill: a skill is run from the thread, by the same path a typed message takes; the server expands it
+# ----------------------------------------------------------------------
+SKILLS = [{"name": "review", "description": "Review a pull request"}, {"name": "digest", "description": "Summarise the review queue"},
+          {"name": "recap", "description": "A recap of the week"}]
+
+
+def slash(channel, user_id: int = 42, guild_id: int | None = GUILD):
+    said: list[tuple[str, str | None, bool]] = []
+
+    async def send_message(content, ephemeral=False):
+        said.append(("answer", content, ephemeral))
+
+    async def defer(ephemeral=False):
+        said.append(("defer", None, ephemeral))
+
+    async def followup(content, ephemeral=False):
+        said.append(("followup", content, ephemeral))
+
+    return SimpleNamespace(user=SimpleNamespace(id=user_id), guild_id=guild_id, channel=channel,
+                           response=SimpleNamespace(send_message=send_message, defer=defer),
+                           followup=SimpleNamespace(send=followup)), said
+
+
+def skills_are(bot, monkeypatch, skills=SKILLS, project=None, failing: str = ""):
+    """Clara's answers for a conversation and its skills; returns the calls made."""
+    calls = []
+
+    async def call(method, path, **options):
+        calls.append((path, options.get("params")))
+        if failing:
+            raise ClaraError(503, failing)
+        return {"project": project} if path.startswith("/v1/conversations/") else {"skills": skills}
+
+    monkeypatch.setattr(bot.clara, "call", call)
+    return calls
+
+
+def asks_are_recorded(bot, monkeypatch) -> list:
+    asked = []
+
+    async def ask(channel, body, remember=True, mirrored=False):
+        asked.append((channel, body, remember, mirrored))
+
+    monkeypatch.setattr(bot, "ask", ask)
+    return asked
+
+
+def in_a_conversation_thread(bot, conversation: str = "c1") -> FakeThread:
+    bot.mirror.forums = {600: "main"}
+    bot.mirror.conversations = {555: conversation}
+    return FakeThread(555, 600)
+
+
+async def test_skill_sends_what_you_would_type_to_the_conversation_of_the_thread(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch, project=3)
+    asked = asks_are_recorded(bot, monkeypatch)
+    command = bot.tree.get_command("skill")
+    call, said = slash(thread)
+    await command.callback(call, name=" /Review ", arguments=" the PR #12 ")
+    body = {"message": "/review the PR #12", "attachments": [], "timezone": "Europe/Paris", "conversation": "c1"}
+    assert asked == [(thread, body, False, True)] and "ref" not in body  # the mirror writes the question: nothing was typed
+    assert ("/v1/skills", {"project": 3}) in calls  # the project of the conversation decides which skills exist there
+    assert said == [("defer", None, True), ("followup", "Running `review`…", True)]
+    call, said = slash(thread)
+    await command.callback(call, name="recap")
+    assert asked[-1][1]["message"] == "/recap" and asked[-1][3] is True
+
+
+async def test_skill_in_the_thread_of_a_run_goes_to_that_run_and_the_answer_is_said_there(bot, monkeypatch):
+    bot.remember_thread(777, "c-run")
+    thread = FakeThread(777, GENERAL)
+    calls = skills_are(bot, monkeypatch)
+    asked = asks_are_recorded(bot, monkeypatch)
+    call, said = slash(thread)
+    await bot.tree.get_command("skill").callback(call, name="review", arguments=None)
+    assert asked[0][1]["conversation"] == "c-run" and asked[0][1]["message"] == "/review" and asked[0][2:] == (False, False)
+    assert ("/v1/skills", {"project": "none"}) in calls  # a conversation outside any project
+
+
+async def test_skill_works_only_where_a_message_to_clara_would(bot, monkeypatch):
+    in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch)
+    asked = asks_are_recorded(bot, monkeypatch)
+    places = [FakeChannel(GENERAL), FakeChannel(NOTIFICATION), None,  # not threads
+              FakeThread(999, 600),  # a thread of the forum that the server does not know as a conversation
+              FakeThread(555, NOTIFICATION),  # the same id under a channel that is not for chatting
+              FakeThread(888, GENERAL)]  # a thread of #general that is no run's
+    for place in places:
+        call, said = slash(place)
+        await bot.tree.get_command("skill").callback(call, name="review")
+        assert len(said) == 1 and said[0][0] == "answer" and said[0][2] is True and "thread" in said[0][1], place
+    assert asked == [] and calls == []
+
+
+async def test_skill_is_for_you_in_your_server_only_like_the_other_commands(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch)
+    asked = asks_are_recorded(bot, monkeypatch)
+    command = bot.tree.get_command("skill")
+    contexts = command.allowed_contexts
+    assert contexts.guild and not contexts.dm_channel and not contexts.private_channel
+    for who, where in ((7, GUILD), (42, GUILD + 1), (42, None)):
+        call, said = slash(thread, who, where)
+        await command.callback(call, name="review")
+        assert said == [("answer", "Not for you.", True)]
+    assert asked == [] and calls == []
+
+
+async def test_skill_that_does_not_exist_or_cannot_be_checked_is_not_sent(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    asked = asks_are_recorded(bot, monkeypatch)
+    command = bot.tree.get_command("skill")
+    skills_are(bot, monkeypatch)
+    call, said = slash(thread)
+    await command.callback(call, name="reveiw", arguments="x")  # a typo: not a plain message for the model
+    assert said[-1] == ("followup", "No skill called `reveiw` in this conversation.", True)
+    skills_are(bot, monkeypatch, failing="down")
+    call, said = slash(thread)
+    await command.callback(call, name="review")
+    assert said[-1] == ("followup", "⚠️ down", True) and asked == []
+
+
+async def test_skill_in_an_archived_thread_follows_what_a_typed_message_does(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    thread.archived = True
+    skills_are(bot, monkeypatch)
+    asked = asks_are_recorded(bot, monkeypatch)
+    reopened = []
+
+    async def reopen(conversation, found):
+        reopened.append(conversation)
+        return len(reopened) > 1  # refused the first time (the web site archived it), allowed the second
+
+    monkeypatch.setattr(bot, "reopen", reopen)
+    call, said = slash(thread)
+    await bot.tree.get_command("skill").callback(call, name="review")
+    assert asked == [] and said[-1][1] == "Not sent."
+    call, said = slash(thread)
+    await bot.tree.get_command("skill").callback(call, name="review")
+    assert reopened == ["c1", "c1"] and len(asked) == 1
+
+
+def names_of(bot):
+    return bot.tree.get_command("skill")._params["name"].autocomplete
+
+
+async def test_the_names_are_suggested_by_prefix_then_by_words_and_are_cut_to_what_discord_allows(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    skills = [*SKILLS, {"name": "long", "description": "x" * 200}, {"name": "lines", "description": "two\nlines\t of text"}]
+    skills_are(bot, monkeypatch, skills)
+    suggest = names_of(bot)
+    call, _ = slash(thread)
+    found = await suggest(call, "re")  # review and recap start with it; digest has it in its description only
+    assert [(c.name, c.value) for c in found] == [("review — Review a pull request", "review"), ("recap — A recap of the week", "recap"),
+                                                  ("digest — Summarise the review queue", "digest")]
+    assert [c.value for c in await suggest(call, "/LIN")] == ["lines"]  # a typed slash and capitals do not matter
+    assert [c.value for c in await suggest(call, "pull")] == ["review"]  # a word of the description
+    assert (await suggest(call, "lines"))[0].name == "lines — two lines of text"  # no line break in a choice
+    assert len((await suggest(call, "long"))[0].name) == 100
+    assert await suggest(call, "nothing like it") == []
+    assert len(await suggest(call, "")) == 5
+
+
+async def test_at_most_25_names_are_suggested(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    skills_are(bot, monkeypatch, [{"name": f"skill-{n:02}", "description": "d"} for n in range(40)])
+    call, _ = slash(thread)
+    found = await names_of(bot)(call, "")
+    assert len(found) == 25 and found[0].value == "skill-00"
+
+
+async def test_the_skills_are_asked_once_for_many_keys_and_again_after_a_while(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch)
+    call, _ = slash(thread)
+    for typed in ("r", "re", "rev"):
+        await names_of(bot)(call, typed)
+    assert calls == [("/v1/conversations/c1", None), ("/v1/skills", {"project": "none"})]  # not one request per key
+    monkeypatch.setattr(bot_module, "SKILLS_KEPT", 0.0)
+    await names_of(bot)(call, "rev")
+    assert len(calls) == 4  # a skill added since shows up
+
+
+async def test_a_failure_or_a_slow_answer_suggests_nothing_and_raises_nothing(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    call, _ = slash(thread)
+    skills_are(bot, monkeypatch, failing="down")
+    assert await names_of(bot)(call, "re") == []
+
+    async def slow(method, path, **options):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(bot.clara, "call", slow)
+    monkeypatch.setattr(bot_module, "AUTOCOMPLETE_WAIT", 0.05)  # Discord drops an answer that comes after 3 seconds
+    assert await names_of(bot)(call, "re") == []
+
+    async def odd(method, path, **options):
+        return {}  # an answer that is not what the API says
+
+    monkeypatch.setattr(bot.clara, "call", odd)
+    assert await names_of(bot)(call, "re") == []
+
+
+async def test_nothing_is_suggested_to_a_stranger_or_outside_a_conversation(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch)
+    for call, _ in (slash(thread, 7), slash(thread, 42, GUILD + 1), slash(FakeChannel(GENERAL)), slash(None)):
+        assert await names_of(bot)(call, "re") == []
+    assert calls == []
+
+
+async def test_the_command_is_part_of_the_one_registration_made_at_start_and_a_new_skill_needs_none(bot):
+    sent = {command.name: command.to_dict(bot.tree) for command in bot.tree.get_commands()}
+    options = {option["name"]: option for option in sent["skill"]["options"]}
+    assert options["name"]["required"] and options["name"]["autocomplete"]  # the names are read live, never registered
+    assert not options["arguments"].get("required") and not options["arguments"].get("autocomplete")
+    assert all(len(command["description"]) <= 100 for command in sent.values())
+
+
+async def test_a_message_that_starts_with_a_slash_is_forwarded_unchanged_for_the_server_to_expand(bot, monkeypatch):
+    asked = asks_are_recorded(bot, monkeypatch)
+    thread = in_a_conversation_thread(bot)
+    bot.remember_thread(777, "c-run")
+    for channel in (thread, FakeThread(777, GENERAL)):
+        message = SimpleNamespace(author=SimpleNamespace(id=42, bot=False), channel=channel, attachments=[], id=31,
+                                  content="/review the PR\nfor tomorrow")
+        await bot.on_message(message)
+    assert [body["message"] for _, body, _, _ in asked] == ["/review the PR\nfor tomorrow"] * 2
+    assert [body["conversation"] for _, body, _, _ in asked] == ["c1", "c-run"]
+
+
+async def test_skill_arguments_over_the_cap_are_refused_before_anything_runs(bot, monkeypatch):
+    thread = in_a_conversation_thread(bot)
+    calls = skills_are(bot, monkeypatch)
+    asked = asks_are_recorded(bot, monkeypatch)
+    call, said = slash(thread)
+    await bot.tree.get_command("skill").callback(call, name="review", arguments="x" * (bot_module.ARGUMENTS_MAX + 1))
+    assert len(said) == 1 and said[0][0] == "answer" and said[0][2] is True and "at most" in said[0][1]
+    assert asked == [] and calls == []
+    call, said = slash(thread)
+    await bot.tree.get_command("skill").callback(call, name="review", arguments="x" * bot_module.ARGUMENTS_MAX)
+    assert len(asked) == 1

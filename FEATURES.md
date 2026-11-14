@@ -276,7 +276,7 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
   Discord (split into messages of 2,000 characters, up to 6,000 characters in all); otherwise in `#general`, where the
   conversation becomes the current one until you write `/new` or another such message arrives. It is never sent in a
   local-only or an incognito conversation. `#notification` stays for pings.
-- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation, the one of the thread you are in: list them, or switch one on or off), `/new` (a new conversation: a thread in the main forum), `/status`, `/tasks`, `/reminders`,
+- Slash commands (in your server, for you only): `/tools` (the special tools of the current conversation, the one of the thread you are in: list them, or switch one on or off), `/new` (a new conversation: a thread in the main forum), `/skill` (run a skill, below), `/status`, `/tasks`, `/reminders`,
   `/approvals`. The bot has no command for modes: its token (scope `safe`) cannot set one.
 - Sends a heartbeat every minute; with `CLARA_DISCORD_EXPECTED=true` (or `CLARA_DISCORD_AUTOSTART=true`) the server
   raises the `discord` alert after 5 minutes of silence. A bot that stopped by itself (exit code 0) is not started
@@ -428,6 +428,16 @@ MCP server or a plug-in (`docs/NON-GOALS.md` stays as it is): it adds no code an
   A command is drawn in the history **as you typed it** (`shown`, with the files as chips), not as the instructions it became; **Edit** and **Ask again**
   send it again as typed (`shown`, and its documents), never the instructions, which would go as plain text. The other kinds of `shown` (an automation's
   origin) are not drawn instead of the message.
+- **On Discord:** one native command, `/skill`, with two options: `name` (suggested as you type) and `arguments` (free text, optional). It works where a
+  message to Clara would be taken: in the thread of a conversation (a forum of the mirror) or of a run under `#general`, for you only, in your server; elsewhere it
+  answers, to you alone, that it is for a conversation's thread. It sends `/<name> <arguments>` to that thread's conversation as if you had typed it there (the
+  same request, so the history, the streaming and the answer are those of a typed message; the mirror writes `/name arguments` as the question, since
+  nothing was typed in the thread) and answers you, to you alone, « Running `name`… »; the server does the expansion, the bot expands nothing. A name that is
+  not a skill of the conversation is refused to you alone, not sent. The names come from `GET /v1/skills?project=<id>|none` for the conversation's project
+  (read from the conversation), kept 30 seconds so that a key is not a request: matches on the start of the name first, then on the name and the description,
+  at most 25, each `name — description` cut to Discord's 100 characters; an API failure, or an answer later than 2.5 seconds, suggests nothing. The command is
+  registered once, at start: **a skill added later needs no new registration**. Typing `/name arguments` as plain text still works, and is sent as typed. A
+  command has one static description for `arguments` (Discord's options cannot change per skill), so a skill's argument hint is not shown on Discord.
 - **Limits:** 30 skills; 1 MB in all per skill (`SKILL.md` and the other files, counted as unpacked); `SKILL.md` 100 KB; 50 files (SKILL.md
   included); a path of 200 characters; an archive of 1.4 MB and 1,000 entries; a request of 2 MB (an archive in base64 fits); a skill reserved
   for at most 50 projects. A skill reserved for projects that were all deleted exists nowhere but on the page, which can remove it.

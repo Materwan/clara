@@ -28,6 +28,9 @@ function: DMs are ignored.
   write in and remove a thread by itself.
 * An automation that delivers to Discord, or Clara herself (`discord_say`), puts a message in #general (`ask` event,
   stage `said`): its conversation becomes the current one, so what you write next goes to it.
+* `/skill name:<skill> arguments:<text>` sends `/<skill> <text>` to the conversation of the thread you are in, as if you had
+  typed it there: the server expands it (the bot expands nothing), and the answer comes in the thread. The names are
+  suggested as you type, read from Clara each time (a skill added later needs no `tree.sync()`).
 * A heartbeat every minute lets the server alert you when the bot is gone. It also tells the channels the bot found and
   the rights it lacks in them, for the Discord page of the web site, which can have a test message posted in each.
 
@@ -92,6 +95,10 @@ APPROVAL_CARD = re.compile(
 )  # a request's message in #approval, as show_approval writes it
 STARTED_LINK = re.compile(r"\n🔗 https://(?:[a-z]+\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)\s*$")
 THREAD_ARCHIVE_MINUTES = 1440
+SKILLS_KEPT = 30.0  # seconds the skills of a conversation are remembered: autocomplete asks at every key
+CHOICES_MAX, CHOICE_NAME_MAX = 25, 100  # Discord's limits on the choices of an autocomplete
+ARGUMENTS_MAX = 4000  # characters of what follows a skill name: more is refused before anything is sent
+AUTOCOMPLETE_WAIT = 2.5  # seconds: Discord drops an autocomplete that takes more than 3
 ICONS = {"reminder": "⏰", "notification": "🔔", "task": "📋", "schedule": "🗓", "alert": "⚠️", "update": "⬆️"}
 # event kind -> channel (approvals have their own path: buttons in #approval; replies to you go to #general)
 ROUTES = {
@@ -118,6 +125,20 @@ def due_text(task: dict, fallback_zone: str) -> str:
     except ZoneError:
         tz = zone(fallback_zone)
     return human(parse_iso(task["due_at"]), tz)
+
+
+def skill_choices(skills: list[dict], typed: str) -> list[app_commands.Choice[str]]:
+    """What `/skill` suggests: the names that start with what was typed, then those that have it in their name or their
+    description; `name — description` cut to what Discord shows (the description may hold line breaks)."""
+    typed = typed.strip().lstrip("/").lower()
+    first = [item for item in skills if item["name"].startswith(typed)]
+    then = [item for item in skills if item not in first and typed in f"{item['name']} {item['description']}".lower()]
+    return [
+        app_commands.Choice(
+            name=" ".join(f"{item['name']} — {item['description']}".split())[:CHOICE_NAME_MAX], value=item["name"]
+        )
+        for item in (first + then)[:CHOICES_MAX]
+    ]
 
 
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
@@ -195,6 +216,7 @@ class ClaraBot(discord.Client):
         ] = {}  # conversation -> its "recap written" event, held until that answer is posted
         self.listed = asyncio.Event()  # set once #alerts is listed at start: what the relay posts after is not backlog
         self.alive: dict[int, float] = {}  # forum thread id -> when Discord last said it exists (`thread_exists`)
+        self.skills_seen: dict[str, tuple[float, list[dict]]] = {}  # conversation -> (when read, its skills)
         self._tasks: list[asyncio.Task] = []
         self._register_commands()
 
@@ -355,7 +377,7 @@ class ClaraBot(discord.Client):
         with contextlib.suppress(NotImplementedError, RuntimeError):  # SIGTERM (the server stopping us) closes cleanly
             asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(self.close()))
         self.add_dynamic_items(ApprovalButton)
-        await self.tree.sync()
+        await self.tree.sync()  # the commands are registered here, once: a skill is no command (`/skill` finds it live)
         self._tasks.append(asyncio.create_task(self.relay(), name="relay"))
         self._tasks.append(asyncio.create_task(self.tidy(), name="tidy"))
         self._tasks.append(asyncio.create_task(self.heartbeat(), name="heartbeat"))
@@ -588,6 +610,35 @@ class ClaraBot(discord.Client):
             )
         except ClaraError as error:
             await channel.send(f"⚠️ {error}")
+
+    def is_you(self, interaction: discord.Interaction) -> bool:
+        """You, in your server: the one check of every command and of the autocomplete."""
+        return interaction.user.id == self.settings.owner_id and interaction.guild_id == self.guild_id
+
+    def chat_place(self, channel) -> tuple[str, bool] | None:
+        """Where a message to Clara is taken from this channel, as `on_message` decides it: (the conversation, whether
+        the mirror writes the answer in the thread), or None when a message there would not be taken."""
+        if not isinstance(channel, discord.Thread):
+            return None
+        if channel.parent_id in self.mirror.forums:
+            found = self.mirror.conversation_of(channel.id)
+            return (found, True) if found else None
+        found = self.threads().get(str(channel.id)) if channel.parent_id == self.settings.channels["general"] else None
+        return (found, False) if found else None
+
+    async def skills_of(self, conversation: str, fresh: bool = False) -> list[dict]:
+        """The skills a conversation can run (its project decides), kept `SKILLS_KEPT` seconds unless `fresh`."""
+        now = time.monotonic()
+        kept = self.skills_seen.get(conversation)
+        if kept and not fresh and now - kept[0] < SKILLS_KEPT:
+            return kept[1]
+        project = (await self.clara.call("GET", f"/v1/conversations/{conversation}")).get("project")
+        found = (
+            await self.clara.call("GET", "/v1/skills", params={"project": "none" if project is None else project})
+        )["skills"]
+        self.skills_seen = {key: seen for key, seen in self.skills_seen.items() if now - seen[0] < SKILLS_KEPT}
+        self.skills_seen[conversation] = (now, found)
+        return found
 
     async def tools_text(self, pack: str | None, state: str | None, current: str | None = None) -> str:
         """The packs of the current conversation (a new one starts with web search), after switching one if asked. The
@@ -996,7 +1047,7 @@ class ClaraBot(discord.Client):
         here = app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 
         async def only_you(interaction: discord.Interaction) -> bool:
-            if interaction.user.id != self.settings.owner_id or interaction.guild_id != self.guild_id:
+            if not self.is_you(interaction):
                 await interaction.response.send_message("Not for you.", ephemeral=True)
                 return False
             return True
@@ -1077,6 +1128,62 @@ class ClaraBot(discord.Client):
                 await interaction.response.send_message(await self.tools_text(pack, state, current), ephemeral=True)
             except ClaraError as error:
                 await interaction.response.send_message(f"⚠️ {error}")
+
+        @tree.command(name="skill", description="Run one of your skills in this conversation")
+        @app_commands.describe(name="The skill to run", arguments="What follows its name, if the skill takes any")
+        @here
+        async def skill(interaction: discord.Interaction, name: str, arguments: str | None = None) -> None:
+            if not await only_you(interaction):
+                return
+            place = self.chat_place(interaction.channel)
+            if place is None:
+                await interaction.response.send_message(
+                    "Use it in a conversation's thread: that is where a message to Clara goes.", ephemeral=True
+                )
+                return
+            if arguments and len(arguments) > ARGUMENTS_MAX:
+                await interaction.response.send_message(
+                    f"The arguments are {len(arguments):,} characters: at most {ARGUMENTS_MAX:,}.", ephemeral=True
+                )
+                return
+            conversation, mirrored = place
+            await interaction.response.defer(ephemeral=True)  # Clara may take longer than Discord's 3 seconds to answer
+            word = name.strip().lstrip("/").lower()
+            try:
+                known = {item["name"] for item in await self.skills_of(conversation, fresh=True)}
+            except ClaraError as error:
+                await interaction.followup.send(f"⚠️ {error}", ephemeral=True)
+                return
+            if word not in known:  # unchecked, a typo would go to the model as a plain message
+                await interaction.followup.send(f"No skill called `{word}` in this conversation.", ephemeral=True)
+                return
+            text = f"/{word} {arguments.strip()}" if arguments and arguments.strip() else f"/{word}"
+            channel = interaction.channel
+            if mirrored and channel.archived and not await self.reopen(conversation, channel):
+                await interaction.followup.send("Not sent.", ephemeral=True)
+                return
+            await interaction.followup.send(f"Running `{word}`…", ephemeral=True)
+            # the server expands the text; no `ref`, so the mirror writes the question in the thread (nothing was typed there)
+            body = {
+                "message": text,
+                "attachments": [],
+                "timezone": self.settings.timezone,
+                "conversation": conversation,
+            }
+            await self.ask(channel, body, remember=False, mirrored=mirrored)
+
+        @skill.autocomplete("name")
+        async def skill_names(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+            """Read live, never registered: a skill added later shows here at once, with no `tree.sync()`."""
+            place = self.chat_place(interaction.channel)
+            if place is None or not self.is_you(interaction):
+                return []
+            try:
+                async with asyncio.timeout(AUTOCOMPLETE_WAIT):
+                    return skill_choices(await self.skills_of(place[0]), current)
+            except Exception as error:  # a failure is no choices: never an error shown while the owner types
+                log.info("skill names: %s", error)
+                return []
 
         @tree.command(name="approvals", description="Requests waiting for your answer")
         @here
