@@ -18,7 +18,7 @@
     "vite": "^7.3.7"
   },
   "dependencies": {
-    "dompurify": "^3.4.17",
+    "dompurify": "^3.4.18",
     "katex": "^0.16.47",
     "marked": "^18.1.3"
   }
