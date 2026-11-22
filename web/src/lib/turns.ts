@@ -15,3 +15,14 @@ export function splitTurns<T extends { role: string; shown?: string }>(history: 
   }
   return turns;
 }
+
+/**
+ * Is `last`, the end of the stored history, the question of the answer being followed (`resumed`: what the run's `resume`
+ * event says was asked)? The server stores a question when it is sent, so a page opened mid-answer already has it: it is
+ * drawn once, and the answer goes after it. The stored text may carry the documents the resume line leaves out, or be the
+ * instructions of a command whose typed form is `shown`. A server that does not store it yet leaves another end: false.
+ */
+export function isKeptQuestion(last: { role: string; content?: string; shown?: string } | undefined, resumed: string): boolean {
+  if (last?.role !== 'user') return false;
+  return (last.content ?? '').includes(resumed) || last.shown === resumed;
+}

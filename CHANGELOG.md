@@ -5,6 +5,10 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 ## Unreleased
 
+- **A question is kept from the moment it is sent, on the web site too.** The conversation list shows a new conversation (with its
+  question as the preview), or moves an old one to the top, as soon as the answer starts instead of when it ends. A page opened while an
+  answer is running draws the stored question once, not twice. A stop or an error before the first word leaves the question on screen
+  with the interrupted note and **Try again**.
 - **The Modes page follows the packs.** A mode's table lists only the tools it sets: the tools with no pack and those of a pack ticked in
   that mode. The tools of an unticked pack move to a read-only section, **Decided by the default mode**, with their pack and the default's
   verdicts, and a mode's lines about them are ignored while the pack stays unticked (they are kept and apply again when it is ticked: the

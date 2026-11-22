@@ -640,9 +640,8 @@ documents.
 ## A question is kept from the moment it is sent (owner's decision, 2026-11-22)
 
 A stop before the first word, or an error, stored nothing: the question was written only when the turn ended, so it vanished and a new
-conversation had no message. The server half is built (`Agent._turn`, `Conversations.add_question` and `add_answer`); the web half (the
-list at once, the question kept on screen after Stop, « Try again », the reproduction of the missing conversation in a browser) is
-left in `TODO.md`.
+conversation had no message. The server half is built (`Agent._turn`, `Conversations.add_question` and `add_answer`); the web half is
+below.
 
 | Decision | Why | Where |
 | --- | --- | --- |
@@ -654,3 +653,11 @@ left in `TODO.md`.
 | **At start, a question a client sent that ends its conversation's path with no answer gets `[This answer was interrupted: the server stopped.]`** (same turn id), once. A row of the server's own client (`server`: runs, reminders, follow-ups) and the instructions of a skill Clara ran are left alone | A server killed outright (kill -9, a power cut) never reaches the stop path. The sweep runs in `recover`, before the automations' recovery, and must not give a run that only has its question a row of Clara's (it would then be taken as begun and not run again) | `Conversations.close_unanswered`, `app.recover` |
 | **Storing the question alone does not tell the Discord mirror** (`add_question` makes no `bump`); its answer does. The conversation's `updated_at` moves at the send, so it is first in the history | The mirror's live feed writes the question of a turn that runs, at the turn's start: a sync started by the question could write it a second time. A bot that starts or reconnects meanwhile has the question at the next change | `memory/conversations.py`, `mirror/service.py` (`Watch`) |
 | **The answer is written after the end of the path** (the last active message), as `add_turn` did, and raises `ConversationError` when its question is gone (the conversation was deleted meanwhile) | The turns of one conversation run one at a time, so the end of the path is the question. Known and unchanged: a version switched while the turn runs, or the instructions of a skill whose approval is answered during it, can still land between them | `Conversations.add_answer` |
+
+### The web half (2026-11-22)
+
+| Decision | Why | Where |
+| --- | --- | --- |
+| **The page tells the conversation list as soon as the stream's `turn` event arrives**, not only when the stream ends. The conversation already exists (the page creates it before the send), so only the list is reloaded | The question is stored right after that event, so the list has the conversation, with its question as the preview, while the model is still silent | `Chat.svelte` (`follow`) |
+| **A page opened mid-answer draws the stored question once.** `attach` reuses the last drawn message when the stored history ends with a question that is the `resume` message (`isKeptQuestion`) and only adds the answer after it; with nothing stored (an older server, an unattended run) it draws the question from `resume` as before | The history now ends with the question while the run goes on, and `resume` says it again | `Chat.svelte` (`attach`), `lib/turns.ts` |
+| **Stop reads the messages back with no retry.** `DELETE /v1/conversations/{id}/run` returns only after the run is stopped and its note stored (`Runs.stop`), and `stop()` reads the messages after it | No race to cover: a bounded retry would only hide a failed stop | `Chat.svelte` (`stop`), `agent/runs.py` |

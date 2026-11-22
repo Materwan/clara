@@ -22,7 +22,7 @@
   import { type Chip, type Skill, chipsFor, filterSkills, hintSkill, insertSkill, isCommand, menuKey, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, type Outcome, OUTCOME_TAGS, note, problems, summary, withoutWarnings } from '../lib/tools';
-  import { splitTurns } from '../lib/turns';
+  import { isKeptQuestion, splitTurns } from '../lib/turns';
 
   type Shown = Call & { open?: boolean };
   // Clara's reply in the order she made it: text, runs of tool calls (calls with no text between them), requests, forms
@@ -570,6 +570,9 @@
   async function follow(events: AsyncIterable<any>, user: Message, current: Message, id: string): Promise<void> {
     for await (const event of events) {
       switch (event.type) {
+        case 'turn':
+          conversations.changed++; // the question is stored: the rail lists the conversation, or moves it up, at once
+          break;
         case 'thinking':
           current.thinking = (current.thinking ?? '') + event.text;
           break;
@@ -736,17 +739,20 @@
       const events = stream('GET', `/v1/conversations/${id}/run`, undefined, mine.signal);
       const first = await events.next();
       if (first.done || first.value.type !== 'resume') return;
-      const user = yours(first.value.message);
+      // The question is already drawn when the stored history ends with it (the server keeps it from the send): once, not twice
+      const kept = messages.at(-1)?.role === 'user' && isKeptQuestion(history.at(-1), first.value.message);
+      const user = kept ? messages[messages.length - 1] : yours(first.value.message);
       for (const name of first.value.attachments ?? []) {
         if (!user.attachments.some((file) => file.name === name)) user.attachments.push({ name });
       }
       const answer = blank('assistant');
       answer.question = user;
       answer.streaming = true;
-      messages.push(user, answer);
+      if (kept) messages.push(answer);
+      else messages.push(user, answer);
       current = messages[messages.length - 1];
       scrollDown(true);
-      await follow(events, messages[messages.length - 2], current, id);
+      await follow(events, user, current, id);
       current.streaming = false;
       messages = [...messages];
     } catch (error) {

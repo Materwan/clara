@@ -195,36 +195,6 @@ What the current design already sets:
   `.env` or the chat.
 - A migration number is taken when the branch is merged.
 
-## Keep the question and the conversation from the moment it is sent
-
-The owner asked that a message whose answer is cut short is kept, that a conversation whose first answer is cut short is kept with
-its first message, and that a conversation appears in the history as soon as its message is sent.
-
-**Done, on the server (branch `fix/kept-question`, 2026-11-22; the rows are in `docs/DECISIONS.md`, « A question is kept from the
-moment it is sent »):** an interactive turn stores its question at the send, before the model is asked, and its answer when it ends
-(`Agent._turn`, `Conversations.add_question` and `add_answer`). A stop, an error (the model fails, a timeout, a prompt that does not
-fit) or the server's stop before the first word leaves the question with `[This answer was interrupted: <why>.]`; a server killed
-outright gets the note at its next start (`Conversations.close_unanswered`); a model that answers nothing leaves `[This answer was
-interrupted: the model gave no answer.]`. The prompt and the compaction leave the turn in flight out of the history, so the question
-is sent once. The conversation is listed with its question as the preview from the send (tests in `tests/test_kept_question.py`).
-Unattended runs are unchanged. All clients have it, since it is the server.
-
-**What is left (the web, slice B2):**
-
-- **The conversation list at once.** `web/src/pages/Chat.svelte` reloads the list only when the stream ends: reload it when the turn
-  starts (the `turn` event), so the conversation is in the history as soon as its message is sent.
-- **The question stays on the screen after Stop.** Stop reloads the messages from the server; now that the server has the question and
-  its note, the page must show them (and not lose the question typed) instead of the empty answer.
-- **« Try again » on a kept question** whose note says `[This answer was interrupted: …]` (`canRetry` and `retry` already work on a
-  stored question; check it on a question whose only answer is the note, and on a conversation that has no other message).
-- **Reproduce the missing conversation in a browser** before the item is closed: the server's listing does not filter on messages, so
-  why a conversation was missing from the list is not found in the code. Check the list right after the send and after a Stop, on
-  the web site with a real browser.
-- `GET /v1/conversations/{id}/run` sends `resume` (the question) first: a page that reloads the stored messages while a run goes on now
-  gets the question from both; show it once.
-
-Not decided: nothing at the product level.
-
 ## Google Drive: the whole Drive, restore, no Picker
 
 **Done (branch `feat/drive-restore`, 2026-11-22):** the restore tools `drive_restore` and `mail_restore` (a restored mail goes back to the

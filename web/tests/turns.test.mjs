@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { splitTurns } from '../src/lib/turns.ts';
+import { isKeptQuestion, splitTurns } from '../src/lib/turns.ts';
 
 const rows = [
   { id: 1, role: 'user' },
@@ -52,4 +52,19 @@ test('a skill row that opens the history, or follows another one, starts nothing
   assert.deepEqual(splitTurns([{ id: 1, ...ran }, { id: 2, role: 'assistant' }]).map((turn) => turn.map((row) => row.id)), [[2]]);
   const twice = [{ id: 1, role: 'user' }, { id: 2, ...ran }, { id: 3, ...ran }, { id: 4, role: 'assistant' }];
   assert.deepEqual(splitTurns(twice).map((turn) => turn.map((row) => row.id)), [[1, 4]]);
+});
+
+test('a stored question that ends the history is the one being followed', () => {
+  assert.equal(isKeptQuestion({ role: 'user', content: 'Hello' }, 'Hello'), true);
+});
+
+test('a stored question carrying documents, or a command typed in short, is still that question', () => {
+  assert.equal(isKeptQuestion({ role: 'user', content: 'Read this\n\n<document name="a" type="text">\nx\n</document>' }, 'Read this'), true);
+  assert.equal(isKeptQuestion({ role: 'user', content: 'Long instructions', shown: '/review' }, '/review'), true);
+});
+
+test('an answer, nothing stored, or another question is not it', () => {
+  assert.equal(isKeptQuestion({ role: 'assistant', content: 'Hello' }, 'Hello'), false);
+  assert.equal(isKeptQuestion(undefined, 'Hello'), false);
+  assert.equal(isKeptQuestion({ role: 'user', content: 'Something else' }, 'Hello'), false);
 });
