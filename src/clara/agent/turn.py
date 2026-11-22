@@ -22,7 +22,11 @@ turns are summarised, then the oldest replayed turns are left out, then the olde
 with a `warning`); if it still does not fit, the turn ends with PromptTooLarge. One message above half the window is
 refused at once.
 
-**Interrupted turns are stored** as far as they went, so Clara knows what changed.
+**The question is stored when it is sent** (an interactive turn), before the model is asked, and the answer when the turn ends: a
+turn that is stopped, fails or is cut by the server's stop keeps its question and ends with a note saying why
+(`[This answer was interrupted: …]`), as far as it went, so Clara knows what changed. A server killed outright leaves the
+question alone: the next start writes its note (`Conversations.close_unanswered`). An unattended run stores its question and its
+answer together when it ends, and nothing when it was cut before it said anything (its own recovery reads that).
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ from ..connectors.forms import CLIENTS as FORM_CLIENTS
 from ..knowledge.attachments import Attached, Image, without_documents
 from ..knowledge.projects import READ_CHARS_LIMIT
 from ..llm import Choice, NoModel, ToolCall
-from ..memory.conversations import RAN, Conversation, StoredMessage, TurnRow
+from ..memory.conversations import RAN, Conversation, StoredMessage, TurnRow, interrupted
 from ..skills.store import split_summary, with_skills
 from ..timeutil import zone
 from ..tools.base import CallResult, Dispatch, ToolContext, TurnState
@@ -611,8 +615,9 @@ class Agent:
             )
             messages.append({"role": "system", "content": render(self.persona.text(), parts)})
             if conversation is not None:
+                # the turn in flight has its question stored already: it is the message of the request, at the end of the prompt
                 stored = self.s.conversations.history(
-                    conversation.id, self.settings.history_turns, conversation.summary_upto
+                    conversation.id, self.settings.history_turns, conversation.summary_upto, state.turn_id
                 )
                 readable = self.s.conversation_files.readable(conversation.id) if files else {}
                 if self._read_untrusted(conversation.id):
@@ -752,18 +757,20 @@ class Agent:
         async with lock as discarded:
             if discarded:
                 yield {"type": "discarded", "tools": discarded}
-            if stored and self._history_overflows(conversation.id):
-                try:
-                    before, after = await self._compact_locked(
-                        conversation.id, keep=max(1, self.settings.history_turns // 2), choice=choice
-                    )
-                    yield {"type": "compacted", "before": before, "after": after}
-                except Exception as error:
-                    log.warning("compaction of %s before the turn failed: %s", conversation.id, error)
-                    yield {"type": "warning", "message": f"Could not compact the conversation: {error}"}
-                plan = replace(plan, conversation=self.s.conversations.get(conversation.id))
-            messages, told = self.build_messages(request, plan)
-            fixed_tokens = estimate_prompt_tokens(messages[:1], schemas)
+            question_id: int | None = None
+            if stored and request.mode == "interactive":
+                # At the send: whatever happens to the answer, the question and the conversation are there. The old version of a
+                # question asked again stays off the path: the new one is on it.
+                question_id = self.s.conversations.add_question(
+                    conversation.id,
+                    request.message,
+                    prefix=request.prefix,
+                    client=request.client,
+                    turn_id=state.turn_id,
+                    ref=request.ref,
+                    shown=request.shown,
+                )
+                detached.clear()
             latest_outputs: list[dict] = []
             rows: list[TurnRow] = []
             reply_parts: list[str] = []
@@ -776,6 +783,21 @@ class Agent:
             reason = "the connection to the client was lost"
             used = choice
             try:
+                if stored and self._history_overflows(conversation.id, state.turn_id):
+                    try:
+                        before, after = await self._compact_locked(
+                            conversation.id,
+                            keep=max(1, self.settings.history_turns // 2),
+                            choice=choice,
+                            without_turn=state.turn_id,
+                        )
+                        yield {"type": "compacted", "before": before, "after": after}
+                    except Exception as error:
+                        log.warning("compaction of %s before the turn failed: %s", conversation.id, error)
+                        yield {"type": "warning", "message": f"Could not compact the conversation: {error}"}
+                    plan = replace(plan, conversation=self.s.conversations.get(conversation.id))
+                messages, told = self.build_messages(request, plan)
+                fixed_tokens = estimate_prompt_tokens(messages[:1], schemas)
                 for round_number in range(self.settings.max_tool_rounds + 1):
                     offer = round_number < self.settings.max_tool_rounds
                     tools = schemas if offer and schemas else None
@@ -881,13 +903,21 @@ class Agent:
                 self.s.questions.release(state.turn_id)  # questions it was still waiting for you to answer
                 if not finished and stored:
                     if self._keep_interrupted(
-                        request, conversation.id, state, rows, current.text if round_open else "", reason
+                        request, conversation.id, state, rows, current.text if round_open else "", reason, question_id
                     ):
                         detached.clear()
             reply = "".join(reply_parts).strip()
-            question_id = None
             compact = False
-            if stored and (reply or rows):
+            kept = False
+            if question_id is not None:  # a model that said nothing leaves no question without an answer
+                self.s.conversations.add_answer(
+                    conversation.id,
+                    question_id,
+                    rows or [TurnRow("assistant", interrupted("the model gave no answer"))],
+                    turn_id=state.turn_id,
+                )
+                kept = True
+            elif stored and (reply or rows):  # an unattended run: its question and its answer together, as they end
                 question_id = self.s.conversations.add_turn(
                     conversation.id,
                     request.message,
@@ -899,6 +929,8 @@ class Agent:
                     shown=request.shown,
                 )
                 detached.clear()
+                kept = True
+            if kept:
                 if told:
                     self.s.approvals.mark_told(told)
                 self.s.conversations.set_context_tokens(conversation.id, context_tokens)
@@ -1157,8 +1189,11 @@ class Agent:
         rows: list[TurnRow],
         partial: str,
         reason: str,
+        question_id: int | None,
     ) -> bool:
-        if not rows and not partial.strip():
+        """Store what an answer cut short had done, ending with its note. An interactive turn stored its question at the send
+        (`question_id`): the note follows it, even when nothing was said. An unattended run stores nothing when it said nothing."""
+        if question_id is None and not rows and not partial.strip():
             return False
         rows = list(rows)
         last = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].role == "assistant"), None)
@@ -1166,19 +1201,22 @@ class Agent:
             answered = sum(1 for row in rows[last + 1 :] if row.role == "tool")
             for call in rows[last].tool_calls[answered:]:
                 rows.append(TurnRow("tool", NOT_RUN, tool_name=call["function"]["name"]))
-        note = f"[This answer was interrupted: {reason}.]"
+        note = interrupted(reason)
         rows.append(TurnRow("assistant", f"{partial.strip()}\n\n{note}" if partial.strip() else note))
         try:
-            self.s.conversations.add_turn(
-                conversation_id,
-                request.message,
-                rows,
-                prefix=request.prefix,
-                client=request.client,
-                turn_id=state.turn_id,
-                ref=request.ref,
-                shown=request.shown,
-            )
+            if question_id is not None:
+                self.s.conversations.add_answer(conversation_id, question_id, rows, turn_id=state.turn_id)
+            else:
+                self.s.conversations.add_turn(
+                    conversation_id,
+                    request.message,
+                    rows,
+                    prefix=request.prefix,
+                    client=request.client,
+                    turn_id=state.turn_id,
+                    ref=request.ref,
+                    shown=request.shown,
+                )
         except Exception:
             log.exception("could not store the interrupted turn of %s", conversation_id)
             return False
@@ -1199,7 +1237,9 @@ class Agent:
         if compact and conversation is not None:
             for keep in dict.fromkeys((self.settings.keep_recent_turns, 0)):
                 try:
-                    before, after = await self._compact_locked(conversation.id, keep=keep, choice=plan.choice)
+                    before, after = await self._compact_locked(
+                        conversation.id, keep=keep, choice=plan.choice, without_turn=plan.state.turn_id
+                    )
                 except NothingToCompact:
                     break
                 except Exception as error:
@@ -1251,12 +1291,13 @@ class Agent:
                 return True
         return False
 
-    def _history_overflows(self, conversation_id: str) -> bool:
+    def _history_overflows(self, conversation_id: str, without_turn: str = "") -> bool:
         conversation = self.s.conversations.get(conversation_id)
         if conversation is None or not self.settings.compact_percent:
             return False
         return (
-            self.s.conversations.turns_after(conversation_id, conversation.summary_upto) > self.settings.history_turns
+            self.s.conversations.turns_after(conversation_id, conversation.summary_upto, without_turn)
+            > self.settings.history_turns
         )
 
     # ------------------------------------------------------------------
@@ -1298,14 +1339,21 @@ class Agent:
         return rows[:boundary], rows[boundary:]
 
     async def _compact_locked(
-        self, conversation_id: str, focus: str = "", keep: int | None = None, choice: Choice | None = None
+        self,
+        conversation_id: str,
+        focus: str = "",
+        keep: int | None = None,
+        choice: Choice | None = None,
+        without_turn: str = "",
     ) -> tuple[float, float]:
+        """Summarise the older turns. `without_turn`: the turn in flight, whose stored question is no older turn: it is neither
+        summarised away nor counted."""
         conversation = self.s.conversations.require(conversation_id)
         choice = choice or self.s.router.choose(conversation.model, conversation.local_only)
         window = choice.window
         summariser = self.s.router.upkeep(choice, conversation.local_only)
         keep = self.settings.keep_recent_turns if keep is None else keep
-        rows = self.s.conversations.messages_after(conversation_id, conversation.summary_upto)
+        rows = self.s.conversations.messages_after(conversation_id, conversation.summary_upto, without_turn)
         if not rows:
             raise NothingToCompact("the conversation is empty: nothing to compact")
         old, kept = self._split_recent(rows, keep)

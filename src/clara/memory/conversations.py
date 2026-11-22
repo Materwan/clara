@@ -32,6 +32,11 @@ ANY = "any"
 NONE = "none"
 
 
+def interrupted(reason: str) -> str:
+    """The note that ends an answer that was cut short: the web recognises it by its start."""
+    return f"[This answer was interrupted: {reason.rstrip('.')}.]"
+
+
 @dataclass(frozen=True)
 class MemoryScope:
     """A memory a conversation shares with others besides the global one (memory/facts.py)."""
@@ -442,16 +447,20 @@ class Conversations:
     # ------------------------------------------------------------------
     _COLUMNS = "SELECT * FROM messages"
 
-    def history(self, conversation_id: str, turns: int, after_id: int = 0) -> list[StoredMessage]:
-        """The last `turns` turns of the path after `after_id`, oldest first."""
+    def history(
+        self, conversation_id: str, turns: int, after_id: int = 0, without_turn: str = ""
+    ) -> list[StoredMessage]:
+        """The last `turns` turns of the path after `after_id`, oldest first. `without_turn`: a turn left out and not counted
+        (the one in flight, whose question is stored at once and is sent from the request)."""
         start = self.db.one(
             f"SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1 AND {NOT_RAN}"
-            " ORDER BY id DESC LIMIT 1 OFFSET ?",
-            (conversation_id, after_id, max(turns, 1) - 1),
+            " AND (turn_id IS NULL OR turn_id <> ?) ORDER BY id DESC LIMIT 1 OFFSET ?",
+            (conversation_id, after_id, without_turn, max(turns, 1) - 1),
         )
         rows = self.db.all(
-            f"{self._COLUMNS} WHERE conversation_id = ? AND id >= ? AND id > ? AND active = 1 ORDER BY id",
-            (conversation_id, start["id"] if start else after_id + 1, after_id),
+            f"{self._COLUMNS} WHERE conversation_id = ? AND id >= ? AND id > ? AND active = 1"
+            " AND (turn_id IS NULL OR turn_id <> ?) ORDER BY id",
+            (conversation_id, start["id"] if start else after_id + 1, after_id, without_turn),
         )
         return [_message(row) for row in rows]
 
@@ -475,18 +484,20 @@ class Conversations:
         )
         return {row[0] for row in rows if row[0]}
 
-    def messages_after(self, conversation_id: str, after_id: int = 0) -> list[StoredMessage]:
+    def messages_after(self, conversation_id: str, after_id: int = 0, without_turn: str = "") -> list[StoredMessage]:
         rows = self.db.all(
-            f"{self._COLUMNS} WHERE conversation_id = ? AND id > ? AND active = 1 ORDER BY id",
-            (conversation_id, after_id),
+            f"{self._COLUMNS} WHERE conversation_id = ? AND id > ? AND active = 1 AND (turn_id IS NULL OR turn_id <> ?)"
+            " ORDER BY id",
+            (conversation_id, after_id, without_turn),
         )
         return [_message(row) for row in rows]
 
-    def turns_after(self, conversation_id: str, after_id: int = 0) -> int:
+    def turns_after(self, conversation_id: str, after_id: int = 0, without_turn: str = "") -> int:
         return int(
             self.db.value(
-                f"SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1 AND {NOT_RAN}",
-                (conversation_id, after_id),
+                f"SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND role = 'user' AND id > ? AND active = 1 AND {NOT_RAN}"
+                " AND (turn_id IS NULL OR turn_id <> ?)",
+                (conversation_id, after_id, without_turn),
                 0,
             )
         )
@@ -521,39 +532,90 @@ class Conversations:
         ref: str = "",
         shown: str = "",
     ) -> int:
-        """Store a question and what followed it after the end of the path. Returns the question's id. `ref`: the id of
-        the question's message on Discord, when it came from there. `shown`: what the Discord mirror writes in place of the
+        """Store a question and what followed it after the end of the path, in one step. Returns the question's id. `ref`: the id
+        of the question's message on Discord, when it came from there. `shown`: what the Discord mirror writes in place of the
         question (an automation run's origin); the question itself is stored whole."""
         now = now_iso()
         with self.db.transaction() as tx:
-            parent = tx.execute(
-                "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND active = 1", (conversation_id,)
-            ).fetchone()[0]
-            question_id = parent = tx.execute(
+            question_id = self._insert_question(tx, conversation_id, question, prefix, client, turn_id, ref, shown, now)
+            self._insert_answer(tx, conversation_id, rows, turn_id, now)
+            tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            bump(tx, conversation_id)
+        return question_id
+
+    def add_question(
+        self,
+        conversation_id: str,
+        question: str,
+        *,
+        prefix: str = "",
+        client: str = "",
+        turn_id: str | None = None,
+        ref: str = "",
+        shown: str = "",
+    ) -> int:
+        """Store a question alone, at the moment it is sent, so that it stays whatever happens to its answer (`add_answer`
+        follows it). Returns its id. The Discord mirror is not told yet: its live feed shows the question of a turn that runs,
+        and the sync that a change would start could write it a second time; the answer's `bump` tells it."""
+        now = now_iso()
+        with self.db.transaction() as tx:
+            question_id = self._insert_question(tx, conversation_id, question, prefix, client, turn_id, ref, shown, now)
+            tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        return question_id
+
+    def add_answer(
+        self, conversation_id: str, question_id: int, rows: list[TurnRow], *, turn_id: str | None = None
+    ) -> None:
+        """Store what answered a question already stored by `add_question`, after the end of the path (the turns of one
+        conversation run one at a time, so the end of the path is that question). Raises ConversationError when the question
+        is no longer there (the conversation was deleted meanwhile)."""
+        now = now_iso()
+        with self.db.transaction() as tx:
+            found = tx.execute(
+                "SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?", (question_id, conversation_id)
+            ).fetchone()
+            if found is None:
+                raise ConversationError(f"The question {question_id} of this answer is no longer in {conversation_id}.")
+            self._insert_answer(tx, conversation_id, rows, turn_id, now)
+            tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            bump(tx, conversation_id)
+
+    @staticmethod
+    def _insert_question(tx, conversation_id, question, prefix, client, turn_id, ref, shown, now) -> int:
+        parent = tx.execute(
+            "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND active = 1", (conversation_id,)
+        ).fetchone()[0]
+        return int(
+            tx.execute(
                 "INSERT INTO messages (conversation_id, parent_id, role, content, prefix, client, turn_id, ref, shown, created_at)"
                 " VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
                 (conversation_id, parent, question, prefix, client, turn_id, ref, shown, now),
             ).lastrowid
-            for row in rows:
-                parent = tx.execute(
-                    "INSERT INTO messages (conversation_id, parent_id, role, content, tool_calls, tool_name, thinking,"
-                    " turn_id, created_at, shown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        conversation_id,
-                        parent,
-                        row.role,
-                        row.content,
-                        json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
-                        row.tool_name,
-                        row.thinking or None,
-                        turn_id,
-                        now,
-                        row.shown,
-                    ),
-                ).lastrowid
-            tx.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
-            bump(tx, conversation_id)
-        return int(question_id or 0)
+            or 0
+        )
+
+    @staticmethod
+    def _insert_answer(tx, conversation_id: str, rows: list[TurnRow], turn_id: str | None, now: str) -> None:
+        parent = tx.execute(
+            "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND active = 1", (conversation_id,)
+        ).fetchone()[0]
+        for row in rows:
+            parent = tx.execute(
+                "INSERT INTO messages (conversation_id, parent_id, role, content, tool_calls, tool_name, thinking,"
+                " turn_id, created_at, shown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    conversation_id,
+                    parent,
+                    row.role,
+                    row.content,
+                    json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
+                    row.tool_name,
+                    row.thinking or None,
+                    turn_id,
+                    now,
+                    row.shown,
+                ),
+            ).lastrowid
 
     # ------------------------------------------------------------------
     # Versions: a question asked again, or edited
@@ -654,6 +716,21 @@ class Conversations:
                     "SELECT MAX(id) FROM messages WHERE conversation_id = ? AND parent_id = ?",
                     (row["conversation_id"], node),
                 )
+        return len(rows)
+
+    def close_unanswered(self) -> int:
+        """A server that stopped hard (kill -9, a power cut) left questions with no answer, which are stored at the send:
+        write the note of an interrupted answer after each one (called at start, before anything runs; done once). Only
+        a conversation whose last message on the path is a question a client sent: an unattended run (client `server`) has
+        its own recovery, which reads whether Clara had written anything (`Automations.did_something`)."""
+        rows = self.db.all(
+            "SELECT m.id, m.conversation_id, m.turn_id FROM messages m WHERE m.active = 1 AND m.role = 'user'"
+            f" AND m.client <> 'server' AND m.{NOT_RAN}"
+            " AND m.id = (SELECT MAX(id) FROM messages WHERE conversation_id = m.conversation_id AND active = 1)"
+        )
+        for row in rows:
+            note = TurnRow("assistant", interrupted("the server stopped"))
+            self.add_answer(row["conversation_id"], row["id"], [note], turn_id=row["turn_id"])
         return len(rows)
 
     # ------------------------------------------------------------------

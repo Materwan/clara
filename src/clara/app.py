@@ -325,14 +325,16 @@ async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int |
 def recover(s: Services) -> None:
     """What a crash (kill -9, a power cut) left half done is put straight before anything runs."""
     healed = s.conversations.heal_versions()
+    closed = s.conversations.close_unanswered()
     failed = s.approvals.recover()
     cut = s.automations.recover()
     booked = s.deferred.recover()
-    if healed or failed or cut or booked:
+    if healed or closed or failed or cut or booked:
         log.warning(
-            "after an unclean stop: %d question(s) put back, %d approved action(s) marked to check, "
-            "%d automation run(s) put right, %d booked call(s) marked to check",
+            "after an unclean stop: %d question(s) put back, %d unanswered question(s) closed, %d approved action(s) "
+            "marked to check, %d automation run(s) put right, %d booked call(s) marked to check",
             healed,
+            closed,
             failed,
             cut,
             booked,

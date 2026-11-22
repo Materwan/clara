@@ -198,50 +198,32 @@ What the current design already sets:
 ## Keep the question and the conversation from the moment it is sent
 
 The owner asked that a message whose answer is cut short is kept, that a conversation whose first answer is cut short is kept with
-its first message, and that a conversation appears in the history as soon as its message is sent. Today the question is written only
-when the turn ends (`src/clara/agent/turn.py`, after the answer). An interruption before the first word stores nothing
-(`_keep_interrupted` returns without storing when there is no text and no tool row), so the question is lost and the conversation has
-no message. On the web, Stop reloads the messages from the server, so the question disappears from the screen, and the conversation
-list reloads only when the stream ends (`web/src/pages/Chat.svelte`).
+its first message, and that a conversation appears in the history as soon as its message is sent.
 
-What the owner decided:
+**Done, on the server (branch `fix/kept-question`, 2026-11-22; the rows are in `docs/DECISIONS.md`, « A question is kept from the
+moment it is sent »):** an interactive turn stores its question at the send, before the model is asked, and its answer when it ends
+(`Agent._turn`, `Conversations.add_question` and `add_answer`). A stop, an error (the model fails, a timeout, a prompt that does not
+fit) or the server's stop before the first word leaves the question with `[This answer was interrupted: <why>.]`; a server killed
+outright gets the note at its next start (`Conversations.close_unanswered`); a model that answers nothing leaves `[This answer was
+interrupted: the model gave no answer.]`. The prompt and the compaction leave the turn in flight out of the history, so the question
+is sent once. The conversation is listed with its question as the preview from the send (tests in `tests/test_kept_question.py`).
+Unattended runs are unchanged. All clients have it, since it is the server.
 
-- **When the question is written:** at the send. The answer is written at the end of the turn, as today. The question and the
-  conversation then survive whatever happens next.
-- **Stop before the first word:** the question is kept, with an answer that says `[This answer was interrupted: you stopped it.]`.
-  « Try again » is offered.
-- **An error before the first word** (the model fails, a timeout, a prompt refused): the same rule. The note says why the answer
-  failed.
-- **The server restarts during an answer:** the question is kept, with `[This answer was interrupted: the server stopped.]`.
-- **All clients:** the web, the Discord bot, the desktop and phone apps and the Discord mirror, since the fix is in the server.
-- **The history:** a conversation appears in the list as soon as its message is sent, with its first question as the preview.
+**What is left (the web, slice B2):**
 
-What I corrected or added to the owner's plan:
+- **The conversation list at once.** `web/src/pages/Chat.svelte` reloads the list only when the stream ends: reload it when the turn
+  starts (the `turn` event), so the conversation is in the history as soon as its message is sent.
+- **The question stays on the screen after Stop.** Stop reloads the messages from the server; now that the server has the question and
+  its note, the page must show them (and not lose the question typed) instead of the empty answer.
+- **« Try again » on a kept question** whose note says `[This answer was interrupted: …]` (`canRetry` and `retry` already work on a
+  stored question; check it on a question whose only answer is the note, and on a conversation that has no other message).
+- **Reproduce the missing conversation in a browser** before the item is closed: the server's listing does not filter on messages, so
+  why a conversation was missing from the list is not found in the code. Check the list right after the send and after a Stop, on
+  the web site with a real browser.
+- `GET /v1/conversations/{id}/run` sends `resume` (the question) first: a page that reloads the stored messages while a run goes on now
+  gets the question from both; show it once.
 
-- **One cause for the three symptoms:** a reload of the list in the browser alone would still lose the question on Stop, so the change
-  is in the write of the turn, not in the page.
-- **A test of the list:** right after the send and after a stop, the conversation is listed with its question. The reason a
-  conversation is missing from the list today is not found in the code (the server's listing does not filter on messages): it has to
-  be reproduced in a browser before the item is closed.
-
-Not decided:
-
-- Nothing at the product level.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- How the prompt builder treats a question with no answer during its turn, so that it is not sent twice.
-- How the web shows a kept question with its note, and how « Try again » works on it.
-- The reproduction of the missing conversation in a browser.
-
-What the current design already sets:
-
-- An interrupted turn is kept as far as it went, with the note the web already recognises (`src/clara/agent/turn.py`, the module
-  docstring; `web/src/pages/Chat.svelte`, `INTERRUPTED`).
-- « Try again » already works on a stored question (`web/src/pages/Chat.svelte`, `canRetry` and `retry`).
-- The conversation row is created in `plan()`, before the turn (`src/clara/agent/turn.py`).
-- A server stop already stores the interrupted turns before the database closes (`src/clara/app.py`, `cancel_all`).
-- `FEATURES.md` is tested against the code: it changes when the item is built, not now.
+Not decided: nothing at the product level.
 
 ## Google Drive: the whole Drive, restore, no Picker
 

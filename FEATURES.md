@@ -296,9 +296,14 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **Streaming:** `POST /v1/chat/stream` answers with server-sent events: `turn`, `thinking`, `token`, `retrying`,
   `tool_start`, `tool`, `present` (a card for a presented file: `path`, `size`, `origin`), `approval`, `tool_requests`, `usage`, `compacting`, `compacted`, `discarded`, `warning`, `done`, or `error`
   (status, code and message) when the turn fails. A `tool` event carries `grant` (the number of the Approve all next
-  button that allowed the call, see Approval requests) when one did. `POST /v1/chat` returns the whole answer at once. Closing the
+  button that allowed the call, see Approval requests) when one did. `POST /v1/chat` returns the whole answer at once. A question is stored when it is
+  sent, before the model is asked, and its answer when the turn ends. Closing the
   stream stops the answer: what was said is kept, marked interrupted, and tool calls that had not run are recorded as
-  not run. Unless the request has `keep_running` (the web sets it): then the answer is driven by the server and the
+  not run. A stop, an error or a server stop before the first word leaves the question with the note alone (`[This answer
+  was interrupted: you stopped it.]`, the error's text, `the server stopped`), and the conversation is listed with that
+  question as its preview from the moment it was sent; a model that says nothing leaves `[This answer was interrupted: the
+  model gave no answer.]`. Automation runs, reminders, tasks and approval follow-ups keep their question and their answer
+  for the end, and store nothing when cut before they said anything. Unless the request has `keep_running` (the web sets it): then the answer is driven by the server and the
   stream only follows it, so closing the page, going to another conversation or losing the connection does not stop
   it, and it is stored when it ends. Open the conversation again and `GET /v1/conversations/{id}/run` gives the same
   events from the start: `resume` first (your question and the names of its files), then everything said so far
@@ -1677,7 +1682,9 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
   bot (or the server starts it: `CLARA_DISCORD_AUTOSTART`). `deploy/install.sh` sets everything up.
 - **Graceful stop:** new turns are refused, running answers get `CLARA_DRAIN_SECONDS` (120 s) to finish (progress is
   logged), then they are cut and saved as interrupted. `/stop now` cuts at once.
-- **Crash recovery** (after `kill -9` or a power cut): at start, a question whose answer never came is put back,
+- **Crash recovery** (after `kill -9` or a power cut): at start, a question a client sent whose answer never came is given the
+  note `[This answer was interrupted: the server stopped.]` (once; a run of the server's own is left to its recovery),
+  a question asked again that was cut is put back,
   approved actions that were running are marked failed with a note to check them (they are never run twice),
   automation runs left running are put right (started again if they had done nothing or the automation repeats a cut run, else interrupted), and workspace changes left uncommitted are
   committed.

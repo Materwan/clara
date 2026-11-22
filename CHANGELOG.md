@@ -18,6 +18,15 @@ Every release has a section here, under its tag; the release workflow publishes 
   `drive_trash`; `drive_write` covers create and update only and asks. **A mode, or an installed `default-mode.toml`, with a line on
   `drive_write` no longer covers a trash: add a line on `drive_trash` if you want it.** No migration.
 - `docs/THREAT-MODEL.md` now says what the default mode does with Drive.
+- **A question is kept from the moment it is sent.** It is stored before the model is asked, and its answer when the turn ends: a
+  stop before the first word, an error (the model fails, a timeout, a prompt that does not fit) or the server stopping leaves the
+  question with a note saying why (`[This answer was interrupted: you stopped it.]`, `… the server stopped.]`, the error), and a
+  conversation whose first answer is cut short keeps its first message. The conversation is listed, with its question as the
+  preview, as soon as the message is sent. A server killed outright (kill -9, a power cut) leaves the question alone: the next start
+  writes its note. A model that answers nothing now leaves `[This answer was interrupted: the model gave no answer.]`. This is the
+  server: every client has it, and the web page shows the kept question and « Try again » in a later change. Automation runs,
+  reminders, tasks and approval follow-ups are unchanged (they store their question and answer together, and nothing when cut
+  before they said anything). No migration.
 
 ## v1.6.0 — 14/11/2026
 
