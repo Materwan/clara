@@ -53,6 +53,7 @@ class World:
         self.gmail_labels_deleted: list[str] = []  # each labels.delete: a label, its messages kept
         self.gmail_modified: list[dict] = []  # each messages.modify, as sent
         self.gmail_trashed: list[str] = []  # each messages.trash
+        self.gmail_untrashed: list[str] = []  # each messages.untrash
         self.gmail_refused: list[str] = []  # each DELETE: Clara must never send one
         self.google_tokens = 0
         self.google_dead = False
@@ -144,6 +145,14 @@ class World:
                 return httpx.Response(404, json={"error": {"code": 404, "message": "Requested entity was not found."}})
             self.gmail_trashed.append(message["id"])
             message["labelIds"] = ["TRASH"]  # what Gmail does: out of the inbox, into the Trash
+            return httpx.Response(200, json=message)
+        found = re.fullmatch(r"/messages/([^/]+)/untrash", path)
+        if found and request.method == "POST":
+            message = self.gmail.get(unquote(found.group(1)))
+            if message is None:
+                return httpx.Response(404, json={"error": {"code": 404, "message": "Requested entity was not found."}})
+            self.gmail_untrashed.append(message["id"])
+            message["labelIds"] = [item for item in message["labelIds"] if item != "TRASH"]  # what Gmail does: only TRASH goes
             return httpx.Response(200, json=message)
         if path == "/messages" and request.method == "GET":
             self.gmail_queries.append({key: params.get_list(key) for key in set(params.keys())})

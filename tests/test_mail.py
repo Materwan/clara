@@ -370,6 +370,39 @@ async def test_a_trash_asks_moves_the_message_and_never_deletes_it(services, wor
     assert world.gmail_refused == []  # Gmail was never asked for a permanent delete
 
 
+async def test_a_restore_takes_the_message_out_of_the_trash_back_to_the_inbox_and_never_deletes(services, world):
+    at_level(services, 3)  # the default mode: a restore is approved, in a tainted turn too
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    world.gmail["m1"]["labelIds"] = ["TRASH"]  # archived before it was trashed: only TRASH is on it
+    for tainted in (False, True):
+        world.gmail["m1"]["labelIds"] = ["TRASH"]
+        result = await run_tool(services, "mail_restore", {"message": "m1"}, tainted=tainted)
+        assert result.ran and result.approval is None and "back in the inbox" in result.text
+        assert world.gmail["m1"]["labelIds"] == ["INBOX"]
+    assert world.gmail_untrashed == ["m1", "m1"]
+    assert world.gmail_modified[-1] == {"message": "m1", "addLabelIds": ["INBOX"], "removeLabelIds": []}
+    assert world.gmail_refused == []  # Gmail was never asked for a permanent delete
+
+
+async def test_a_restore_of_a_message_that_is_not_in_the_trash_says_so_and_changes_nothing(services, world):
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    world.gmail["m1"]["labelIds"] = []  # archived: not in the inbox, not in the Trash
+    result = await run_tool(services, "mail_restore", {"message": "m1"})
+    assert "not in the Trash" in result.text
+    assert world.gmail["m1"]["labelIds"] == [] and not world.gmail_untrashed and not world.gmail_modified
+
+
+async def test_the_trash_can_be_searched_to_find_what_to_restore(services, world):
+    connect_mailbox(services)
+    world.gmail["m1"] = gmail_message("m1", "Alice <alice@example.com>", "Invoice", "Please pay.", NOW)
+    world.gmail["m1"]["labelIds"] = ["TRASH"]
+    found = await run_tool(services, "mail_search", {"folder": "trash"})
+    assert "[m1]" in found.text
+    assert world.gmail_queries[-1]["labelIds"] == ["TRASH"] and world.gmail_queries[-1]["includeSpamTrash"] == ["true"]
+
+
 async def test_unattended_labels_and_the_trash_wait_for_the_person(services, world):
     connect_mailbox(services)
     at_level(services, 3)  # the default mode of a run nobody watches: they ask
@@ -434,7 +467,8 @@ def system_text(llm) -> str:
 
 
 MAIL_TOOLS = {"mail_search", "mail_read", "mail_attachment_read", "mail_attachment_save", "mail_draft", "mail_send",
-              "mail_labels", "mail_label_create", "mail_label", "mail_trash", "mail_mark_read", "mail_label_delete"}
+              "mail_labels", "mail_label_create", "mail_label", "mail_trash", "mail_restore", "mail_mark_read",
+              "mail_label_delete"}
 
 
 async def test_the_tools_exist_only_with_a_mailbox_and_the_mail_pack_and_never_in_a_local_only_chat(services, llm, world):
@@ -1003,7 +1037,7 @@ async def test_a_drive_file_is_named_in_the_request_that_replaces_trashes_or_rea
     assert said(services, "drive_delete", {"file": "f1"}, other) == "Trash Drive file f1"
     # the target, the class and the level are what a mode's lines match on, and are as they were
     action = services.toolbox.action("drive_delete", chat(services, cid), {"file": "f1"})
-    assert (action.targets, action.klass, action.level) == (("drive:f1",), "drive_write", "destructive")
+    assert (action.targets, action.klass, action.level) == (("drive:f1",), "drive_trash", "destructive")
 
 
 async def test_a_file_clara_made_is_named_even_in_another_conversation_or_after_a_restart(services, drive):

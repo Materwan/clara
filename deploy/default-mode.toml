@@ -63,10 +63,20 @@ verdict = "refuse"
 class = "drive_read"
 verdict = "approve"
 
-# Drive create, update, delete
+# Drive create or modify: create a file, replace a file's content
 [[verdict]]
 class = "drive_write"
+verdict = "ask"
+
+# Drive trash: move a file to Drive's trash (never emptied)
+[[verdict]]
+class = "drive_trash"
 verdict = "refuse"
+
+# Drive restore: take a file out of Drive's trash
+[[verdict]]
+class = "drive_restore"
+verdict = "approve"
 
 # Mail read: search, read a message or an attachment (Gmail)
 [[verdict]]
@@ -92,6 +102,11 @@ verdict = "ask"
 [[verdict]]
 class = "mail_trash"
 verdict = "ask"
+
+# Mail restore: take a message out of the Trash and put it back in the inbox
+[[verdict]]
+class = "mail_restore"
+verdict = "approve"
 
 # Mail mark: take the unread mark off a message (nothing else changes)
 [[verdict]]

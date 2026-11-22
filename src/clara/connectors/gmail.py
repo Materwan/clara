@@ -378,6 +378,16 @@ class Gmail(MailClient):
         """Moves a message to the Trash. The permanent delete (`messages.delete`) is never called."""
         await self.json("POST", f"{API}/messages/{quote(message, safe='')}/trash")
 
+    async def untrash(self, message: str) -> None:
+        """Takes a message out of the Trash and puts it back in the inbox. `messages.untrash` only removes TRASH, and a
+        message archived before it was trashed would not return to the inbox: INBOX is added too (`gmail.modify` allows it).
+        A message that is not in the Trash is refused: restoring it would otherwise put an archived mail back in the inbox."""
+        found = await self.json("GET", f"{API}/messages/{quote(message, safe='')}", params={"format": "minimal"})
+        if "TRASH" not in (found.get("labelIds") or []):
+            raise MailError("That message is not in the Trash.")
+        await self.json("POST", f"{API}/messages/{quote(message, safe='')}/untrash")
+        await self.modify(message, ["INBOX"], [])
+
     async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:
         """The oldest `limit` inbox messages received since `received_ms`. Gmail lists newest first, so every id since then is
         listed (ids only: 500 a page, cheap), and the details are fetched for the oldest `limit` of them alone. A backlog

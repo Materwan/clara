@@ -5,8 +5,11 @@ Connecting is OAuth with PKCE. The flow is bound to the browser session that sta
 attached is shown before you confirm, and disconnecting revokes the token at Google.
 
     read          list, read (Google Docs, Sheets and Slides are exported as text), search      class drive_read
+                  (a search may list the trash)
     write         create a file                                                                 class drive_write
-    destructive   replace a file's content, move a file to Drive's trash                        class drive_write
+    destructive   replace a file's content                                                      class drive_write
+    destructive   move a file to Drive's trash (never emptied, never deleted for good)          class drive_trash
+    write         take a file out of the trash                                                  class drive_restore
 """
 
 from __future__ import annotations
@@ -227,13 +230,14 @@ class Drive:
                 break
         return found
 
-    async def search(self, query: str) -> list[dict]:
+    async def search(self, query: str, trashed: bool = False) -> list[dict]:
+        """Files by name and content; with `trashed`, the files that are in the trash instead of the others."""
         if not query.strip():
             raise DriveError("The query is empty.")
         text = quoted(query.strip()[:200])
         found = await self.get(
             f"{API}/files",
-            q=f"(name contains {text} or fullText contains {text}) and trashed = false",
+            q=f"(name contains {text} or fullText contains {text}) and trashed = {'true' if trashed else 'false'}",
             fields=f"files({FIELDS})",
             pageSize=50,
             supportsAllDrives="true",
@@ -296,5 +300,15 @@ class Drive:
     async def trash(self, file_id: str) -> dict:
         response = await self.request(
             "PATCH", f"{API}/files/{file_id}", params={"fields": FIELDS}, json={"trashed": True}
+        )
+        return response.json()
+
+    async def restore(self, file_id: str) -> dict:
+        """Takes a file out of the trash (`trashed` back to false); a file that is not in it is an error, not a silent no-op."""
+        info = await self.meta(file_id)
+        if not info.get("trashed"):
+            raise DriveError(f"{info.get('name', file_id)} is not in the trash.")
+        response = await self.request(
+            "PATCH", f"{API}/files/{file_id}", params={"fields": FIELDS}, json={"trashed": False}
         )
         return response.json()

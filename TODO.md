@@ -245,6 +245,13 @@ What the current design already sets:
 
 ## Google Drive: the whole Drive, restore, no Picker
 
+**Done (branch `feat/drive-restore`, 2026-11-22):** the restore tools `drive_restore` and `mail_restore` (a restored mail goes back to the
+inbox: `untrash`, then `INBOX` added); the trash as a class of its own (`drive_trash`, refused by default; `drive_write` is now create and
+modify, and asks); the default-mode verdicts (reads approved, create and modify asked, trash refused, restore approved, Drive and mail);
+`drive_search` with `trashed` and `mail_search` with the folder `trash`; the threat model corrected. **Left:** the whole-Drive scope, the
+native-file guard, the removal of the Picker, the reconnect notice and the docs of the Google Cloud setup (what follows is the full plan;
+the parts above are built).
+
 Drive is connected with the narrow `drive.file` scope today: Clara sees only what she created and the files opened to her with the
 Google Picker (`src/clara/connectors/drive.py`, line 32). A file the owner made by hand is invisible to her, so she can answer that
 the folder is empty. This item widens Drive to the whole Drive, gives Clara restore for Drive and mail, and removes the Picker.
@@ -293,10 +300,10 @@ Left for the implementation (the owner asked to be shown a proposal and to appro
 
 What the current design already sets:
 
-- `src/clara/connectors/drive.py`: the `drive.file` scope (line 32); the trash is `trashed: true` (line 296); no restore.
-- `src/clara/connectors/gmail.py` (line 377): the trash is `messages.trash`; no untrash; the permanent delete is never called.
-- `src/clara/gate/actions.py` (lines 51-52): `drive_read` is `any_read`; `drive_write` covers create, update and delete.
-- `deploy/default-mode.toml` (lines 61-69): the default verdicts for Drive.
+- `src/clara/connectors/drive.py`: the `drive.file` scope (line 32); the trash is `trashed: true` and `restore` sets it back (done).
+- `src/clara/connectors/gmail.py`: the trash is `messages.trash`, `untrash` takes it back (done); the permanent delete is never called.
+- `src/clara/gate/actions.py`: `drive_read` is `any_read`; `drive_write` covers create and update, `drive_trash` and `drive_restore` are their own classes (done).
+- `deploy/default-mode.toml`: the default verdicts for Drive (done: create and modify ask, trash refused, restore approved).
 - `docs/DECISIONS.md` (line 39) and `docs/REVIEW-RESPONSE.md` (priority 2, N1): `drive.file` was chosen after a review; this item
   supersedes both when it is built.
 - `docs/OPERATIONS.md` (lines 100-109) and `docs/PROVIDERS.md` (line 69): the Google Cloud setup with `drive.file` and the Picker.

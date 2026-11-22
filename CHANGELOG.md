@@ -11,6 +11,13 @@ Every release has a section here, under its tag; the release workflow publishes 
   gate now filters them, not only the page). Ticking a pack approves nothing. `GET /v1/modes/{name}` rows have `pack` and `shown`, and
   `POST /v1/modes/test` says `ignored_pack`. **Check your modes:** a mode that approved a tool of a pack it does not switch on now follows
   the default mode for it until you tick the pack.
+- **Restore, for Drive and mail:** new tools `drive_restore` (takes a file out of Drive's trash) and `mail_restore` (takes a message out of
+  the Trash and puts it back in the inbox), new action classes `drive_restore` and `mail_restore`, approved in the default mode. `drive_search`
+  takes `trashed` and `mail_search` takes the folder `trash`, to find what to restore. The Drive scope does not change.
+- **Drive's trash is a class of its own, and the default mode refuses it:** `drive_delete` (it only ever moved a file to the trash) is now
+  `drive_trash`; `drive_write` covers create and update only and asks. **A mode, or an installed `default-mode.toml`, with a line on
+  `drive_write` no longer covers a trash: add a line on `drive_trash` if you want it.** No migration.
+- `docs/THREAT-MODEL.md` now says what the default mode does with Drive.
 
 ## v1.6.0 — 14/11/2026
 

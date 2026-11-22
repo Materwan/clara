@@ -290,7 +290,7 @@ def test_a_local_only_turn_sends_nothing_out(services):
     local = Situation("interactive", local_only=True)
     default(services, line("approve", tool="web_fetch"), line("approve", klass="github_write"))  # no mode opens it
     leaving = ("web_search", "fetch_trusted", "fetch_other", "github_read", "github_write", "drive_read", "drive_write",
-               "run_network", "vault_write", "vault_destroy")
+               "drive_trash", "drive_restore", "mail_restore", "run_network", "vault_write", "vault_destroy")
     for klass in leaving:
         decision = services.gate.decide(action("web_fetch", "read", klass, "domain:x.org"), local)
         assert decision.effect == "refuse" and decision.floor, klass

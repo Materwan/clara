@@ -1168,13 +1168,18 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   PKCE. Clara sees only files she created (in her own "Clara" folder) and files or folders you open to her with the
   Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
   confirm before anything is stored. Disconnecting revokes the token at Google. Reading Google Docs, Sheets and Slides
-  gives text; every create, update or delete (to Drive's trash) asks by default.
+  gives text. A create or an update asks by default (`drive_write`); a move to Drive's trash (`drive_delete`, class
+  `drive_trash`) is refused by default; taking a file out of the trash (`drive_restore`, class `drive_restore`) is approved. The
+  trash is never emptied and no tool deletes for good. `drive_search` lists the trash with `trashed` set. A mode with a line on
+  `drive_write` still decides a create and an update; it no longer covers a trash.
 - **Gmail:** OAuth with PKCE and three scopes only, `gmail.readonly`, `gmail.compose` and `gmail.modify` (plus `openid email`
   to show which mailbox you attach), using the Google client of Drive but a token of its own. Clara can search (free words,
   sender, recipient, subject, unread, with an attachment, between two dates, in the inbox, sent, drafts, trash, spam or
   everywhere), read a message, read an attachment's text, keep an attachment in the workspace, save a draft and send. She
   can list your labels, make one, add or remove your labels on a message, delete one of your labels (its messages stay),
-  take the unread mark off a message, and move a message to the Trash. She cannot archive, empty the Trash or change any
+  take the unread mark off a message, move a message to the Trash and take it back out (`mail_restore`: the message goes back
+  to the inbox, by `messages.untrash` and then adding `INBOX`, which `gmail.modify` allows; a message that is not in the Trash is
+  refused; `mail_search` with the folder `trash` finds it). She cannot archive, empty the Trash or change any
   setting: the token has no scope for settings, and Clara never calls the permanent delete (`messages.delete`), which
   `gmail.modify` does not allow. A label is named from your own labels only, so INBOX is refused; the mark read touches
   UNREAD and nothing else. A connection made before this version asks you to connect Gmail once more, for `gmail.modify`. The Gmail API itself says
@@ -1258,8 +1263,8 @@ Every tool call is an **action**: a tool, a class, a level (`read`, `write`, `de
 `reminders`, `tasks`, `notify`, `forms`, `history`, `discord`, `automations`, `deferred`) and a one-line summary. The gate answers allow, ask or refuse. The model can
 neither read nor change a mode, and no tool answers a request.
 
-The summary of a request about a **mail** (`mail_read`, `mail_attachment_read`, `mail_label`, `mail_trash`, `mail_mark_read`) or a **Drive file**
-(`drive_update`, `drive_delete`, `read_created_file` of a `drive:` reference) names it, so that you can tell which one it is:
+The summary of a request about a **mail** (`mail_read`, `mail_attachment_read`, `mail_label`, `mail_trash`, `mail_restore`, `mail_mark_read`) or a **Drive file**
+(`drive_update`, `drive_delete`, `drive_restore`, `read_created_file` of a `drive:` reference) names it, so that you can tell which one it is:
 `Move a Gmail message to the Trash (not emptied): "Invoice March" from Alice <alice@acme.com> [19a3f0c2d4e5]`. The subject, the sender or
 the file name come last, in quotes, with the id at the end; they are made one line with no quote, bracket or invisible character, cut
 (80 and 60 characters) and never change the words before them. They are what the conversation was shown by `mail_search`, `mail_read`,
@@ -1349,7 +1354,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 - **A class the file has no line for** (alone: no tool, no target) takes the built-in line, so a file written before a class was
   added still decides it; the server says so in its log.
 - **The built-in copy** (and the shipped file): each class decided as its thresholds were at level 3, and the classes the tainted-turn
-  rule raised (`github_write`, `drive_write`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`, `run_network`,
+  rule raised (`github_write`, `drive_write`, `drive_trash`, `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`, `run_network`,
   `automation`, `deferred`, `feed_follow`, `skill_run`, `skill_pack`, `fetch_other`) get an `(if tainted)` verdict of at least `ask`:
 
 | Action class | Normal turn | When tainted |
@@ -1363,12 +1368,15 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 | `github_read`: GitHub read | approve | same |
 | `github_write`: GitHub issue, branch, pull request, commit | refuse | same |
 | `drive_read`: Drive read (files Clara created or you opened to her) | approve | same |
-| `drive_write`: Drive create, update, delete | refuse | same |
+| `drive_write`: Drive create or modify: create a file, replace a file's content | ask | same |
+| `drive_trash`: Drive trash: move a file to Drive's trash (never emptied) | refuse | same |
+| `drive_restore`: Drive restore: take a file out of Drive's trash | approve | same |
 | `mail_read`: Mail read: search, read a message or an attachment (Gmail) | approve | same |
 | `mail_draft`: Mail draft: save a draft in your mailbox (nothing is sent) | ask | same |
 | `mail_send`: Mail send: an email leaves your mailbox | refuse | same |
 | `mail_label`: Mail label: add or remove your labels on a message, or make one (nothing is archived) | ask | same |
 | `mail_trash`: Mail trash: move a message to the Trash (never emptied) | ask | same |
+| `mail_restore`: Mail restore: take a message out of the Trash and put it back in the inbox | approve | same |
 | `mail_mark`: Mail mark: take the unread mark off a message (nothing else changes) | ask | same |
 | `mail_label_delete`: Mail label delete: delete one of your labels (its messages stay) | refuse | same |
 | `school_read`: Moodle and Auriga read: your courses, calendar, grades and the files of a course | approve | same |
@@ -1416,7 +1424,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 - **Tainted turns:** once a conversation has read untrusted content (a web page or search result, a GitHub file or thread, a
   Drive file, an email or an attachment; and every run an event starts, from its first word), each of its later turns is
   tainted too (also after a marked file of the workspace, or a script that ran with the network, was read), and each tool gets the
-  `(if tainted)` verdict of its line. The default mode asks at least for outside-world writes (`github_write`, `drive_write`,
+  `(if tainted)` verdict of its line. The default mode asks at least for outside-world writes (`github_write`, `drive_write`, `drive_trash`,
   `mail_send`, `mail_label_delete`, `vault_write`, `vault_destroy`), networked scripts (`run_network`), changes to your automations
   (`automation`), booked calls (`deferred`), a feed to follow (`feed_follow`), a skill she runs (`skill_run`, and `skill_pack`, which asks in any turn) and the fetch of an address nobody gave (`fetch_other`) then; to run one with no card after
   outside content, give that tool the `(if tainted)` verdict `approve` in a mode, one tool at a time.
@@ -1488,7 +1496,7 @@ the arguments (never the arguments themselves), the effect, the outcome and a de
 
 ## 10. Tools
 
-91 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+93 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -1536,10 +1544,11 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `github_issue` | Open, comment or close an issue (pack GitHub) | github_write / write; destructive to close |
 | `drive_list` | List what Clara may use on Drive, or a folder — untrusted | drive_read / read |
 | `drive_read` | Read a Drive file (Docs, Sheets, Slides as text) — untrusted | drive_read / read |
-| `drive_search` | Search the Drive files Clara may see — untrusted | drive_read / read |
+| `drive_search` | Search the Drive files Clara may see, or Drive's trash with `trashed` — untrusted | drive_read / read |
 | `drive_create` | Create a file (or a Google Doc) | drive_write / write |
 | `drive_update` | Replace a file's content | drive_write / destructive |
-| `drive_delete` | Move a file to Drive's trash | drive_write / destructive |
+| `drive_delete` | Move a file to Drive's trash; never deleted for good, never emptied; refused by default | drive_trash / destructive |
+| `drive_restore` | Take a file out of Drive's trash; approved by default | drive_restore / write |
 | `mail_search` | Search a mailbox, newest first — untrusted | mail_read / read |
 | `mail_read` | Read one email: headers, a quarantined reader's report of the text (`focus`: what to look for), attachments — untrusted | mail_read / read |
 | `mail_attachment_read` | A quarantined reader's report of an attachment (text, code, PDF, Word) — untrusted | mail_read / read |
@@ -1550,6 +1559,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `mail_label_create` | Make a label of yours; it moves nothing (pack Mail) | mail_label / write |
 | `mail_label` | Add or remove your labels on one message; never archives or marks read (pack Mail) | mail_label / write |
 | `mail_trash` | Move one message to the Trash; never emptied; asks, and Approve all next covers it (pack Mail) | mail_trash / destructive |
+| `mail_restore` | Take one message out of the Trash and put it back in the inbox; approved by default (pack Mail) | mail_restore / write |
 | `mail_mark_read` | Take the unread mark off one message; nothing else changes, never an archive (pack Mail) | mail_mark / write |
 | `mail_label_delete` | Delete one of your labels; it comes off its messages, which stay; asks, not grantable (pack Mail) | mail_label_delete / destructive |
 | `school_calendar` | The school calendar between two dates: Auriga's classes and exams, Moodle's assignments, activities and quizzes (pack Moodle/Auriga) | school_read / read |

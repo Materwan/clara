@@ -52,6 +52,7 @@ LABELS: dict[str, str] = {
     "drive_create": "Created on Drive",
     "drive_update": "Replaced a Drive file",
     "drive_delete": "Moved a Drive file to the trash",
+    "drive_restore": "Restored a Drive file from the trash",
     "open_second_brain": "Opened the vault",
     "vault_search": "Searched the vault",
     "vault_read": "Read the note",

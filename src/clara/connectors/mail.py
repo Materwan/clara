@@ -10,6 +10,7 @@ sees a password. What she may do, in the order of risk:
     label     add or remove labels of your own on a message, make one or delete one (nothing is archived)
     mark      take the unread mark off a message (nothing else changes)
     trash     move a message to the Trash: never emptied, and the Trash keeps it until it is removed there
+    restore   take a message out of the Trash and put it back in the inbox
 
 Everything that comes out of a mailbox is written by someone else. `clean_text` removes what is invisible to you but
 not to a model (zero-width and direction-control characters, Unicode "tag" characters, text hidden with CSS), and the
@@ -443,6 +444,7 @@ class MailClient:
         modify(id, add, remove)  label ids added and removed on one message
         delete_label(id)         one of your labels, deleted (its messages stay)
         trash(id)                the message moved to the Trash (never deleted)
+        untrash(id)              the message taken out of the Trash and put back in the inbox
         new_since(ms, limit)     the OLDEST `limit` inbox messages received since then, oldest first: a backlog is
                                  worked through from its start, never from its end (the caller moves its cursor on)
     """
@@ -545,6 +547,9 @@ class MailClient:
         raise NotImplementedError
 
     async def trash(self, message: str) -> None:
+        raise NotImplementedError
+
+    async def untrash(self, message: str) -> None:
         raise NotImplementedError
 
     async def new_since(self, received_ms: int, limit: int = NEW_BATCH) -> list[Summary]:

@@ -90,7 +90,7 @@ PACKS: tuple[Pack, ...] = (
         "mail",
         "Mail",
         "Your Gmail: search, read and draft; label messages, make and delete labels; mark a message read; move a message "
-        "to the Trash. Sending always asks you first.",
+        "to the Trash and take it back out. Sending always asks you first.",
         frozenset(
             {
                 "mail_search",
@@ -103,6 +103,7 @@ PACKS: tuple[Pack, ...] = (
                 "mail_label_create",
                 "mail_label",
                 "mail_trash",
+                "mail_restore",
                 "mail_mark_read",
                 "mail_label_delete",
             }
