@@ -112,6 +112,62 @@ right (`allowed-tools` is ignored). The terminal and Discord clients run skills 
 
 - **Schedules and hooks running a skill:** later; the owner left them out of this item.
 
+## The modes page: packs show and hide their tools
+
+The Modes page (Settings, `#/modes`) has a row of pack switches for each mode, and under it a table of verdicts with one row per
+tool and class. Today a pack switch only changes the mode's pack list: the packs decide which tools a conversation offers, and the
+gate decides each call by the mode's lines, never by a pack. The table lists every tool of the catalogue whatever the packs, so a
+tool whose pack is off still has a row, dimmed and marked « from default ». The owner asked that the table follow the packs: a
+pack's tools are set per mode only while the pack is on in that mode. Ticking a pack must not approve anything.
+
+What the owner decided:
+
+- **Ticked in a mode:** the tools of that pack appear in the mode's table, with their normal and tainted verdicts and their
+  exceptions, like any other tool.
+- **Unticked in a mode:** those tools leave its table. A conversation of that mode that uses one of them (the pack is on in the
+  conversation) is decided by the default mode's rules.
+- **Shown, not editable:** the tools that the default mode decides for a mode are listed in a section « decided by the default
+  mode », read-only, with the default's verdict.
+- **A line on a tool whose pack is unticked** is kept, and ignored while the pack stays unticked; ticking the pack again brings it back.
+
+What I corrected or added to the owner's plan:
+
+- **Ticking a pack approves nothing.** A ticked tool without a line takes the default mode's verdict, as it does today: a pack never
+  grants a permission (`docs/DECISIONS.md`, « Special tools: what a pack is »). This answers the owner's first worry, that a pack
+  click approves its tools.
+- **The default mode keeps all its rows** (a proposal, not yet confirmed by the owner). The other modes take their verdicts from
+  it; hiding its tools would hide what applies everywhere.
+- **No exception on a hidden tool** (a proposal, not yet confirmed by the owner): `+ exception` is offered only on a tool whose
+  pack is ticked in the mode.
+- **This changes the gate.** Today a line applies whatever the packs are. After the change, a line on an unticked tool is ignored,
+  so the default mode decides it. If the default mode approves that tool, unticking a pack makes it approve it: the section above
+  is where that is shown.
+- **The reported symptom is not explained by the code.** Read in the page and the API, ticking or unticking a pack changes no line
+  and removes no row; unticking leaves the rows dimmed. The owner reported that the rows disappear when a pack is ticked. That is
+  reproduced before anything is changed.
+
+Not decided:
+
+- Tools with no pack (always offered, such as the workspace's read tools): are they in every mode's table? Assumed yes.
+- The lines that cover several tools or a whole class (« Other lines » on the page): where they are shown when they touch a hidden tool.
+- Whether the section « decided by the default mode » shows the pack of each tool.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The design of the table and of the section, how the hidden lines are listed, the reproduction of the ticking symptom, the change
+  of the gate and its tests.
+
+What the current design already sets:
+
+- The gate's verdict takes no pack (`Modes.verdict` in `src/clara/gate/modes.py`). A call without a line in its mode is decided by
+  the default mode, tainted verdict included (the docstring of `gate/modes.py`).
+- The packs of a mode are added to the conversation's packs and never replace them (`docs/DECISIONS.md`, « Modes instead of auto
+  levels and rules »; `with_mode` in `src/clara/packs/registry.py`).
+- The default mode is a root-owned file read at start (`CLARA_DEFAULT_MODE_FILE`), shown read-only on the page.
+- Only a token with the approval scope `all` changes a mode (`settled_by_you` in `src/clara/api/modes.py`).
+- `FEATURES.md` describes the Modes page in detail and `tests/test_docs.py` checks its names: it changes when the item is built,
+  not now. `tests/test_modes.py` already has the test of packs added to a conversation.
+
 ## Moodle and Auriga: what is left
 
 The Moodle/Auriga pack is built (`docs/DECISIONS.md`, « Moodle and Auriga »; `FEATURES.md`, section 8). Its tests run against
@@ -194,3 +250,203 @@ What the current design already sets:
   decision is recorded in `docs/DECISIONS.md`. A secret is set by a hidden prompt (`clara secrets set` or the connect command), never in
   `.env` or the chat.
 - A migration number is taken when the branch is merged.
+
+## Keep the question and the conversation from the moment it is sent
+
+The owner asked that a message whose answer is cut short is kept, that a conversation whose first answer is cut short is kept with
+its first message, and that a conversation appears in the history as soon as its message is sent. Today the question is written only
+when the turn ends (`src/clara/agent/turn.py`, after the answer). An interruption before the first word stores nothing
+(`_keep_interrupted` returns without storing when there is no text and no tool row), so the question is lost and the conversation has
+no message. On the web, Stop reloads the messages from the server, so the question disappears from the screen, and the conversation
+list reloads only when the stream ends (`web/src/pages/Chat.svelte`).
+
+What the owner decided:
+
+- **When the question is written:** at the send. The answer is written at the end of the turn, as today. The question and the
+  conversation then survive whatever happens next.
+- **Stop before the first word:** the question is kept, with an answer that says `[This answer was interrupted: you stopped it.]`.
+  « Try again » is offered.
+- **An error before the first word** (the model fails, a timeout, a prompt refused): the same rule. The note says why the answer
+  failed.
+- **The server restarts during an answer:** the question is kept, with `[This answer was interrupted: the server stopped.]`.
+- **All clients:** the web, the Discord bot, the desktop and phone apps and the Discord mirror, since the fix is in the server.
+- **The history:** a conversation appears in the list as soon as its message is sent, with its first question as the preview.
+
+What I corrected or added to the owner's plan:
+
+- **One cause for the three symptoms:** a reload of the list in the browser alone would still lose the question on Stop, so the change
+  is in the write of the turn, not in the page.
+- **A test of the list:** right after the send and after a stop, the conversation is listed with its question. The reason a
+  conversation is missing from the list today is not found in the code (the server's listing does not filter on messages): it has to
+  be reproduced in a browser before the item is closed.
+
+Not decided:
+
+- Nothing at the product level.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- How the prompt builder treats a question with no answer during its turn, so that it is not sent twice.
+- How the web shows a kept question with its note, and how « Try again » works on it.
+- The reproduction of the missing conversation in a browser.
+
+What the current design already sets:
+
+- An interrupted turn is kept as far as it went, with the note the web already recognises (`src/clara/agent/turn.py`, the module
+  docstring; `web/src/pages/Chat.svelte`, `INTERRUPTED`).
+- « Try again » already works on a stored question (`web/src/pages/Chat.svelte`, `canRetry` and `retry`).
+- The conversation row is created in `plan()`, before the turn (`src/clara/agent/turn.py`).
+- A server stop already stores the interrupted turns before the database closes (`src/clara/app.py`, `cancel_all`).
+- `FEATURES.md` is tested against the code: it changes when the item is built, not now.
+
+## Google Drive: the whole Drive, restore, no Picker
+
+Drive is connected with the narrow `drive.file` scope today: Clara sees only what she created and the files opened to her with the
+Google Picker (`src/clara/connectors/drive.py`, line 32). A file the owner made by hand is invisible to her, so she can answer that
+the folder is empty. This item widens Drive to the whole Drive, gives Clara restore for Drive and mail, and removes the Picker.
+
+What the owner decided:
+
+- **Scope:** Google's `drive` scope, for the whole Drive. It replaces `drive.file`. It is a restricted scope: the app stays in
+  Testing for the owner's personal use (refresh tokens expire after 7 days, 100 users at most).
+- **Reads:** Clara lists, searches and reads any file, and reads Google Docs, Sheets and Slides as text.
+- **Writes:** Clara creates files anywhere in the Drive and modifies non-native files. Google-native files (Docs, Sheets, Slides and
+  the other Google types) are only read, moved to the trash and restored: Clara never modifies one, in any mode. Creating one from
+  text stays allowed.
+- **Trash:** Clara moves a file to the trash. She never empties the trash, and no tool deletes for good, as for mail.
+- **Files of another owner:** Clara cannot move them to the trash; Google refuses.
+- **Restore:** a tool restores a Drive file from the trash, and a tool restores a mail from the trash. A restored mail goes back to
+  the inbox.
+- **Default mode:** reads approved; create and modify asked; trash refused; restore approved (Drive and mail).
+- **Picker removed:** no « Open files to Clara », no `google_picker_api_key`, no `/v1/connections/google/picker` route.
+- **One person:** Clara is for the owner only. If she is opened to other people, they get no connection at all: not GitHub, mail,
+  Drive, Moodle nor Auriga.
+
+What I corrected or added to the owner's plan:
+
+- **A mail restore needs two labels:** Gmail's `messages.untrash` only removes `TRASH`; a mail archived before it was trashed would
+  not return to the inbox. The restore also adds `INBOX`. `gmail.modify` already allows it, so no new scope.
+- **A Drive restore** sets `trashed` back to false. The `drive` scope already allows it.
+- **The current default mode contradicts the threat model:** `deploy/default-mode.toml` (lines 61-69) approves Drive reads and
+  refuses Drive writes, while `docs/THREAT-MODEL.md` (line 39) says the default mode refuses Drive tools. The item corrects the
+  threat model.
+- **Trash and modify are separate classes:** today `drive_write` covers create, update and delete. Trash gets its own class, so the
+  mode can refuse it while modify asks.
+- **Refusal of another owner's file** is a Google rule the owner noted. It was not tested on a real account: check it when built.
+- **The refusal of native files is in the code, not only in the mode:** the replace tool (`src/clara/connectors/tools.py`, around
+  line 406) accepts any file id today, and the gate does not see a file's type. The check is by MIME type (`application/vnd.google-apps.*`,
+  folders included), before the call. Whether today's replace on a native file fails or corrupts it is not checked yet.
+
+Not decided:
+
+- Nothing at the owner's level.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The names of the tools and classes, the TOML rules, the wording of the Connections page, the tests.
+- The exact list of native MIME types, and the message a refused native modification gives Clara.
+- The move of existing `drive.file` connections: they must be connected again, and the page must say so.
+
+What the current design already sets:
+
+- `src/clara/connectors/drive.py`: the `drive.file` scope (line 32); the trash is `trashed: true` (line 296); no restore.
+- `src/clara/connectors/gmail.py` (line 377): the trash is `messages.trash`; no untrash; the permanent delete is never called.
+- `src/clara/gate/actions.py` (lines 51-52): `drive_read` is `any_read`; `drive_write` covers create, update and delete.
+- `deploy/default-mode.toml` (lines 61-69): the default verdicts for Drive.
+- `docs/DECISIONS.md` (line 39) and `docs/REVIEW-RESPONSE.md` (priority 2, N1): `drive.file` was chosen after a review; this item
+  supersedes both when it is built.
+- `docs/OPERATIONS.md` (lines 100-109) and `docs/PROVIDERS.md` (line 69): the Google Cloud setup with `drive.file` and the Picker.
+- `docs/NON-GOALS.md` (lines 10 and 24): one person; accounts and sign-up are out.
+- `FEATURES.md` (line 82) and `src/clara/api/connections.py` (line 77): the Picker.
+
+## Voice dictation into Clara: send from the phone or the island, transcribed on the PC
+
+The owner wants a voice command that needs as little phone use as possible: speak, and the words become a message in Clara. The
+transcription runs on the PC that hosts Clara, from the audio sent by the client, for all clients (the Windows island, the Android
+phone, the web site (a button only, see below), the terminal, Discord voice messages and scripts through the API). It is not a voice
+answer: Clara still answers in text. The client-side parts (the trigger, which is the
+Android default assistant if the phone allows it, else a persistent notification with a button; the island shortcut; the recording) live
+in the separate `clara_coucou` repository; this item covers the Clara side.
+
+What the owner decided:
+
+- **Automatic sending** (`envoi automatique`): a setting per client (island, phone, web), off by default. When on, the transcribed
+  text is sent as a message at once, even with the phone's screen locked. When off, the text waits in the box and the owner sends it
+  (« relire et envoyer »). The owner takes the responsibility for the automatic case.
+- **Transcription on the PC**, not the phone and not a third-party service. The audio is never kept: only the text is stored, as an
+  ordinary message.
+- **A dictation conversation per client.** Each client has one current dictation conversation. A « new dictation conversation » button
+  creates a normal conversation (no project, no automation) and makes it the target of the dictations that follow, from that client. Any
+  client can dictate into any conversation. The conversations are normal: they are synchronised across the clients.
+- **One setting per client for the approval mode and the tool packs** of the dictation conversations. The new conversation takes them.
+  The owner decides them in the application.
+- **A dictation conversation is tainted**, as a conversation that read content from outside: its facts and its files are not trusted
+  until the owner has checked them. Tainted means the owner's rule for a tainted turn applies to the whole conversation (see below).
+- **No approval by voice.** A spoken phrase never approves a request of Clara.
+- **The web site may use the microphone, on a button press only.** The site's microphone permission goes from none to Clara's own
+  origin alone. The microphone never opens in the background: it opens when the owner presses the button, and stops with it.
+- **Other clients can dictate too:** the terminal (`clara-chat`), Discord voice messages sent to the bot, and scripts that call the API.
+
+What I corrected or added to the owner's plan:
+
+- **« Approbation » is not the word for the client's confirmation.** The item uses « automatic sending » for the setting and « review and
+  send » for the manual case. « Approval » stays the word for Clara's tool requests, as it is elsewhere.
+- **A tainted conversation asks for every outside write.** The existing rule for a tainted turn raises the verdict of outside writes
+  (mail, Drive, and others), so each such write asks the owner, on the phone if that is where the owner is. The automatic sending does
+  not get round that rule: a dictation can put a message into the conversation without a question, but a mail sent from it still asks.
+  This is the cost the owner accepted; it is recorded here so that it is seen when the item is built.
+- **The existing marks are reused.** Facts written in a tainted turn are already kept and shown to the model with the tag
+  `[unconfirmed]` until the owner confirms them. A file written after an untrusted read already carries the `tainted` mark. The new
+  source is « conversation of a dictation », not a new mechanism.
+- **Server transcription is a new audio route**, which is also a new surface: a decoder for audio sent by a client. It needs a size
+  limit, a duration limit and a timeout, and the audio must be dropped once transcribed, whatever the outcome.
+- **The current conversation of a client** follows a precedent: the Discord bot keeps its current conversation id in its state file
+  (`docs/DATA-MAP.md`, line 25). The item decides whether it is a table or a field, not whether it exists.
+
+- **The web microphone is a recorded guarantee that changes.** `src/clara/api/middleware.py` (line 264) sends
+  `camera=(), microphone=(), geolocation=()`, and `FEATURES.md` (line 1641) states « no camera, microphone or location ». The
+  microphone goes to Clara's own origin only; both places change when the item is built. This is a change of a decision, not an
+  exception to it.
+- **The threat model gains a row.** Once the origin may use the microphone, a script running on that origin can use it while the
+  page is open. The strict content security policy limits this, and `docs/THREAT-MODEL.md` must name it.
+- **A microphone needs a secure context.** Clara is served over HTTPS through Tailscale (`docs/OPERATIONS.md`, line 41), so the
+  condition holds; the browser behaviour still has to be checked on the real site.
+
+Not decided:
+
+- The model used on the PC. The owner's machine ran `small` in int8 at about 0.47 times real time (measured on 2026-11-22, a 13.7 s
+  French sample; the peak memory was 833 MB). A larger model is possible on the same machine, but the figures are not measured.
+- The maximum length of one dictation and the audio format sent by the clients.
+- What the « new dictation conversation » button does with the previous one: it is left as it is, with its title.
+- Whether Discord voice messages go into the Discord conversation of their channel, or into the dictation conversation of a client.
+- Whether the terminal's dictation follows the per-client automatic-sending setting, and which client's setting that is.
+- The place and the label of the button on the web site: an interface choice, left for the implementation.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The route that receives the audio, its format, its limits, its timeout and the drop of the audio after use.
+- How the current dictation conversation of each client is stored (a table, or a field), and its migration (the last one is `0037`).
+- The title of a dictation conversation, and how it is marked in the list of conversations.
+- The Settings page for the per-client setting, the approval mode and the packs.
+- The tests: the route with a fake transcriber, the rule that the audio is dropped, the locked-screen case, and the taint of the
+  conversation.
+- The change of the microphone header for Clara's origin, the two `FEATURES.md` lines it changes, and the threat-model row.
+- The audio library of the terminal (not checked yet), and the code of the web button: recording, sending, stopping.
+
+What the current design already sets:
+
+- `src/clara/db/migrations/0001_initial.sql` (lines 93-107): a conversation has a `client`, an optional `project_id`, and the flags
+  `incognito` and `local_only`.
+- `src/clara/api/modes.py`: a conversation's mode is read and set with `GET` and `PUT /v1/conversations/{id}/mode`; packs are switched
+  per conversation.
+- `docs/DECISIONS.md` (line 47): a tainted turn raises the verdict of outside writes; a mail trash is the one grantable exception.
+- `docs/DECISIONS.md` (line 72): facts from tainted turns are kept, tagged `[unconfirmed]` until confirmed.
+- `docs/DECISIONS.md` (line 303): the workspace marks files `quarantine` and `tainted`.
+- `docs/DATA-MAP.md` (line 25): the Discord bot keeps its current conversation id in its state file.
+- `coucou_copy/CLAUDE.md` (line 32): the phone's token is `phone`, created with `--approvals all`; a voice phrase must never approve.
+- `docs/THREAT-MODEL.md`: the content a conversation reads is the threat; a dictation is the owner's voice, but it can capture other
+  people or the television in the room.
+- `src/clara/api/middleware.py` (line 264): `permissions-policy: camera=(), microphone=(), geolocation=()` on every response.
+- `FEATURES.md` (line 1641): the web promise « no camera, microphone or location ».
+- `docs/OPERATIONS.md` (line 41): Clara is served over HTTPS by Tailscale.
+- Measured on 2026-11-22 on this PC: `faster-whisper` `small`, int8, 0.47 times real time on a 13.7 s French sample, 833 MB peak.
