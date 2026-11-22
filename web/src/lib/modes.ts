@@ -8,7 +8,13 @@ export const KIND: Record<Verdict, 'ok' | 'warn' | 'danger'> = { approve: 'ok', 
 
 export type Line = { tool: string; class: string; target: string; verdict: Verdict; tainted: Verdict };
 export type Uses = { conversations: number; automation_conversations: number; automations: number; projects: number };
-export type Effective = { tool: string; class: string; verdict: Verdict; tainted: Verdict; line: string | null; from: 'mode' | 'default' };
+export type Effective = {
+  tool: string; class: string; verdict: Verdict; tainted: Verdict; line: string | null; from: 'mode' | 'default';
+  /** The tool's pack, or null. */
+  pack: string | null;
+  /** False when the tool's pack is off in this mode: the default mode decides it and the mode's table leaves it out. */
+  shown: boolean;
+};
 export type ToolInfo = { name: string; description: string; classes: string[]; pack: string | null };
 
 const PERMISSIVE: Record<Verdict, number> = { refuse: 0, ask: 1, approve: 2 };
@@ -42,6 +48,23 @@ export const effectiveOf = (rows: Effective[], tool: string, klass: string): Eff
 export function toolsOf(tools: ToolInfo[], klass: string, filter: string): ToolInfo[] {
   const words = filter.trim().toLowerCase();
   return tools.filter((tool) => tool.classes.includes(klass) && (!words || `${tool.name} ${tool.description} ${tool.classes.join(' ')}`.toLowerCase().includes(words)));
+}
+
+/** Whether the table of the mode sets this tool under this class (no pack, or its pack on); a row the server did not list is not. */
+export const isShown = (rows: Effective[], tool: string, klass: string): boolean => !!effectiveOf(rows, tool, klass)?.shown;
+
+/** The rows the default mode decides for this mode (their pack is off), kept when the words of the filter are in the tool, class or pack. */
+export function decidedByDefault(rows: Effective[], filter: string, packLabel: (id: string | null) => string): Effective[] {
+  const words = filter.trim().toLowerCase();
+  return rows.filter((row) => !row.shown && (!words || `${row.tool} ${row.class} ${packLabel(row.pack)}`.toLowerCase().includes(words)));
+}
+
+/** The tools a line of this mode says nothing about, as long as their pack is off: those its tool glob and class cover.
+ *  Shortcut: a target is not matched, so a line with a target lists every hidden tool its tool and class cover. */
+export function ignoredFor(line: Line, rows: Effective[]): string[] {
+  const glob = line.tool ? new RegExp(`^${line.tool.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}$`) : null;
+  const names = rows.filter((row) => !row.shown && (!glob || glob.test(row.tool)) && (!line.class || line.class === row.class)).map((row) => row.tool);
+  return [...new Set(names)];
 }
 
 const plural = (n: number, one: string, many = one + 's'): string => `${n} ${n === 1 ? one : many}`;

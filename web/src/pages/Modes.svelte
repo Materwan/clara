@@ -6,7 +6,7 @@
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
   import {
-    type Effective, type Line, type Uses, type Verdict, KIND, VERDICTS, confirmQuery, deleteWarning, effectiveOf, exceptionsOf, otherLines, ownLine,
+    type Effective, type Line, type Uses, type Verdict, KIND, VERDICTS, confirmQuery, decidedByDefault, deleteWarning, effectiveOf, exceptionsOf, ignoredFor, isShown, otherLines, ownLine,
     sameUses, taintedAfter, taintedChoices, toolsOf, usedBy,
   } from '../lib/modes';
   import { live, route, session, toast } from '../lib/state.svelte';
@@ -135,9 +135,14 @@
   // ---- what is shown
   const rowOf = (tool: string, klass: string): Effective | undefined => effectiveOf(detail?.effective ?? [], tool, klass);
   const groups = $derived(
-    index.classes.map((row) => ({ ...row, tools: toolsOf(index.tools, row.class, filter) })).filter((group) => group.tools.length),
+    index.classes
+      .map((row) => ({ ...row, tools: toolsOf(index.tools, row.class, filter).filter((tool) => isShown(detail?.effective ?? [], tool.name, row.class)) }))
+      .filter((group) => group.tools.length),
   );
   const others = $derived(otherLines(detail?.verdicts ?? [], index.tools));
+  const packLabel = (id: string | null): string => index.packs.find((pack) => pack.id === id)?.label ?? id ?? '';
+  /** The tools whose pack is off in this mode: the default mode decides them (never any in the default mode itself). */
+  const byDefault = $derived(decidedByDefault(detail?.effective ?? [], filter, packLabel));
 
   // ---- the test box
   async function runTest(event: SubmitEvent): Promise<void> {
@@ -265,13 +270,36 @@
               <p class="muted small">Lines that cover several tools or a whole class: they decide the rows above that have no line of their own.</p>
               <ul class="plain">
                 {#each others as line (`${line.tool}|${line.class}|${line.target}`)}
-                  <li class="row"><code class="grow">{lineText(line)}</code>
+                  {@const ignored = ignoredFor(line, detail.effective ?? [])}
+                  <li class="row"><span class="grow"><code>{lineText(line)}</code>
+                    {#if ignored.length}<div class="muted small">Ignored for: {ignored.join(', ')} (their pack is off in this mode)</div>{/if}</span>
                     {#if !locked}<button class="small danger" onclick={() => removeLine(line)}>Remove</button>{/if}</li>
                 {/each}
               </ul>
             </div>
           {/if}
-          <p class="muted small">If tainted is never more permissive than the normal turn. A tool this mode does not name takes its verdict from the default mode.
+
+          {#if !detail.default && byDefault.length}
+            <div class="panel stack">
+              <h3>Decided by the default mode</h3>
+              <p class="muted small">The pack of these tools is off in this mode, so the default mode decides them and this mode's lines about them are
+                ignored (they are kept). Tick the pack to set them here: that changes no verdict by itself.</p>
+              <table>
+                <thead><tr><th>Tool</th><th>Pack</th><th>Normal turn</th><th>If tainted</th></tr></thead>
+                <tbody>
+                  {#each byDefault as row (`${row.tool}|${row.class}`)}
+                    <tr>
+                      <td><code>{row.tool}</code><div class="muted small">{row.class}</div></td>
+                      <td>{packLabel(row.pack)}</td>
+                      <td><span class="tag {KIND[row.verdict]}">{row.verdict}</span></td>
+                      <td><span class="tag {KIND[row.tainted]}">{row.tainted}</span></td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+          <p class="muted small">If tainted is never more permissive than the normal turn. A tool this mode does not name, or whose pack is off in it, takes its verdict from the default mode.
             The gate's floor, local only, chat only and the secret check apply in every mode.</p>
         </section>
       {/if}
@@ -313,6 +341,7 @@
             Normal turn: <span class="tag {KIND[result.verdicts.normal as Verdict]}">{result.verdicts.normal}</span>
             if tainted: <span class="tag {KIND[result.verdicts.tainted as Verdict]}">{result.verdicts.tainted}</span>
           {:else}No line of the mode {result.mode} decides it.{/if}
+          {#if result.ignored_pack}<div class="warn">A line of this mode names this tool, but its pack <code>{result.ignored_pack}</code> is off in the mode: the line is ignored.</div>{/if}
         </div>
       </div>
     {/if}

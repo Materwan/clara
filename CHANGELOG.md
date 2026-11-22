@@ -3,6 +3,15 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## Unreleased
+
+- **The Modes page follows the packs.** A mode's table lists only the tools it sets: the tools with no pack and those of a pack ticked in
+  that mode. The tools of an unticked pack move to a read-only section, **Decided by the default mode**, with their pack and the default's
+  verdicts, and a mode's lines about them are ignored while the pack stays unticked (they are kept and apply again when it is ticked: the
+  gate now filters them, not only the page). Ticking a pack approves nothing. `GET /v1/modes/{name}` rows have `pack` and `shown`, and
+  `POST /v1/modes/test` says `ignored_pack`. **Check your modes:** a mode that approved a tool of a pack it does not switch on now follows
+  the default mode for it until you tick the pack.
+
 ## v1.6.0 — 14/11/2026
 
 **Modes, one kind of automation, new kinds of event, and skills.** What Clara may do is now a **mode** you choose, in place of the auto

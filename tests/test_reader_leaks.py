@@ -59,6 +59,6 @@ def test_a_trash_asks_in_the_default_mode_and_a_tainted_turn_does_not_raise_it(s
     [line] = [each for each in builtin_default().lines if each.klass == "mail_trash"]
     assert (line.verdict, line.tainted) == ("ask", "ask")
     assert "mail_trash" not in RAISED_WHEN_TAINTED
-    services.modes.create("Sorting", (), [type(line)("approve", "mail_trash")])
+    services.modes.create("Sorting", ("mail",), [type(line)("approve", "mail_trash")])
     for tainted in (False, True):  # no card, even in a turn that read mail
         assert services.gate.decide(trash, Situation("interactive", tainted=tainted, mode_name="Sorting")).effect == "allow"

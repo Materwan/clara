@@ -261,7 +261,7 @@ def test_the_default_mode_cannot_be_changed_by_a_request(services):
 # What the gate does with a mode
 # ----------------------------------------------------------------------
 def test_a_mode_names_what_it_decides_and_the_default_mode_decides_the_rest(services):
-    make(services, "Mail", line("approve", klass="mail_send"), line("approve", "mail_draft"))
+    make(services, "Mail", line("approve", klass="mail_send"), line("approve", "mail_draft"), packs=["mail"])
     send = action("mail_send", "mail_send", "destructive", "mail:to:a@b.c")
     assert decide(services, send, at()).effect == "refuse"  # the default mode
     assert decide(services, send, at("Mail")).effect == "allow"
@@ -274,7 +274,7 @@ def test_a_mode_that_refuses_every_class_is_the_old_level_zero_and_one_that_appr
     """The levels 0 and 5 have no mode of their own: a mode is as strict or as open as its lines (a default mode file with
     `refuse` for every class is level 0). What it cannot change is the floor, the local-only rule and the secret check."""
     make(services, "Nothing", *(line("refuse", klass=klass) for klass in CLASSES))
-    make(services, "All", *(line("approve", klass=klass) for klass in CLASSES))
+    make(services, "All", *(line("approve", klass=klass) for klass in CLASSES), packs=["github"])
     for klass in CLASSES:
         assert decide(services, action("t", klass, "write"), at("Nothing")).effect == "refuse", klass
         assert decide(services, action("t", klass, "write"), at("All", tainted=True)).effect == "allow", klass
@@ -310,7 +310,7 @@ def test_a_tainted_turn_gets_the_tainted_verdict_which_is_never_more_permissive(
 
 
 def test_the_secret_check_always_asks_in_every_mode_and_nothing_suspends_it(services):
-    make(services, "Everything", line("approve", klass="github_write", tainted="approve"), line("approve", klass="fetch_other"))
+    make(services, "Everything", line("approve", klass="github_write", tainted="approve"), line("approve", klass="fetch_other"), packs=["github"])
     leaky = action("github_write", "github_write", "write", "github:me/r", secrets=["GitHub token"])
     for mode in ("interactive", "unattended"):
         for tainted in (False, True):
@@ -351,7 +351,7 @@ def test_an_answered_request_is_not_judged_again_unless_the_mode_refuses(service
 
 def test_a_hook_runs_with_its_tainted_verdicts_from_its_first_word(services):
     push = action("github_write", "github_write", "write", "github:me/r")
-    make(services, "Hooks", line("approve", klass="github_write", tainted="ask"))
+    make(services, "Hooks", line("approve", klass="github_write", tainted="ask"), packs=["github"])
     assert decide(services, push, at("Hooks", "unattended", tainted=True)).effect == "ask"
     assert decide(services, push, at("Hooks", "unattended")).effect == "allow"
 
@@ -363,6 +363,72 @@ def test_the_tester_says_which_line_decided_and_the_verdicts(services):
     assert explained["line"]["class"] == "mail_trash" and explained["verdicts"] == {"normal": "approve", "tainted": "ask"}
     not_named = services.gate.explain(action("some_tool", "ws_write", "write"), at("Mail"))
     assert not_named["mode"] == DEFAULT and not_named["from_default"] is True
+
+
+# ----------------------------------------------------------------------
+# Packs decide which lines count
+# ----------------------------------------------------------------------
+def test_a_line_on_a_tool_counts_only_while_its_pack_is_ticked_and_ticking_approves_nothing(services):
+    trash = action("mail_trash", "mail_trash", "destructive", "mail:a")
+    make(services, "M", line("approve", "mail_trash"))
+    for tainted in (False, True):
+        assert decide(services, trash, at("M", tainted=tainted)).effect == "ask"  # pack off: the default mode's (ask)
+    services.modes.update("M", packs=["mail"])
+    assert decide(services, trash, at("M")).effect == "allow"  # ticked: the line applies
+    assert decide(services, trash, at("M", tainted=True)).effect == "allow"
+    services.modes.update("M", packs=[])
+    assert decide(services, trash, at("M")).effect == "ask"  # unticked again: kept, ignored
+    assert [ln.tool for ln in services.modes.require("M").lines] == ["mail_trash"]
+    services.modes.update("M", packs=["mail"])
+    assert decide(services, trash, at("M")).effect == "allow"  # back
+    # a refusal on a tool whose pack is off does not refuse either: the default mode decides
+    make(services, "R", line("refuse", "mail_trash"))
+    assert decide(services, trash, at("R")).effect == "ask"
+    services.modes.update("R", packs=["mail"])
+    assert decide(services, trash, at("R")).effect == "refuse"
+
+
+def test_ticking_a_pack_with_no_line_gives_the_default_modes_verdict(services):
+    make(services, "Bare", packs=["mail", "github"])
+    for tool, klass, level in (("mail_trash", "mail_trash", "destructive"), ("mail_read", "mail_read", "read")):
+        act = action(tool, klass, level, "mail:a")
+        for tainted in (False, True):
+            assert decide(services, act, at("Bare", tainted=tainted)).effect == decide(services, act, at(tainted=tainted)).effect
+
+
+def test_a_tool_with_no_pack_and_the_default_mode_are_never_filtered(services):
+    make(services, "P", line("approve", "ws_read"), line("approve", klass="mail_trash"))
+    read = action("ws_read", "ws_write", "write", "ws:a")
+    only(services, line("refuse", "ws_read"), line("refuse", "mail_trash"))
+    assert decide(services, read, at("P")).effect == "allow"  # no pack: the mode's line counts with no pack ticked
+    assert decide(services, read, at()).effect == "refuse"
+    trash = action("mail_trash", "mail_trash", "destructive", "mail:a")
+    assert decide(services, trash, at()).effect == "refuse"  # the default mode keeps every line, whatever its packs
+    assert services.modes.off_pack(services.modes.default, "mail_trash") is None
+
+
+def test_a_line_over_a_class_is_ignored_only_for_the_tools_whose_pack_is_off(services):
+    only(services, line("refuse", klass="mail_trash"))
+    make(services, "Class", line("approve", klass="mail_trash"))
+    packed = action("mail_trash", "mail_trash", "destructive", "mail:a")
+    free = action("some_tool", "mail_trash", "destructive", "mail:a")  # a tool with no pack under the same class
+    assert decide(services, packed, at("Class")).effect == "refuse"  # the default mode's
+    assert decide(services, free, at("Class")).effect == "allow"  # the line still counts
+    services.modes.update("Class", packs=["mail"])
+    assert decide(services, packed, at("Class")).effect == "allow"
+
+
+def test_the_tester_names_the_pack_that_made_a_line_count_for_nothing(services):
+    make(services, "Mail", line("approve", "mail_trash"))
+    trash = action("mail_trash", "mail_trash", "destructive")
+    explained = services.gate.explain(trash, at("Mail"))
+    assert explained["ignored_pack"] == "mail" and explained["mode"] == DEFAULT and explained["from_default"] is True
+    services.modes.update("Mail", packs=["mail"])
+    explained = services.gate.explain(trash, at("Mail"))
+    assert explained["ignored_pack"] is None and explained["mode"] == "Mail"
+    assert services.gate.explain(trash, at())["ignored_pack"] is None  # no mode named: nothing was ignored
+    make(services, "Other", line("approve", "ws_read"))
+    assert services.gate.explain(trash, at("Other"))["ignored_pack"] is None  # no line named it, so none was ignored
 
 
 # ----------------------------------------------------------------------
@@ -610,6 +676,20 @@ async def test_the_page_reads_the_modes_and_everything_it_needs_to_edit_one(clie
     assert default_view["name"] == DEFAULT and default_view["effective"]
 
 
+async def test_the_table_of_a_mode_follows_its_packs(client, services):
+    make(services, "Mail work", line("approve", "mail_trash"))
+    rows = {r["tool"]: r for r in (await client.get("/v1/modes/Mail work")).json()["effective"]}
+    assert rows["mail_trash"]["pack"] == "mail" and rows["mail_trash"]["shown"] is False
+    assert rows["mail_trash"]["from"] == "default" and rows["mail_trash"]["verdict"] == "ask"  # the line is ignored
+    assert rows["ws_read"]["pack"] is None and rows["ws_read"]["shown"] is True  # no pack: in every table
+    changed = await client.put("/v1/modes/Mail work", json={"packs": ["mail"]})  # ticking creates and removes no line
+    rows = {r["tool"]: r for r in changed.json()["effective"]}
+    assert rows["mail_trash"]["shown"] is True and (rows["mail_trash"]["verdict"], rows["mail_trash"]["from"]) == ("approve", "mode")
+    assert len(changed.json()["verdicts"]) == 1
+    default = (await client.get("/v1/modes/default")).json()["effective"]
+    assert all(r["shown"] for r in default) and any(r["pack"] == "mail" for r in default)  # the default mode keeps every row
+
+
 async def test_a_mode_is_made_changed_and_deleted_from_the_page(client, services):
     made = await client.post(
         "/v1/modes", json={"name": "Mail work", "packs": ["mail"], "verdicts": [{"tool": "mail_read", "verdict": "approve"}]}
@@ -682,6 +762,14 @@ async def test_the_tester_says_what_would_decide_a_call(client, services):
     assert (await client.post("/v1/modes/test", json={**body, "tainted": True})).json()["effect"] == "ask"
     assert (await client.post("/v1/modes/test", json={**body, "mode": "default"})).json()["effect"] == "allow"  # level 3 approves it
     assert (await client.post("/v1/modes/test", json={**body, "local_only": True})).json()["effect"] == "allow"  # stays on the machine
+    assert plain["ignored_pack"] is None
+    make(services, "Web off", line("refuse", "web_search"))
+    search = {"tool": "web_search", "arguments": {"query": "clara"}, "mode": "Web off"}
+    said = (await client.post("/v1/modes/test", json=search)).json()
+    assert said["ignored_pack"] == "web" and said["mode"] == DEFAULT and said["effect"] == "allow"
+    services.modes.update("Web off", packs=["web"])
+    said = (await client.post("/v1/modes/test", json=search)).json()
+    assert said["ignored_pack"] is None and said["effect"] == "refuse"
     assert (await client.post("/v1/modes/test", json={**body, "mode": "Nothing"})).status_code == 404
     assert (await client.post("/v1/modes/test", json={"tool": "nothing"})).status_code == 404
 

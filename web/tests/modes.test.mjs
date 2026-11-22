@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { confirmQuery, deleteWarning, effectiveOf, exceptionsOf, otherLines, ownLine, taintedAfter, taintedChoices, toolsOf, usedBy } from '../src/lib/modes.ts';
+import { confirmQuery, decidedByDefault, deleteWarning, effectiveOf, exceptionsOf, ignoredFor, isShown, otherLines, ownLine, taintedAfter, taintedChoices, toolsOf, usedBy } from '../src/lib/modes.ts';
 
 test('a tainted turn is never more permissive than the normal one', () => {
   assert.deepEqual(taintedChoices('approve'), ['approve', 'ask', 'refuse']);
@@ -44,6 +44,29 @@ test('the effective verdict is looked up by tool and class', () => {
   const rows = [{ tool: 'ws_run', class: 'script', verdict: 'ask', tainted: 'refuse', line: null, from: 'default' }];
   assert.equal(effectiveOf(rows, 'ws_run', 'script')?.from, 'default');
   assert.equal(effectiveOf(rows, 'ws_run', 'script_net'), undefined);
+});
+
+const packed = [
+  { tool: 'mail_send', class: 'mail_send', verdict: 'ask', tainted: 'ask', line: null, from: 'default', pack: 'mail', shown: false },
+  { tool: 'mail_read', class: 'mail_read', verdict: 'approve', tainted: 'ask', line: null, from: 'default', pack: 'mail', shown: false },
+  { tool: 'ws_read', class: 'ws_read', verdict: 'approve', tainted: 'approve', line: null, from: 'default', pack: null, shown: true },
+];
+
+test('a tool whose pack is off leaves the table and is listed as decided by the default mode, with its pack', () => {
+  assert.equal(isShown(packed, 'ws_read', 'ws_read'), true);
+  assert.equal(isShown(packed, 'mail_send', 'mail_send'), false);
+  assert.equal(isShown(packed, 'nothing', 'ws_read'), false);
+  const label = (id) => (id === 'mail' ? 'Mail' : '');
+  assert.deepEqual(decidedByDefault(packed, '', label).map((row) => row.tool), ['mail_send', 'mail_read']);
+  assert.deepEqual(decidedByDefault(packed, 'MAIL', label).length, 2);
+  assert.deepEqual(decidedByDefault(packed, 'send', label).map((row) => row.tool), ['mail_send']);
+});
+
+test('a line over several tools says which tools with a pack off it is ignored for', () => {
+  const glob = { tool: 'mail_*', class: '', target: '', verdict: 'approve', tainted: 'approve' };
+  assert.deepEqual(ignoredFor(glob, packed), ['mail_send', 'mail_read']);
+  assert.deepEqual(ignoredFor({ ...glob, tool: '', class: 'mail_send' }, packed), ['mail_send']);
+  assert.deepEqual(ignoredFor({ ...glob, tool: 'ws_*' }, packed), []);
 });
 
 test('the numbers of a deletion are shown, then sent back as they were', () => {

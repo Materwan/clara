@@ -362,7 +362,7 @@ async def test_a_hook_run_cannot_change_github_without_asking_even_when_its_mode
     `(if tainted)` verdict decides: each change asks."""
     connect_github(services)
     trigger = hook(services, tools=["github_read", "github_write", "github_branch", "github_pr", "github_issue"])
-    make_mode(services, "Hooks", line("approve", "github_*", tainted="ask"))
+    make_mode(services, "Hooks", line("approve", "github_*", tainted="ask"), packs=["github"])
     services.modes.set_stored("automations", trigger.id, "Hooks")
     await poll(services)
     github.open_pr(5, "Please fix it")

@@ -129,7 +129,7 @@ def test_an_address_nobody_gave_asks_once_the_turn_read_untrusted_content(servic
 
 def test_only_a_mode_that_approves_it_when_tainted_lifts_the_raise_of_an_address(services):
     """No level and no switch lifts it any more: the owner says it for a tool, in a mode, with the `(if tainted)` verdict."""
-    make(services, "Reader", line("approve", "web_fetch", "fetch_other", tainted="approve"))
+    make(services, "Reader", line("approve", "web_fetch", "fetch_other", tainted="approve"), packs=["web"])
     url = {"url": "https://evil.example/a"}
     assert decide(services, "web_fetch", url, tainted=True).effect == "ask"
     assert decide(services, "web_fetch", url, tainted=True, mode_name="Reader").effect == "allow"

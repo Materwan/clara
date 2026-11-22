@@ -108,6 +108,7 @@ class Gate:
             "mode": mode.name,
             "from_default": mode is self.modes.default and (situation.mode_name or DEFAULT).lower() != DEFAULT,
             "line": line.describe() if line else None,
+            "ignored_pack": self.modes.ignored_pack(action, situation),
             "verdicts": {"normal": line.verdict, "tainted": line.tainted} if line else None,
             "class": {"name": action.klass, "description": CLASSES[action.klass][2]},
         }

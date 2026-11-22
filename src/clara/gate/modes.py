@@ -5,7 +5,9 @@ it matches, in two flavours: for a normal turn (`verdict`) and for a turn that r
 more permissive than the first). A line names a tool (a name or a glob), an action class (actions.CLASSES) and/or a
 target (a glob), at least one of them. A call is decided by the most specific line that matches it: more fields set,
 then the longer literal target, then the longer literal tool; on a tie the stricter verdict. A call a mode has no line
-for is decided by the **default mode**.
+for is decided by the **default mode**. A line of a mode counts for a tool of a pack only while that pack is in the mode's own pack list
+(a tool with no pack always counts; the default mode is never filtered): with the pack off the lines stay stored and say nothing, so
+the default mode decides the tool. Ticking a pack therefore approves nothing; it only brings the mode's own lines back into play.
 A run of a skill's script names the skill besides its folder: a line about the skill decides what the rest of the mode leaves open,
 never a refusal of the same run (`Modes.verdict`).
 
@@ -219,6 +221,14 @@ def check_packs(packs: Iterable[str]) -> tuple[str, ...]:
     if unknown:
         raise ModeError(f"No such tool pack: {', '.join(unknown)}.")
     return tuple(pack.id for pack in PACKS if pack.id in wanted)
+
+
+@lru_cache(maxsize=1)
+def pack_of() -> dict[str, str]:
+    """The pack of each tool that has one (the registry is imported late: it imports the gate)."""
+    from ..packs.registry import PACKS
+
+    return {tool: pack.id for pack in PACKS for tool in pack.tools}
 
 
 def check_tool(tool: str, known: Iterable[str]) -> None:
@@ -454,10 +464,25 @@ class Modes:
                 return without
         return found
 
+    def off_pack(self, mode: Mode | None, tool: str) -> str | None:
+        """The pack of `tool` when `mode` has it off: the lines of that mode say nothing about the tool then, and the default mode
+        decides it. A tool with no pack, and the default mode itself, are never affected. The mode's own packs count, not the
+        conversation's."""
+        if mode is None or mode is self.default:
+            return None
+        pack = pack_of().get(tool)
+        return pack if pack is not None and pack not in mode.packs else None
+
+    def ignored_pack(self, action: Action, situation: Situation) -> str | None:
+        """The pack that is off in the conversation's mode when that made a line of the mode count for nothing (the tester says it)."""
+        named = self.get(situation.mode_name)
+        pack = self.off_pack(named, action.tool)
+        return pack if pack and named is not None and named.best(action, situation.tainted) is not None else None
+
     def _verdict(self, action: Action, situation: Situation) -> tuple[Mode, Line | None, str]:
         named = self.get(situation.mode_name)
         for mode in (named, self.default):
-            if mode is not None:
+            if mode is not None and not self.off_pack(mode, action.tool):
                 line = mode.best(action, situation.tainted)
                 if line is not None:
                     return mode, line, line.when(situation.tainted)

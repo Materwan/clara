@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..gate import Action, Line, Mode, ModeError, Situation
 from ..gate.actions import CLASSES
-from ..gate.modes import MAX_NAME, MissingRow, NeedsConfirmation
+from ..gate.modes import MAX_NAME, MissingRow, NeedsConfirmation, pack_of
 from ..tools.base import ToolContext, ToolError, TurnState
 from .common import ApiError, caller, services
 
@@ -68,11 +68,13 @@ def settable(request: Request, name: str | None) -> str | None:
 # What a page shows
 # ----------------------------------------------------------------------
 def _effective(request: Request, mode: Mode) -> list[dict]:
-    """The verdict of every tool and class under this mode (its own line, else the default mode's): what the page lists."""
+    """The verdict of every tool and class under this mode (its own line, else the default mode's) and whether the mode sets it
+    (`shown`) or its pack is off and the default mode decides it: what the page lists."""
     s = services(request)
     rows = []
     for name in sorted(s.toolbox.names):
         tool = s.toolbox.get(name)
+        pack = pack_of().get(name)
         for klass in tool.classes:
             named = None if mode is s.modes.default else mode.name
             found, line, verdict = s.modes.verdict(
@@ -86,6 +88,9 @@ def _effective(request: Request, mode: Mode) -> list[dict]:
                     "tainted": line.tainted if line else "refuse",
                     "line": line.describe() if line else None,
                     "from": "default" if found is s.modes.default and mode is not s.modes.default else "mode",
+                    "pack": pack,
+                    # the table of a mode lists the tools it sets: no pack, or its pack on (the default mode shows all)
+                    "shown": s.modes.off_pack(mode, name) is None,
                 }
             )
     return rows
@@ -111,7 +116,6 @@ def _catalog(request: Request) -> dict:
     from ..packs.registry import BY_ID, PACKS
 
     s = services(request)
-    pack_of = {tool: pack.id for pack in PACKS for tool in pack.tools}
     tools = []
     for name in sorted(s.toolbox.names):
         tool = s.toolbox.get(name)
@@ -120,7 +124,7 @@ def _catalog(request: Request) -> dict:
                 "name": name,
                 "description": " ".join(tool.description.split())[:200],
                 "classes": list(tool.classes),
-                "pack": pack_of.get(name),
+                "pack": pack_of().get(name),
             }
         )
     return {
