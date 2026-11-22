@@ -9,6 +9,17 @@ Every release has a section here, under its tag; the release workflow publishes 
   question as the preview), or moves an old one to the top, as soon as the answer starts instead of when it ends. A page opened while an
   answer is running draws the stored question once, not twice. A stop or an error before the first word leaves the question on screen
   with the interrupted note and **Try again**.
+- **Drive reaches your whole Drive; the Picker is gone.** Clara now asks Google for the `drive` scope (it replaces `drive.file`): she lists,
+  searches and reads any file of your Drive, and creates files anywhere (in her own « Clara » folder unless she is given a folder). She never
+  modifies a Google-native file (a Doc, Sheet, Slide, Form, folder, shortcut...): `drive_update` refuses it before any change, in every mode;
+  creating one from text, trashing and restoring one stay allowed. **What you must do:** (1) in Google Cloud, change the OAuth consent screen's
+  scope from `.../auth/drive.file` to `.../auth/drive` (a restricted scope: keep the app in *Testing* with your address as a test user);
+  (2) on the Connections page, **Connect again** under Google Drive: an old connection keeps its token but Clara's Drive tools say to connect
+  again until you do. While the app is in *Testing*, Google ends the connection every 7 days: connect again when the page says so.
+  Removed: « Open files to Clara », the routes `GET /v1/connections/google/picker` and `POST /v1/connections/google/picked`, the `picker` and
+  `files` fields of `google` in `GET /v1/connections` (which gains `old_scope`), and the Picker window's own page and CSP. **Deprecated, removed in
+  the next release:** the setting `CLARA_GOOGLE_PROJECT_NUMBER` and the secret `google_picker_api_key` are still accepted and are ignored; unset
+  the secret with `clara secrets unset google_picker_api_key` whenever you like. No migration.
 - **The Modes page follows the packs.** A mode's table lists only the tools it sets: the tools with no pack and those of a pack ticked in
   that mode. The tools of an unticked pack move to a read-only section, **Decided by the default mode**, with their pack and the default's
   verdicts, and a mode's lines about them are ignored while the pack stays unticked (they are kept and apply again when it is ticked: the

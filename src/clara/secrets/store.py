@@ -51,7 +51,7 @@ KNOWN_SECRETS: dict[str, str] = {
     "github_token": "GitHub fine-grained personal access token",
     "google_client_secret": "Google OAuth client secret (Drive and Gmail)",
     "google_refresh_token": "Google refresh token (set by the Drive connection, not by hand)",
-    "google_picker_api_key": "Google API key for the Drive Picker",
+    "google_picker_api_key": "Unused (the Drive Picker is gone); removed in the next release",
     "gmail_refresh_token": "Gmail refresh token (set by the Gmail connection, not by hand)",
     "moodle_token": "Moodle token (set by the Moodle sign-in, not by hand)",
     "auriga_refresh_token": "Auriga refresh token (set by the Auriga sign-in, not by hand)",
@@ -93,7 +93,7 @@ SECRET_SOURCES: dict[str, tuple[str, str, str]] = {
     "github_token": _GITHUB_TOKENS,
     "release_token": _GITHUB_TOKENS,
     "google_client_secret": _GOOGLE_CREDENTIALS,
-    "google_picker_api_key": _GOOGLE_CREDENTIALS,
+    "google_picker_api_key": _GOOGLE_CREDENTIALS,  # unused, kept one release so a stored value still lists and unsets
     "google_refresh_token": _CONNECTIONS,
     "gmail_refresh_token": _CONNECTIONS,
     "moodle_token": _SCHOOL,

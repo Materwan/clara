@@ -17,7 +17,7 @@ reminders across that very night (`tests/test_time.py`, `tests/test_reminders.py
 
 | # | Finding | Clara 1.0 |
 | --- | --- | --- |
-| 1 | Drive asked with the full `drive` scope; callback not tied to the browser; confirm page named the Clara user | `drive.file` (plus `openid email`) only, with PKCE (`connectors/drive.py`); the consent is bound to the web session that started it, the Google address is shown before you confirm, disconnecting revokes the token (`api/connections.py`; `tests/test_connectors.py`) |
+| 1 | Drive asked with the full `drive` scope; callback not tied to the browser; confirm page named the Clara user | *(the scope part superseded 2026-11-22: see « Google Drive: the whole Drive » in [DECISIONS.md](DECISIONS.md))* `drive.file` (plus `openid email`) only, with PKCE (`connectors/drive.py`); the consent is bound to the web session that started it, the Google address is shown before you confirm, disconnecting revokes the token (`api/connections.py`; `tests/test_connectors.py`) |
 | 2 | Passphrase hashed with one unsalted SHA-256 | scrypt N=2^17 with a random salt, or a raw 32-byte key; AES-GCM; a check value; `clara secrets rotate` (`secrets/store.py`; `tests/test_foundations.py`) |
 | 3 | Fallbacks could leave a local choice for a hosted provider | A local model never falls back to a hosted one; a local-only conversation is refused any hosted model and anything leaving the machine (`llm/router.py`, `gate/engine.py`; `tests/test_foundations.py`, `tests/test_gate.py`) |
 | 4 | Users on their own key bypassed the limit | Gone: no users, no limits |
@@ -37,7 +37,7 @@ reminders across that very night (`tests/test_time.py`, `tests/test_reminders.py
 | 4 | Master key beside the data; weak derivation; no rotation | Key in a systemd credential (or a file you name), never in the data folder or `.env`; scrypt; rotation |
 | 5 | `.env` holds every credential, unchecked; restart installs code with secrets in reach | `.env` is non-secret only (a `*_API_KEY`, `*_PASSWORD`, `*_SECRET` variable stops the start); its permissions, the data folder's and the key file's are checked at start; updates install only checked releases into their own folder (`settings.py`, `ops/private.py`, `ops/updater.py`) |
 | 6 | Shared GitHub token copies any private repository | Gone; GitHub uses your fine-grained token and only the repositories you list (`connectors/github.py`) |
-| 7 | Tokens reach further than needed; Discord takes passwords | `drive.file`; GitHub fine-grained plus a repository list; Discord takes no passwords (it has nothing to sign in to) |
+| 7 | Tokens reach further than needed; Discord takes passwords | *(the scope part superseded 2026-11-22: see « Google Drive: the whole Drive » in [DECISIONS.md](DECISIONS.md))* `drive.file`; GitHub fine-grained plus a repository list; Discord takes no passwords (it has nothing to sign in to) |
 | 8 | Smaller leaks | Vault token as a header, never in the URL (kept from the old code); token files 0600; no headers or bodies in the log; provider error texts never in the traffic log (a failed model call keeps its HTTP status and the provider's error code, a plain token; the text is in the debug log while the switch is on) (`ops/traffic.py`) |
 | 9 | Server folder roots can contain the server's secrets | Gone: Clara's files are the workspace only, a separate git repository; no tool reaches the data folder, the database, `.env` or the key (`workspace/paths.py`; `tests/test_workspace.py`) |
 | 10 | Nothing screens for secrets | Secret-looking text (keys, tokens, private keys, passwords, connection strings, Clara tokens) is refused as a fact and raises any call sending it out of the machine to `ask` (`secretscan.py`, `memory/facts.py`, `gate/engine.py`). What you type is not screened: it is yours, and goes to the model you chose (use a local-only conversation for what must stay home) |
@@ -107,7 +107,7 @@ reminders across that very night (`tests/test_time.py`, `tests/test_reminders.py
 
 | # | Finding | Clara 1.0 |
 | --- | --- | --- |
-| N1 | Full Drive scope | `drive.file` |
+| N1 | Full Drive scope | *(superseded 2026-11-22 by « Google Drive: the whole Drive » in [DECISIONS.md](DECISIONS.md))* `drive.file`; the owner chose the full `drive` scope afterwards |
 | N2 | Unsalted SHA-256 passphrase | scrypt, salted |
 | N3 | Owner `/link` merges filled accounts | Gone |
 | N4 | A stale comment about erasure | Gone with erasure; documents are checked by tests |
@@ -121,7 +121,7 @@ reminders across that very night (`tests/test_time.py`, `tests/test_reminders.py
 | Priority | Done in Clara 1.0 |
 | --- | --- |
 | 1. Fix offset reminders before 25 October | Old server: see the top of this page. New server: zone names only |
-| 2. Narrow Drive | `drive.file`, session-bound consent, address shown before confirming |
+| 2. Narrow Drive | *(superseded 2026-11-22 by « Google Drive: the whole Drive » in [DECISIONS.md](DECISIONS.md))* `drive.file`, session-bound consent, address shown before confirming (the session-bound consent and the address stand; the scope is the whole Drive now) |
 | 3. Close the open defaults | No sign-up, no surfaces, Funnel refused, `/docs` off |
 | 4. Replace the passphrase derivation, add rotation | Done |
 | 5. Keep a local choice local | Done, plus local-only conversations |

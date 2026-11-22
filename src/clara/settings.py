@@ -137,7 +137,7 @@ class Settings:
     fetch_max_bytes: int = 2_000_000
     public_url: str = ""
     google_client_id: str = ""
-    google_project_number: str = ""
+    google_project_number: str = ""  # unused (the Drive Picker is gone), still accepted; removed in the next release
     mail_poll_seconds: int = 120
     github_poll_seconds: int = 120
     school_poll_seconds: int = 900
@@ -508,7 +508,7 @@ def load_settings(
         fetch_max_bytes=r.size("CLARA_FETCH_MAX_SIZE", 2_000_000),
         public_url=r.url("CLARA_PUBLIC_URL", ""),
         google_client_id=r.text("CLARA_GOOGLE_CLIENT_ID", ""),
-        google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),
+        google_project_number=r.text("CLARA_GOOGLE_PROJECT_NUMBER", ""),  # unused: see the field
         mail_poll_seconds=mail_poll_seconds,
         github_poll_seconds=github_poll_seconds,
         school_poll_seconds=school_poll_seconds,

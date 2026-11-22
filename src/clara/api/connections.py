@@ -1,5 +1,5 @@
-"""Connections: GitHub (a fine-grained token you paste), Google Drive (OAuth, `drive.file`), Gmail (OAuth, read and
-drafts), and the resources Clara may use: the repositories you add, the Drive files and folders you pick.
+"""Connections: GitHub (a fine-grained token you paste), Google Drive (OAuth, the whole Drive), Gmail (OAuth, read and
+drafts), and the GitHub repositories you add (Clara reaches no other).
 
 Each consent is bound to the browser session that started it, and to the connection it was started for: the provider
 sends the browser back to a `callback` (which needs no token: it only forwards to the web site), the web site, signed
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from ..connectors.auriga import AurigaError
 from ..connectors.auriga import authorize_url as auriga_authorize_url
 from ..connectors.auriga import sign_in as auriga_sign_in
-from ..connectors.drive import FOLDER, DriveError, authorize_url, email_of, pkce
+from ..connectors.drive import DriveError, authorize_url, email_of, pkce
 from ..connectors.github import REPO, GitHub, GitHubError
 from ..connectors.gmail import Gmail
 from ..connectors.gmail import authorize_url as gmail_authorize_url
@@ -74,8 +74,7 @@ def status(request: Request) -> dict:
             "connected": bool(google and s.secrets.has("google_refresh_token")),
             "account": google["account"] if google else "",
             "status": google["status"] if google else "",
-            "picker": bool(s.settings.google_project_number and s.secrets.has("google_picker_api_key")),
-            "files": [r.describe() for r in s.connections.resources() if r.kind.startswith("drive")],
+            "old_scope": connectors.drive_old_scope,  # made with the narrow `drive.file` scope: connect again
         },
         "gmail": _mailbox_state(s, connectors, "gmail", connectors.google_auth() is not None),
         "moodle": _school_state(s, connectors, "moodle"),
@@ -246,6 +245,7 @@ async def google_confirm(body: Confirm, request: Request) -> dict:
     s.secrets.set("google_refresh_token", flow.refresh_token)
     s.connections.set("google", flow.email)
     connectors.flows.pop(body.state, None)
+    connectors.drive_old_scope = False
     auth = connectors.google_auth()
     if old and old != flow.refresh_token and auth is not None:
         await auth.revoke(old)
@@ -268,54 +268,6 @@ async def google_disconnect(request: Request) -> dict:
     s.secrets.unset("google_refresh_token")
     s.connections.remove("google")
     return {"connected": False, "revoked": revoked}
-
-
-@router.get("/google/picker")
-async def google_picker(request: Request) -> dict:
-    """What the picker page needs: only for the signed-in browser."""
-    s, connectors = _connectors(request)
-    if caller(request).web_session is None:
-        raise ApiError(403, "The picker is for the web site.")
-    drive = connectors.drive_client()
-    key = s.secrets.get("google_picker_api_key")
-    if drive is None or not key or not s.settings.google_project_number:
-        raise ApiError(409, "Connect Drive, set CLARA_GOOGLE_PROJECT_NUMBER and the secret google_picker_api_key.")
-    try:
-        token = await drive.access_token()
-    except DriveError as error:
-        raise ApiError(502, str(error)) from None
-    return {
-        "api_key": key,
-        "app_id": s.settings.google_project_number,
-        "client_id": s.settings.google_client_id,
-        "token": token,
-    }
-
-
-class Picked(BaseModel):
-    id: str = Field(min_length=5, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
-    name: str = Field(min_length=1, max_length=300)
-    mimeType: str = Field(default="", max_length=200)  # Google's name
-
-
-class PickedFiles(BaseModel):
-    files: list[Picked] = Field(min_length=1, max_length=100)
-
-
-@router.post("/google/picked", status_code=201)
-def google_picked(body: PickedFiles, request: Request) -> dict:
-    s, _ = _connectors(request)
-    added = [
-        s.connections.add(
-            "google",
-            "drive_folder" if item.mimeType == FOLDER else "drive_file",
-            item.id,
-            item.name,
-            mime=item.mimeType,
-        ).describe()
-        for item in body.files
-    ]
-    return {"added": added}
 
 
 # ----------------------------------------------------------------------

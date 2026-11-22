@@ -1,5 +1,6 @@
-"""Google Drive, with the narrow `drive.file` scope: Clara sees only files she created (in a "Clara" folder she makes
-when you connect) and files you open to her with the Google Picker on the Connections page.
+"""Google Drive, with Google's `drive` scope: Clara reaches the whole Drive. New files go in a "Clara" folder she makes
+when you connect, unless a folder is given. Google-native files (Docs, Sheets, Slides, folders...) are read, trashed and
+restored but never modified; a file of another owner cannot be trashed (Google refuses).
 
 Connecting is OAuth with PKCE. The flow is bound to the browser session that started it, the Google address being
 attached is shown before you confirm, and disconnecting revokes the token at Google.
@@ -7,7 +8,7 @@ attached is shown before you confirm, and disconnecting revokes the token at Goo
     read          list, read (Google Docs, Sheets and Slides are exported as text), search      class drive_read
                   (a search may list the trash)
     write         create a file                                                                 class drive_write
-    destructive   replace a file's content                                                      class drive_write
+    destructive   replace the content of a file that is not Google-native                       class drive_write
     destructive   move a file to Drive's trash (never emptied, never deleted for good)          class drive_trash
     write         take a file out of the trash                                                  class drive_restore
 """
@@ -32,9 +33,11 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 - an address, no
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 API = "https://www.googleapis.com/drive/v3"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3"
-SCOPES = "https://www.googleapis.com/auth/drive.file openid email"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = f"{DRIVE_SCOPE} openid email"
 TIMEOUT = httpx.Timeout(20.0, read=90.0)
-FOLDER = "application/vnd.google-apps.folder"
+NATIVE_PREFIX = "application/vnd.google-apps."  # Docs, Sheets, Slides, Forms, Drawings, Sites, folders, shortcuts...
+FOLDER = NATIVE_PREFIX + "folder"
 DOC = "application/vnd.google-apps.document"
 EXPORTS = {
     DOC: "text/plain",
@@ -50,6 +53,15 @@ class DriveError(ValueError):
     def __init__(self, message: str, reconnect: bool = False):
         super().__init__(message)
         self.reconnect = reconnect
+
+
+class OldScope(DriveError):
+    """The connection was made with the narrow `drive.file` scope: it keeps working at Google, but not for Clara."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Drive is connected with the old narrow permission: connect Drive again on the Connections page.", True
+        )
 
 
 def pkce() -> tuple[str, str]:
@@ -147,6 +159,9 @@ class Drive:
         if self._access and self._access[1] > time.monotonic() + 60:
             return self._access[0]
         found = await self.auth.token({"grant_type": "refresh_token", "refresh_token": self.refresh_token})
+        granted = found.get("scope")
+        if isinstance(granted, str) and DRIVE_SCOPE not in granted.split():  # the exact token: `drive.file` is not it
+            raise OldScope
         self._access = (found["access_token"], time.monotonic() + int(found.get("expires_in", 3000)))
         return self._access[0]
 
@@ -185,7 +200,7 @@ class Drive:
         if status == 403 and "Limit" in reason:
             return DriveError("Google says too many requests for now: try again later.")
         if status == 404:
-            return DriveError("Drive cannot find that file, or Clara may not see it (open it to her with the Picker).")
+            return DriveError("Drive cannot find that file: check its id.")
         return DriveError(f"Google Drive answered HTTP {status}: {detail or reason or 'error'}")
 
     async def get(self, url: str, **params: Any) -> Any:
@@ -199,7 +214,7 @@ class Drive:
     async def ensure_folder(self, name: str = "Clara") -> dict:
         found = await self.get(
             f"{API}/files",
-            q=f"name = {quoted(name)} and mimeType = {quoted(FOLDER)} and trashed = false",
+            q=f"name = {quoted(name)} and mimeType = {quoted(FOLDER)} and trashed = false and 'me' in owners",
             fields=f"files({FIELDS})",
             pageSize=10,
         )
@@ -253,7 +268,7 @@ class Drive:
         if kind in EXPORTS:
             response = await self.request("GET", f"{API}/files/{file_id}/export", params={"mimeType": EXPORTS[kind]})
             text = response.text
-        elif kind.startswith("application/vnd.google-apps."):
+        elif kind.startswith(NATIVE_PREFIX):
             raise DriveError(f"{name} is a {kind.rsplit('.', 1)[-1]}, which cannot be read as text.")
         else:
             if int(info.get("size") or 0) > MAX_FILE_BYTES:
@@ -288,6 +303,12 @@ class Drive:
         return response.json()
 
     async def update(self, file_id: str, content: str) -> dict:
+        info = await self.meta(file_id)  # the type is read first: the gate never sees it
+        if str(info.get("mimeType", "")).startswith(NATIVE_PREFIX):
+            raise DriveError(
+                f"This is a Google-native file ({info.get('name', file_id)}): Clara never modifies those. "
+                "Make a new file with the new text instead, or move it to the trash."
+            )
         response = await self.request(
             "PATCH",
             f"{UPLOAD}/files/{file_id}",

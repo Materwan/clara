@@ -1,6 +1,6 @@
 # Threat model
 
-Clara serves one person from one Linux machine. This page says what is protected, from whom, how, and what is left.
+Clara serves one person from one Linux machine. This page says what is protected, from whom, how, and what is left. Clara is for the owner alone: if she were ever opened to other people, they would get no connection at all (not GitHub, mail, Drive, Moodle nor Auriga); nothing in the code enforces it, because there are no other users.
 What is stored where is in [DATA-MAP.md](DATA-MAP.md).
 
 ## What is worth protecting
@@ -10,7 +10,7 @@ What is stored where is in [DATA-MAP.md](DATA-MAP.md).
 | Memory | Facts about your life, every conversation, files you sent, project content |
 | Secrets | Provider keys, the GitHub token, the Google and Gmail refresh tokens, the restic password, client tokens, and, if you chose to keep it, your school email and password (see the row on it below) |
 | The machine | Clara writes files and runs scripts on it |
-| Your outside accounts | GitHub repositories, Drive files, the vault's remote: Clara can change them. Your mailbox: she can read all of your Gmail, label messages, mark them read, delete your labels, move messages to the Trash (never empty it), and send as you after your approval |
+| Your outside accounts | GitHub repositories, your whole Drive (Google's `drive` scope, since 2026-11-22: she reads any file, may create files and replace a file that is not Google-native after the mode allows it, never modifies a Doc, Sheet or Slide, moves to the trash only if the mode allows it and never empties it), the vault's remote: Clara can change them. Your mailbox: she can read all of your Gmail, label messages, mark them read, delete your labels, move messages to the Trash (never empty it), and send as you after your approval |
 | Availability | Reminders and automations must fire; backups must exist |
 
 ## Three locks

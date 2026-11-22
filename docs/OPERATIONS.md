@@ -97,16 +97,22 @@ requests and pushes, read access to Contents and Pull requests is what the poll 
 
 ### Google Drive
 
-1. In Google Cloud: a project; enable the **Google Drive API** and the **Google Picker API**; an OAuth consent screen
-   with the scope `.../auth/drive.file` only; an **OAuth client** of type *Web application* with the authorised
-   redirect URI `https://<machine>.<tailnet>.ts.net/v1/connections/google/callback`; an **API key** restricted to the
-   Picker API and to that address. A consent screen left in *Testing* status gets refresh tokens that expire after 7
-   days ([PROVIDERS.md](PROVIDERS.md)).
-2. In `/etc/clara/clara.env`: `CLARA_GOOGLE_CLIENT_ID`, `CLARA_GOOGLE_PROJECT_NUMBER`, and `CLARA_PUBLIC_URL` if the
-   Tailscale address is not the one you use. Secrets: `clara secrets set google_client_secret`,
-   `clara secrets set google_picker_api_key`. Restart.
-3. On the Connections page: **Connect Google Drive**, consent, check the address shown, **Attach it**. Clara makes
-   her own "Clara" folder. **Open files to Clara…** opens the Picker for files and folders you want her to see.
+1. In Google Cloud: a project; enable the **Google Drive API**; an OAuth consent screen in *Testing* status with your
+   own Google address as a test user and the scope `.../auth/drive` (Google's *restricted* scope for the whole Drive; it
+   replaces `drive.file`); an **OAuth client** of type *Web application* with the authorised redirect URI
+   `https://<machine>.<tailnet>.ts.net/v1/connections/google/callback`. No Picker API, no API key and no project number
+   are needed any more. A consent screen in *Testing* status gets refresh tokens that expire after 7 days: connect Drive
+   again when the Connections page says so ([PROVIDERS.md](PROVIDERS.md)).
+2. In `/etc/clara/clara.env`: `CLARA_GOOGLE_CLIENT_ID`, and `CLARA_PUBLIC_URL` if the Tailscale address is not the one
+   you use. Secret: `clara secrets set google_client_secret`. Restart. An old `CLARA_GOOGLE_PROJECT_NUMBER` or a stored
+   `google_picker_api_key` is accepted and ignored for one release (removed in the next); you can unset the secret
+   with `clara secrets unset google_picker_api_key`.
+3. On the Connections page: **Connect Google Drive**, consent, check the address shown, **Attach it**. Clara reaches
+   your whole Drive and makes her own "Clara" folder, where a new file goes unless she is given a folder. She never
+   modifies a Google Doc, Sheet or Slide (she reads them, creates new ones, moves them to the trash and restores them).
+4. **A Drive connection made with `drive.file`** (before this change) keeps working at Google but not for Clara: her
+   Drive tools say to connect Drive again, and the Connections page shows « Connect Drive again: Clara now uses your
+   whole Drive ». Change the consent screen's scope to `.../auth/drive` first, then **Connect again**.
 
 ### Gmail
 
@@ -117,7 +123,7 @@ a token of its own.
    Platform → Data Access) add the scopes `.../auth/gmail.readonly`, `.../auth/gmail.compose` and `.../auth/gmail.modify`,
    and nothing else (Clara cannot archive, delete a message for good or change settings: the token has no scope for it,
    and `gmail.modify` cannot delete a message for good). An app that was connected before needs this scope added, and
-   then Gmail connected again. The scope picker lists only
+   then Gmail connected again. The consent screen's scope list shows only
    the scopes of enabled APIs; if one is missing, paste its full URL in the *Manually add scopes* box, then *Add to
    table*, *Update* and *Save*.
 2. These are Google's *restricted* scopes. An app *In production* that Google has not verified shows an « unverified

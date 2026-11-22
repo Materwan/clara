@@ -58,7 +58,7 @@ verdict = "approve"
 class = "github_write"
 verdict = "refuse"
 
-# Drive read (files Clara created or you opened to her)
+# Drive read: any file of your Drive
 [[verdict]]
 class = "drive_read"
 verdict = "approve"

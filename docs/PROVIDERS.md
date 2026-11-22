@@ -64,9 +64,11 @@ the provider appear only once you `show` them.
 
 ## Google Drive (not a model provider)
 
-A Google Cloud OAuth client whose consent screen is in **Testing** publishing status gets refresh tokens that expire
-after 7 days: Drive would then ask to be reconnected every week. Publish the app (as an internal or external app with
-only the `drive.file` scope), or accept reconnecting. To verify in Google's current documentation.
+Drive uses Google's `drive` scope (the whole Drive), which is *restricted*. Clara is for one person, so the Google Cloud
+app stays in **Testing** publishing status with the owner as a test user (up to 100 test users). In that status refresh
+tokens expire after 7 days: Drive asks to be reconnected every week (the Connections page says so). Publishing the app
+would end that, but a restricted scope then needs Google's verification, which Clara does not ask for. Clara does not
+use the Picker API, an API key or the project number any more. To verify in Google's current documentation.
 
 ## Gmail (not a model provider)
 

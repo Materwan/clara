@@ -11,9 +11,6 @@ export default defineConfig({
     assetsInlineLimit: 0, // no data: URIs: the site's CSP allows fonts and images from itself only
     sourcemap: false,
     cssCodeSplit: true,
-    rollupOptions: {
-      input: { main: 'index.html', picker: 'picker.html' },
-    },
   },
   server: { proxy: { '/v1': 'http://127.0.0.1:8765', '/health': 'http://127.0.0.1:8765' } },
 });

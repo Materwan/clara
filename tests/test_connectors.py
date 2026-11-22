@@ -203,14 +203,6 @@ async def test_the_google_flow_is_bound_to_the_browser_that_started_it(services)
         connectors.flow("unknown-state-value", 7)
 
 
-def test_the_drive_scope_is_narrow():
-    from clara.connectors.drive import SCOPES, authorize_url
-
-    assert "drive.file" in SCOPES and "auth/drive " not in SCOPES + " " and "readonly" not in SCOPES
-    url = authorize_url("id", "https://x/cb", "state", "challenge")
-    assert "code_challenge_method=S256" in url and "access_type=offline" in url
-
-
 @pytest.fixture
 def vault(services, tmp_path):
     root = tmp_path / "vault"

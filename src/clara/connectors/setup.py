@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from ..secrets import LOGIN_SECRETS
 from ..tools.base import TurnState
 from .auriga import LAPSED, Auriga, AurigaAuth, AurigaError
-from .drive import Drive, DriveError, GoogleAuth
+from .drive import Drive, DriveError, GoogleAuth, OldScope
 from .feeds import Feeds
 from .github import GitHub, GitHubError
 from .github_watch import GitHubWatch
@@ -65,6 +65,7 @@ class Connectors:
         self._moodle: Moodle | None = None
         self._moodle_key = ""
         self._auriga: Auriga | None = None
+        self.drive_old_scope = False  # the Drive token was made with the narrow `drive.file` scope (kept in memory only)
         self._relogin = asyncio.Lock()  # one sign-in with the kept password at a time
         self.watch = MailWatch(s)
         self.github_watch = GitHubWatch(s)
@@ -112,6 +113,8 @@ class Connectors:
         return self._drive
 
     def drive_failed(self, error: DriveError) -> None:
+        if isinstance(error, OldScope):
+            self.drive_old_scope = True
         if error.reconnect:
             self.s.connections.mark("google", "needs_reconnect")
             self.s.alerts.raise_("google", "Google Drive refused the connection", str(error))
@@ -303,10 +306,10 @@ class Connectors:
             names = ", ".join(r.locator + (f" (branch {r.branch})" if r.branch else "") for r in repos)
             lines.append(f"- GitHub repositories (github_* tools): {names}")
         if connections.get("google") and self.s.secrets.has("google_refresh_token"):
-            drive = [r for r in connections.resources() if r.kind.startswith("drive")]
+            folder = self.clara_folder()
             lines.append(
-                "- Google Drive (drive_* tools): "
-                + (", ".join(f"{r.label} [{r.locator}]" for r in drive) or "your own folder only")
+                "- Google Drive (drive_* tools): your whole Drive"
+                + (f"; new files go in Clara's own folder [{folder}] unless a folder is given" if folder else "")
             )
         if mailboxes and "mail_search" in off:
             lines.append(

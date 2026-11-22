@@ -29,7 +29,7 @@ An agent built for exactly one person, on that person's own machine, with no acc
 
 ## Operating Context
 
-- Served by `clara-server` on 127.0.0.1, exposed only inside the tailnet by `tailscale serve` (HTTPS); signed in with a pasted web token that becomes a cookie. The site's CSP allows scripts, styles, fonts and connections from itself only; the Drive picker is the single exception.
+- Served by `clara-server` on 127.0.0.1, exposed only inside the tailnet by `tailscale serve` (HTTPS); signed in with a pasted web token that becomes a cookie. The site's CSP allows scripts, styles, fonts and connections from itself only.
 - Svelte 5 + TypeScript in `web/`, built in a pinned Node container into `src/clara/web/dist` and shipped in the release; the server machine needs no Node.
 - Approvals can be answered from the web site, another client, or Discord buttons; unattended runs (reminders, tasks, automations) go through the same gate.
 - Conversations come from every client (web, terminal, Discord, console) and share one list; incognito and local-only conversations have privacy rules that the interface must respect.

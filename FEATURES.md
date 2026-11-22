@@ -70,7 +70,7 @@ you point at them and can be dismissed (an error stays 8 seconds; on a phone the
 | Library | One page for the files Clara keeps, with a switch at its top between its views: **Workspace** (the default) and **Vault** (`#/library?view=vault`). The old addresses `#/workspace` and `#/vault` still lead there. A link can name what to open: `#/library?path=notes/plan.md` opens that file in the Workspace view, `#/library?view=vault&note=Ideas/Kayak.md` that note in the Vault view (the chat's side panel uses them). Another place is one more view |
 | Library → Workspace | File tree, read and edit files, upload, delete, git log with each commit's diff, undo, script runs and their logs (three small tabs: Files, History, Script runs). A file marked as coming from outside and not trusted is shown with its raw text and a note that says so (« This is the raw text of a file that came from outside. Clara reads it through a quarantined reader. ») |
 | Library → Vault | Status of the Obsidian vault, search, read notes, sync, reindex |
-| Connections (Settings) | GitHub token and the repositories Clara may use, with since when automations look at each (a repository that has a webhook source carries the tag « webhook: poll off »: GitHub calls Clara for it, so it is not polled); Google Drive consent (the Google address is shown before you confirm), the files and folders you opened to Clara with the Google Picker, disconnect (the token is revoked at Google). A form that fails writes its error under it, tied to its field (`aria-invalid`), until you edit the field; a long account address in a heading is cut with an ellipsis (its full text is the tag's title); after **Connect** on Moodle or Auriga the focus goes to the section's sign-in button; the web client shows `lapses` (an ISO date) from the answer of `POST /v1/connections/auriga/finish`, in local time, in the « connected » toast and on the Auriga card, when the server sends it |
+| Connections (Settings) | GitHub token and the repositories Clara may use, with since when automations look at each (a repository that has a webhook source carries the tag « webhook: poll off »: GitHub calls Clara for it, so it is not polled); Google Drive consent (the Google address is shown before you confirm), a line that says Drive is the whole Drive, that Google ends the connection every 7 days while its app is in Testing, and « Connect Drive again: Clara now uses your whole Drive » when the connection was made with the old narrow permission (`old_scope` in `google` of `GET /v1/connections`); disconnect (the token is revoked at Google). A form that fails writes its error under it, tied to its field (`aria-invalid`), until you edit the field; a long account address in a heading is cut with an ellipsis (its full text is the tag's title); after **Connect** on Moodle or Auriga the focus goes to the section's sign-in button; the web client shows `lapses` (an ISO date) from the answer of `POST /v1/connections/auriga/finish`, in local time, in the « connected » toast and on the Auriga card, when the server sends it |
 | Modes (Settings, `#/modes`; the old `#/rules` and `#/auto-mode` lead here) | One page with four tabs. **Modes**: a list (the default mode first, locked and marked *(file)*: it is a file the server reads, `CLARA_DEFAULT_MODE_FILE`, shown read-only, with a warning when the file is missing and the built-in copy applies; then the modes you made; **+ New mode**, which asks for a name of 30 characters at most and makes it empty, so that it follows the default for every tool; on a phone the list is a select) and, for the one opened, **Switches on** (its packs as toggles), a table with one row per tool under each of its action classes, for the tools it sets: a tool with no pack, or whose pack is ticked in this mode (the default mode shows all of them; **Normal turn** and **If tainted**, each *approve*, *ask* or *refuse*; the tainted one offers nothing more permissive than the normal one and follows it down when it is lowered), **exceptions per target** under a tool (`*@epita.fr`, `ws:private/**`, `domain:*.wikipedia.org`, added with **+ exception**, which starts at *ask*), a filter box, and **Delete mode** (a warning with how many conversations, automation conversations, automations and projects use it; they all move to the default mode; the numbers are sent back to confirm, and a 409 shows the new ones). A row the mode does not name is dimmed and says *from default*; changing it writes a line into the mode, and **Reset** removes that line. **Decided by the default mode** (not on the default mode's own page): a read-only table of the tools whose pack is off in this mode (tool, pack, and the default mode's verdict for a normal and a tainted turn); ticking the pack moves them to the table above and approves nothing. **Other lines** (a line over several tools or a class) stay editable, with the note *Ignored for: …* naming the tools of an unticked pack they cover. Only a token that may answer every request changes a mode; the others see them read-only. **Waiting**: the requests waiting (answer them; the tab and the rail show their count) and recent ones. **Test**: which line decides a call, for a mode, a situation, a tainted turn or a local-only conversation (`POST /v1/modes/test`). **Audit log** |
 | Skills (Settings, `#/skills`) | The skills you hold, with **Add a skill**: the list shows each one's name and argument hint, its description, the special tools it needs as chips (by name), where it applies (*Everywhere*, or *N projects* with their names when they are few), its files and size, when it was added, and **Delete** (a question first). A line says « N of 30 skills ». **Add a skill** opens a panel with two ways, **Paste a SKILL.md** (and a name, for one whose frontmatter has none) or **Send a zip of the folder** (the browser reads the file; one over 1,400,000 bytes is refused before it is sent, in the server's words), and both go to **Preview** (`POST /v1/skills/preview`, which stores nothing): the name, description and argument hint, the packs it needs (one that does not exist is in the warning colour, « no such pack »), the warnings the server gives (`allowed-tools` ignored, fields left out, system files left out), a warning when it **replaces** the skill of the same name, **the text of SKILL.md** in a scrolling block, every other file (its path, size and note; a text file opens to show its text, up to 20,000 characters on screen; a binary one is only named), every problem that stops it (in the danger colour, announced), and **Where**: *Everywhere*, or *Only in these projects* (a choice among your projects, at least one, 50 at most). **Add the skill** is off while there is a problem or no project is chosen; a skill that would replace another asks first and then sends `replace: true`. Changing the text, the file or the name clears the preview, so that what is added is what you saw. Everything a skill holds is drawn as plain text. A token that may not answer every request sees the list with its controls off and one line saying why |
 | Models (Settings) | Providers (enable, check), the catalogue (show in pickers, set default, side-jobs model, fallbacks in order), a selector **Work with Clara / All / Don't work** that keeps the models Clara cannot use out of the way, each with its reason |
@@ -79,7 +79,7 @@ you point at them and can be dismissed (an error stays 8 seconds; on a phone the
 
 The site is built at release time (`scripts/build-web.sh`): the machine needs no Node. Every page is served with a
 strict Content-Security-Policy (scripts, styles, fonts and connections from the site only; nothing is inlined as a
-`data:` URI, so KaTeX's fonts load too); the Drive picker window is the one page allowed Google's picker script.
+`data:` URI, so KaTeX's fonts load too).
 
 ### `clara-chat`
 
@@ -1169,9 +1169,14 @@ script makes are one commit after the run, and any commit can be undone (`/undo`
   The five tools are in the **GitHub** pack: a conversation has them only when the pack is switched on (off in a new one), a
   automation or a project may list it, and a local-only conversation never has them. The pack says it is unusable while no token
   or no repository is set. A conversation or an automation (then a schedule) that had called a GitHub tool before the pack existed was given it once.
-- **Google Drive:** OAuth with the `drive.file` scope only (plus `openid email` to show which account you attach), with
-  PKCE. Clara sees only files she created (in her own "Clara" folder) and files or folders you open to her with the
-  Google Picker. The consent is bound to the browser session that started it; the Google address is shown and you
+- **Google Drive:** OAuth with Google's `drive` scope, the whole Drive (plus `openid email` to show which account you attach),
+  with PKCE. Clara lists, searches and reads any file of your Drive; a new file goes in her own "Clara" folder unless a
+  folder is given. She never modifies a Google-native file (a Doc, Sheet, Slide, Form, folder, shortcut...: any type that starts
+  with `application/vnd.google-apps.`): `drive_update` reads the type first and refuses before any change, in every mode; she
+  may create a Google Doc from text, move one to the trash and restore it. Google refuses a trash of a file of another owner
+  (not tried on a real account). A connection made with the old `drive.file` scope keeps its token: the Drive tools answer « Drive is
+  connected with the old narrow permission: connect Drive again on the Connections page » and the page says so. While the Google app is in
+  Testing, Google ends the connection every 7 days (`invalid_grant`: the status becomes `needs_reconnect` and an alert is raised). The consent is bound to the browser session that started it; the Google address is shown and you
   confirm before anything is stored. Disconnecting revokes the token at Google. Reading Google Docs, Sheets and Slides
   gives text. A create or an update asks by default (`drive_write`); a move to Drive's trash (`drive_delete`, class
   `drive_trash`) is refused by default; taking a file out of the trash (`drive_restore`, class `drive_restore`) is approved. The
@@ -1372,7 +1377,7 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 | `run_network`: Run a script with network | refuse | same |
 | `github_read`: GitHub read | approve | same |
 | `github_write`: GitHub issue, branch, pull request, commit | refuse | same |
-| `drive_read`: Drive read (files Clara created or you opened to her) | approve | same |
+| `drive_read`: Drive read: any file of your Drive | approve | same |
 | `drive_write`: Drive create or modify: create a file, replace a file's content | ask | same |
 | `drive_trash`: Drive trash: move a file to Drive's trash (never emptied) | refuse | same |
 | `drive_restore`: Drive restore: take a file out of Drive's trash | approve | same |
@@ -1547,11 +1552,11 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `github_branch` | Create or delete a branch (pack GitHub) | github_write / write or destructive |
 | `github_pr` | Open, comment, merge or close a pull request (pack GitHub) | github_write / write or destructive |
 | `github_issue` | Open, comment or close an issue (pack GitHub) | github_write / write; destructive to close |
-| `drive_list` | List what Clara may use on Drive, or a folder — untrusted | drive_read / read |
+| `drive_list` | List the top of your Drive, or a folder — untrusted | drive_read / read |
 | `drive_read` | Read a Drive file (Docs, Sheets, Slides as text) — untrusted | drive_read / read |
-| `drive_search` | Search the Drive files Clara may see, or Drive's trash with `trashed` — untrusted | drive_read / read |
+| `drive_search` | Search your Drive files, or Drive's trash with `trashed` — untrusted | drive_read / read |
 | `drive_create` | Create a file (or a Google Doc) | drive_write / write |
-| `drive_update` | Replace a file's content | drive_write / destructive |
+| `drive_update` | Replace a file's content (never a Google-native file) | drive_write / destructive |
 | `drive_delete` | Move a file to Drive's trash; never deleted for good, never emptied; refused by default | drive_trash / destructive |
 | `drive_restore` | Take a file out of Drive's trash; approved by default | drive_restore / write |
 | `mail_search` | Search a mailbox, newest first — untrusted | mail_read / read |
@@ -1843,7 +1848,7 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 | `CLARA_FETCH_MAX_SIZE` | 2m | Largest page fetched |
 | `CLARA_PUBLIC_URL` | the Tailscale address | Your `https://` address, for Google's redirect |
 | `CLARA_GOOGLE_CLIENT_ID` | — | Google OAuth client (web application) |
-| `CLARA_GOOGLE_PROJECT_NUMBER` | — | Google Cloud project number (the Picker) |
+| `CLARA_GOOGLE_PROJECT_NUMBER` | — | Unused (the Drive Picker is gone); still accepted, removed in the next release |
 | `CLARA_MAIL_POLL_SECONDS` | `120` | How often the inbox is looked at for new-mail notifications; `0` never; 30 at least |
 | `CLARA_GITHUB_POLL_SECONDS` | `120` | How often the added repositories are looked at for automations on pull requests and pushes (only while one waits for them); `0` never; 30 at least |
 | `CLARA_SCHOOL_POLL_SECONDS` | `900` | How often Moodle and Auriga are looked at for automations on school events (only while one waits for them, only a connected site whose sign-in works); `0` never; 60 at least |
@@ -1921,7 +1926,7 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `auriga_refresh_token` | Auriga refresh token (set by the Auriga sign-in on the Connections page or `clara auriga connect`, not by hand) |
 | `auriga_email` | The school email to sign in to Auriga again (kept only by the hidden prompt of `clara auriga connect`; never shown) |
 | `auriga_password` | The school password to sign in to Auriga again (kept only by the hidden prompt of `clara auriga connect`; never shown or read back; removed by `clara auriga forget-password`) |
-| `google_picker_api_key` | Google API key for the Drive Picker |
+| `google_picker_api_key` | Unused (the Drive Picker is gone); still known, listed and unset-able, removed in the next release |
 | `vault_git_token` | Token to push the vault over HTTPS |
 | `restic_password` | Password of the restic repository |
 | `release_token` | Optional GitHub token for release downloads |
@@ -2094,18 +2099,16 @@ keep-alive every 15 s.
 | `POST /v1/workspace/trust` | Trust a marked file (or every marked file of a folder) as it is now (a token that may answer every request) |
 | `DELETE /v1/workspace/trust` | Take your trust back |
 | `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
-| `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each), files; the mail notification settings; the school poll interval (`school.poll_seconds`) |
+| `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each); for Drive, whether the connection has the old narrow permission (`old_scope`); the mail notification settings; the school poll interval (`school.poll_seconds`) |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
 | `POST /v1/connections/github/repos` | Add a repository |
-| `DELETE /v1/connections/resources/{resource_id}` | Remove a repository, file or folder |
+| `DELETE /v1/connections/resources/{resource_id}` | Remove a repository |
 | `POST /v1/connections/google/start` | Start the Google consent (web session only) |
 | `GET /v1/connections/google/callback` | Google's redirect (forwards to the site; no token, does nothing else) |
 | `POST /v1/connections/google/finish` | Exchange the code; returns the Google address |
 | `POST /v1/connections/google/confirm` | Attach that account |
 | `DELETE /v1/connections/google` | Disconnect (revoke at Google) |
-| `GET /v1/connections/google/picker` | What the picker window needs (web session only) |
-| `POST /v1/connections/google/picked` | Files and folders you opened to Clara |
 | `POST /v1/connections/mail/{mailbox}/start` | Start the Gmail consent (web session only) |
 | `POST /v1/connections/mail/{mailbox}/finish` | Exchange the code and prove the mailbox is reachable; returns its address |
 | `POST /v1/connections/mail/{mailbox}/confirm` | Attach that mailbox |
@@ -2123,7 +2126,7 @@ keep-alive every 15 s.
 | `POST /v1/vault/sync` | Pull and push now |
 | `POST /v1/vault/reindex` | Rebuild the search index |
 
-The web site itself is served at `/` (with `/assets/…` and `/picker.html`).
+The web site itself is served at `/` (with `/assets/…`).
 
 ## 16. Limits
 

@@ -223,11 +223,6 @@
     if (site === 'auriga') aurigaLapses = null;
     load();
   }
-
-  function picker(): void {
-    window.open('/picker.html', 'clara-picker', 'width=900,height=650');
-    addEventListener('focus', load, { once: true });
-  }
 </script>
 
 {#snippet problem(form: string)}
@@ -265,7 +260,7 @@
       <h2><Icon name="cloud" size={18} /> Google Drive {#if info.google.connected}<span class="tag ok account" title={info.google.account}>{info.google.account}</span>{/if}
         {#if info.google.status === 'needs_reconnect'}<span class="tag danger">reconnect</span>{/if}</h2>
       {#if !info.google.configured}
-        <p class="muted small">Google Drive is not set up on this server. Clara asks only for <code>drive.file</code>: the files she creates and those you open to her.</p>
+        <p class="muted small">Google Drive is not set up on this server. Clara asks for Google's <code>drive</code> permission: your whole Drive.</p>
         <details class="setup"><summary>How to set it up</summary>
           <p class="muted small">Create a Google Cloud OAuth client of type “web application”, with the redirect
             <code>&lt;your Clara address&gt;/v1/connections/google/callback</code>, then set <code>CLARA_GOOGLE_CLIENT_ID</code>
@@ -275,15 +270,15 @@
         <div class="row">
           <button class="primary" onclick={startGoogle}>{info.google.connected ? 'Connect again' : 'Connect Google Drive'}</button>
           {#if info.google.connected}
-            <button onclick={picker} disabled={!info.google.picker} title={info.google.picker ? '' : 'Needs CLARA_GOOGLE_PROJECT_NUMBER and the secret google_picker_api_key on the server'}>Open files to Clara…</button>
             <button class="danger" onclick={() => disconnect('google')}>Disconnect</button>
           {/if}
         </div>
+        {#if info.google.old_scope}
+          <p class="small" role="alert"><b>Connect Drive again: Clara now uses your whole Drive.</b> This connection was made with the old narrow permission.</p>
+        {/if}
+        <p class="muted small">Clara reads any file of your Drive and creates files there; she never modifies a Google Doc, Sheet or Slide, and only moves files to the trash.
+          While the Google app is in Testing, Google ends the connection every 7 days: connect again when the page says so.</p>
       {/if}
-      {#each info.google.files as item (item.id)}
-        <div class="row"><span class="grow"><Icon name={item.kind === 'drive_folder' ? 'folder' : 'file'} size={16} /> {item.label}</span>
-          {#if item.mime !== 'clara'}<button class="small danger" onclick={() => removeResource(item.id)}>Remove</button>{/if}</div>
-      {/each}
     </section>
     <section class="panel stack">
       <h2><Icon name="mail" size={18} /> Gmail {#if info.gmail.connected}<span class="tag ok account" title={info.gmail.account}>{info.gmail.account}</span>{/if}
@@ -293,7 +288,7 @@
         <details class="setup"><summary>How to set it up</summary>
           <p class="muted small">Gmail uses the Google OAuth client of Drive: set <code>CLARA_GOOGLE_CLIENT_ID</code> and the secret
             <code>google_client_secret</code>, turn on the <b>Gmail API</b> in the same Google Cloud project, and add the scopes
-            <code>gmail.readonly</code>, <code>gmail.compose</code> and <code>gmail.modify</code> to its consent screen (Data Access; if the picker does not list them,
+            <code>gmail.readonly</code>, <code>gmail.compose</code> and <code>gmail.modify</code> to its consent screen (Data Access; if the scope list does not show them,
             paste their full addresses in <i>Manually add scopes</i>).</p>
         </details>
       {:else}

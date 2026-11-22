@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: scripts/build-web.sh
-      - run: test -f src/clara/web/dist/index.html && test -f src/clara/web/dist/picker.html
+      - run: test -f src/clara/web/dist/index.html
 
   sandbox:
     name: Sandbox (rootless Podman)

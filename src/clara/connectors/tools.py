@@ -321,24 +321,13 @@ def _remember(context: ToolContext, files: list[tuple[str, str]]) -> None:
 async def _drive_list(context: ToolContext, folder: str = "") -> str:
     connectors = _connectors(context)
     try:
-        if folder:
-            found = await _drive(context).children(_file({"folder": folder}, "folder"))
-            _remember(context, [(f["id"], f["name"]) for f in found])
-            return (
-                "\n".join(f"[{f['id']}] {f['name']}{'/' if f['mimeType'].endswith('folder') else ''}" for f in found)
-                or "(empty, or nothing Clara may see)"
-            )
+        found = await _drive(context).children(_file({"folder": folder or "root"}, "folder"))
     except DriveError as error:
         connectors.drive_failed(error)
         raise ToolError(str(error)) from None
-    resources = context.services.connections.resources()
-    _remember(context, [(r.locator, r.label) for r in resources if r.kind.startswith("drive")])
-    lines = [
-        f"[{r.locator}] {r.label}{'/' if r.kind == 'drive_folder' else ''}"
-        for r in resources
-        if r.kind.startswith("drive")
-    ]
-    return "What Clara may use on Drive (list a folder by its id):\n" + ("\n".join(lines) or "(nothing yet)")
+    _remember(context, [(f["id"], f["name"]) for f in found])
+    lines = "\n".join(f"[{f['id']}] {f['name']}{'/' if f['mimeType'].endswith('folder') else ''}" for f in found)
+    return (lines or "(empty)") if folder else "Your Drive (list a folder by its id):\n" + (lines or "(empty)")
 
 
 async def _drive_read(context: ToolContext, file: str, start_line: Any = 1) -> str:
@@ -356,6 +345,7 @@ async def _drive_search(context: ToolContext, query: str, trashed: Any = False) 
     try:
         found = await _drive(context).search(str(query), flag(trashed))
     except DriveError as error:
+        _connectors(context).drive_failed(error)
         raise ToolError(str(error)) from None
     _remember(context, [(f["id"], f["name"]) for f in found])
     return "\n".join(f"[{f['id']}] {f['name']} ({f['mimeType'].rsplit('.', 1)[-1]})" for f in found) or "No match."
@@ -387,6 +377,7 @@ async def _drive_create(
     try:
         made = await _drive(context).create(name, str(content), parent, flag(google_doc))
     except DriveError as error:
+        _connectors(context).drive_failed(error)
         raise ToolError(str(error)) from None
     _remember(context, [(made["id"], str(made["name"]))])
     context.services.db.execute(
@@ -406,6 +397,7 @@ async def _drive_update(context: ToolContext, file: str, content: str) -> str:
     try:
         updated = await _drive(context).update(_file({"file": file}), str(content))
     except DriveError as error:
+        _connectors(context).drive_failed(error)
         raise ToolError(str(error)) from None
     return f"Replaced the content of [{updated['id']}] {updated['name']}."
 
@@ -421,6 +413,7 @@ async def _drive_delete(context: ToolContext, file: str) -> str:
     try:
         trashed = await _drive(context).trash(_file({"file": file}))
     except DriveError as error:
+        _connectors(context).drive_failed(error)
         raise ToolError(str(error)) from None
     return f"Moved [{trashed['id']}] {trashed['name']} to Drive's trash (it can be restored there)."
 
@@ -436,6 +429,7 @@ async def _drive_restore(context: ToolContext, file: str) -> str:
     try:
         restored = await _drive(context).restore(_file({"file": file}))
     except DriveError as error:
+        _connectors(context).drive_failed(error)
         raise ToolError(str(error)) from None
     _remember(context, [(restored["id"], str(restored["name"]))])
     return f"Took [{restored['id']}] {restored['name']} out of Drive's trash."
@@ -593,7 +587,7 @@ def drive_tools() -> list[Tool]:
     return [
         Tool(
             "drive_list",
-            "List what Clara may use on Google Drive, or the content of a folder (its id).",
+            "List the top of your Google Drive, or the content of a folder (its id).",
             _drive_list,
             fixed("drive_read", "read", lambda c, a: f"drive:{a.get('folder') or 'root'}", "List Drive"),
             {"folder": file},
@@ -617,7 +611,7 @@ def drive_tools() -> list[Tool]:
         ),
         Tool(
             "drive_search",
-            "Search the Drive files Clara may see, by name and content. With trashed=true, search Drive's trash instead "
+            "Search your Drive files by name and content. With trashed=true, search Drive's trash instead "
             "(to find a file to restore with drive_restore).",
             _drive_search,
             fixed("drive_read", "read", "drive:search", lambda a: f"Search Drive: {a.get('query')}"),
@@ -647,7 +641,7 @@ def drive_tools() -> list[Tool]:
         ),
         Tool(
             "drive_update",
-            "Replace the whole content of a Drive file.",
+            "Replace the whole content of a Drive file. Google-native files (Docs, Sheets, Slides, folders...) are refused: Clara never modifies those.",
             _drive_update,
             acts_as("drive_write")(
                 lambda c, a: Action(

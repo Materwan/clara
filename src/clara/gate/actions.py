@@ -48,7 +48,7 @@ CLASSES: dict[str, tuple[str, str, str]] = {
     "run_network": ("mail", "all", "Run a script with network"),
     "github_read": ("any_read", "any_read", "GitHub read"),
     "github_write": ("mail", "all", "GitHub issue, branch, pull request, commit"),
-    "drive_read": ("any_read", "any_read", "Drive read (files Clara created or you opened to her)"),
+    "drive_read": ("any_read", "any_read", "Drive read: any file of your Drive"),
     "drive_write": ("files_vault", "mail", "Drive create or modify: create a file, replace a file's content"),
     "drive_trash": ("mail", "all", "Drive trash: move a file to Drive's trash (never emptied)"),
     "drive_restore": ("any_read", "files_vault", "Drive restore: take a file out of Drive's trash"),
