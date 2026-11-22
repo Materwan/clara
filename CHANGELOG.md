@@ -3,45 +3,69 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
-## Unreleased
+## v1.6.1 — 22/11/2026
 
-- **A question is kept from the moment it is sent, on the web site too.** The conversation list shows a new conversation (with its
-  question as the preview), or moves an old one to the top, as soon as the answer starts instead of when it ends. A page opened while an
-  answer is running draws the stored question once, not twice. A stop or an error before the first word leaves the question on screen
-  with the interrupted note and **Try again**.
-- **Drive reaches your whole Drive; the Picker is gone.** Clara now asks Google for the `drive` scope (it replaces `drive.file`): she lists,
-  searches and reads any file of your Drive, and creates files anywhere (in her own « Clara » folder unless she is given a folder). She never
-  modifies a Google-native file (a Doc, Sheet, Slide, Form, folder, shortcut...): `drive_update` refuses it before any change, in every mode;
-  creating one from text, trashing and restoring one stay allowed. **What you must do:** (1) in Google Cloud, change the OAuth consent screen's
-  scope from `.../auth/drive.file` to `.../auth/drive` (a restricted scope: keep the app in *Testing* with your address as a test user);
-  (2) on the Connections page, **Connect again** under Google Drive: an old connection keeps its token but Clara's Drive tools say to connect
-  again until you do. While the app is in *Testing*, Google ends the connection every 7 days: connect again when the page says so.
-  Removed: « Open files to Clara », the routes `GET /v1/connections/google/picker` and `POST /v1/connections/google/picked`, the `picker` and
-  `files` fields of `google` in `GET /v1/connections` (which gains `old_scope`), and the Picker window's own page and CSP. **Deprecated, removed in
-  the next release:** the setting `CLARA_GOOGLE_PROJECT_NUMBER` and the secret `google_picker_api_key` are still accepted and are ignored; unset
-  the secret with `clara secrets unset google_picker_api_key` whenever you like. No migration.
-- **The Modes page follows the packs.** A mode's table lists only the tools it sets: the tools with no pack and those of a pack ticked in
-  that mode. The tools of an unticked pack move to a read-only section, **Decided by the default mode**, with their pack and the default's
-  verdicts, and a mode's lines about them are ignored while the pack stays unticked (they are kept and apply again when it is ticked: the
-  gate now filters them, not only the page). Ticking a pack approves nothing. `GET /v1/modes/{name}` rows have `pack` and `shown`, and
-  `POST /v1/modes/test` says `ignored_pack`. **Check your modes:** a mode that approved a tool of a pack it does not switch on now follows
-  the default mode for it until you tick the pack.
-- **Restore, for Drive and mail:** new tools `drive_restore` (takes a file out of Drive's trash) and `mail_restore` (takes a message out of
-  the Trash and puts it back in the inbox), new action classes `drive_restore` and `mail_restore`, approved in the default mode. `drive_search`
-  takes `trashed` and `mail_search` takes the folder `trash`, to find what to restore. The Drive scope does not change.
-- **Drive's trash is a class of its own, and the default mode refuses it:** `drive_delete` (it only ever moved a file to the trash) is now
-  `drive_trash`; `drive_write` covers create and update only and asks. **A mode, or an installed `default-mode.toml`, with a line on
-  `drive_write` no longer covers a trash: add a line on `drive_trash` if you want it.** No migration.
-- `docs/THREAT-MODEL.md` now says what the default mode does with Drive.
-- **A question is kept from the moment it is sent.** It is stored before the model is asked, and its answer when the turn ends: a
-  stop before the first word, an error (the model fails, a timeout, a prompt that does not fit) or the server stopping leaves the
-  question with a note saying why (`[This answer was interrupted: you stopped it.]`, `… the server stopped.]`, the error), and a
-  conversation whose first answer is cut short keeps its first message. The conversation is listed, with its question as the
-  preview, as soon as the message is sent. A server killed outright (kill -9, a power cut) leaves the question alone: the next start
-  writes its note. A model that answers nothing now leaves `[This answer was interrupted: the model gave no answer.]`. This is the
-  server: every client has it, and the web page shows the kept question and « Try again » in a later change. Automation runs,
-  reminders, tasks and approval follow-ups are unchanged (they store their question and answer together, and nothing when cut
-  before they said anything). No migration.
+**Drive reaches your whole Drive, restore for Drive and mail, a kept question, and a Modes page that follows the packs.** A question is now
+stored the moment it is sent, so a stop, an error or a server stop no longer loses it; Clara can restore a file or a mail from the trash;
+Drive uses Google's `drive` scope (the Picker is gone); and a mode's table lists only the tools whose pack it switches on.
+**Not tried on real systems when this version came out:** everything about Google (the real `scope` in a refresh response, Google refusing
+to trash another owner's file, shared drives, the folder lookup, an untrash putting a mail back in the inbox) and the kept question with a
+real model or the Discord bot. The tests use stand-ins.
+
+**What changes when you update.**
+
+- **Drive needs you, twice.** (1) In Google Cloud, change the OAuth consent screen's scope from `.../auth/drive.file` to `.../auth/drive` (a
+  restricted scope: keep the app in *Testing* with your address as a test user). (2) On the Connections page, **Connect again** under Google
+  Drive: an old connection keeps its token, but Clara's Drive tools say to connect again until you do. While the app is in *Testing*, Google
+  ends the connection every 7 days: connect again when the page says so. See `docs/OPERATIONS.md` and `docs/PROVIDERS.md`.
+- **`/etc/clara/default-mode.toml` is yours to update** (root-owned, so the installer does not overwrite it): copy the new lines of
+  `deploy/default-mode.toml` for `drive_write` (**ask**), `drive_trash` (**refuse**), `drive_restore` and `mail_restore` (**approve**).
+  A class with no line in your file takes the built-in verdict, which is the same, so nothing is wrong until you do. A line of yours on
+  `drive_write` or a mode's line on it no longer covers a trash: add a line on `drive_trash` if you want one.
+- **Check your modes.** A mode's lines about the tools of a pack count only while that pack is ticked in the mode; with the pack unticked the
+  default mode decides those tools (the lines are kept and apply again when the pack is ticked). A mode that approved a tool of a pack it does
+  not switch on now follows the default mode for it until you tick the pack.
+- **Deprecated, removed in the next release:** the setting `CLARA_GOOGLE_PROJECT_NUMBER` and the secret `google_picker_api_key` are still
+  accepted and are ignored; unset the secret with `clara secrets unset google_picker_api_key` whenever you like.
+
+**Drive.**
+
+- **The whole Drive, and no Picker.** Clara lists, searches and reads any file of your Drive and creates files anywhere (in her own « Clara »
+  folder unless she is given a folder). She never modifies a Google-native file (a Doc, Sheet, Slide, Form, folder, shortcut...):
+  `drive_update` refuses it before any change, in every mode; creating one from text, trashing and restoring one stay allowed.
+- **Restore.** New tools `drive_restore` (takes a file out of Drive's trash) and `mail_restore` (takes a message out of the Trash and puts it
+  back in the inbox: `untrash`, then `INBOX` added), approved in the default mode. `drive_search` takes `trashed` and `mail_search` takes the
+  folder `trash`, to find what to restore.
+- **Drive's trash is a class of its own.** `drive_delete` (it only ever moved a file to the trash) is now class `drive_trash`, refused in the
+  default mode; `drive_write` covers create and update only and asks. The new classes are `drive_trash`, `drive_restore` and `mail_restore`.
+- `docs/THREAT-MODEL.md` now says what the default mode does with Drive, and that Clara is for you alone (no connection for anyone else).
+
+**The kept question.**
+
+- **A question is kept from the moment it is sent.** It is stored before the model is asked, and its answer when the turn ends: a stop
+  before the first word, an error (the model fails, a timeout, a prompt that does not fit) or the server stopping leaves the question with a
+  note saying why (`[This answer was interrupted: you stopped it.]`, `… the server stopped.]`, the error), and a conversation whose first
+  answer is cut short keeps its first message. A model that answers nothing leaves `[This answer was interrupted: the model gave no answer.]`.
+  A server killed outright (kill -9, a power cut) leaves the question alone: the next start writes its note. Automation runs, reminders,
+  tasks and approval follow-ups are unchanged (they store their question and answer together, and nothing when cut before they said anything).
+- **On the web site**, the conversation list shows a new conversation (with its question as the preview), or moves an old one to the top, as
+  soon as the answer starts instead of when it ends; a page opened while an answer is running draws the stored question once, not twice; and
+  a stop or an error before the first word leaves the question on screen with the note and **Try again**.
+
+**The Modes page.**
+
+- A mode's table lists only the tools it sets: the tools with no pack and those of a pack ticked in that mode. The tools of an unticked pack
+  move to a read-only section, **Decided by the default mode**, with their pack and the default's verdicts, and a line of the mode about
+  them says « Ignored for … » in **Other lines**. Ticking a pack approves nothing.
+
+**Interface changes.**
+
+- Removed: « Open files to Clara », the routes `GET /v1/connections/google/picker` and `POST /v1/connections/google/picked`, the `picker` and
+  `files` fields of `google` in `GET /v1/connections` (which gains `old_scope`), and the Picker window's own page and CSP.
+- `GET /v1/modes/{name}` rows have `pack` and `shown`, and `POST /v1/modes/test` says `ignored_pack`.
+- `drive_search` has the argument `trashed`; the tools `drive_restore` and `mail_restore` are new (93 tools).
+
+**Migrations.** None.
 
 ## v1.6.0 — 14/11/2026
 
