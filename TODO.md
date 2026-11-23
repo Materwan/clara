@@ -286,3 +286,71 @@ What the current design already sets:
 - `FEATURES.md` (line 1641): the web promise « no camera, microphone or location ».
 - `docs/OPERATIONS.md` (line 41): Clara is served over HTTPS by Tailscale.
 - Measured on 2026-11-22 on this PC: `faster-whisper` `small`, int8, 0.47 times real time on a 13.7 s French sample, 833 MB peak.
+
+## `/goal`: Clara keeps working on a conversation until a condition is met
+
+The owner wants an equivalent of Claude Code's `/goal` for Clara. In a web conversation the owner sets a completion condition, and
+Clara keeps taking turns without a new message until a judge finds the condition met, judged impossible, or a limit is reached. Today
+one message gives one answer, bounded by `CLARA_MAX_TOOL_ROUNDS` and `CLARA_ANSWER_BUDGET` (`src/clara/settings.py:89`, `:94`), and
+nothing continues between messages.
+
+What the owner decided:
+
+- **The loop runs on the server**, in the turn driver, through the `Runs` mechanism that already keeps a web turn going when the page
+  is closed (`docs/DECISIONS.md:55`, `src/clara/agent/runs.py`). Web only: the terminal and Discord are later items.
+- **Commands**: `/goal <condition>` starts a goal, `/goal` alone shows its state, `/goal clear` ends it.
+- **One goal per conversation.**
+- **The model that works the goal is the conversation's model** by default; each goal may name another.
+- **The judge is the same model as the goal**, with no tools. After each turn it answers met, not yet met, or impossible. It sees the
+  goal, the reply of the turn and its tool results. It can stop the loop; it cannot approve or run anything.
+- **The judge checks only the rules written in the condition**, for instance « only use the following websites ». It does not judge
+  tool permissions: the modes and the gate decide those, unchanged.
+- **Default limits: 10 turns and 15 minutes of model time**, set in the settings and changeable for each goal. A turn is one turn of
+  the conversation, which may itself use up to `CLARA_MAX_TOOL_ROUNDS` tool rounds. The time counts model time only, as the answer
+  budget does (`docs/DECISIONS.md:124`), so a pause for an approval does not use it.
+- **When a limit is reached**, the goal is paused and says where it stopped. `/goal` resumes it, or adds turns.
+- **An approval requested during a goal** pauses it. It resumes after the owner answers, through the follow-up turn that already
+  exists (`docs/DECISIONS.md:115`).
+- **A restart of the server** pauses the goal. Nothing resumes on its own.
+- **A conversation contaminated by outside content** (a mail, a page) is not limited further. The tainted rule keeps its existing
+  effect on outside writes (`docs/DECISIONS.md:47`).
+
+What I corrected or added to the owner's plan:
+
+- **The judge can stop, not decide.** A judge that reads outside text can be misled into stopping early, but not into doing more.
+- **« Turn » is ambiguous.** It is counted as a turn of the conversation, not a tool round: otherwise ten turns could mean two hundred
+  tool rounds.
+- **Cost.** Each turn costs two model calls, since the judge is the same model. Spending is not capped (`docs/NON-GOALS.md`, « Spending
+  caps »), so the turn and time limits bound the work, not the money. The build must say so in `docs/DECISIONS.md`: a turn limit is
+  not a spending cap.
+- **The judge sees only what the reply and the tool results show.** A rule such as « only use these websites » is checked against the
+  addresses that appear there, not against everything a tool did, unless the tool reports it.
+
+Not decided:
+
+- How a goal reaches the terminal and Discord, when those clients are added.
+- Whether a goal survives a change of the conversation's model or provider.
+- The exact syntax for changing the limits of one goal.
+- Whether a goal may run in a conversation that belongs to a project or to an automation.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The field or table that holds a goal, its state and its counters, and its migration (the last one is `0037`).
+- The judge's prompt and its answer format.
+- The status line on the web page, and how a paused goal is shown.
+- The names and ranges of the settings for the default limits.
+- The tests, with `FakeLLM` and a scripted judge: met, not yet met, impossible, a limit reached, a pause for an approval, a pause on
+  restart, and a judge that stops on a broken rule.
+- The lines of `FEATURES.md` and the entry of `docs/DECISIONS.md` on the limits.
+
+What the current design already sets:
+
+- `src/clara/agent/turn.py:651`: `Agent.turn()` is the one path for all conversation.
+- `src/clara/settings.py:89`, `:94`, `:466`, `:471`: `CLARA_MAX_TOOL_ROUNDS` (20) and `CLARA_ANSWER_BUDGET` (900 s), per answer.
+- `src/clara/agent/runs.py`: the web turn kept alive when the page closes (`docs/DECISIONS.md:55`).
+- `docs/DECISIONS.md:115`: an approval waits up to `CLARA_APPROVAL_WAIT`, then a follow-up turn starts.
+- `docs/DECISIONS.md:124`: the answer budget counts model time only.
+- `docs/DECISIONS.md:47`: a tainted turn raises the verdict of outside writes.
+- `docs/NON-GOALS.md`, « Spending caps »: spending is shown, not capped.
+- `docs/THREAT-MODEL.md`, « A model that misbehaves »: tool rounds and model time are bounded.
+- `src/clara/tools/base.py:7-9`, `:260-261`: a refusal is recorded in the audit log, and the model is told the action was not done.
