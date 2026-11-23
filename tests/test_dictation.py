@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 import wave
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from clara.dictation import (
     TooLong,
     Transcript,
     read_limited,
+    worker,
 )
 from clara.dictation import models as speech_models
 from clara.dictation.process import ProcessTranscriber
@@ -359,6 +361,49 @@ async def test_a_child_that_answers_without_reading_the_audio_is_fine(tmp_path):
     engine = stand_in(tmp_path, "import json\nprint(json.dumps({'ok': False, 'error': 'bad_audio', 'message': 'no'}))\n")
     with pytest.raises(BadAudio):
         await engine.transcribe(b"x" * 5_000_000, **OPTIONS)  # more than a pipe holds: the write meets a closed pipe
+
+
+# ------------------------------------------------------------------------------------- the silence filter (no model)
+class Seg:
+    def __init__(self, text, no_speech_prob, avg_logprob=-0.2):
+        self.text, self.no_speech_prob, self.avg_logprob = text, no_speech_prob, avg_logprob
+
+
+def run_transcribe(monkeypatch, *segments):
+    """`worker.transcribe` against a stand-in faster_whisper module that yields these segments."""
+    import types
+
+    class Model:
+        def __init__(self, *a, **k): pass
+        def transcribe(self, audio, **k): return iter(segments), None
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=Model))
+    args = types.SimpleNamespace(model_dir="x", language="fr", deadline=60)
+    return worker.transcribe(None, args, time.monotonic())
+
+
+def test_speech_is_kept_and_a_high_no_speech_prob_is_dropped():
+    assert worker.is_speech(Seg("Bonjour", 0.03)) and worker.is_speech(Seg("Merci beaucoup", 0.55, -0.5))
+    assert not worker.is_speech(Seg("Merci.", 0.64, -0.4))  # measured: noise hallucinations sit at 0.64 and above, never under 1.0 logprob
+    assert not worker.is_speech(Seg("Sous-titres", 0.9, -1.5))
+
+
+def test_the_threshold_itself_is_kept_and_just_above_is_dropped():
+    assert worker.is_speech(Seg("x", worker.NO_SPEECH_MAX)) and not worker.is_speech(Seg("x", worker.NO_SPEECH_MAX + 0.001))
+
+
+def test_the_filter_looks_at_no_speech_prob_alone():  # the library's own rule also needs avg_logprob < -1.0
+    assert worker.is_speech(Seg("x", 0.1, -3.0)) and not worker.is_speech(Seg("x", 0.7, -0.1))
+
+
+def test_transcribe_joins_what_is_speech_and_drops_the_rest(monkeypatch):
+    got = run_transcribe(monkeypatch, Seg(" Bonjour Clara. ", 0.03), Seg("Merci.", 0.8), Seg("À demain.", 0.05))
+    assert got == "Bonjour Clara. À demain."
+
+
+def test_a_transcription_where_every_segment_is_dropped_is_empty(monkeypatch):
+    assert run_transcribe(monkeypatch, Seg("Merci.", 0.7), Seg("Sous-titres réalisés par la communauté d'Amara.org", 0.9)) == ""
+    assert run_transcribe(monkeypatch) == ""
 
 
 # ------------------------------------------------------------------------------------- the real worker

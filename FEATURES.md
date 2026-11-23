@@ -1880,7 +1880,7 @@ anything else, or none, is a 422. Clara still answers in text.
   conversation the answer is a 409 `Clara is already answering`, before the audio is transcribed. The turn is the one a typed message makes (same
   request, same mode and packs of the conversation), labelled with the client's name, and a failure to start it is the chat's own error.
   The word *approval* stays for Clara's tool requests: this setting is not one.
-- **Silence** (an empty transcript) answers 200 with `text: ""` and `sent: false`: no message is sent and no conversation is made or tainted.
+- **Silence** (an empty transcript; the worker drops every segment Whisper rates above 0.6 `no_speech_prob`, so room noise gives this and not a hallucinated word) answers 200 with `text: ""` and `sent: false`: no message is sent and no conversation is made or tainted.
 - **A dictation conversation is tainted, for good.** The first dictation into a conversation, new or existing, taints it (source
   `dictation`; the existing mechanism, and nothing lifts it: a conversation does not become untainted, and the old `/tainted off` switch
   no longer exists). Tainted means the rule for a tainted turn: the `(if tainted)` verdict of the conversation's mode decides each call,

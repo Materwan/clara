@@ -13,6 +13,8 @@ limit is not a spending cap: each turn costs two model calls. New routes `GET` a
 and `goal_state`. **On the web page**, a message that starts with `/goal` goes to the goal and not to the model (with a hint of its syntax under the box), one line above the box shows the goal (turn, minutes, pause reason, **Stop**, **Resume**, **+5 turns**, **+10 min**, **Clear**), and a goal's messages are thin dividers in the conversation; the terminal and Discord come later. **Migration `0038_goals.sql`** (a `goals` table), **new runtime settings**
 `goal_turns` and `goal_minutes`; the usage log has a `judge` kind.
 
+**Dictation no longer types « Merci. » for silence.** The transcriber now drops a segment Whisper itself rates above 0.6 `no_speech_prob`, on that alone (the library also wanted a low `avg_logprob`, which noise hallucinations never had); a dictation with nothing left says *Nothing heard*. Measured on the real model with synthetic noise and speech, not on the recording that showed the problem. No setting, no migration.
+
 **Voice dictation, the transcription part.** `POST /v1/dictation/transcribe` takes a recording (webm or ogg with opus, m4a, wav, any
 `audio/*`) and returns `{"text", "seconds"}`, transcribed on the machine that hosts Clara with faster-whisper (`small`, int8, French by
 default), in a child process killed on a timeout. At most 5 minutes of decoded audio and 30 MB, one dictation at a time (a second gets a

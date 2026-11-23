@@ -20,6 +20,9 @@ import sys
 import time
 
 RATE = 16_000  # what Whisper reads
+# A segment above this no_speech_prob is dropped on that alone: the library also wants avg_logprob < -1.0,
+# and the noise hallucinations measured on 2026-11-23 never got that low.
+NO_SPEECH_MAX = 0.6
 
 
 class Refused(Exception):
@@ -72,6 +75,11 @@ def _frames(container):
     yield None  # flushes the resampler
 
 
+def is_speech(segment) -> bool:
+    """False for a segment Whisper itself judges to be silence or noise: its text is then a hallucination ("Merci.", "You")."""
+    return segment.no_speech_prob <= NO_SPEECH_MAX
+
+
 def transcribe(audio, args, started: float) -> str:
     from faster_whisper import WhisperModel
 
@@ -84,7 +92,8 @@ def transcribe(audio, args, started: float) -> str:
     for segment in segments:  # the work happens here, one segment at a time
         if time.monotonic() - started > args.deadline:
             raise Refused("timeout", f"The transcription took more than {args.deadline} seconds.")
-        parts.append(segment.text.strip())
+        if is_speech(segment):
+            parts.append(segment.text.strip())
     return " ".join(part for part in parts if part)
 
 
