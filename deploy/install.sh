@@ -43,7 +43,7 @@ if [ "${1:-}" = "--from-source" ]; then
     release=/opt/clara/releases/$tag
     rm -rf "$release"; install -d -o clara -g clara "$release"
     sudo -u clara env UV_PYTHON_INSTALL_DIR=/var/lib/clara-home/.python uv venv --python 3.12 "$release/.venv"
-    sudo -u clara uv pip install --python "$release/.venv/bin/python" "$source_dir[discord]"
+    sudo -u clara uv pip install --python "$release/.venv/bin/python" "$source_dir[discord,dictation]"
 else
     tarball=$(realpath "${1:?give the release tarball}")
     tag=$(basename "$tarball" .tar.gz); tag=${tag#clara-}

@@ -1816,7 +1816,7 @@ no third party). It sends nothing into a conversation: the client decides what t
 works (webm or ogg with opus, m4a, wav: the decoder is PyAV, which carries FFmpeg, so no `ffmpeg` binary is needed).
 
 - **An optional extra.** It needs the `dictation` extra of the package (faster-whisper). Without it Clara starts and works as before,
-  and the route answers 503 `dictation_not_installed`. Releases do not include the extra yet: `docs/OPERATIONS.md`, « Voice dictation ».
+  and the route answers 503 `dictation_not_installed`. Releases include it (their lock is built with `--extra dictation`); the model is still fetched by hand: `docs/OPERATIONS.md`, « Voice dictation ».
 - **The model is fetched only by `/dictation fetch-model`** (about 500 MB for `small`, from Hugging Face, into `<data>/models/whisper/`),
   never by a request. Until then the route answers 503 `model_not_installed` and says how to fetch it. The worker loads it with
   `local_files_only`.

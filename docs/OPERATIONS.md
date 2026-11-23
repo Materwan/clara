@@ -416,11 +416,10 @@ run fails and is recorded as such; **Run now** tries again.
 three things, in this order.
 
 1. **The `dictation` extra** (faster-whisper, with CTranslate2, ONNX Runtime and PyAV; no `ffmpeg` binary). In a development checkout:
-   `uv sync --extra dictation` (or `--all-extras`). **Releases do not include it yet:** `deploy/install.sh` installs the hash-pinned
-   `requirements.lock` of the release, which `scripts/build-release.sh` exports with `--extra discord` only, and `install.sh --from-source`
-   installs `<source>[discord]`. A hand install into an installed release's environment,
-   `sudo -u clara uv pip install --python /opt/clara/current/.venv/bin/python 'faster-whisper>=1.1'`, works until the next update builds a
-   new environment without it. Which way to ship it is the owner's decision.
+   `uv sync --extra dictation` (or `--all-extras`). **Releases include it:** `scripts/build-release.sh` exports the hash-pinned
+   `requirements.lock` with `--extra discord --extra dictation`, which `deploy/install.sh` installs, and `install.sh --from-source`
+   installs `<source>[discord,dictation]`. An update keeps it, since the new environment is built from the same lock (it makes the
+   release bigger: CTranslate2, ONNX Runtime and PyAV).
 2. **The model, fetched once** from the console: `/dictation fetch-model` (the Admin page's console or `clara-admin`). It downloads the
    `dictation_model` (`small`, about 500 MB) from Hugging Face into `<data>/models/whisper/small/`: the only time dictation uses the
    network. A request never fetches it: until then the route answers 503 `model_not_installed`. To fetch another model, change

@@ -33,7 +33,7 @@ rm -rf "$out"; mkdir -p "$out"
 
 "$UV" build --wheel --out-dir "$stage" --quiet
 rm -f "$stage/.gitignore"  # uv marks its output folder; it does not belong in the release
-"$UV" export --frozen --no-dev --extra discord --no-emit-project --no-header --format requirements-txt \
+"$UV" export --frozen --no-dev --extra discord --extra dictation --no-emit-project --no-header --format requirements-txt \
   --output-file "$stage/requirements.lock" --quiet
 grep -q -- "--hash=sha256:" "$stage/requirements.lock" || { echo "requirements.lock has no hashes" >&2; exit 1; }
 cp -r deploy sandbox "$stage/"
