@@ -29,7 +29,7 @@ Nov 14:05`). The conversation is tainted from then on, an existing one included:
 the phone locked. A dictation never answers an approval. `GET` and `PUT /v1/dictation/clients[/{client}]` hold the settings, with the approval
 mode and tool packs of a new dictation conversation (changing them takes a token that may answer every request), and `POST
 /v1/dictation/clients/{client}/conversation` starts a new one. The conversation list says `dictation: true`. Migration 0039; deleting a mode
-a client uses moves it to the default mode (the 409 counts them as `dictation_clients`). No page or button yet: that is the web part. **Not tried with real speech or on
+a client uses moves it to the default mode (the 409 counts them as `dictation_clients`). The web part is the next paragraph. **Not tried with real speech or on
 a phone when this was built.**
 
 **Voice dictation, the terminal and Discord.** In `clara-chat`, `/dictate` records from the microphone with `arecord` (package `alsa-utils`)
@@ -41,6 +41,19 @@ question and the answer follows; off (the default), the bot replies `Transcript,
 message too big or too long is refused before it is downloaded; one that would start a new post is not dictated. Neither client answers an
 approval from a transcript. No migration. **Not tried with a real microphone, a real recorder or a real Discord voice message when this was
 built.**
+
+**Voice dictation, on the web site.** A microphone button in the box you write in: press it to record (a timer shows), press again to stop and send; Cancel or
+Escape drops the recording, and it also stops by itself at the longest dictation (`dictation_max_seconds`, 5 minutes), and, without sending anything, when the page is hidden or another conversation is
+opened. The audio goes to `POST /v1/dictation?client=web` (into the open conversation, or on a new chat into the web client's own dictation
+conversation, which the page then opens). With automatic sending off the text lands in the box for you to read and send; on, it is sent at once and
+the page follows the run as for a goal. A new **Settings > Dictation** page holds, per client, automatic sending, the mode, the tool packs, the current dictation conversation
+and **New dictation conversation**; the list of conversations shows a microphone on dictation ones, and the Modes page counts and confirms the
+dictation clients that use a mode before it is deleted. **A guarantee changes:** the site's `Permissions-Policy` was `microphone=()` and is now
+`microphone=(self)` (the camera and the location stay off). The microphone opens on a button press only and every track is stopped when the
+recording ends; the strict content security policy is the other limit (`docs/THREAT-MODEL.md`, `docs/DECISIONS.md`). A dictation conversation is outside
+content for good, and the page says so (Settings, the button's help, the conversation's header). The microphone needs a secure page: Clara's Tailscale
+https address, or localhost; elsewhere the button explains. No migration, no new route. **Tried in headless Chromium with a fake microphone and a scripted
+transcriber only: not with a real microphone, a real model, or the real permission prompt on the https address.**
 
 ## v1.6.1 — 22/11/2026
 

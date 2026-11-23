@@ -158,6 +158,7 @@
       <span class="title">
         {#if item.incognito}<Icon name="incognito" size={14} label="Incognito" />{/if}
         {#if item.local_only}<Icon name="home" size={14} label="Local only" />{/if}
+        {#if item.dictation}<Icon name="mic" size={14} label="Dictation" />{/if}
         <span>{item.title || item.preview || 'New conversation'}</span>
       </span>
       <span class="meta">{item.client === 'web' ? '' : `${item.client} · `}{short(item.updated_at)}</span>

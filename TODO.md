@@ -246,24 +246,16 @@ What I corrected or added to the owner's plan:
 - **A microphone needs a secure context.** Clara is served over HTTPS through Tailscale (`docs/OPERATIONS.md`, line 41), so the
   condition holds; the browser behaviour still has to be checked on the real site.
 
-Not decided:
-
-- The place and the label of the button on the web site: an interface choice, left for the implementation.
-
 Built so far (branch `feat/dictation-transcribe`, 2026-11-23): the transcription route `POST /v1/dictation/transcribe` (audio in, text
 out; `small` int8, French, 5 minutes, 30 MB, one at a time, the audio never kept, a child process; `docs/DECISIONS.md`, « Voice
 dictation »). Built on branch `feat/dictation-conversations` (2026-11-23): the conversations per client, `POST /v1/dictation`, the
 per-client settings (`auto_send`, mode, packs) and the new-dictation-conversation action, migration 0039 (`docs/DECISIONS.md`, « Dictation
 goes into conversations, per client »). Built on branch `feat/dictation-cli-discord` (2026-11-23): `/dictate` in the terminal (an external
 `arecord` or `parecord`, client `cli`) and the Discord voice messages (into the conversation of their thread, client `discord`; `docs/DECISIONS.md`,
-« Dictation from the terminal and from Discord »). Still to do: the web Settings page and button with its microphone change, and the phone and island apps. Nothing lifts the taint of a conversation any more (`/tainted off` went with the modes): a dictation
+« Dictation from the terminal and from Discord »). Built on branch `feat/dictation-web` (2026-11-23): the web site's microphone button, the Settings > Dictation page,
+the microphone on the conversation list, the Modes page's `dictation_clients`, and the header, `FEATURES.md` and threat-model changes (`docs/DECISIONS.md`, « The web site may
+use the microphone, on a press only »); tried in headless Chromium with a fake microphone only, not with a real one. Still to do: the phone and island apps. Nothing lifts the taint of a conversation any more (`/tainted off` went with the modes): a dictation
 conversation stays tainted, and the mode's `(if tainted)` lines are what the owner can loosen.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The Settings page for the per-client setting, the approval mode and the packs.
-- The change of the microphone header for Clara's origin, the two `FEATURES.md` lines it changes, and the threat-model row.
-- The code of the web button: recording, sending, stopping.
 
 What the current design already sets:
 
@@ -278,8 +270,8 @@ What the current design already sets:
 - `coucou_copy/CLAUDE.md` (line 32): the phone's token is `phone`, created with `--approvals all`; a voice phrase must never approve.
 - `docs/THREAT-MODEL.md`: the content a conversation reads is the threat; a dictation is the owner's voice, but it can capture other
   people or the television in the room.
-- `src/clara/api/middleware.py` (line 264): `permissions-policy: camera=(), microphone=(), geolocation=()` on every response.
-- `FEATURES.md` (line 1641): the web promise « no camera, microphone or location ».
+- `src/clara/api/middleware.py`: `permissions-policy: camera=(), microphone=(self), geolocation=()` on every response (it was `microphone=()` before the web slice).
+- `FEATURES.md`: the web promise is now « no camera or location, the microphone for Clara's own origin alone, on a press only ».
 - `docs/OPERATIONS.md` (line 41): Clara is served over HTTPS by Tailscale.
 - Measured on 2026-11-22 on this PC: `faster-whisper` `small`, int8, 0.47 times real time on a 13.7 s French sample, 833 MB peak.
 

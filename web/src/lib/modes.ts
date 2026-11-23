@@ -7,7 +7,8 @@ export const VERDICTS: Verdict[] = ['approve', 'ask', 'refuse'];
 export const KIND: Record<Verdict, 'ok' | 'warn' | 'danger'> = { approve: 'ok', ask: 'warn', refuse: 'danger' };
 
 export type Line = { tool: string; class: string; target: string; verdict: Verdict; tainted: Verdict };
-export type Uses = { conversations: number; automation_conversations: number; automations: number; projects: number };
+/** What uses a mode. `dictation_clients` is there only when a dictation client does (the server leaves it out otherwise, so that a confirmation made before it existed still stands). */
+export type Uses = { conversations: number; automation_conversations: number; automations: number; projects: number; dictation_clients?: number };
 export type Effective = {
   tool: string; class: string; verdict: Verdict; tainted: Verdict; line: string | null; from: 'mode' | 'default';
   /** The tool's pack, or null. */
@@ -71,12 +72,15 @@ const plural = (n: number, one: string, many = one + 's'): string => `${n} ${n =
 
 /** « Used by 3 conversations, 1 project, 0 automations » */
 export const usedBy = (uses: Uses): string =>
-  `Used by ${plural(uses.conversations + uses.automation_conversations, 'conversation')}, ${plural(uses.projects, 'project')}, ${plural(uses.automations, 'automation')}`;
+  `Used by ${plural(uses.conversations + uses.automation_conversations, 'conversation')}, ${plural(uses.projects, 'project')}, ${plural(uses.automations, 'automation')}` +
+  (uses.dictation_clients ? `, ${plural(uses.dictation_clients, 'dictation client')}` : '');
 
 /** The warning of a deletion: the four numbers the server counts and asks to be sent back. */
-export const deleteWarning = (uses: Uses): string =>
-  `${plural(uses.conversations, 'conversation')}, ${plural(uses.automation_conversations, 'automation conversation')}, ` +
-  `${plural(uses.automations, 'automation')} and ${plural(uses.projects, 'project')} use this mode: they all move to the default mode.`;
+export const deleteWarning = (uses: Uses): string => {
+  const clients = uses.dictation_clients ? `, ${plural(uses.dictation_clients, 'dictation client')}` : '';
+  return `${plural(uses.conversations, 'conversation')}, ${plural(uses.automation_conversations, 'automation conversation')}, ` +
+    `${plural(uses.automations, 'automation')}${clients} and ${plural(uses.projects, 'project')} use this mode: they all move to the default mode.`;
+};
 
 /** The query string that confirms a deletion with the numbers that were shown. */
 export const confirmQuery = (uses: Uses): string =>
@@ -85,7 +89,9 @@ export const confirmQuery = (uses: Uses): string =>
     automation_conversations: String(uses.automation_conversations),
     automations: String(uses.automations),
     projects: String(uses.projects),
+    ...(uses.dictation_clients ? { dictation_clients: String(uses.dictation_clients) } : {}), // sent only when the server counted some, as it lists them only then
   }).toString();
 
 export const sameUses = (a: Uses, b: Uses): boolean =>
-  a.conversations === b.conversations && a.automation_conversations === b.automation_conversations && a.automations === b.automations && a.projects === b.projects;
+  a.conversations === b.conversations && a.automation_conversations === b.automation_conversations && a.automations === b.automations && a.projects === b.projects
+  && (a.dictation_clients ?? 0) === (b.dictation_clients ?? 0);

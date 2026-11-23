@@ -8,6 +8,7 @@
   import Icon from '../components/Icon.svelte';
   import ModeSelect from '../components/ModeSelect.svelte';
   import Mark from '../components/Mark.svelte';
+  import MicButton from '../components/MicButton.svelte';
   import PlusMenu from '../components/PlusMenu.svelte';
   import PresentCard from '../components/PresentCard.svelte';
   import SidePanel from '../components/SidePanel.svelte';
@@ -16,6 +17,7 @@
   import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
+  import { type Answer, outcome, withText } from '../lib/dictation';
   import { type Goal, SYNTAX, WAITING, afterEvent, goalArgs, goalLine, goalRunStart, isGoalCommand, startsGoal } from '../lib/goal';
   import { load as loadGrants } from '../lib/grants.svelte';
     import { markdown } from '../lib/markdown';
@@ -196,8 +198,10 @@
   // The tag is a button because a title does not show on a touch screen: it opens the same sentence under the header.
   let taintOpen = $state(false);
   const taintNote = $derived(
-    'This conversation read outside content (a page, a mail, a file from outside). Its mode gives each tool the verdict « if tainted »: ' +
-    'a tool the mode lets run may still ask or be refused.',
+    (conversation?.dictation
+      ? 'A dictation went into this conversation, and a microphone also hears other voices, so it counts as outside content for good. '
+      : 'This conversation read outside content (a page, a mail, a file from outside). ') +
+    'Its mode gives each tool the verdict « if tainted »: a tool the mode lets run may still ask or be refused.',
   );
   const tagOf = (bad: Outcome): string => (bad === 'asked' ? 'tag warn' : 'tag danger');
 
@@ -388,6 +392,32 @@
       if (found?.running && !busy && conversationId === id) await followRun(id);
     });
   });
+
+  // ---- dictation (lib/dictation.ts, components/MicButton.svelte) ------------------------------------------------------
+  /** What the server made of a dictation: nothing was heard; the text was sent (a run to follow, as for a goal); or it waits in the box for you to read and send.
+   *  A page with no conversation yet opens the one the server used or made for the web client. Whatever the answer, that conversation is tainted for good. */
+  async function dictated(answer: Answer): Promise<void> {
+    const kind = outcome(answer);
+    if (kind === 'silence') {
+      toast('Nothing was heard: nothing was sent.');
+      return;
+    }
+    const id = answer.conversation;
+    if (!id) return;
+    conversations.changed++;
+    if (kind === 'compose') {
+      draft = withText(draft, answer.text);
+      toast('The dictation is in the box: read it, then send.');
+    }
+    if (conversationId !== id) go('/chat/' + id); // the page loads it, and follows its run when the server started one
+    else if (kind === 'follow') await followRun(id);
+    else conversation = await api.get(`/v1/conversations/${id}`).catch(() => conversation); // tainted now: the header says so
+    if (kind === 'compose') {
+      await tick();
+      box?.focus();
+      box?.setSelectionRange(draft.length, draft.length);
+    }
+  }
 
   // ---- the side panel -------------------------------------------------------------------------------------
   const cards = $derived(side.files.length + side.notes.length + side.forms.length);
@@ -1185,6 +1215,7 @@
     {#if projectName}<a class="flag" href={'#/projects/' + projectId} title="Open the project"><Icon name="folder" size={16} />{projectName}</a>{/if}
     {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
     {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
+    {#if conversation?.dictation}<span class="flag" title="Dictated: a microphone put words into this conversation"><Icon name="mic" size={16} />Dictation</span>{/if}
     {#if conversation?.tainted}
       <button type="button" class="flag taint" aria-label="Outside content" aria-expanded={taintOpen} aria-controls={taintOpen ? 'taint-note' : undefined}
         title={taintNote} onclick={() => (taintOpen = !taintOpen)}><Icon name="shield_warn" size={16} /><span>Outside<span class="more"> content</span></span></button>
@@ -1425,6 +1456,7 @@
             <option value="">Default model ({models.default || 'none'})</option>
             {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
           </select>
+          <MicButton conversation={conversationId} disabled={!!conversation?.archived || !!loadError} onAnswer={dictated} />
           {#if busy}
             <button class="send stop" title={compacting ? 'Stop compacting' : 'Stop'} aria-label={compacting ? 'Stop compacting' : 'Stop'} onclick={stop}><Icon name="stop" /></button>
           {:else}

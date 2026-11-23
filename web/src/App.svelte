@@ -18,6 +18,7 @@
   import Connections from './pages/Connections.svelte';
   import Modes from './pages/Modes.svelte';
   import Skills from './pages/Skills.svelte';
+  import Dictation from './pages/Dictation.svelte';
   import Models from './pages/Models.svelte';
   import Usage from './pages/Usage.svelte';
   import Admin from './pages/Admin.svelte';
@@ -37,6 +38,7 @@
     { path: '/connections', label: 'Connections', icon: 'plug', page: Connections },
     { path: '/modes', label: 'Modes', icon: 'shield', page: Modes },
     { path: '/skills', label: 'Skills', icon: 'sparkle', page: Skills },
+    { path: '/dictation', label: 'Dictation', icon: 'mic', page: Dictation },
     { path: '/models', label: 'Models', icon: 'chip', page: Models },
     { path: '/usage', label: 'Usage', icon: 'bolt', page: Usage },
     { path: '/admin', label: 'Admin', icon: 'server', page: Admin },

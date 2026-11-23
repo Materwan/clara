@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { confirmQuery, decidedByDefault, deleteWarning, effectiveOf, exceptionsOf, ignoredFor, isShown, otherLines, ownLine, taintedAfter, taintedChoices, toolsOf, usedBy } from '../src/lib/modes.ts';
+import { confirmQuery, decidedByDefault, deleteWarning, effectiveOf, exceptionsOf, ignoredFor, isShown, otherLines, ownLine, taintedAfter, taintedChoices, sameUses, toolsOf, usedBy } from '../src/lib/modes.ts';
 
 test('a tainted turn is never more permissive than the normal one', () => {
   assert.deepEqual(taintedChoices('approve'), ['approve', 'ask', 'refuse']);
@@ -74,4 +74,19 @@ test('the numbers of a deletion are shown, then sent back as they were', () => {
   assert.equal(usedBy(uses), 'Used by 4 conversations, 1 project, 2 automations');
   assert.match(deleteWarning(uses), /^3 conversations, 1 automation conversation, 2 automations and 1 project use this mode/);
   assert.equal(confirmQuery(uses), 'conversations=3&automation_conversations=1&automations=2&projects=1');
+});
+
+test('a dictation client that uses the mode is shown and its count sent back; with none, the query is the old one', () => {
+  const uses = { conversations: 0, automation_conversations: 0, automations: 0, projects: 0, dictation_clients: 2 };
+  assert.equal(usedBy(uses), 'Used by 0 conversations, 0 projects, 0 automations, 2 dictation clients');
+  assert.match(deleteWarning(uses), /0 automations, 2 dictation clients and 0 projects use this mode/);
+  assert.equal(confirmQuery(uses), 'conversations=0&automation_conversations=0&automations=0&projects=0&dictation_clients=2');
+  assert.equal(confirmQuery({ ...uses, dictation_clients: 0 }), 'conversations=0&automation_conversations=0&automations=0&projects=0');
+  assert.match(deleteWarning({ ...uses, dictation_clients: 1 }), /1 dictation client and/);
+});
+
+test('uses are the same only when the dictation clients agree too (none counts as zero)', () => {
+  const base = { conversations: 1, automation_conversations: 0, automations: 0, projects: 0 };
+  assert.equal(sameUses(base, { ...base, dictation_clients: 0 }), true);
+  assert.equal(sameUses(base, { ...base, dictation_clients: 1 }), false);
 });

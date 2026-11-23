@@ -91,6 +91,21 @@ export const api = {
   del: <T = any>(path: string) => request<T>('DELETE', path),
 };
 
+/** Send a recording as the body of a POST (the audio itself, not JSON) and read the JSON answer. Written for the dictation route: one try, never repeated,
+ *  and `signal` aborts it (the server then stops the work). */
+export async function postAudio<T = any>(path: string, audio: Blob, signal: AbortSignal): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST', credentials: 'same-origin', headers: { ...HEADERS, 'Content-Type': audio.type || 'application/octet-stream' }, body: audio, signal,
+  }).catch((error: unknown) => {
+    if (error instanceof TypeError) throw new ApiError(0, 'network', NETWORK);
+    throw error;
+  });
+  if (response.status === 401) session.signedIn = false;
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(response.status, data?.error?.code ?? 'error', data?.error?.message ?? `HTTP ${response.status}`);
+  return data as T;
+}
+
 export async function download(path: string): Promise<Blob> {
   const response = await fetch(path, { credentials: 'same-origin', headers: HEADERS });
   if (!response.ok) throw new ApiError(response.status, 'error', `HTTP ${response.status}`);
