@@ -57,9 +57,10 @@ from ..tools.folder_tools import TOOL_FOLDERS, FolderRequest
 from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PROJECT_TOOLS, QCM
 from .compaction import build_transcript, chunk_messages, summary_request, transcript_budget
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
+from .goals import WAITING, drive
 from .model import Budget, ModelRunner, RoundResult
 from .prompt import Persona, PromptParts, ScopedFacts, render
-from .runs import Runs
+from .runs import AlreadyRunning, Runs
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -202,6 +203,7 @@ class ChatRequest:
     mirror_thread: str = ""  # a new conversation started in a Discord forum post: its thread
     folder: FolderRequest | None = None  # a folder on the person's computer, opened in this web chat (folder tools)
     can_answer_questions: bool = False  # not the web site, but a client that shows Clara's questions (island, phone)
+    goal: bool = False  # a turn of the conversation's goal (agent/goals.py)
 
 
 @dataclass
@@ -245,7 +247,7 @@ class Agent:
         self._pending: dict[str, _Pending] = {}
         self._background: set[asyncio.Task] = set()
         self._side_jobs = 0
-        self.runs = Runs(self.turn)  # turns that go on when their client leaves
+        self.runs = Runs(self._driven)  # turns that go on when their client leaves (and goals, which are several turns)
         # Blocks of the system prompt that connectors add (GitHub, Drive...): each gives text for a turn, or ""
         self.context_blocks: list[Callable[[TurnState], str]] = []
         # Tools offered only when a condition holds for the turn (name -> condition)
@@ -282,6 +284,9 @@ class Agent:
         task = asyncio.ensure_future(coroutine)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+
+    def _driven(self, request: ChatRequest, plan: TurnPlan) -> AsyncIterator[dict]:
+        return drive(self, request, plan) if request.goal else self.turn(request, plan)
 
     def start_turn(self, request: ChatRequest) -> None:
         """A turn nobody waits for, run to its end: an edited Discord message asked again. Its answer is shown by the mirror."""
@@ -954,6 +959,7 @@ class Agent:
             "context": {"tokens": context_tokens, "window": window, "percent": round(100 * context_tokens / window, 1)},
             "model": used.ref,
             "tainted": state.tainted,
+            "seconds": round(budget.spent, 2),  # model time, which a goal counts
         }
         if compact:  # after the answer, which is complete and stored: the summary is a step of its own
             yield {"type": "compacting"}
@@ -1451,17 +1457,47 @@ class Agent:
         limits: dict = {}
         for restrict in self.restrictions:
             limits.update(restrict(conversation_id))
-        await self.answer(
-            ChatRequest(
-                message=message,
-                client="server",
-                conversation=conversation_id,
-                mode="unattended",
-                kind="followup",
-                quiet=True,
-                **limits,
-            )
+        request = ChatRequest(
+            message=message,
+            client="server",
+            conversation=conversation_id,
+            mode="unattended",
+            kind="followup",
+            quiet=True,
+            **limits,
         )
+        goal = self.s.goals.get(conversation_id)
+        if (
+            goal is not None
+            and goal.state == "paused"
+            and goal.reason == WAITING
+            and not self.s.approvals.waiting(conversation_id)
+            and await self._resume_goal(replace(request, model=goal.model))
+        ):
+            return
+        await self.answer(request)
+
+    async def _resume_goal(self, request: ChatRequest) -> bool:
+        """The goal paused for an approval: this follow-up turn, which tells Clara how it ended, is the goal's next turn, and the
+        goal goes on after it (the judge reads it). False: a run is there already, and the goal stays paused."""
+        request = replace(request, goal=True)
+        plan = self.plan(request)
+        failed: list[Exception] = []
+
+        def fail(error: Exception) -> dict:
+            failed.append(error)
+            return {"type": "error", "message": str(error)}
+
+        self.s.goals.set_state(request.conversation or "", "active", "")
+        try:
+            run = self.runs.start(request, plan, fail)
+        except AlreadyRunning:
+            self.s.goals.set_state(request.conversation or "", "paused", WAITING)
+            return False
+        await asyncio.wait({run.task})  # type: ignore[arg-type]
+        if failed:  # the model is down: Clara is told at her next turn instead (Approvals._followup)
+            raise failed[0]
+        return True
 
 
 @contextlib.asynccontextmanager

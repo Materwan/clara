@@ -127,6 +127,18 @@ KNOBS: dict[str, Knob] = {
         "How many conversations of each automation's runs are kept, the latest ones; the others are deleted "
         "(0: no count limit; an automation may set its own).",
     ),
+    "goal_turns": Knob(
+        10,
+        _whole(1, 100),
+        "Turns a /goal may take before it pauses, from 1 to 100 (a turn is one turn of the conversation, which may use many tool "
+        "rounds, and costs two model calls: the judge's too; it is not a spending cap). A goal may set its own with --turns.",
+    ),
+    "goal_minutes": Knob(
+        15,
+        _whole(1, 240),
+        "Minutes of model time (the turns' and the judge's, not a wait for an approval) a /goal may use before it pauses, from 1 to "
+        "240. A goal may set its own with --minutes.",
+    ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),
     "hidden_tools": Knob(

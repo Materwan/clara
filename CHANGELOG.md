@@ -3,6 +3,16 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## Unreleased
+
+**`/goal`: Clara keeps working on a conversation until a condition is met (server side).** `/goal <condition>` sets a goal on a web
+conversation: Clara keeps taking turns, with no new message, until a judge (one model call, no tools) finds it met or impossible, or a limit is
+reached (10 turns and 15 minutes of model time by default, the runtime settings `goal_turns` and `goal_minutes`, or `--turns`, `--minutes` and
+`--model` for one goal). A limit, an approval, a Stop, a failure and a restart pause the goal; `/goal --turns 5` adds turns and resumes it. A turn
+limit is not a spending cap: each turn costs two model calls. New routes `GET` and `POST /v1/conversations/{id}/goal`, new stream events `goal_turn`
+and `goal_state`; the web page and the other clients come later. **Migration `0038_goals.sql`** (a `goals` table), **new runtime settings**
+`goal_turns` and `goal_minutes`; the usage log has a `judge` kind.
+
 ## v1.6.1 — 22/11/2026
 
 **Drive reaches your whole Drive, restore for Drive and mail, a kept question, and a Modes page that follows the packs.** A question is now

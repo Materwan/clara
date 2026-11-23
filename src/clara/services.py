@@ -13,6 +13,7 @@ from .ops.discord_report import DiscordReport
 from .ops.status import StatusProbe
 
 if TYPE_CHECKING:
+    from .agent.goals import Goals
     from .agent.reader import Reader
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
@@ -67,6 +68,7 @@ class Services:
     automations: Automations
     event_sources: EventSources
     skills: Skills
+    goals: Goals
     deferred: DeferredCalls
     gate: Gate
     modes: Modes

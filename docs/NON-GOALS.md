@@ -27,7 +27,7 @@ change that adds one of these needs a decision written in [DECISIONS.md](DECISIO
 - **Scripts without a container.** If rootless Podman does not work, scripts stay off: there is no plain-subprocess
   fallback.
 - **Automatic updates.** Releases are installed when you choose one.
-- **Spending caps.** Spending is shown, not capped. Use the providers' own limits if you need one.
+- **Spending caps.** Spending is shown, not capped. Use the providers' own limits if you need one. The limits of a `/goal` (turns, minutes of model time) bound the work, not the money: each turn costs two model calls.
 - **Arbitrary MCP servers or plug-ins.** Every tool is in this repository, with its gate class, and tested.
 - **Hook sources other than mail and GitHub** in 1.0 (Drive changes, files, GitHub issues and comments, workflow runs). The design
   takes them (`triggers/events.py`, a source hands events to `Triggers.ingest`); the mail source and GitHub pull requests and pushes exist.

@@ -294,7 +294,7 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
 - **One shared list:** a conversation started on Discord can be continued on the web or in the terminal. Each message
   records the client it came from (`X-Clara-Client`), which the prompt mentions.
 - **Streaming:** `POST /v1/chat/stream` answers with server-sent events: `turn`, `thinking`, `token`, `retrying`,
-  `tool_start`, `tool`, `present` (a card for a presented file: `path`, `size`, `origin`), `approval`, `tool_requests`, `usage`, `compacting`, `compacted`, `discarded`, `warning`, `done`, or `error`
+  `tool_start`, `tool`, `present` (a card for a presented file: `path`, `size`, `origin`), `approval`, `tool_requests`, `usage`, `compacting`, `compacted`, `discarded`, `warning`, `done` (with `seconds`, the model time of the turn), or `error`
   (status, code and message) when the turn fails. A `tool` event carries `grant` (the number of the Approve all next
   button that allowed the call, see Approval requests) when one did. `POST /v1/chat` returns the whole answer at once. A question is stored when it is
   sent, before the model is asked, and its answer when the turn ends. Closing the
@@ -313,6 +313,33 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   (a second question is refused with 409), and not with client-side `tools` (422: they need the client). A kept answer
   that needs an approval waits for it as any chat does (`CLARA_APPROVAL_WAIT`), whoever is reading. A graceful stop
   waits for kept answers like for any running turn, then saves them as interrupted.
+- **Goals (`/goal`):** the owner sets a condition on a web conversation and Clara keeps taking turns, with no new message, until a judge
+  finds it met, judged impossible, or a limit is reached. The commands are parsed by the server (`agent/goals.py`), so another client can
+  use them: `/goal <condition>` starts a goal and its first turn at once, `/goal` alone shows its state, `/goal clear` ends it (and
+  stops the turn in progress), `/goal resume` goes on with a paused goal, and flags go first: `/goal --turns 20 --minutes 30 --model
+  <provider:model> <condition>` starts with those limits, and `/goal --turns 5` (or `--minutes 10`) alone **adds** turns or minutes to the
+  current or paused goal and resumes it. Flags are clamped to the ranges of the runtime settings `goal_turns` (10 turns by default, 1 to
+  100) and `goal_minutes` (15 minutes, 1 to 240). One goal per conversation; a plain conversation and a project's conversation may have
+  one, an automation's conversation is refused. The model is the conversation's, or the goal's own (`--model`), and it is **fixed when
+  the goal starts**: a later change of the conversation's model does not touch it, and `--model` on an existing goal is refused. A
+  **turn** is one turn of the conversation (up to `CLARA_MAX_TOOL_ROUNDS` tool rounds), and the time is **model time** only, as the
+  answer budget is (a wait for an approval is not counted), the judge's included. **A turn limit is not a spending cap**: each turn costs
+  two model calls (the work and the judge) and spending is not capped. After each turn the **judge**, one call to the goal's model with
+  no tool (`kind` `judge` in the usage log), reads the goal, the reply and the turn's tool results (as data, with a mark, truncated) and
+  answers `MET`, `NOT_YET` or `IMPOSSIBLE` on the first line and one sentence on the second. It checks only the rules the condition
+  writes (a site to use, a format), never tool permissions: the modes and the gate decide those, unchanged. Any other answer, or a
+  judge that fails, **pauses** the goal (`judge unclear`, `judge failed: …`): the judge can only stop the loop. On `NOT_YET` the next turn
+  starts with a stored message (`Goal, turn 3 of 10: keep working on it.`, with the judge's sentence as a note, without addresses, that is
+  not the person's word). The goal is **paused**, with its reason and its counters, when a limit is reached (`turn limit`, `time limit`),
+  when a request waits for an approval (`waiting for your approval`: the follow-up turn after your answer is the next turn and the goal
+  goes on), when you stop the answer (`stopped by you`), when a turn fails (`turn failed: …`), and for every active goal when the server
+  starts (`server restarted`: nothing resumes by itself). A `met` or `impossible` goal stays shown until it is cleared or replaced. The
+  tainted rule is unchanged: a conversation that read outside content is not limited further. The goal runs in the conversation's kept
+  answer (`Runs`): the conversation is busy (a message gets 409), `GET /v1/conversations/{id}/run` follows the whole goal, and
+  `DELETE` on it stops it. In that stream a turn starts with a `goal_turn` event (`turn`, `max_turns`), each turn ends with its own `done`,
+  and `goal_state` carries the goal (`state`, `reason`, counters, `text`) whenever it changes. `POST /v1/conversations/{id}/goal` takes
+  `{"text": "<what follows /goal>"}` (and an optional `timezone`) and answers `{"goal", "running", "message"}`: when `running` is true,
+  follow the run. `GET /v1/conversations/{id}/goal` gives the state.
 - **Request fields:** `message`, `conversation`, `attachments` (base64, at most 4), `project`, `model`, `fork_of`
   (ask again or edit: a new version of a message), `timezone`, `tools` (client-side tools), `instructions`,
   `incognito`, `local_only`, `keep_running` (the answer goes on without the stream, above).
@@ -1895,6 +1922,8 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `reader` | The quarantined reader (on): web pages, search results, mail, attachments and files that came from outside are read by a model with no tools and no memory, and the conversation gets only its checked report |
 | `reader_model` | The model of the quarantined reader, written `provider:model` with both parts filled (empty: the model of titles and summaries); anything else is refused when it is saved |
 | `reader_max_chars` | Characters of a text the quarantined reader reads, the rest is cut and the report says so (40,000; a whole number from 1,000 to 400,000, else refused when it is saved) |
+| `goal_turns` | Turns a `/goal` may take before it pauses (10; 1 to 100); a goal may set its own with `--turns` |
+| `goal_minutes` | Minutes of model time a `/goal` may use before it pauses (15; 1 to 240); a goal may set its own with `--minutes` |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
 | `folder_budget` | Bytes of file content Clara may read from a folder opened in a web chat, per grant (1,000,000; 0 to 100,000,000) |
 | `folder_budget_max` | The most a folder grant's budget may be raised to, in bytes (16,000,000; 1 to 100,000,000) |
@@ -1955,6 +1984,8 @@ keep-alive every 15 s.
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
 | `DELETE /v1/conversations/{conversation_id}` | Delete it, with its files |
 | `GET /v1/conversations/{conversation_id}/messages` | Its messages (the chosen versions); a question has `shown` when a client shows other words than were sent (a skill command as typed); a user message whose `shown` starts with `Clara ran /` is the instructions of a skill Clara ran (after her `skill_run` call: not a question you asked; the web site does not draw it) |
+| `GET /v1/conversations/{conversation_id}/goal` | The goal of the conversation (`goal`: its state, reason, counters; `null` if none) and whether a run works on it |
+| `POST /v1/conversations/{conversation_id}/goal` | What follows `/goal`, as `text`: empty shows the state, `clear` ends the goal, `resume` or flags alone add limits and resume it, anything else starts a goal and its first turn (follow it with `GET .../run`); 422 in an automation's conversation, 409 while Clara answers |
 | `GET /v1/conversations/{conversation_id}/run` | Follow the answer being given in it (a kept one), from its first event; 404 when there is none |
 | `DELETE /v1/conversations/{conversation_id}/run` | Stop that answer; what was said is kept, marked interrupted |
 | `POST /v1/conversations/{conversation_id}/compact` | Summarise it now |

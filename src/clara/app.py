@@ -24,6 +24,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from . import __version__
+from .agent.goals import RESTARTED, Goals
 from .agent.model import ModelRunner
 from .agent.prompt import Persona
 from .agent.reader import Reader
@@ -40,6 +41,7 @@ from .api import events as events_api
 from .api import feeds as feeds_api
 from .api import forms as forms_api
 from .api import gate as gate_api
+from .api import goals as goals_api
 from .api import memory as memory_api
 from .api import models as models_api
 from .api import modes as modes_api
@@ -224,6 +226,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         automations=automations,
         event_sources=EventSources(db, secrets, automations, audit),
         skills=Skills(db, audit),
+        goals=Goals(db),
         deferred=DeferredCalls(db, events, home),
         gate=Gate(modes, vault_push=settings.vault_push),
         modes=modes,
@@ -325,10 +328,13 @@ async def run_deferred(s: Services, call: DeferredCall) -> tuple[str, str, int |
 def recover(s: Services) -> None:
     """What a crash (kill -9, a power cut) left half done is put straight before anything runs."""
     healed = s.conversations.heal_versions()
+    paused = s.goals.pause_active(RESTARTED)  # nothing resumes by itself
     closed = s.conversations.close_unanswered()
     failed = s.approvals.recover()
     cut = s.automations.recover()
     booked = s.deferred.recover()
+    if paused:
+        log.warning("%d goal(s) that were running are paused: the server restarted", paused)
     if healed or closed or failed or cut or booked:
         log.warning(
             "after an unclean stop: %d question(s) put back, %d unanswered question(s) closed, %d approved action(s) "
@@ -412,6 +418,7 @@ def create_app(s: Services) -> FastAPI:
         auth_api.router,
         chat_api.router,
         conversations_api.router,
+        goals_api.router,
         forms_api.router,
         forms_api.questions_router,
         memory_api.router,

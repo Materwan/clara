@@ -329,19 +329,24 @@ What I corrected or added to the owner's plan:
 Not decided:
 
 - How a goal reaches the terminal and Discord, when those clients are added.
-- Whether a goal survives a change of the conversation's model or provider.
-- The exact syntax for changing the limits of one goal.
-- Whether a goal may run in a conversation that belongs to a project or to an automation.
 
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+Settled by the owner (2026-11-23):
 
-- The field or table that holds a goal, its state and its counters, and its migration (the last one is `0037`).
-- The judge's prompt and its answer format.
-- The status line on the web page, and how a paused goal is shown.
-- The names and ranges of the settings for the default limits.
-- The tests, with `FakeLLM` and a scripted judge: met, not yet met, impossible, a limit reached, a pause for an approval, a pause on
-  restart, and a judge that stops on a broken rule.
-- The lines of `FEATURES.md` and the entry of `docs/DECISIONS.md` on the limits.
+- **Syntax of the limits**: `/goal --turns 20 --minutes 30 --model <provider:model> <condition>` starts a goal with those limits; `/goal --turns 20` alone
+  adds turns to the current or paused goal and resumes it. The flags are clamped to the ranges of the settings.
+- **A change of the conversation's model or provider does not touch a goal**: its model is fixed when it starts.
+- **A goal may run in a plain conversation or a project's conversation**; in an automation's conversation it is refused with a clear message.
+
+Done on the server (branch `feat/goal-server`, 2026-11-23; see `docs/DECISIONS.md`, « `/goal` »): the `goals` table (migration `0038`), the settings
+`goal_turns` and `goal_minutes`, the judge (prompt, answer format, fail closed), the loop in the kept answer, the pause for an approval and for a restart,
+`GET` and `POST /v1/conversations/{id}/goal`, the stream events `goal_turn` and `goal_state`, the tests (`tests/test_goals.py`) and the lines of
+`FEATURES.md`, `docs/DECISIONS.md`, `docs/THREAT-MODEL.md` and `CHANGELOG.md`. What the web slice still needs:
+
+- The status line on the web page, and how a paused goal is shown (state, reason, counters and the `/goal` commands from the box you write in, which
+  posts `POST /v1/conversations/{id}/goal` and follows `GET .../run`).
+- The followed stream of a goal holds one `done` for each turn: the page must not take the first one for the end of the answer (`goal_state` with a
+  state other than `active`, or the end of the stream, is the end).
+- To confirm with the owner: `/goal resume` (added: a bare `/goal` shows the state, so something must resume without changing a limit).
 
 What the current design already sets:
 
