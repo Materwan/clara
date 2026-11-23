@@ -14,6 +14,7 @@ Everything Clara stores, where, for how long, and what leaves the machine. Paths
 | `<data>/logs/traffic-<date>.jsonl` | One line per request: time, method, route (ids replaced), status, duration, client, token name, model, token counts, outcome (for a failed model call also its HTTP status and the provider's error code, never its text); the address of failed sign-ins | `CLARA_TRAFFIC_LOG_DAYS` (7) | No |
 | `<data>/logs/debug-content.jsonl` | Full prompts and answers, and the text of failed model calls, only while `/debug on` | Deleted when the hour ends or `/debug off` | No |
 | *(memory only)* the live log | The last 500 lines of the server's log (INFO and up) and of the traffic records, shown in the Admin page's Logs tab; secret-looking text masked, no sign-in addresses, no debug content | Until the server restarts | No |
+| `<data>/models/whisper/<name>/` | The speech model of dictation (public weights from Hugging Face, about 500 MB for `small`), put there only by `/dictation fetch-model` | Until you delete it | No (fetch it again) |
 | `<data>/run/` | The instance lock, the boot record, a pending update's plan and result | While needed | No |
 | `<data>/workspace/` | Clara's files and notes (`notes/`), script logs, and its git history | Until deleted; **the git history keeps deleted files** until you rewrite it | Remote copy (bundle) |
 | `CLARA_VAULT_PATH` | Your Obsidian vault (a git clone) | Yours; deleted notes go to `.trash/`, and stay in git history | No (it has its own remote) |

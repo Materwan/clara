@@ -410,6 +410,28 @@ to do when the server was off or when the last run is not over), pause it, or de
 A run missed because the server was off is run once at the next start for its due time (`latest`). If the model is down the
 run fails and is recorded as such; **Run now** tries again.
 
+### Voice dictation (transcription on this machine)
+
+`POST /v1/dictation/transcribe` turns a recording into text on the PC that hosts Clara (`FEATURES.md`, « Voice dictation »). It needs
+three things, in this order.
+
+1. **The `dictation` extra** (faster-whisper, with CTranslate2, ONNX Runtime and PyAV; no `ffmpeg` binary). In a development checkout:
+   `uv sync --extra dictation` (or `--all-extras`). **Releases do not include it yet:** `deploy/install.sh` installs the hash-pinned
+   `requirements.lock` of the release, which `scripts/build-release.sh` exports with `--extra discord` only, and `install.sh --from-source`
+   installs `<source>[discord]`. A hand install into an installed release's environment,
+   `sudo -u clara uv pip install --python /opt/clara/current/.venv/bin/python 'faster-whisper>=1.1'`, works until the next update builds a
+   new environment without it. Which way to ship it is the owner's decision.
+2. **The model, fetched once** from the console: `/dictation fetch-model` (the Admin page's console or `clara-admin`). It downloads the
+   `dictation_model` (`small`, about 500 MB) from Hugging Face into `<data>/models/whisper/small/`: the only time dictation uses the
+   network. A request never fetches it: until then the route answers 503 `model_not_installed`. To fetch another model, change
+   `dictation_model` and run the command again. `/dictation` shows what is installed.
+3. **Memory.** `small` in int8 peaked at 833 MB on the owner's machine and runs at about half of real time; each dictation loads the model
+   again in a child process and frees it at the end. `scripts/dictation-bench.py <audio file>` measures it. The child may map 4,096 MB of
+   address space (`dictation_memory_mb`): the model does not load below about 3 GB; raise it for a larger model.
+
+A request needs a token like any other: `curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: audio/webm" --data-binary @note.webm
+"$URL/v1/dictation/transcribe?language=fr"`. One dictation runs at a time (a second gets a 429 `busy`).
+
 ### Remote backups (restic)
 
 Install restic; on another tailnet machine, a place for the repository (an SFTP account, or `rest-server`).

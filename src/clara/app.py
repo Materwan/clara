@@ -35,6 +35,7 @@ from .api import automations as automations_api
 from .api import chat as chat_api
 from .api import connections as connections_api
 from .api import conversations as conversations_api
+from .api import dictation as dictation_api
 from .api import discord as discord_api
 from .api import event_sources as event_sources_api
 from .api import events as events_api
@@ -66,6 +67,7 @@ from .connectors.quizzes import Quizzes
 from .connectors.school_tools import school_tools
 from .connectors.tools import drive_tools, github_tools, web_tools
 from .db import AlreadyRunning, Database, InstanceLock, SchemaTooNew, migrate
+from .dictation import setup as dictation_setup
 from .events import Events
 from .gate import Approvals, Audit, DefaultModeError, Gate, Grants, Modes
 from .gate.allowances import Allowances
@@ -441,6 +443,7 @@ def create_app(s: Services) -> FastAPI:
     app.include_router(vault_api.router)
     app.include_router(packs_api.router)
     app.include_router(discord_api.router)
+    app.include_router(dictation_api.router)
     app.include_router(web_api.router)
     # outermost last: security headers → traffic log → body limit → authentication → the routes
     app.add_middleware(AuthMiddleware, services=s)
@@ -617,6 +620,7 @@ def extend(s: Services) -> None:
     vault_setup.install(s)
     packs_install(s)
     automations_install(s)
+    dictation_setup.install(s)
     ops_setup.install(s)
 
 

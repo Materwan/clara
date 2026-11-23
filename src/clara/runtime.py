@@ -73,6 +73,18 @@ def _whole(low: int, high: int, example: int | None = None) -> Callable[[Any], i
     return check
 
 
+def _model_name(value: Any) -> str:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,40}", value):
+        return value
+    raise ValueError("a model name such as small (letters, digits, dots, dashes and underscores)")
+
+
+def _language(value: Any) -> str:
+    if isinstance(value, str) and re.fullmatch(r"([a-z]{2,3})?", value):
+        return value
+    raise ValueError("a language code of two or three lowercase letters such as fr or en, or empty to detect it")
+
+
 KNOBS: dict[str, Knob] = {
     "default_model": Knob("", _ref_or_empty, "The model that answers when a conversation has none of its own."),
     "upkeep_model": Knob("", _ref_or_empty, "The model for titles and summaries ('': the default model)."),
@@ -151,6 +163,38 @@ KNOBS: dict[str, Knob] = {
         check_routes,
         "Where Discord posts each kind of message: {category: notification|general|alerts|off}; "
         "a category not named keeps its default.",
+    ),
+    "dictation_model": Knob(
+        "small",
+        _model_name,
+        "The speech model of dictation, a faster-whisper name such as tiny, base, small or medium. A model other than the one "
+        "fetched must be fetched with /dictation fetch-model first.",
+    ),
+    "dictation_language": Knob(
+        "fr",
+        _language,
+        "The language spoken in a dictation, two or three letters such as fr or en ('': detect it; a request may say its own).",
+    ),
+    "dictation_max_seconds": Knob(
+        300,
+        _whole(5, 3600, 300),
+        "The longest dictation, in seconds of audio, as decoded (5 to 3,600; 300 is five minutes).",
+    ),
+    "dictation_max_bytes": Knob(
+        30_000_000,
+        _whole(100_000, 100_000_000, 30_000_000),
+        "The biggest audio a dictation may send, in bytes (30 MB; counted as it arrives, at most 100 MB).",
+    ),
+    "dictation_timeout": Knob(
+        300,
+        _whole(10, 3600, 300),
+        "Seconds a transcription may take before it is stopped (the model loads in each one).",
+    ),
+    "dictation_memory_mb": Knob(
+        4096,
+        _whole(2048, 65536, 4096),
+        "The address space, in MB, the transcribing process may use (the model needs about 1 GB of memory; the limit counts "
+        "mapped libraries too).",
     ),
     "mail_notify": Knob(False, _bool, "Notify you of new mail in the inbox of a connected Gmail mailbox."),
     "mail_notify_senders": Knob(

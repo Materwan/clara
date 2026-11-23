@@ -10,7 +10,7 @@ from clara.app import build_services, create_app, extend, open_database
 from clara.gate.modes import builtin_default, to_toml
 from clara.services import Services
 from clara.settings import load_settings
-from fakes import FakeLLM
+from fakes import FakeLLM, FakeTranscriber
 from mailworld import World
 
 KEY = "ab" * 32
@@ -54,6 +54,13 @@ def services(settings, llm) -> Services:
     yield s
     s.traffic.close()
     db.close()
+
+
+@pytest.fixture
+def transcriber(services) -> FakeTranscriber:
+    """The dictation service with a scripted transcriber instead of the child process."""
+    services.dictation.engine = FakeTranscriber()
+    return services.dictation.engine
 
 
 @pytest.fixture

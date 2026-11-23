@@ -13,6 +13,15 @@ limit is not a spending cap: each turn costs two model calls. New routes `GET` a
 and `goal_state`. **On the web page**, a message that starts with `/goal` goes to the goal and not to the model (with a hint of its syntax under the box), one line above the box shows the goal (turn, minutes, pause reason, **Stop**, **Resume**, **+5 turns**, **+10 min**, **Clear**), and a goal's messages are thin dividers in the conversation; the terminal and Discord come later. **Migration `0038_goals.sql`** (a `goals` table), **new runtime settings**
 `goal_turns` and `goal_minutes`; the usage log has a `judge` kind.
 
+**Voice dictation, the transcription part.** `POST /v1/dictation/transcribe` takes a recording (webm or ogg with opus, m4a, wav, any
+`audio/*`) and returns `{"text", "seconds"}`, transcribed on the machine that hosts Clara with faster-whisper (`small`, int8, French by
+default), in a child process killed on a timeout. At most 5 minutes of decoded audio and 30 MB, one dictation at a time (a second gets a
+429), and the audio is never kept. It sends nothing into a conversation yet. **To use it:** install the new `dictation` extra (releases
+do not include it yet, see `docs/OPERATIONS.md`, « Voice dictation ») and run `/dictation fetch-model` once (about 500 MB from Hugging
+Face: the only time it uses the network). New runtime settings `dictation_model`, `dictation_language`, `dictation_max_seconds`,
+`dictation_max_bytes`, `dictation_timeout` and `dictation_memory_mb`; `scripts/dictation-bench.py` measures it on your machine. No
+migration. **Not tried with real speech on the real machine when this was built.**
+
 ## v1.6.1 — 22/11/2026
 
 **Drive reaches your whole Drive, restore for Drive and mail, a kept question, and a Modes page that follows the packs.** A question is now

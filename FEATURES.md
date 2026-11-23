@@ -136,6 +136,7 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/sources [list] \| fire <source> [field=value ...]` | The event sources (programs that tell Clara something happened; made with `POST /v1/event-sources`): list them, or fire an event of one with your token |
 | `/trust [list] \| <path> \| untrust <path>` | Workspace files that came from outside or were written after untrusted content: list them, trust one (Clara reads it as your own) or take it back; scope `all` only |
 | `/mode [list] \| show <name\|default> \| conversation\|project\|automation <id> [<name>\|follow] \| new <name> [<pack,pack>] \| packs <name> <pack,pack> \| delete <name> [<conversations> <automation conversations> <automations> <projects>] \| verdict <name> <approve\|ask\|refuse> [tool=…] [class=…] [target=…] [tainted=<verdict>] \| unverdict <name> [tool=…] [class=…] [target=…] \| test <tool> <json> [mode=<name>] [tainted] \| import-legacy` | The modes: list them, show one (the default mode too), set the mode of a conversation, project or automation (or `follow`), make one, set its packs, delete one (the first call says how many conversations, automation conversations, automations and projects use it and the line to confirm with those numbers), set or remove a verdict line, test a call, or print a `default-mode.toml` made from the old levels and rules (`import-legacy`, see Operations); everything but `list`, `show` and `test` needs a token that may answer every request (scope `all`) |
+| `/dictation [status] \| fetch-model` | Voice dictation: whether it is installed and the speech model fetched, or download the model (the only command or request that makes dictation use the network) |
 | `/approvals [list] \| allow\|refuse <id>` | Pending approval requests |
 | `/debug [on\|off]` | Full prompts and answers to the debug log for one hour |
 | `/usage [24h\|7d\|30d\|90d\|365d\|all] [day\|model\|kind\|provider\|client]` | Token statistics |
@@ -1692,7 +1693,7 @@ The threat model is in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md); what is sto
   say they come from.
 - **Web:** cookie plus `X-Clara-Web` header (another site cannot post to Clara); no CORS; strict CSP; `nosniff`,
   `no-referrer`, `DENY` framing, same-origin opener, no camera, microphone or location.
-- **Request sizes:** 16 MB by default; chat 48 MB, document extraction 41 MB, client tool results 64 MB, project
+- **Request sizes:** 16 MB by default; dictation audio 30 MB (up to 100 MB, `dictation_max_bytes`); chat 48 MB, document extraction 41 MB, client tool results 64 MB, project
   uploads 90 MB, workspace uploads 110 MB, skills 2 MB.
 - **API docs:** `/docs` and `/openapi.json` are served only with `CLARA_DEBUG=true`.
 - **Secrets store:** provider keys and every other secret (section 14) are encrypted in the database with AES-GCM. The
@@ -1807,6 +1808,32 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 `clara` (run as the service user) has: `version`, `token create|list|revoke`, `secrets new-key|list|set|unset|rotate`,
 `doctor [--pull]`, `backup [now|init-remote]`, `restore <file> [--verify]`, `migrate`, `purge`, `preflight --database <file>`.
+
+### Voice dictation: audio in, text out
+
+`POST /v1/dictation/transcribe` takes a recording and returns its text, transcribed **on the machine that hosts Clara** (not the phone,
+no third party). It sends nothing into a conversation: the client decides what to do with the text. Any format the decoder reads
+works (webm or ogg with opus, m4a, wav: the decoder is PyAV, which carries FFmpeg, so no `ffmpeg` binary is needed).
+
+- **An optional extra.** It needs the `dictation` extra of the package (faster-whisper). Without it Clara starts and works as before,
+  and the route answers 503 `dictation_not_installed`. Releases do not include the extra yet: `docs/OPERATIONS.md`, « Voice dictation ».
+- **The model is fetched only by `/dictation fetch-model`** (about 500 MB for `small`, from Hugging Face, into `<data>/models/whisper/`),
+  never by a request. Until then the route answers 503 `model_not_installed` and says how to fetch it. The worker loads it with
+  `local_files_only`.
+- **A child process per dictation** (`python -m clara.dictation.worker`, an argv list, an almost empty environment): the decoder reads
+  bytes a client sent, so a bug in it must not take Clara down, and the model's memory (about 800 MB with `small` in int8) is given
+  back after each dictation. The child limits itself before it reads a byte: address space (`dictation_memory_mb`), CPU time, no core
+  dump and no data it can write to a file (a file-size limit of zero). Its stderr is kept in the server's log when something fails, and is never shown to the client. It is killed on a timeout, when the client
+  goes away and when the server stops.
+- **Limits.** The body is counted as it arrives and refused the moment it passes `dictation_max_bytes` (a `Content-Length` is not
+  trusted); the duration is the REAL decoded length, checked in the child (413 `too_long` above `dictation_max_seconds`); the audio has
+  2 minutes to arrive; a transcription is stopped after `dictation_timeout` (504). **One dictation at a time:** a second one gets a 429
+  `busy` at once, with `Retry-After`, and no queue. Audio that cannot be decoded is a 422 `bad_audio`; another content type, a 415.
+- **The audio is never kept.** It lives in memory, reaches the child through its stdin pipe, is never written to a file by Clara, and is
+  dropped whatever the outcome (success, failure, refusal, a dropped connection). Only the text comes out, and the traffic log keeps no
+  body.
+- **Settings:** the `dictation_*` runtime settings of section 14. `scripts/dictation-bench.py <audio file>` measures the real-time
+  factor and the peak memory on your machine.
 
 ## 14. Settings
 
@@ -1935,6 +1962,12 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `sandbox_image` | The sandbox image pinned by the last release (empty: `CLARA_SANDBOX_IMAGE`) |
 | `hidden_tools` | Tools not offered to some clients: `{client: [tool, …]}` |
 | `discord_routes` | Where Discord posts each kind of message: `{category: notification\|general\|alerts\|off}`; a category not named keeps its default |
+| `dictation_model` | The speech model of dictation, a faster-whisper name (`small`; letters, digits, dots, dashes, underscores). Another one must be fetched with `/dictation fetch-model` first |
+| `dictation_language` | The language spoken in a dictation (`fr`; two or three lowercase letters, empty detects it; a request may say its own) |
+| `dictation_max_seconds` | The longest dictation, in seconds of decoded audio (300; 5 to 3,600) |
+| `dictation_max_bytes` | The biggest audio a dictation may send, counted as it arrives (30,000,000; 100,000 to 100,000,000) |
+| `dictation_timeout` | Seconds a transcription may take before its process is killed (300; 10 to 3,600) |
+| `dictation_memory_mb` | The address space the transcribing process may use, in MB (4,096; 2,048 to 65,536) |
 | `mail_notify` | Notify you of new mail in the inbox of a connected mailbox (off) |
 | `mail_notify_senders` | Only for senders whose name or address contains one of these words (empty: all) |
 
@@ -2131,6 +2164,7 @@ keep-alive every 15 s.
 | `POST /v1/workspace/trust` | Trust a marked file (or every marked file of a folder) as it is now (a token that may answer every request) |
 | `DELETE /v1/workspace/trust` | Take your trust back |
 | `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
+| `POST /v1/dictation/transcribe` | The audio as the body (`audio/*` or `application/octet-stream`; optional `?language=fr`, or `auto`): returns `{"text", "seconds"}`. One at a time (a second one gets a 429 at once); see *Voice dictation* |
 | `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each); for Drive, whether the connection has the old narrow permission (`old_scope`); the mail notification settings; the school poll interval (`school.poll_seconds`) |
 | `PUT /v1/connections/github` | Set the GitHub token |
 | `DELETE /v1/connections/github` | Forget it |
@@ -2187,4 +2221,5 @@ The web site itself is served at `/` (with `/assets/…`).
 | GitHub events | 300 pull requests and the first 100 branches looked at in a poll, 10 commits listed in a push event |
 | Mail | a search lists 25 messages at most; 20 recipients, a subject of 300 and a text of 6,000 characters, 5 attachments, 5 emails per answer; a label's name 100 characters; an attachment over 25 MB is not fetched and one over 10 MB is not parsed for text |
 | Web page | `CLARA_FETCH_MAX_SIZE`; 5 redirects; 40 links listed |
+| Dictation | audio 30 MB (`dictation_max_bytes`, up to 100 MB), 300 s of decoded audio (`dictation_max_seconds`), 300 s to transcribe (`dictation_timeout`), 2 minutes to receive the audio, one dictation at a time |
 | Request bodies | see section 12 |

@@ -580,6 +580,34 @@ def _alerts(s: Services, args: list[str], token: TokenInfo) -> str:
     return "\n".join(active + [f"{e.created_at} {e.title}: {e.text}" for e in recent]) or "No alert."
 
 
+async def _dictation(s: Services, args: list[str], token: TokenInfo) -> str:
+    from .dictation import DictationError
+    from .dictation import models as speech_models
+
+    name = s.runtime.get("dictation_model")
+    if args[:1] == ["fetch-model"] and len(args) == 1:
+        try:
+            return await speech_models.fetch(s.settings.models_dir, name)  # the only code that touches the network
+        except DictationError as error:
+            return str(error)
+    if args and args != ["status"]:
+        return "Usage: /dictation [status] | fetch-model"
+    return "\n".join(
+        [
+            f"Installed: {'yes' if speech_models.installed() else 'no (the `dictation` extra, faster-whisper, is missing)'}.",
+            f"Model {name!r}: "
+            + (
+                f"fetched, in {speech_models.folder(s.settings.models_dir, name)}."
+                if speech_models.present(s.settings.models_dir, name)
+                else "not fetched: /dictation fetch-model."
+            ),
+            f"Language {s.runtime.get('dictation_language') or 'detected'}, at most {s.runtime.get('dictation_max_seconds')} s "
+            f"of audio and {s.runtime.get('dictation_max_bytes') // 1_000_000} MB.",
+            "Working now." if s.dictation.busy else "Idle.",
+        ]
+    )
+
+
 def _stop(s: Services, args: list[str], token: TokenInfo) -> str:
     return s.lifecycle.stop(force=bool(args and args[0] == "now"))
 
@@ -717,6 +745,12 @@ COMMANDS: list[Command] = [
         "/sources [list] | fire <source> [field=value ...]",
         "The event sources (programs that tell Clara something happened): list them, or fire an event of one.",
         _sources,
+    ),
+    Command(
+        "dictation",
+        "/dictation [status] | fetch-model",
+        "Voice dictation: whether it is installed, and download the speech model (the only time it uses the network).",
+        _dictation,
     ),
     Command("approvals", "/approvals [list] | allow|refuse <id>", "Pending approval requests.", _approvals),
     Command("debug", "/debug [on|off]", "Full prompts and answers to the debug log for one hour.", _debug),

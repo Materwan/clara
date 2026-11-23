@@ -234,8 +234,6 @@ What I corrected or added to the owner's plan:
 - **The existing marks are reused.** Facts written in a tainted turn are already kept and shown to the model with the tag
   `[unconfirmed]` until the owner confirms them. A file written after an untrusted read already carries the `tainted` mark. The new
   source is « conversation of a dictation », not a new mechanism.
-- **Server transcription is a new audio route**, which is also a new surface: a decoder for audio sent by a client. It needs a size
-  limit, a duration limit and a timeout, and the audio must be dropped once transcribed, whatever the outcome.
 - **The current conversation of a client** follows a precedent: the Discord bot keeps its current conversation id in its state file
   (`docs/DATA-MAP.md`, line 25). The item decides whether it is a table or a field, not whether it exists.
 
@@ -250,17 +248,18 @@ What I corrected or added to the owner's plan:
 
 Not decided:
 
-- The model used on the PC. The owner's machine ran `small` in int8 at about 0.47 times real time (measured on 2026-11-22, a 13.7 s
-  French sample; the peak memory was 833 MB). A larger model is possible on the same machine, but the figures are not measured.
-- The maximum length of one dictation and the audio format sent by the clients.
 - What the « new dictation conversation » button does with the previous one: it is left as it is, with its title.
 - Whether Discord voice messages go into the Discord conversation of their channel, or into the dictation conversation of a client.
 - Whether the terminal's dictation follows the per-client automatic-sending setting, and which client's setting that is.
 - The place and the label of the button on the web site: an interface choice, left for the implementation.
 
+Built so far (branch `feat/dictation-transcribe`, 2026-11-23): the transcription route `POST /v1/dictation/transcribe` (audio in, text
+out; `small` int8, French, 5 minutes, 30 MB, one at a time, the audio never kept, a child process; `docs/DECISIONS.md`, « Voice
+dictation »). Still to do: the conversations, the per-client settings, the web button and its microphone change, the terminal, Discord,
+and shipping the `dictation` extra in the releases.
+
 Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
 
-- The route that receives the audio, its format, its limits, its timeout and the drop of the audio after use.
 - How the current dictation conversation of each client is stored (a table, or a field), and its migration (the last one is `0037`).
 - The title of a dictation conversation, and how it is marked in the list of conversations.
 - The Settings page for the per-client setting, the approval mode and the packs.

@@ -88,3 +88,38 @@ class FakeLLM:
 
     def factory(self, provider: Provider, model: str, key: str | None, num_ctx: int | None) -> FakeBackend:
         return FakeBackend(model, self, provider.id)
+
+
+class FakeTranscriber:
+    """A scripted audio transcriber (dictation): each call takes the next reply (a Transcript or an exception); with none left
+    it answers "bonjour". `hold` is an Event the call waits for, `problem` an error `ready()` raises. `calls` keeps what was asked
+    (never the audio itself, only its size); `cancelled` counts the calls that were cancelled."""
+
+    def __init__(self, *replies, hold: asyncio.Event | None = None, problem: Exception | None = None):
+        from clara.dictation import Transcript
+
+        self.replies = list(replies)
+        self.hold = hold
+        self.problem = problem
+        self.calls: list[dict] = []
+        self.started = asyncio.Event()
+        self.cancelled = 0
+        self.default = Transcript("bonjour", 2.0)
+
+    def ready(self, model: str) -> None:
+        if self.problem is not None:
+            raise self.problem
+
+    async def transcribe(self, audio: bytes, **options):
+        self.calls.append({"size": len(audio), **options})
+        self.started.set()
+        try:
+            if self.hold is not None:
+                await self.hold.wait()
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        reply = self.replies.pop(0) if self.replies else self.default
+        if isinstance(reply, Exception):
+            raise reply
+        return reply

@@ -100,6 +100,7 @@ class Services:
     tailscale: Any = None
     events_door: Any = None  # the second listener for events from the internet (ops/door.py): only with CLARA_EVENTS=on
     backups: Any = None
+    dictation: Any = None  # the audio transcriber (dictation/__init__.py)
     updater: Any = None
     discord: Any = None
     monitors: Any = None

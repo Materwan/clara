@@ -183,6 +183,11 @@ class Settings:
         return self.backup_dir or self.data_dir / "backups"
 
     @property
+    def models_dir(self) -> Path:
+        """Models fetched from outside (the speech model of dictation), by an explicit console command only."""
+        return self.data_dir / "models"
+
+    @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 

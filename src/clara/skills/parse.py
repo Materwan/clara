@@ -55,7 +55,7 @@ RESERVED = frozenset(
         # Discord bot
         "status",
         # console
-        "alerts", "audit", "automations", "backup", "debug", "fallbacks", "models", "provider", "restart", "school",
+        "alerts", "audit", "automations", "backup", "debug", "dictation", "fallbacks", "models", "provider", "restart", "school",
         "secrets", "sources", "stop", "tokens", "trust", "update", "upkeep", "usage", "vault",
         # this feature and the usual ones of other agents
         "skills", "skill", "clear", "compact", "config", "settings", "memory", "init", "login", "logout",
