@@ -3,6 +3,7 @@
   import ApprovalCard from '../components/ApprovalCard.svelte';
   import AskQuestions from '../components/AskQuestions.svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import GoalLine from '../components/GoalLine.svelte';
   import GrantBar from '../components/GrantBar.svelte';
   import Icon from '../components/Icon.svelte';
   import ModeSelect from '../components/ModeSelect.svelte';
@@ -15,6 +16,7 @@
   import { ApiError, type ReadOptions, api, fileToBase64, stream, zone } from '../lib/api';
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
+  import { type Goal, SYNTAX, WAITING, afterEvent, goalArgs, goalLine, goalRunStart, isGoalCommand, startsGoal } from '../lib/goal';
   import { load as loadGrants } from '../lib/grants.svelte';
     import { markdown } from '../lib/markdown';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
@@ -48,6 +50,7 @@
     notes: string[];
     versions?: number[];
     version?: number;
+    line?: { text: string; note?: boolean }; // a thin divider instead of a bubble: a stored goal message (« Goal, turn 3 of 10 »), or a note from /goal that is not stored
     question?: Message; // a reply: the question it answers (the message before it), so that no reply reads its place in the list
     streaming?: boolean;
     compacting?: boolean; // the answer is complete and stored; the conversation is being summarised after it
@@ -64,6 +67,8 @@
     const sent = command ? typedCommand(said, content) : unpack(content);
     const message = blank('user', content);
     message.command = command;
+    const goalRow = goalLine(said);
+    if (goalRow) message.line = { text: goalRow }; // a turn of a goal: not something you wrote
     message.quiz = quizMessage(content) ?? undefined;
     message.shown = sent.text;
     message.documents = sent.documents;
@@ -95,6 +100,9 @@
   let outbox: string[] = []; // answers of a QCM to send Clara, one after the other, when she has finished the one before
   let panelTimer: ReturnType<typeof setTimeout> | undefined;
   let busy = $state(false);
+  let goal = $state<Goal | null>(null); // the conversation's goal (`/goal`): the line above the box
+  let goalPending = $state(false); // a /goal command is on its way
+  let goalSeq = 0; // bumped by every event that says what the goal is: a read that began before it is older than it and is dropped
   const compacting = $derived(messages.some((message) => message.compacting));
   let dragging = $state(false);
   let controller: AbortController | null = null;
@@ -221,6 +229,8 @@
     const mine = ++loads;
     leave();
     conversation = null;
+    goal = null;
+    goalSeq++;
     taintOpen = false;
     drawing++; // the older exchanges of the conversation before are not drawn into this one
     messages = [];
@@ -249,6 +259,7 @@
       // An answer still being given is followed from its start: its approval cards come with it
       draw(found, history, found.answering ? [] : (found.approvals ?? []));
       loadPanel(id, true);
+      void loadGoal(id);
       if (found.answering) attach(id, found, history);
     } catch (error) {
       if (mine !== loads) return;
@@ -303,6 +314,80 @@
     const [found, read] = await Promise.all([api.get(`/v1/conversations/${id}`), api.get(`/v1/conversations/${id}/messages`, { calls: true })]);
     if (conversationId === id) draw(found, read.messages, found.approvals ?? []);
   }
+
+  // ---- /goal (lib/goal.ts, DECISIONS.md « /goal ») -----------------------------------------------------------------
+  /** Read the goal of a conversation. An answer that began before an event of the followed stream is older than it and is dropped, unless nothing is known yet. */
+  async function loadGoal(id: string): Promise<{ goal: Goal | null; running: boolean } | null> {
+    const seq = goalSeq;
+    try {
+      const found = await api.get(`/v1/conversations/${id}/goal`);
+      if (conversationId === id && (seq === goalSeq || !goal)) goal = found.goal;
+      return found;
+    } catch {
+      return null; // the line is a convenience: the conversation does not depend on it
+    }
+  }
+
+  /** A line in the conversation that is not a message: what a /goal command answered. Not stored, so a reload leaves it out. */
+  const lineOf = (text: string): Message => Object.assign(blank('user'), { line: { text, note: true } });
+
+  function say(text: string): void {
+    messages.push(lineOf(text));
+    void scrollDown(true);
+  }
+
+  /** The conversation's goal, drawn again with the run that works on it followed (a goal that starts, resumes, or goes on after an approval). */
+  async function followRun(id: string, said = ''): Promise<void> {
+    const [found, read] = await Promise.all([api.get(`/v1/conversations/${id}`), api.get(`/v1/conversations/${id}/messages`, { calls: true })]);
+    if (conversationId !== id) return;
+    draw(found, read.messages, []);
+    void attach(id, found, read.messages, said);
+  }
+
+  /** What follows `/goal`, sent to the goal route and never to the model. `typed`: it came from the box, which is emptied once the server took it. */
+  async function runGoal(args: string, typed = false): Promise<void> {
+    if (goalPending || conversation?.archived || loadError) return;
+    goalPending = true;
+    const wasBusy = busy;
+    try {
+      let id = conversationId;
+      if (!id && !startsGoal(args)) {
+        // nothing to show, clear or resume in a conversation that does not exist yet: no empty conversation made for it
+        if (typed) draft = '';
+        say('No goal in this conversation: write /goal <condition>.');
+        return;
+      }
+      id ??= await startConversation();
+      const reply = await api.post(`/v1/conversations/${id}/goal`, { text: args, timezone: zone });
+      if (typed) draft = '';
+      goal = reply.goal;
+      goalSeq++;
+      if (reply.running && !busy) await followRun(id, reply.message);
+      else {
+        if (wasBusy && !reply.running) {
+          controller?.abort(); // the goal was cleared under a stream we were reading: what it had said is read back
+          await refresh(id).catch(() => {});
+        }
+        say(reply.message);
+      }
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      goalPending = false;
+    }
+  }
+
+  // The goal goes on by itself after you answer the approval it waited for: the answer changes `live.refresh`, and the run that continues it is followed
+  $effect(() => {
+    void live.refresh;
+    const id = conversationId;
+    if (!id) return;
+    untrack(async () => {
+      if (goal?.state !== 'paused' || goal.reason !== WAITING || busy) return;
+      const found = await loadGoal(id);
+      if (found?.running && !busy && conversationId === id) await followRun(id);
+    });
+  });
 
   // ---- the side panel -------------------------------------------------------------------------------------
   const cards = $derived(side.files.length + side.notes.length + side.forms.length);
@@ -568,82 +653,104 @@
 
   /** Draw the events of an answer into `current` until its stream ends (`id`: the conversation they belong to). */
   async function follow(events: AsyncIterable<any>, user: Message, current: Message, id: string): Promise<void> {
-    for await (const event of events) {
-      switch (event.type) {
-        case 'turn':
-          conversations.changed++; // the question is stored: the rail lists the conversation, or moves it up, at once
-          break;
-        case 'thinking':
-          current.thinking = (current.thinking ?? '') + event.text;
-          break;
-        case 'token':
-          addText(current, event.text);
-          break;
-        case 'tool_start':
-          addCall(current, { name: event.name, arguments: event.arguments, running: true });
-          break;
-        case 'tool': {
-          const call = openCall(current, event.name, true);
-          if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
-          else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
-          if (WRITES.has(event.name)) schedulePanel(id);
-          break;
+    let turns = 0; // the turns of a goal this stream has begun: the first is the question already drawn, each after it is a divider and a reply of its own
+    try {
+      for await (const event of events) {
+        switch (event.type) {
+          case 'goal_turn':
+            goal = afterEvent(goal, event);
+            goalSeq++;
+            if (turns++ > 0) {
+              current.streaming = false;
+              messages.push(Object.assign(blank('user'), { line: { text: `Goal, turn ${event.turn} of ${event.max_turns}` } }), blank('assistant'));
+              user = messages[messages.length - 2];
+              current = messages[messages.length - 1];
+              current.question = user;
+              current.streaming = true;
+            }
+            break;
+          case 'goal_state':
+            goal = afterEvent(goal, event);
+            goalSeq++;
+            break;
+          case 'turn':
+            conversations.changed++; // the question is stored: the rail lists the conversation, or moves it up, at once
+            break;
+          case 'thinking':
+            current.thinking = (current.thinking ?? '') + event.text;
+            break;
+          case 'token':
+            addText(current, event.text);
+            break;
+          case 'tool_start':
+            addCall(current, { name: event.name, arguments: event.arguments, running: true });
+            break;
+          case 'tool': {
+            const call = openCall(current, event.name, true);
+            if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
+            else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
+            if (WRITES.has(event.name)) schedulePanel(id);
+            break;
+          }
+          case 'approval':
+            current.parts.push({ kind: 'approval', approval: event.approval });
+            break;
+          case 'qcm':
+            current.parts.push({ kind: 'form', form: event.form });
+            if (!side.forms.some((form) => form.ref === event.form.ref)) side.forms.push(newForm(event.form));
+            openQuiz(event.form.ref);
+            break;
+          case 'questions':
+            pendingAsk = event.ask;
+            break;
+          case 'questions_done':
+            if (pendingAsk?.id === event.id) pendingAsk = null;
+            break;
+          case 'present':
+            if (!current.presented.some((card) => (card.ref ?? card.path) === (event.ref ?? event.path))) current.presented.push(event);
+            break;
+          case 'retrying':
+            current.notes.push(event.message);
+            break;
+          case 'warning':
+            current.notes.push(event.message);
+            current.compacting = false;
+            break;
+          case 'compacting':
+            current.compacting = true;
+            break;
+          case 'compacted':
+            current.compacting = false;
+            current.notes.push(`Summarised: ${Math.round(event.before)}% → ${Math.round(event.after)}% of the context.`);
+            break;
+          case 'discarded':
+            current.notes.push(`The replaced answer had run: ${event.tools.join(', ')} (what they changed stays changed).`);
+            break;
+          case 'done':
+            user.id = event.message_id ?? undefined;
+            user.versions = event.versions?.length > 1 ? event.versions : undefined;
+            user.version = user.versions ? user.versions.indexOf(event.message_id) + 1 : undefined;
+            if (conversation?.id === id) conversation.context = event.context;
+            loadPanel(id);
+            break;
+          case 'error':
+            current.error = event.message;
+            break;
+          case 'tool_requests':
+            void answerFolderCalls(event, turnFolder);
+            break;
         }
-        case 'approval':
-          current.parts.push({ kind: 'approval', approval: event.approval });
-          break;
-        case 'qcm':
-          current.parts.push({ kind: 'form', form: event.form });
-          if (!side.forms.some((form) => form.ref === event.form.ref)) side.forms.push(newForm(event.form));
-          openQuiz(event.form.ref);
-          break;
-        case 'questions':
-          pendingAsk = event.ask;
-          break;
-        case 'questions_done':
-          if (pendingAsk?.id === event.id) pendingAsk = null;
-          break;
-        case 'present':
-          if (!current.presented.some((card) => (card.ref ?? card.path) === (event.ref ?? event.path))) current.presented.push(event);
-          break;
-        case 'retrying':
-          current.notes.push(event.message);
-          break;
-        case 'warning':
-          current.notes.push(event.message);
-          current.compacting = false;
-          break;
-        case 'compacting':
-          current.compacting = true;
-          break;
-        case 'compacted':
-          current.compacting = false;
-          current.notes.push(`Summarised: ${Math.round(event.before)}% → ${Math.round(event.after)}% of the context.`);
-          break;
-        case 'discarded':
-          current.notes.push(`The replaced answer had run: ${event.tools.join(', ')} (what they changed stays changed).`);
-          break;
-        case 'done':
-          user.id = event.message_id ?? undefined;
-          user.versions = event.versions?.length > 1 ? event.versions : undefined;
-          user.version = user.versions ? user.versions.indexOf(event.message_id) + 1 : undefined;
-          if (conversation?.id === id) conversation.context = event.context;
-          loadPanel(id);
-          break;
-        case 'error':
-          current.error = event.message;
-          break;
-        case 'tool_requests':
-          void answerFolderCalls(event, turnFolder);
-          break;
+        scrollDown();
       }
-      scrollDown();
+    } finally {
+      current.streaming = false;
     }
   }
 
   /** The end of a stream we were reading: ready for the next question, unless we left for another conversation. */
   async function finished(mine: AbortController, id: string | null): Promise<void> {
     conversations.changed++;
+    if (id) void loadGoal(id); // a goal ends or pauses with its stream: the line says how
     if (controller !== mine) return; // left, or another stream has taken over
     controller = null;
     busy = false;
@@ -676,7 +783,18 @@
     await api.post(`/v1/turns/${event.turn}/tool-results`, { results }).catch((error) => toast((error as Error).message, 'error'));
   }
 
+  /** The conversation a first message (or a first /goal) goes into: made now, with what the new-conversation page holds, and opened. */
+  async function startConversation(): Promise<string> {
+    const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, mode: fresh.mode ?? undefined });
+    skipReload = made.id;
+    fresh.mode = null; // the next new chat starts without a mode of its own again
+    go('/chat/' + made.id);
+    conversation = made;
+    return made.id as string;
+  }
+
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
+    if (isGoalCommand(text) && forkOf === null && !carried) return runGoal(goalArgs(text), text === draft); // a goal command is never a message for the model
     if (conversation?.archived || loadError) return; // a conversation that did not load takes no message
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
@@ -687,14 +805,7 @@
     let current: Message | undefined;
     const granted = folder;
     try {
-      if (!id) {
-        const made = await api.post('/v1/conversations', { incognito: fresh.incognito, local_only: fresh.local_only, model: fresh.model, project: projectId ?? undefined, packs: fresh.packs, mode: fresh.mode ?? undefined });
-        id = made.id as string;
-        skipReload = id;
-        fresh.mode = null; // the next new chat starts without a mode of its own again
-        go('/chat/' + id);
-        conversation = made;
-      }
+      id ??= await startConversation();
       if (granted && !granted.conversation) granted.conversation = id;
       turnFolder = granted;
       if (forkOf !== null) {
@@ -730,7 +841,7 @@
   }
 
   /** Follow the answer Clara is still giving in a conversation we opened: the page was closed, or left, while she worked. */
-  async function attach(id: string, found: any, history: any[]): Promise<void> {
+  async function attach(id: string, found: any, history: any[], said = ''): Promise<void> {
     busy = true;
     const mine = new AbortController();
     controller = mine;
@@ -740,16 +851,24 @@
       const first = await events.next();
       if (first.done || first.value.type !== 'resume') return;
       // The question is already drawn when the stored history ends with it (the server keeps it from the send): once, not twice
-      const kept = messages.at(-1)?.role === 'user' && isKeptQuestion(history.at(-1), first.value.message);
-      const user = kept ? messages[messages.length - 1] : yours(first.value.message);
+      const resumed: string = first.value.message;
+      let kept = messages.at(-1)?.role === 'user' && isKeptQuestion(history.at(-1), resumed);
+      // A goal's run says all its turns again, from its first question: what the history holds before that question is drawn, the rest comes from the stream
+      const began = goalRunStart(history, resumed);
+      if (began >= 0 && began < history.length - 1) {
+        draw(found, history.slice(0, began), []);
+        kept = false;
+      }
+      const user = kept ? messages[messages.length - 1] : yours(resumed, goalLine(resumed) ?? undefined);
       for (const name of first.value.attachments ?? []) {
         if (!user.attachments.some((file) => file.name === name)) user.attachments.push({ name });
       }
       const answer = blank('assistant');
       answer.question = user;
       answer.streaming = true;
-      if (kept) messages.push(answer);
-      else messages.push(user, answer);
+      if (!kept) messages.push(user);
+      if (said) messages.push(lineOf(said));
+      messages.push(answer);
       current = messages[messages.length - 1];
       scrollDown(true);
       await follow(events, user, current, id);
@@ -774,6 +893,7 @@
     if (id) await api.del(`/v1/conversations/${id}/run`).catch(() => {});
     controller?.abort();
     if (id) await refresh(id).catch(() => {});
+    if (id) await loadGoal(id); // paused, « stopped by you »
   }
 
   /** A reply that failed or was cut off can be tried again: its question is asked again (a new version when it is stored). */
@@ -783,7 +903,7 @@
 
   function canRetry(message: Message): boolean {
     const question = message.question;
-    if (busy || question?.role !== 'user' || !(message.error || message.interrupted)) return false;
+    if (busy || question?.role !== 'user' || question.line || !(message.error || message.interrupted)) return false;
     return question.id !== undefined || message === last; // a question not stored: the reply after it is dropped
   }
 
@@ -901,7 +1021,7 @@
   // the project whose skills the menu lists (null: a conversation that is still loading does not know its project yet)
   const skillsFor = $derived(conversationId && !conversation ? null : String(projectId ?? 'none'));
   const slash = $derived(slashWord(draft, caret));
-  const rows = $derived(slash && !menuShut ? filterSkills(skills, slash.query) : []);
+  const rows = $derived(slash && !menuShut && !isGoalCommand(draft) ? filterSkills(skills, slash.query) : []);
   const at = $derived(Math.min(menuAt, rows.length - 1));
   const hinted = $derived(hintSkill(draft, skills));
   const chips = $derived(chipsFor(hintPacks, activePacks, !!conversationId));
@@ -1127,7 +1247,10 @@
         <div class="window" bind:this={windowEl} style:padding-top={`${range.padTop}px`} style:padding-bottom={`${range.padBottom}px`}>
           {#each shown as message (message.key)}
             <div class="slot" use:measure={message.key}>
-        {#if message.role === 'user'}
+        {#if message.line}
+          <!-- a goal's message, or what /goal answered: a thin line across the conversation, not a bubble you wrote -->
+          <div class="line-note" class:note={message.line.note} title={message.line.text}><span>{message.line.text}</span></div>
+        {:else if message.role === 'user'}
           <div class="msg user">
             <div class="body">
               {#if editing === message.id}
@@ -1246,6 +1369,7 @@
   <div class="composer" class:drop={dragging} role="group" aria-label="Write to Clara"
     ondragover={(event) => { event.preventDefault(); dragging = true; }} ondragleave={() => (dragging = false)} ondrop={drop}>
     <div class="composer-frame">
+      <GoalLine {goal} pending={goalPending} onStop={stop} onCommand={(text) => runGoal(text)} />
       {#if conversation?.archived}
         <p class="composer-hint" role="status">This conversation is archived: you can read it, but it takes no new message.
           <button type="button" class="link" onclick={unarchive}>Unarchive</button></p>
@@ -1308,6 +1432,7 @@
           {/if}
         </div>
       </div>
+      {#if isGoalCommand(draft)}<SkillHint hint={SYNTAX} chips={[]} onOn={() => {}} />{/if}
       {#if hinted && (hinted.argument_hint || chips.length)}<SkillHint hint={hinted.argument_hint} {chips} onOn={switchOn} />{/if}
       {/if}
       <p class="composer-hint">Enter sends, Shift+Enter starts a new line.{skills.length ? ' Type / to run a skill.' : ''} Drop or paste files to attach them (4 at most).</p>
