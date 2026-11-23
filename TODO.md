@@ -248,23 +248,22 @@ What I corrected or added to the owner's plan:
 
 Not decided:
 
-- Whether Discord voice messages go into the Discord conversation of their channel, or into the dictation conversation of a client.
-- Whether the terminal's dictation follows the per-client automatic-sending setting, and which client's setting that is.
 - The place and the label of the button on the web site: an interface choice, left for the implementation.
 
 Built so far (branch `feat/dictation-transcribe`, 2026-11-23): the transcription route `POST /v1/dictation/transcribe` (audio in, text
 out; `small` int8, French, 5 minutes, 30 MB, one at a time, the audio never kept, a child process; `docs/DECISIONS.md`, « Voice
 dictation »). Built on branch `feat/dictation-conversations` (2026-11-23): the conversations per client, `POST /v1/dictation`, the
 per-client settings (`auto_send`, mode, packs) and the new-dictation-conversation action, migration 0039 (`docs/DECISIONS.md`, « Dictation
-goes into conversations, per client »). Still to do: the web Settings page and button with its microphone change, the terminal, Discord,
-and the phone and island apps. Nothing lifts the taint of a conversation any more (`/tainted off` went with the modes): a dictation
+goes into conversations, per client »). Built on branch `feat/dictation-cli-discord` (2026-11-23): `/dictate` in the terminal (an external
+`arecord` or `parecord`, client `cli`) and the Discord voice messages (into the conversation of their thread, client `discord`; `docs/DECISIONS.md`,
+« Dictation from the terminal and from Discord »). Still to do: the web Settings page and button with its microphone change, and the phone and island apps. Nothing lifts the taint of a conversation any more (`/tainted off` went with the modes): a dictation
 conversation stays tainted, and the mode's `(if tainted)` lines are what the owner can loosen.
 
 Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
 
 - The Settings page for the per-client setting, the approval mode and the packs.
 - The change of the microphone header for Clara's origin, the two `FEATURES.md` lines it changes, and the threat-model row.
-- The audio library of the terminal (not checked yet), and the code of the web button: recording, sending, stopping.
+- The code of the web button: recording, sending, stopping.
 
 What the current design already sets:
 

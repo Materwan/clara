@@ -16,6 +16,11 @@ function: DMs are ignored.
 * The channels keep what still helps (`tidy`): #approval only the requests that wait (a request that is settled or
   expires is deleted), #alerts only the alerts whose problem lasts (`alert_resolved` deletes the message), and
   #notification loses the lines about a run whose forum thread is gone. The bot deletes only its own messages.
+* A **voice message** from you in a conversation's thread is transcribed by Clara's server (`POST /v1/dictation`, client
+  `discord`) into that conversation, which becomes tainted for good. With the `discord` client's automatic sending on,
+  the server sends it as a message at once and the thread shows it like any question; off, the bot only replies with the
+  transcript for you to copy, edit and post, and nothing is sent. Its size and length are checked before the download;
+  voice never approves a request; the audio is dropped after the call.
 * An automation with « Show in history » ticked lives in one forum thread (its conversation, in its automation's forum) and
   puts nothing in #general: when a run starts the bot posts its link in the channel the server names (#notification
   by default), the run's questions, reminder and end are written in the thread, and you answer there. The answer itself
@@ -55,6 +60,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import discord
+import httpx
 from discord import app_commands
 
 from clara.timeutil import ZoneError, human, parse_iso, zone
@@ -69,6 +75,11 @@ LIMIT = 2000
 MAX_FILES = 4
 MAX_FILE_BYTES = 25_000_000
 MAX_TOTAL_BYTES = 34_000_000  # what Clara takes for one message in all
+VOICE_BYTES, VOICE_SECONDS = (
+    30_000_000,
+    300,
+)  # the server's defaults of `dictation_max_bytes` and `dictation_max_seconds`
+VOICE_WAIT = 330.0  # seconds a transcription may take: the server stops it at `dictation_timeout` (300 by default)
 HEARTBEAT = 60.0
 TEST_MAX_AGE = 120.0  # a test message older than this (the bot was away) is dropped: it would only confuse
 STARTED_MAX_AGE = 900.0  # so is the notice that a run began, when the bot was away longer than this
@@ -139,6 +150,12 @@ def skill_choices(skills: list[dict], typed: str) -> list[app_commands.Choice[st
         )
         for item in (first + then)[:CHOICES_MAX]
     ]
+
+
+def voice_of(message: discord.Message) -> discord.Attachment | None:
+    """The attachment of a voice message (Discord's voice-message flag, one Ogg opus file), else None."""
+    found = message.attachments
+    return found[0] if len(found) == 1 and found[0].is_voice_message() else None
 
 
 def split_message(text: str, limit: int = LIMIT) -> list[str]:
@@ -434,6 +451,9 @@ class ClaraBot(discord.Client):
             return  # every other id is ignored, without a word
         channel = message.channel
         general = self.settings.channels["general"]
+        voice = voice_of(message)
+        if voice is not None and await self.voice_message(message, voice):
+            return
         if isinstance(channel, discord.Thread) and channel.parent_id in self.mirror.forums:
             await self.mirror_message(message)
             return
@@ -463,6 +483,62 @@ class ClaraBot(discord.Client):
             )
         else:
             return  # the other channels, other servers and DMs are not for chatting
+
+    async def voice_limits(self) -> tuple[int, int]:
+        """The server's longest audio (bytes, seconds): its runtime settings when the bot's token may read them."""
+        try:
+            found = {
+                item["key"]: item["value"] for item in (await self.clara.call("GET", "/v1/admin/settings"))["settings"]
+            }
+            return int(found["dictation_max_bytes"]), int(found["dictation_max_seconds"])
+        except (ClaraError, KeyError, TypeError, ValueError):
+            return VOICE_BYTES, VOICE_SECONDS
+
+    async def voice_message(self, message: discord.Message, voice: discord.Attachment) -> bool:
+        """Your voice message in a conversation's thread, dictated into that conversation. False: not a place for it (the
+        message is handled as any other). Only you reach this (`on_message` checked), and the audio is never kept."""
+        channel = message.channel
+        place = self.chat_place(channel)
+        if place is None:
+            if not (isinstance(channel, discord.Thread) and channel.parent_id in self.mirror.forums):
+                return False
+            await channel.send("Start the conversation with a written message: voice messages go into one that exists.")
+            return True
+        conversation, mirrored = place
+        max_bytes, max_seconds = await self.voice_limits()
+        max_bytes = min(max_bytes, MAX_FILE_BYTES)  # Discord's own limit on what a bot downloads here
+        if voice.size > max_bytes or (voice.duration or 0) > max_seconds:
+            await channel.send(
+                f"⚠️ This voice message is too big or too long ({voice.size // 1000} KB, {voice.duration or 0:.0f} s): "
+                f"at most {max_bytes // 1_000_000} MB and {max_seconds} s."
+            )
+            return True
+        try:
+            async with channel.typing():
+                data = await voice.read()
+                answer = await self.clara.call(
+                    "POST",
+                    "/v1/dictation",
+                    params={"client": "discord", "conversation": conversation},
+                    content=data,
+                    headers={"Content-Type": "audio/ogg"},
+                    timeout=httpx.Timeout(10.0, read=VOICE_WAIT),
+                )
+                del data
+        except (ClaraError, discord.HTTPException) as error:
+            await channel.send(f"⚠️ {error}"[:LIMIT])
+            return True
+        text = answer.get("text") or ""
+        if not text:
+            await channel.send("I heard nothing in that voice message.")
+        elif not answer.get("sent"):  # automatic sending is off for this client: nothing goes to Clara
+            for part in split_message(f"Transcript, nothing sent: {text}"):
+                await channel.send(part)
+        else:
+            if not mirrored:  # the mirror writes the question in its threads; a run's thread has no mirror
+                await channel.send(split_message(f"🎙 {text}")[0])
+            await self.ask(channel, {"conversation": conversation}, remember=False, mirrored=mirrored, follow=True)
+        return True
 
     async def attachments_of(self, message: discord.Message) -> list[dict] | None:
         """The files of a message, read, or None when one of them is refused (the refusal is said in the channel)."""
@@ -530,11 +606,17 @@ class ClaraBot(discord.Client):
         return False
 
     async def ask(
-        self, channel: discord.abc.Messageable, body: dict, remember: bool = True, mirrored: bool = False
+        self,
+        channel: discord.abc.Messageable,
+        body: dict,
+        remember: bool = True,
+        mirrored: bool = False,
+        follow: bool = False,
     ) -> None:
         """Send a message to Clara. `remember`: the conversation becomes the current one (not for a check-in thread, which
         has its own). `mirrored`: the answer is written by the mirror as it comes (text and files), so only approvals and
-        failures are said here."""
+        failures are said here. `follow`: the run of `body["conversation"]` is already going (a dictation started it): follow it
+        instead of sending `body`."""
         reply = ""
         done: dict = {}
         presented: list[str] = []  # the files Clara handed over: a line each under her answer
@@ -543,7 +625,12 @@ class ClaraBot(discord.Client):
             self.answering.add(conversation)
         try:
             async with channel.typing():
-                async for event in self.clara.stream("POST", "/v1/chat/stream", body):
+                stream = (
+                    self.clara.stream("GET", f"/v1/conversations/{conversation}/run")
+                    if follow
+                    else self.clara.stream("POST", "/v1/chat/stream", body)
+                )
+                async for event in stream:
                     kind = event["type"]
                     if kind == "turn" and event.get("conversation") and remember:
                         self.set_conversation(event["conversation"])
@@ -565,6 +652,8 @@ class ClaraBot(discord.Client):
             if error.status == 404 and "conversation" in str(error).lower() and remember:
                 self.set_conversation(None)
             reply = f"⚠️ {error}"
+            if follow and error.status == 404:  # the run ended before the bot came: the mirror has written its answer
+                reply = "" if mirrored else "⚠️ The answer was finished before I could follow it: read it in Clara."
         finally:
             self.answering.discard(conversation)
         if mirrored and reply.startswith("⚠️"):

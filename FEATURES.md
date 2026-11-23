@@ -111,8 +111,21 @@ strict Content-Security-Policy (scripts, styles, fonts and connections from the 
 | `/approvals`, `/allow`, `/refuse <id>` | Approval requests |
 | `/undo` | Revert Clara's last workspace change |
 | `/skills` | The skills this conversation can run, one line each: `/name <argument hint>`, then the description (cut to the terminal's width); `/name arguments` runs one (see *Skills*) |
+| `/dictate` | Speak into the microphone and put the transcript on the prompt line (or send it, see below) |
 | `/quit` | Leave |
 
+- **`/dictate`** records with an **external recorder**, started as an argv list (never a shell): `arecord` (package `alsa-utils`), else
+  `parecord` (package `pulseaudio-utils`, which also works on PipeWire); no Python audio library is used, and with neither installed the
+  command says so and names both. The recorder writes a 16 kHz mono WAV to its standard output, which is read into memory (no file); **Enter**
+  stops it, and so does the maximum length (the server's `dictation_max_seconds`, read from `GET /v1/admin/settings` when the token may,
+  else 300 s; also kept under what `dictation_max_bytes` allows). The recorder is killed on Enter, on the time limit, on Ctrl-C (which
+  cancels the dictation) and on any error. The audio goes to `POST /v1/dictation?client=cli`, with `conversation=` the one open in the
+  terminal, else the server's `cli` dictation conversation (which the terminal then opens). With the `cli` client's **automatic sending off**
+  (the default) the transcript is put on the prompt line (where `readline` can prefill it; elsewhere it is shown and Enter alone sends it), to
+  edit and send with Enter; **on**, the server has sent it and the terminal follows and prints the answer like any other. Silence says
+  « Nothing heard ». The first `/dictate` of a session says that a dictated conversation is tainted for good. A transcript that starts with a
+  slash loses it, so it is never read as a command, and nothing here answers an approval: they are answered by typing, as always. The
+  setting is changed with `PUT /v1/dictation/clients/cli` by a token with approval scope `all`.
 - A line `/name arguments` whose `name` is a skill of the conversation is sent as typed, and the server expands it. The skills are read
   once per project for the session (`GET /v1/skills?project=<id>|none`, the project of the conversation); a list that cannot be read
   only means no skill is offered. The terminal's own commands always win, and a word that is none of them gets the help.
@@ -188,6 +201,18 @@ channels, each named by its id. It has **no direct-message function**: a DM to t
     the main forum, in a project's forum or in the incognito forum starts a conversation there. An automation's forum
     takes no new post (its conversations are made by its runs). Editing your last question in Discord asks Clara again,
     as the web site does; only the last one can be changed, and your messages are never deleted by Clara.
+  - *Voice messages:* a **voice message** (an Ogg opus attachment with Discord's voice-message flag) that you post in a conversation's
+    thread, or in the thread of a run under `#general`, is sent to `POST /v1/dictation?client=discord&conversation=<that conversation>`.
+    Only yours count (every other user is ignored without a word); a voice message in `#general` itself, or one that would start a new
+    post, is not dictated (the second is told to start with a written message). **Size and length are checked before the download:** over
+    the server's `dictation_max_bytes` and `dictation_max_seconds` (read from `GET /v1/admin/settings` when the bot's token may, else 30
+    MB and 300 s; never over 25 MB) the bot answers with one short line and downloads nothing. The audio is read into memory, sent and
+    dropped. With the `discord` client's **automatic sending on**, the server starts the run, and the bot behaves as for a typed message:
+    the mirror writes the transcript as your question and the answer as it comes (the bot only follows the run for approvals and
+    failures; in a run's thread, which has no mirror, it posts `🎙 <transcript>` and the answer); **off** (the default), the bot replies in
+    the thread `Transcript, nothing sent: <text>` for you to copy, edit and post, and nothing goes to Clara. A refusal (busy, not installed,
+    too long, unreadable, archived) is one reply with the server's words, and silence says so. **A voice message never answers an
+    approval**, and the bot's token (scope `safe`) cannot change the client's setting; the conversation it dictates into is tainted for good.
   - *The answer is written as it comes:* the bot posts a message when a turn starts and edits it while Clara writes
     (a line of tools, then the text, at most about once every 1.5 seconds), then gives it its final text. Only the answer
     and the questions are written, never the results of tools.
@@ -1872,8 +1897,8 @@ anything else, or none, is a 422. Clara still answers in text.
   sent back with the other numbers when there are any); `packs` are chat packs, and an empty list means the packs a new conversation
   starts with. **Changing them takes a token that may answer every request** (approval scope `all`), because turning on automatic sending is an
   answer given in advance; a script (`none`) and the Discord bot (`safe`) get a 403 but can dictate. The table is `dictation_clients` (migration 0039).
-- **Not in the server yet:** the web Settings page and microphone button, the terminal, the Discord voice messages and the phone
-  and island apps.
+- **The terminal** (`/dictate`, client `cli`) and **Discord** (voice messages, client `discord`) are described under `clara-chat` and
+  `clara-discord`. **Not built yet:** the web Settings page and microphone button, and the phone and island apps.
 
 ## 14. Settings
 

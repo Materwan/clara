@@ -32,6 +32,16 @@ mode and tool packs of a new dictation conversation (changing them takes a token
 a client uses moves it to the default mode (the 409 counts them as `dictation_clients`). No page or button yet: that is the web part. **Not tried with real speech or on
 a phone when this was built.**
 
+**Voice dictation, the terminal and Discord.** In `clara-chat`, `/dictate` records from the microphone with `arecord` (package `alsa-utils`)
+or `parecord` (`pulseaudio-utils`), whichever is installed (a new Python library is not needed), stops at Enter (or after the server's
+`dictation_max_seconds`), and puts the transcript on the prompt line to edit and send; if the `cli` client's automatic sending is on, the
+terminal follows the answer instead. It says once that a dictated conversation stays tainted. In Discord, a **voice message** from you in a
+conversation's thread is dictated into that conversation (client `discord`): with automatic sending on, the thread shows your words as a
+question and the answer follows; off (the default), the bot replies `Transcript, nothing sent: …` for you to copy, edit and post. A voice
+message too big or too long is refused before it is downloaded; one that would start a new post is not dictated. Neither client answers an
+approval from a transcript. No migration. **Not tried with a real microphone, a real recorder or a real Discord voice message when this was
+built.**
+
 ## v1.6.1 — 22/11/2026
 
 **Drive reaches your whole Drive, restore for Drive and mail, a kept question, and a Modes page that follows the packs.** A question is now

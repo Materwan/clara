@@ -51,7 +51,7 @@ RESERVED = frozenset(
     {
         # terminal client
         "quit", "exit", "new", "resume", "conversations", "facts", "remember", "forget", "remind", "reminders", "unremind",
-        "tasks", "task", "notify", "model", "tools", "mode", "approvals", "allow", "refuse", "undo", "help",
+        "tasks", "task", "notify", "model", "tools", "mode", "approvals", "allow", "refuse", "undo", "help", "dictate",
         # Discord bot
         "status",
         # console

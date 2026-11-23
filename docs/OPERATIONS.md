@@ -431,6 +431,11 @@ three things, in this order.
 A request needs a token like any other: `curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: audio/webm" --data-binary @note.webm
 "$URL/v1/dictation/transcribe?language=fr"`. One dictation runs at a time (a second gets a 429 `busy`).
 
+**Clients.** `/dictate` in `clara-chat` needs `arecord` (`sudo apt install alsa-utils`) or `parecord` (`pulseaudio-utils`) on the machine where
+the terminal runs. A Discord voice message needs nothing more than the bot. Neither sends the text on its own until you turn on the client's
+automatic sending (`PUT /v1/dictation/clients/cli` or `discord`, with a token that may answer every request): until then the terminal puts the
+text on the line and the bot replies with the transcript.
+
 ### Remote backups (restic)
 
 Install restic; on another tailnet machine, a place for the repository (an SFTP account, or `rest-server`).

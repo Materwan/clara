@@ -31,6 +31,7 @@ import httpx
 
 from ..timeutil import system_zone_name, zone
 from .common import DEFAULT_URL, Api, ClientError, read_token, save_token, token_file, utf8_console
+from .dictate import BYTES_PER_SECOND, DEFAULT_SECONDS, pick_recorder, record
 
 try:  # line editing, history and Tab completion; Windows has no readline, and the terminal works without it
     import readline
@@ -44,7 +45,7 @@ ANSWERS = {"o": "allow_once", "r": "refuse_once"}
 OWN = frozenset(
     {
         "new", "resume", "conversations", "facts", "remember", "forget", "remind", "reminders", "unremind", "tasks", "task",
-        "notify", "model", "tools", "mode", "approvals", "allow", "refuse", "undo", "skills", "quit", "exit", "help",
+        "notify", "model", "tools", "mode", "approvals", "allow", "refuse", "undo", "skills", "dictate", "quit", "exit", "help",
     }
 )  # fmt: skip
 
@@ -68,6 +69,8 @@ HELP = """\
 /approvals                 requests waiting      /allow|/refuse <id>  answer one
 /undo                      revert Clara's last workspace change
 /skills                    the skills this conversation can run
+/dictate                   speak into the microphone, Enter stops: the text goes on the prompt line (or is sent, if
+                           automatic sending is on for `cli`)
 /name arguments            run a skill (its arguments after the name; the list is /skills)
 /quit                      leave"""
 
@@ -324,6 +327,7 @@ class Chat:
         incognito: bool,
         local_only: bool,
         tools: LocalTools | None,
+        recorder: list[str] | None = None,
     ):
         self.api = api
         self.zone = zone_name
@@ -334,6 +338,9 @@ class Chat:
         # the skills visible per project ("none" or its id), kept for the session
         self.skills: dict[str, list[dict]] = {}
         self.listed: list[dict] = []  # the last list read: what Tab completes
+        self.recorder = recorder  # the argv of the recorder; None: arecord or parecord, whichever is installed
+        self.pending = ""  # a dictated text waiting on the prompt line
+        self.told = False  # the notice about the taint has been shown
 
     def visible_skills(self) -> list[dict]:
         """The skills this conversation can run: the server's list for its project (none outside one), read once per project.
@@ -356,7 +363,10 @@ class Chat:
             body.update(incognito=self.incognito, local_only=self.local_only)
         if self.tools:
             body["tools"] = LOCAL_TOOLS
-        for event in self.api.stream("POST", "/v1/chat/stream", body):
+        self.show(self.api.stream("POST", "/v1/chat/stream", body))
+
+    def show(self, events: Iterator[dict]) -> None:
+        for event in events:
             kind = event["type"]
             if kind == "turn" and event.get("conversation"):
                 self.conversation = event["conversation"]
@@ -379,6 +389,50 @@ class Chat:
             elif kind == "error":
                 print(f"\n! {event['message']}")
         print()
+
+    def dictation_seconds(self) -> int:
+        """The server's longest dictation (and what its byte limit allows), else the default of 300 s."""
+        try:
+            found = {item["key"]: item["value"] for item in self.api.get("/v1/admin/settings")["settings"]}
+            return max(
+                5, min(int(found["dictation_max_seconds"]), int(found["dictation_max_bytes"]) // BYTES_PER_SECOND - 1)
+            )
+        except (ClientError, httpx.HTTPError, KeyError, ValueError, TypeError):
+            return DEFAULT_SECONDS
+
+    def dictate(self) -> None:
+        """Record, have Clara's server transcribe it into this conversation (or the terminal's dictation one), and put the
+        text on the prompt line, or follow the answer when the server sent it. Nothing here ever answers an approval."""
+        argv = self.recorder or pick_recorder()
+        seconds = self.dictation_seconds()
+        if not self.told:
+            self.told = True
+            print(
+                "Note: what a microphone hears counts as outside content. A conversation you dictate into (a new one too) is"
+                "\nmarked so for good: Clara asks you before each outside write in it (mail, Drive, ...)."
+            )
+        print(f"Recording... press Enter to stop (at most {seconds} s).")
+        try:
+            audio = record(argv, seconds)
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return
+        print("Transcribing...")
+        params = {"client": CLIENT, **({"conversation": self.conversation} if self.conversation else {})}
+        answer = self.api.call(
+            "POST", "/v1/dictation", params=params, content=audio, headers={"Content-Type": "audio/wav"}
+        )
+        del audio
+        text = " ".join("".join(ch if ch.isprintable() else " " for ch in answer.get("text") or "").split())
+        if not text:
+            print("Nothing heard.")
+            return
+        self.conversation = answer.get("conversation") or self.conversation
+        if answer.get("sent"):
+            print(f"you> {text}\n")
+            self.show(self.api.stream("GET", f"/v1/conversations/{self.conversation}/run"))
+        else:
+            self.pending = text.lstrip("/ ")  # a transcript is never a command of this terminal
 
     def answer_inline(self, approval: dict) -> None:
         print(f"\n  🔐 {approval['summary']} [{approval['level']}; {approval['reason']}]")
@@ -549,6 +603,8 @@ def command(chat: Chat, line: str) -> bool:
         print(api.post("/v1/workspace/undo", {}).get("message", "Done."))
     elif name == "/skills":
         print(skills_text(chat))
+    elif name == "/dictate":
+        chat.dictate()
     else:
         # Not one of ours: a skill of this conversation is sent as typed, and the server expands it.
         skill = line.split(maxsplit=1)[0][1:]
@@ -675,6 +731,22 @@ def task_command(chat: Chat, argument: str, now: datetime) -> None:
         print(HELP)
 
 
+def read_line(pending: str) -> str:
+    """The next line typed. A dictated text waits on the line to be edited and sent with Enter; where readline cannot prefill
+    (Windows, libedit) it is shown, and Enter alone sends it."""
+    prompt = "\nyou> "
+    if not pending:
+        return input(prompt)
+    if readline is not None and hasattr(readline, "set_pre_input_hook"):
+        readline.set_pre_input_hook(lambda: (readline.insert_text(pending), readline.redisplay()))
+        try:
+            return input(prompt)
+        finally:
+            readline.set_pre_input_hook()
+    print(f"\nTranscript: {pending}\n(Enter alone sends it, or type another message.)")
+    return input(prompt) or pending
+
+
 def main(argv: list[str] | None = None) -> int:
     utf8_console()
     parser = argparse.ArgumentParser(prog="clara-chat", description="Talk to Clara from a terminal.")
@@ -731,7 +803,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         while True:
             try:
-                line = input("\nyou> ").strip()
+                line = read_line(chat.pending).strip()
+                chat.pending = ""
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
