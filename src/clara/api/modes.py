@@ -4,7 +4,7 @@ GET    /v1/modes                           the default mode, the modes you made,
 POST   /v1/modes                           {name, packs?, verdicts?}: make a mode
 GET    /v1/modes/{name}                    one mode, with what uses it and the verdict of every tool and class (`default` too)
 PUT    /v1/modes/{name}                    {packs?, verdicts?}: replace its packs and/or all its lines
-DELETE /v1/modes/{name}                    ?conversations=&automation_conversations=&automations=&projects=: the numbers of what
+DELETE /v1/modes/{name}                    ?conversations=&automation_conversations=&automations=&projects=[&dictation_clients=]: the numbers of what
                                            uses it, as GET gave them (409 with the current ones when they are not); all of it
                                            then moves to the default mode
 PUT    /v1/modes/{name}/verdicts           {tool?, class?, target?, verdict, tainted?}: one line, added or replaced
@@ -258,6 +258,7 @@ def delete(
     automation_conversations: int | None = Query(default=None, ge=0),
     automations: int | None = Query(default=None, ge=0),
     projects: int | None = Query(default=None, ge=0),
+    dictation_clients: int | None = Query(default=None, ge=0),
 ) -> dict:
     settled_by_you(request)
     s = services(request)
@@ -266,6 +267,7 @@ def delete(
         "automation_conversations": automation_conversations,
         "automations": automations,
         "projects": projects,
+        "dictation_clients": dictation_clients,
     }
     try:
         moved = s.modes.delete(name, {key: value for key, value in given.items() if value is not None})

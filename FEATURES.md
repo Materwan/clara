@@ -1812,7 +1812,8 @@ How to run all this is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 ### Voice dictation: audio in, text out
 
 `POST /v1/dictation/transcribe` takes a recording and returns its text, transcribed **on the machine that hosts Clara** (not the phone,
-no third party). It sends nothing into a conversation: the client decides what to do with the text. Any format the decoder reads
+no third party). It sends nothing into a conversation: the client decides what to do with the text. `POST /v1/dictation` does the same
+and puts the text into a conversation (below). Any format the decoder reads
 works (webm or ogg with opus, m4a, wav: the decoder is PyAV, which carries FFmpeg, so no `ffmpeg` binary is needed).
 
 - **An optional extra.** It needs the `dictation` extra of the package (faster-whisper). Without it Clara starts and works as before,
@@ -1834,6 +1835,45 @@ works (webm or ogg with opus, m4a, wav: the decoder is PyAV, which carries FFmpe
   body.
 - **Settings:** the `dictation_*` runtime settings of section 14. `scripts/dictation-bench.py <audio file>` measures the real-time
   factor and the peak memory on your machine.
+
+#### Dictation into a conversation, per client
+
+`POST /v1/dictation?client=<name>` takes the same audio (same limits, content types, 429 and errors as `/transcribe`, and the same
+`?language=`) and puts the text into a conversation. `client` is one of a fixed list, `web`, `island`, `phone`, `cli` and `discord`;
+anything else, or none, is a 422. Clara still answers in text.
+
+- **Which conversation.** `&conversation=<id>` if given (it must exist, a 404, and not be archived, a 409; both are checked before the
+  audio is transcribed), else the client's **current dictation conversation**, else a new one is made for the client (below). Any
+  client may dictate into any conversation. Dictating into an explicit conversation does not make it the client's current one.
+- **Automatic sending** (`auto_send`, a setting per client, **off** by default). Off: the answer is `{"text", "seconds",
+  "conversation", "sent": false}`, nothing is sent and the client puts the text in its box for you to read and send. On: the text is sent at once
+  as a message, in a Run like a chat with `keep_running`, so it goes on with the phone's screen locked; the answer is `{..., "sent":
+  true, "running": true}` and a client that wants to watch follows `GET /v1/conversations/{id}/run`. If Clara is already answering in that
+  conversation the answer is a 409 `Clara is already answering`, before the audio is transcribed. The turn is the one a typed message makes (same
+  request, same mode and packs of the conversation), labelled with the client's name, and a failure to start it is the chat's own error.
+  The word *approval* stays for Clara's tool requests: this setting is not one.
+- **Silence** (an empty transcript) answers 200 with `text: ""` and `sent: false`: no message is sent and no conversation is made or tainted.
+- **A dictation conversation is tainted, for good.** The first dictation into a conversation, new or existing, taints it (source
+  `dictation`; the existing mechanism, and nothing lifts it: a conversation does not become untainted, and the old `/tainted off` switch
+  no longer exists). Tainted means the rule for a tainted turn: the `(if tainted)` verdict of the conversation's mode decides each call,
+  so with the built-in default mode every outside write (mail, Drive, GitHub...) asks you even with automatic sending on, facts it writes are
+  kept `[unconfirmed]`, and files written after an untrusted read carry the `tainted` mark. The conversation list and `GET /v1/conversations/{id}` carry `dictation:
+  true` for such a conversation. **No approval by voice:** the dictation routes never touch approvals. A dictated message never answers a
+  request of Clara; an automatically sent turn that needs one waits as a chat does (`CLARA_APPROVAL_WAIT`) and the card reaches your clients as ever.
+- **The new dictation conversation** (`POST /v1/dictation/clients/{client}/conversation`, any token, answers 201 `{"conversation",
+  "title"}`): a normal conversation (no project, no automation) titled `Dictation · <client> · <D Mon HH:MM>` (server time; rename
+  it like any title: the automatic title never replaces it), with the client's mode and packs, tainted, and the target of the dictations
+  that follow from that client. The previous one is left as it is. A dictation with no current conversation makes one the same way.
+  Deleting a conversation clears the client's current one; an archived current one is replaced by a new one at the next dictation.
+- **The settings of a client** (`GET /v1/dictation/clients`, the five with their defaults; `GET /v1/dictation/clients/{client}`;
+  `PUT /v1/dictation/clients/{client}` with any of `auto_send`, `mode` and `packs`): `{client, conversation, auto_send, mode, packs}`.
+  `mode` is the approval mode a new dictation conversation of the client starts with (`null`: the default mode, which is also
+  what a client falls back to when its mode is deleted: the mode's deletion counts these clients as `dictation_clients`, listed in the 409 and
+  sent back with the other numbers when there are any); `packs` are chat packs, and an empty list means the packs a new conversation
+  starts with. **Changing them takes a token that may answer every request** (approval scope `all`), because turning on automatic sending is an
+  answer given in advance; a script (`none`) and the Discord bot (`safe`) get a 403 but can dictate. The table is `dictation_clients` (migration 0039).
+- **Not in the server yet:** the web Settings page and microphone button, the terminal, the Discord voice messages and the phone
+  and island apps.
 
 ## 14. Settings
 
@@ -2164,6 +2204,11 @@ keep-alive every 15 s.
 | `POST /v1/workspace/trust` | Trust a marked file (or every marked file of a folder) as it is now (a token that may answer every request) |
 | `DELETE /v1/workspace/trust` | Take your trust back |
 | `GET /v1/retention/preview` | How many conversations the next pass would delete for limits not saved: the runtime settings as given, or with `kind` and `id` one automation's own (`keep_days`, `keep_hours`, `keep_last`; what is left out follows the setting). Nothing is deleted |
+| `POST /v1/dictation` | The audio as the body, with `?client=` (`web`, `island`, `phone`, `cli` or `discord`) and optionally `&conversation=` and `&language=`: the text goes into a conversation and the conversation is tainted; with the client's `auto_send` on it is sent at once in a Run (`{"text", "seconds", "conversation", "sent", "running"}`), else it is only returned (`"sent": false`); see *Dictation into a conversation, per client* |
+| `GET /v1/dictation/clients` | The five clients' dictation settings: `{client, conversation, auto_send, mode, packs}` |
+| `GET /v1/dictation/clients/{client}` | One client's dictation settings |
+| `PUT /v1/dictation/clients/{client}` | Change `auto_send`, `mode` and/or `packs` (a token that may answer every request) |
+| `POST /v1/dictation/clients/{client}/conversation` | Make a new dictation conversation for the client (tainted, with its mode and packs) and make it the client's current one: `{"conversation", "title"}` |
 | `POST /v1/dictation/transcribe` | The audio as the body (`audio/*` or `application/octet-stream`; optional `?language=fr`, or `auto`): returns `{"text", "seconds"}`. One at a time (a second one gets a 429 at once); see *Voice dictation* |
 | `GET /v1/connections` | GitHub, Drive, Gmail, Moodle and Auriga: state, repositories (with since when automations look at each); for Drive, whether the connection has the old narrow permission (`old_scope`); the mail notification settings; the school poll interval (`school.poll_seconds`) |
 | `PUT /v1/connections/github` | Set the GitHub token |

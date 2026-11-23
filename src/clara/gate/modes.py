@@ -81,7 +81,9 @@ class NeedsConfirmation(ModeError):
         self.uses = uses
         super().__init__(
             f"{uses['conversations']} conversation(s), {uses['automation_conversations']} automation conversation(s), "
-            f"{uses['automations']} automation(s) and {uses['projects']} project(s) use this mode: "
+            f"{uses['automations']} automation(s), {uses['projects']} project(s)"
+            + (f" and {uses['dictation_clients']} dictation client(s)" if "dictation_clients" in uses else "")
+            + " use this mode: "
             "they all move to the default mode. Send these numbers to confirm."
         )
 
@@ -557,13 +559,14 @@ class Modes:
         return self.update(name, lines=kept)
 
     def uses(self, name: str) -> dict[str, int]:
-        """What stores this mode: conversations of its own, conversations of automations, automations, projects."""
+        """What stores this mode: conversations of its own, conversations of automations, automations, projects, and (listed only
+        when there are some, so that a confirmation made before dictation existed still stands) the clients that dictate."""
         automation = f"(c.kind = 'schedule' OR {Conversations._AUTOMATION} IS NOT NULL)"
 
         def count(sql: str) -> int:
             return int(self.db.value(sql, (name,), 0))
 
-        return {
+        found = {
             "conversations": count(f"SELECT COUNT(*) FROM conversations c WHERE c.mode = ? AND NOT {automation}"),
             "automation_conversations": count(
                 f"SELECT COUNT(*) FROM conversations c WHERE c.mode = ? AND {automation}"
@@ -571,6 +574,8 @@ class Modes:
             "automations": count("SELECT COUNT(*) FROM automations WHERE mode = ?"),
             "projects": count("SELECT COUNT(*) FROM projects WHERE mode = ?"),
         }
+        clients = count("SELECT COUNT(*) FROM dictation_clients WHERE mode = ?")
+        return {**found, "dictation_clients": clients} if clients else found
 
     def delete(self, name: str, confirmed: dict[str, int]) -> dict[str, int]:
         """Delete a mode once the numbers of what uses it are confirmed; all of it moves to the default mode (follow)."""
@@ -583,6 +588,7 @@ class Modes:
         with self.db.transaction() as tx:
             for table in STORED:
                 tx.execute(f"UPDATE {table} SET mode = NULL WHERE mode = ?", (mode.name,))
+            tx.execute("UPDATE dictation_clients SET mode = NULL WHERE mode = ?", (mode.name,))
             tx.execute("DELETE FROM modes WHERE name = ?", (mode.name,))
         self._changed()
         return uses

@@ -491,8 +491,14 @@ def _mode(s: Services, args: list[str], token: TokenInfo) -> str:
                     rest[0],
                     dict(
                         zip(
-                            ("conversations", "automation_conversations", "automations", "projects"),
-                            map(int, rest[1:5]),
+                            (
+                                "conversations",
+                                "automation_conversations",
+                                "automations",
+                                "projects",
+                                "dictation_clients",
+                            ),
+                            map(int, rest[1:6]),
                         )
                     ),
                 )

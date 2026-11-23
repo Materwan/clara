@@ -42,7 +42,7 @@ LIMITS: tuple[tuple[re.Pattern[str], int], ...] = (
     (re.compile(r"^/v1/turns/[^/]+/tool-results$"), 64 * MEGABYTE),
     (re.compile(r"^/v1/chat(/stream)?$"), 48 * MEGABYTE),
     # the setting `dictation_max_bytes` (at most 100 MB) is checked by the route on the bytes as they arrive
-    (re.compile(r"^/v1/dictation/transcribe$"), 100 * MEGABYTE),
+    (re.compile(r"^/v1/dictation(/transcribe)?$"), 100 * MEGABYTE),
 )
 OPEN_PATHS = frozenset({"/health", "/v1/auth/web-login", "/v1/connections/google/callback"})
 DEBUG_PATHS = ("/docs", "/openapi.json", "/redoc")

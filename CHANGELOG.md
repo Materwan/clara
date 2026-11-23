@@ -16,11 +16,21 @@ and `goal_state`. **On the web page**, a message that starts with `/goal` goes t
 **Voice dictation, the transcription part.** `POST /v1/dictation/transcribe` takes a recording (webm or ogg with opus, m4a, wav, any
 `audio/*`) and returns `{"text", "seconds"}`, transcribed on the machine that hosts Clara with faster-whisper (`small`, int8, French by
 default), in a child process killed on a timeout. At most 5 minutes of decoded audio and 30 MB, one dictation at a time (a second gets a
-429), and the audio is never kept. It sends nothing into a conversation yet. **To use it:** releases now carry the new `dictation` extra (faster-whisper, PyAV,
+429), and the audio is never kept. This route sends nothing into a conversation (the next paragraph does). **To use it:** releases now carry the new `dictation` extra (faster-whisper, PyAV,
 CTranslate2: the release is bigger), and you run `/dictation fetch-model` once (about 500 MB from Hugging
 Face: the only time it uses the network). New runtime settings `dictation_model`, `dictation_language`, `dictation_max_seconds`,
 `dictation_max_bytes`, `dictation_timeout` and `dictation_memory_mb`; `scripts/dictation-bench.py` measures it on your machine. No
 migration. **Not tried with real speech on the real machine when this was built.**
+
+**Voice dictation, into conversations.** New `POST /v1/dictation?client=<web|island|phone|cli|discord>`: the same audio, and the text goes
+into the client's current dictation conversation (or the one you name with `conversation=`, or a new one titled `Dictation · phone · 23
+Nov 14:05`). The conversation is tainted from then on, an existing one included: every outside write there still asks, facts are kept
+`[unconfirmed]`. Each client has `auto_send` (off): off returns the text for you to send, on sends it at once in a run that goes on with
+the phone locked. A dictation never answers an approval. `GET` and `PUT /v1/dictation/clients[/{client}]` hold the settings, with the approval
+mode and tool packs of a new dictation conversation (changing them takes a token that may answer every request), and `POST
+/v1/dictation/clients/{client}/conversation` starts a new one. The conversation list says `dictation: true`. Migration 0039; deleting a mode
+a client uses moves it to the default mode (the 409 counts them as `dictation_clients`). No page or button yet: that is the web part. **Not tried with real speech or on
+a phone when this was built.**
 
 ## v1.6.1 — 22/11/2026
 

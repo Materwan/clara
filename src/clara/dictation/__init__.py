@@ -18,6 +18,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from .clients import Clients
+
 if TYPE_CHECKING:
     from ..services import Services
 
@@ -102,6 +104,7 @@ class Dictation:
         self.s = s
         self.engine = engine
         self.busy = False
+        self.clients = Clients(s)
 
     async def transcribe(
         self,

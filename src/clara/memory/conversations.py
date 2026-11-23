@@ -325,12 +325,18 @@ class Conversations:
             " AND m.role = 'user' AND m.active = 1 ORDER BY m.id LIMIT 1) AS preview,"
             f" {self._AUTOMATION} AS automation_id,"
             f" (SELECT a.name FROM automations a WHERE a.id = {self._AUTOMATION}) AS automation_name,"
-            " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name"
+            " (SELECT p.name FROM projects p WHERE p.id = c.project_id) AS project_name,"
+            " EXISTS (SELECT 1 FROM conversation_taint t WHERE t.conversation_id = c.id AND t.source = 'dictation') AS dictation"
             f" FROM conversations c WHERE {' AND '.join(where) or '1'} ORDER BY c.pinned DESC, c.updated_at DESC LIMIT ? OFFSET ?",
             (PREVIEW, *params, limit, offset),
         )
         return [
-            {**_conversation(row).describe(), "preview": row["preview"] or "", "group": self._group(row)}
+            {
+                **_conversation(row).describe(),
+                "preview": row["preview"] or "",
+                "group": self._group(row),
+                "dictation": bool(row["dictation"]),
+            }
             for row in rows
         ]
 
@@ -471,6 +477,16 @@ class Conversations:
             "INSERT OR IGNORE INTO conversation_taint (conversation_id, source, at)"
             " SELECT id, ?, ? FROM conversations WHERE id = ?",
             (source[:200], now_iso(), conversation_id),
+        )
+
+    def is_dictation(self, conversation_id: str) -> bool:
+        """A dictation conversation: tainted because a dictation went into it (it shows a microphone in the list)."""
+        return (
+            self.db.one(
+                "SELECT 1 FROM conversation_taint WHERE conversation_id = ? AND source = 'dictation'",
+                (conversation_id,),
+            )
+            is not None
         )
 
     def is_tainted(self, conversation_id: str) -> bool:
