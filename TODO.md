@@ -275,6 +275,70 @@ What the current design already sets:
 - `docs/OPERATIONS.md` (line 41): Clara is served over HTTPS by Tailscale.
 - Measured on 2026-11-22 on this PC: `faster-whisper` `small`, int8, 0.47 times real time on a 13.7 s French sample, 833 MB peak.
 
+## A plan pack: Clara keeps a plan for the work she does
+
+The owner asked for a plan system: tools with which Clara creates, changes and updates a plan, as a new tool pack. Nothing like it exists
+today. The nearest things are the tasks (`add_task`: the owner's own to-do list, with reminders), `/goal` (a condition Clara works towards)
+and a file she writes by hand in the workspace. Decided on 2026-11-24, after an analysis with the owner.
+
+What the owner decided:
+
+- **A pack, « Plan »:** a new pack of tools, off in a new conversation like Mail or GitHub; the « + » menu, a project, a mode or the packs of
+  an automation switch it on. It is for chats and for automations.
+- **One plan per conversation**, which goes with the conversation. No plan of a project, no global plan.
+- **A flat list of steps.** Each step has a status (to do, in progress, done, dropped) and a short note; no sub-steps. Limits, kept as
+  proposed: 30 steps, 200 characters a step, 300 a note, 100 the title.
+- **The owner sees it, read only.** The side panel of the web page shows it: no write route, no approval before she acts. The owner steers
+  by telling Clara in a message what to change, and she changes the plan with her tools. Discord, the terminal and the apps show nothing
+  more than the tool lines; Clara quotes the plan when asked.
+- **Clara has her plan in front of her at every turn**, so that a summary of the conversation does not lose it.
+- **A step written after outside content** (a mail, a web page) is marked, in the panel and in what Clara reads, and asks nothing. Every
+  risky action still goes through the gate.
+- **In an automation** the plan is her work list, read afterwards in the history. The server checks nothing: `finish_run` does not look at it.
+- **Separate from the tasks and from `/goal`:** no reminders, not in the Tasks page, and the goal's judge does not read it.
+
+What I corrected or added to the owner's plan:
+
+- **« See and steer » and « read only » are read together:** read in the page, correct by talking.
+- **The plan is stored on the server, not only in messages.** A summary cuts tool results to 300 characters
+  (`src/clara/agent/compaction.py`, line 19) and the history read is 20 turns (`src/clara/settings.py`, line 88), so a plan that lives
+  in the messages is lost.
+- **Writing a plan asks nothing, even after outside content.** The default mode approves the class `memory` and has no `tainted` line
+  (`deploy/default-mode.toml`, lines 26-29), so the mark is the plan's own protection. A mode line on `plan_*` can tighten it later.
+- **The mark says « written after outside content », not « hostile ».** A dictation conversation is tainted for good (the voice dictation
+  item above), so each of its steps carries it.
+- **A plan of a project or a global plan is left out on purpose:** a plan written after a mail would reach clean conversations, as hidden
+  project facts do (`docs/DECISIONS.md`, line 250).
+- **The plan tools cannot be booked** by Booked calls: no conversation is open when a booked call runs (`BOOKED_NEVER`,
+  `src/clara/packs/deferred.py`, line 39).
+
+Not decided:
+
+- The words of the statuses (proposed `todo`, `doing`, `done`, `dropped`) and whether only one step may be in progress at a time.
+- Whether the plan's card opens the side panel by itself (today the first card does, `docs/DECISIONS.md`, line 94).
+- Whether the history of a run reopens its conversation with its side panel (not checked).
+- How a finished plan is removed (proposed: an empty list) and whether it stays shown once done, as a `met` goal does.
+- Whether the default mode gets a `(if tainted)` line for `plan_*`.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The tools (proposed: `plan_set` to create or replace the plan, `plan_update` to change the status or the note of steps by number, each
+  result returning the numbered plan), the table, the block of the prompt, the read route, the event and the card. Server and web in two
+  branches, as `/goal` was.
+
+What the current design already sets:
+
+- A pack is a line of `PACKS` (`src/clara/packs/registry.py`, line 72). With `where` set to `both`, a hook's run gets it only when the hook's
+  list of tools names one of its tools (`registry.py`, line 256).
+- There is no new write route, so no question of approval scope.
+- `FEATURES.md` must name every tool and every route, and the line « N tools. » must be updated (`tests/test_docs.py`, line 40); the choice
+  is recorded in `docs/DECISIONS.md`, and the labels go in `web/src/lib/tools.ts`.
+- A migration number is taken when the branch is merged (`CLAUDE.md`, « Conventions that bite »); the next free one was 0040 on 2026-11-24.
+- The prompt stays identical from one turn to the next and what changes comes last (`src/clara/agent/prompt.py`, line 3): the plan's block
+  goes last.
+- A table with a conversation for its key goes with the conversation (`src/clara/db/migrations/0038_goals.sql`, line 4), and `/goal`
+  split its server and web work into two branches (`goal-server`, `goal-web`).
+
 ## `/goal`: what is left
 
 The server and the web page are done (`docs/DECISIONS.md`, « `/goal` »). Left:
