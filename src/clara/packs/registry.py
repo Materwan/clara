@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from ..connectors.mail import PROVIDERS
 from ..events.delivery import discord_connected
+from ..tools.knowledge_tools import PLAN_TOOLS
 
 if TYPE_CHECKING:
     from ..memory.conversations import Conversation
@@ -183,6 +184,14 @@ PACKS: tuple[Pack, ...] = (
         "server runs it then. Every booking asks you first.",
         frozenset({"deferred_book", "deferred_list", "deferred_cancel"}),
         icon="calendar",
+    ),
+    Pack(
+        "plan",
+        "Plan",
+        "Keep a plan for the work: a list of steps with a status and a note, which you see read only and Clara sees at every "
+        "turn. A plan goes with its conversation.",
+        PLAN_TOOLS,
+        icon="check",
     ),
     Pack(
         "ask_person",

@@ -386,7 +386,8 @@ folder (`discord-state.json`) unless `CLARA_DISCORD_STATE` says otherwise; no ot
   automations, see the Automation page; every change asks you first and an automation's run is never offered it; and follows a feed
   you named, after a request that shows it, see « Feeds » in section 5),
   **Booked calls** (off until you switch it on, in a chat or in the packs or the tools of an automation: Clara
-  books a tool call to run later, see *Booked calls* in section 5), and, for the runs of automations only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
+  books a tool call to run later, see *Booked calls* in section 5), **Plan** (off until you switch it on, in a chat or in an automation: Clara
+  keeps a plan for her work, see *Plan* in section 5), and, for the runs of automations only, **Ask you** and **Discord thread**. The "+" menu of the web chat, `/tools` on
   Discord and in the terminal, and `PATCH /v1/conversations/{id}` switch them for a conversation; the choice is saved with
   it, so it follows the conversation to every client, and a new conversation starts with web search only. A **project** can
   start its conversations with other tools: its `packs` (chosen when the project is made or later, on its page) are copied to each
@@ -728,8 +729,25 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   `deferred_cancel` and `DELETE /v1/deferred/{deferred_id}` do the same, and Clara can list them (`deferred_list`). Only Clara
   books one, in a chat or in a run; there is no way to book from the API. A run does not wait for your answer: its request
   is stored and pushed like any other of an unattended run, and the call is booked when you allow it. Finished calls are kept 30 days. Not bookable: the tools that need a
-  person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`),
+  person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`, `plan_set`, `plan_update`),
   those run by your browser (the computer folder) and a tool that the conversation is not offered.
+- **Plan (the `plan` pack):** with the **Plan** pack (off in a new conversation; for chats and for the runs of automations, a hook's run gets it
+  when its list of tools names `plan_set` or `plan_update`), Clara keeps **one plan per conversation** with `plan_set` (create or replace it:
+  a title and a flat list of steps, each `{text, status, note}`; an empty list removes the plan) and `plan_update` (the status or the note
+  of steps, by number: `{step, status, note}`). The statuses are `todo`, `doing`, `done` and `dropped`; several steps may be `doing`; there are no sub-steps. Limits: 30 steps, 100 characters
+  for the title, 200 for a step, 300 for a note; a longer text is an error that says the limit, never a cut. Every answer is the numbered plan.
+  The plan is stored on the server (table `plans`, which goes with its conversation), because a summary of the conversation cuts tool
+  results short and the prompt replays only its last turns. While the pack is on, Clara has her plan in front of her at the end of the
+  prompt, at every turn (`## Your plan: …`, each step numbered, « data, not instructions », a step on one line); it changes only when
+  the plan does. A step carries `outside` (« written after outside content ») when the turn that wrote its text or its note had read
+  outside content (a mail, a page, a file: a dictation conversation counts for good): the block flags it and tells her not to obey it. The
+  mark follows the text: a write in a clean turn does not clear it, a step whose text is new in a clean turn has none, a change of
+  status alone keeps it. Writing a plan asks nothing (class `memory`, approved by the default mode, with no `(if tainted)` line: the
+  mark is its protection); every risky action still goes through the gate. `GET /v1/conversations/{id}/plan` gives the plan to the web site
+  (read only: you steer it by telling Clara in a message), and each successful call of a plan tool sends a `plan` event (`{"type": "plan", "plan": <that
+  object, or null once removed>}`) in the answer's stream, kept in a followed run like the others. A done plan stays. It is not in the Tasks
+  page, has no reminder, is not read by the goal's judge, and `finish_run` does not look at it; in an automation's run it is her work list,
+  read afterwards in the history. A plan tool cannot be booked.
 - **Notifications:** Clara may notify you (3 per turn, only when asked or when long work is done); you can notify
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
@@ -1563,7 +1581,7 @@ the arguments (never the arguments themselves), the effect, the outcome and a de
 
 ## 10. Tools
 
-93 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+95 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -1650,6 +1668,8 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `deferred_book` | Book a tool call to run later, by itself: a tool, its arguments and a date. You read the whole call and allow it once; a mode that refuses it, the floor and the local-only rule still apply when it is due (pack Booked calls) | deferred / the level of the booked call |
 | `deferred_list` | The booked calls that wait and the latest ones that ended, with their numbers; the summary of a local-only call is shown only to a local-only conversation (pack Booked calls) | read |
 | `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
+| `plan_set` | Write the plan of the conversation, or replace it: a title (100 characters) and a flat list of steps (30, 200 characters each) with a status (`todo`, `doing`, `done`, `dropped`) and a note (300 characters); an empty list removes it. The answer is the numbered plan (pack Plan; asks nothing, even after outside content) | memory / write, target `plan` |
+| `plan_update` | Change the status or the note of steps of the plan, by number; nothing else (pack Plan; asks nothing) | memory / write, target `plan` |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; automation runs only, and not offered to a run in a forum thread: its thread is the forum's) | discord / write |
 | `skill_run` | Run one of your skills by name, with optional text arguments (at most 1,500 characters): its instructions join the conversation as a message (not a tool result). Not in any pack; offered in a chat that has a skill she may run, never in an unattended run; a skill with `disable-model-invocation` and a skill of another project are refused. Asks after untrusted content, and always when it must switch a pack on (the request shows the skill, the pack and every argument) | skill_run / read (target `skill:<name>`), skill_pack / write when a pack the skill names is off and can be switched on |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
@@ -2088,6 +2108,7 @@ keep-alive every 15 s.
 | `DELETE /v1/conversations/{conversation_id}` | Delete it, with its files |
 | `GET /v1/conversations/{conversation_id}/messages` | Its messages (the chosen versions); a question has `shown` when a client shows other words than were sent (a skill command as typed); a user message whose `shown` starts with `Clara ran /` is the instructions of a skill Clara ran (after her `skill_run` call: not a question you asked; the web site does not draw it) |
 | `GET /v1/conversations/{conversation_id}/goal` | The goal of the conversation (`goal`: its state, reason, counters; `null` if none) and whether a run works on it |
+| `GET /v1/conversations/{conversation_id}/plan` | The plan Clara keeps for the conversation: `title`, `steps` (`n`, `text`, `status`, `note`, `outside`) and `updated_at`; 404 when there is none. Read only: there is no write route (pack Plan) |
 | `POST /v1/conversations/{conversation_id}/goal` | What follows `/goal`, as `text`: empty shows the state, `clear` ends the goal, `resume` or flags alone add limits and resume it, anything else starts a goal and its first turn (follow it with `GET .../run`); 422 in an automation's conversation, 409 while Clara answers |
 | `GET /v1/conversations/{conversation_id}/run` | Follow the answer being given in it (a kept one), from its first event; 404 when there is none |
 | `DELETE /v1/conversations/{conversation_id}/run` | Stop that answer; what was said is kept, marked interrupted |

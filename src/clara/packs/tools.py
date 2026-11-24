@@ -8,6 +8,7 @@ discord_thread                                         discord (it leaves the ma
 automation_*                                           in automations.py
 feed_follow                                            in feeds.py
 deferred_*                                             in deferred.py
+plan_*                                                 in plan.py
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from .deferred import deferred_tools
 from .feeds import feed_tools
 from .files import MODES, SOURCES, FilesReader
 from .history import HistoryReader, french_date
+from .plan import plan_tools
 
 if TYPE_CHECKING:
     from ..services import Services
@@ -442,5 +444,11 @@ def install(s: Services) -> None:
     from .registry import Packs
 
     s.packs = Packs(s)
-    for tool in [*pack_tools(s.vault is not None), *automation_tools(), *feed_tools(), *deferred_tools()]:
+    for tool in [
+        *pack_tools(s.vault is not None),
+        *automation_tools(),
+        *feed_tools(),
+        *deferred_tools(),
+        *plan_tools(),
+    ]:
         s.toolbox.add(tool)

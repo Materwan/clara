@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from .ops.logstream import LogHub
     from .ops.traffic import TrafficLog
     from .ops.usage import UsageLog
+    from .packs.plan import Plans
     from .runtime import RuntimeSettings
     from .secrets import SecretsStore
     from .settings import Settings
@@ -69,6 +70,7 @@ class Services:
     event_sources: EventSources
     skills: Skills
     goals: Goals
+    plans: Plans
     deferred: DeferredCalls
     gate: Gate
     modes: Modes

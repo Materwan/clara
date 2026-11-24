@@ -75,6 +75,9 @@ class PromptParts:
     unattended: bool = False
     summary: str = ""
     news: str = ""
+    plan: str = (
+        ""  # the conversation's plan, when the plan tools are offered: last, and changing only when the plan does
+    )
 
 
 def render(persona: str, parts: PromptParts) -> str:
@@ -106,6 +109,8 @@ def render(persona: str, parts: PromptParts) -> str:
         sections.append(f"## Earlier in this conversation (summary)\n{parts.summary.strip()}\n")
     if parts.news.strip():
         sections.append(parts.news.strip() + "\n")
+    if parts.plan.strip():
+        sections.append(parts.plan.strip() + "\n")
     return "\n".join(sections)
 
 

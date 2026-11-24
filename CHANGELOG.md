@@ -5,6 +5,13 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 ## Unreleased
 
+**A Plan pack: Clara keeps a plan for the work she does.** New pack **Plan** (off in a new conversation; chats and automations) with the tools `plan_set` (create or replace the
+conversation's plan: a title and a flat list of steps, an empty list removes it) and `plan_update` (the status or the note of steps by number). A step is `todo`,
+`doing`, `done` or `dropped` (several may be `doing`), with at most 30 steps, 200 characters a step, 300 a note and 100 the title. The plan is stored on the server and
+shown to Clara at the end of her prompt at every turn the pack is on; a step written after outside content is marked (`outside`) and asks nothing, since every risky
+action still goes through the gate. New route `GET /v1/conversations/{id}/plan` (read only) and stream event `plan`. Migration 0040 (table `plans`). The plan tools
+cannot be booked. **This is the server half: the web panel comes in the next branch.**
+
 **`/goal`: Clara keeps working on a conversation until a condition is met.** `/goal <condition>` sets a goal on a web
 conversation: Clara keeps taking turns, with no new message, until a judge (one model call, no tools) finds it met or impossible, or a limit is
 reached (10 turns and 15 minutes of model time by default, the runtime settings `goal_turns` and `goal_minutes`, or `--turns`, `--minutes` and

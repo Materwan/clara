@@ -15,6 +15,9 @@ from .base import Tool, ToolContext, ToolError, fixed, flag, optional_number
 
 QCM = "qcm"
 ASK = "ask_questions"
+PLAN_TOOLS = frozenset(
+    {"plan_set", "plan_update"}
+)  # the Plan pack (packs/plan.py): the turn shows the plan when one is offered
 
 
 def _read_conversation_file(context: ToolContext, file: Any = None, name: str = "", start_line: Any = 1) -> str:

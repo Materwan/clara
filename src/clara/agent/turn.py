@@ -7,7 +7,7 @@
 (the answer is the `done` event). After `done`, a long conversation is summarised: `compacting`, then `compacted` or
 `warning`.
 
-    turn, thinking, token, tool_start, tool, qcm, file, present, tool_requests, approval, retrying, discarded, usage,
+    turn, thinking, token, tool_start, tool, qcm, plan, file, present, tool_requests, approval, retrying, discarded, usage,
     done, compacting, compacted, warning
 
 **Client tools** are tools a client describes in its request and runs on its own machine: when the model calls one,
@@ -54,7 +54,7 @@ from ..skills.store import split_summary, with_skills
 from ..timeutil import zone
 from ..tools.base import CallResult, Dispatch, ToolContext, TurnState
 from ..tools.folder_tools import TOOL_FOLDERS, FolderRequest
-from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PROJECT_TOOLS, QCM
+from ..tools.knowledge_tools import ASK, CONVERSATION_FILE_TOOLS, PLAN_TOOLS, PROJECT_TOOLS, QCM
 from .compaction import build_transcript, chunk_messages, summary_request, transcript_budget
 from .estimate import CHARS_PER_TOKEN, IMAGE_TOKENS, estimate_prompt_tokens, estimate_stored, estimate_tokens
 from .goals import WAITING, drive
@@ -596,6 +596,7 @@ class Agent:
             files = (
                 self._files_context(conversation.id) if conversation and CONVERSATION_FILE_TOOLS - plan.hidden else ""
             )
+            kept_plan = self.s.plans.get(conversation.id) if conversation and PLAN_TOOLS - plan.hidden else None
             skills = "" if "skill_run" in plan.hidden else self.s.skills.prompt_block(state.project_id)
             parts = PromptParts(
                 today=now,
@@ -617,6 +618,7 @@ class Agent:
                 unattended=state.mode == "unattended",
                 summary=conversation.summary if conversation else "",
                 news=news,
+                plan=kept_plan.block() if kept_plan else "",
             )
             messages.append({"role": "system", "content": render(self.persona.text(), parts)})
             if conversation is not None:

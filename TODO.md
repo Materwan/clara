@@ -312,32 +312,20 @@ What I corrected or added to the owner's plan:
 - **The plan tools cannot be booked** by Booked calls: no conversation is open when a booked call runs (`BOOKED_NEVER`,
   `src/clara/packs/deferred.py`, line 39).
 
-Not decided:
+Built on the server (branch `feat/plan-server`, 2026-11-24; `docs/DECISIONS.md`, « The plan pack »): the pack `plan` with `plan_set` and
+`plan_update`, the table `plans` (migration 0040), the block at the end of the prompt, `GET /v1/conversations/{id}/plan`, the `plan` stream event
+(`{"type": "plan", "plan": {...} | null}`, kept in a followed run), the mark `outside`, `BOOKED_NEVER`, the docs. Settled while building it: the
+statuses are `todo`, `doing`, `done`, `dropped` and several steps may be `doing`; an empty list removes the plan and a done plan stays shown;
+the default mode gets no `(if tainted)` line for `plan_*`.
 
-- The words of the statuses (proposed `todo`, `doing`, `done`, `dropped`) and whether only one step may be in progress at a time.
-- Whether the plan's card opens the side panel by itself (today the first card does, `docs/DECISIONS.md`, line 94).
-- Whether the history of a run reopens its conversation with its side panel (not checked).
-- How a finished plan is removed (proposed: an empty list) and whether it stays shown once done, as a `met` goal does.
-- Whether the default mode gets a `(if tainted)` line for `plan_*`.
+Left (the web half, a later branch, as `goal-web` was for `/goal`):
 
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The tools (proposed: `plan_set` to create or replace the plan, `plan_update` to change the status or the note of steps by number, each
-  result returning the numbered plan), the table, the block of the prompt, the read route, the event and the card. Server and web in two
-  branches, as `/goal` was.
-
-What the current design already sets:
-
-- A pack is a line of `PACKS` (`src/clara/packs/registry.py`, line 72). With `where` set to `both`, a hook's run gets it only when the hook's
-  list of tools names one of its tools (`registry.py`, line 256).
-- There is no new write route, so no question of approval scope.
-- `FEATURES.md` must name every tool and every route, and the line « N tools. » must be updated (`tests/test_docs.py`, line 40); the choice
-  is recorded in `docs/DECISIONS.md`, and the labels go in `web/src/lib/tools.ts`.
-- A migration number is taken when the branch is merged (`CLAUDE.md`, « Conventions that bite »); the next free one was 0040 on 2026-11-24.
-- The prompt stays identical from one turn to the next and what changes comes last (`src/clara/agent/prompt.py`, line 3): the plan's block
-  goes last.
-- A table with a conversation for its key goes with the conversation (`src/clara/db/migrations/0038_goals.sql`, line 4), and `/goal`
-  split its server and web work into two branches (`goal-server`, `goal-web`).
+- **The panel card:** read `GET .../plan` when a conversation opens, update on each `plan` event (`plan: null` removes the card), show each step with
+  its status, its note and a flag for `outside` (« written after outside content »), read only. The icon of the pack is `check`.
+- **The tool labels** in `web/src/lib/tools.ts` for `plan_set` and `plan_update` (the web build does not test them; the server tests do not need them).
+- **Not decided:** whether the plan's card opens the side panel by itself (today the first card does, `docs/DECISIONS.md`, line 94), and whether
+  the history of a run reopens its conversation with its side panel (not checked).
+- **Not tried with a real model:** whether she keeps the plan up to date by herself, and how long a plan she writes.
 
 ## `/goal`: what is left
 

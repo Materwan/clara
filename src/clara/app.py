@@ -47,6 +47,7 @@ from .api import memory as memory_api
 from .api import models as models_api
 from .api import modes as modes_api
 from .api import packs as packs_api
+from .api import plans as plans_api
 from .api import projects as projects_api
 from .api import retention as retention_api
 from .api import skills as skills_api
@@ -99,6 +100,7 @@ from .packs.automations import automation_tools
 from .packs.daily_note import seed as seed_daily_note
 from .packs.deferred import deferred_tools
 from .packs.feeds import feed_tools
+from .packs.plan import Plans, plan_tools
 from .packs.tools import pack_tools
 from .runtime import RuntimeSettings
 from .secrets import SecretError, SecretsStore, load_key_material
@@ -165,6 +167,7 @@ def static_tools() -> list[Tool]:
         *automation_tools(),
         *feed_tools(),
         *deferred_tools(),
+        *plan_tools(),
         *skill_tools(),
     ]
 
@@ -229,6 +232,7 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         event_sources=EventSources(db, secrets, automations, audit),
         skills=Skills(db, audit),
         goals=Goals(db),
+        plans=Plans(db),
         deferred=DeferredCalls(db, events, home),
         gate=Gate(modes, vault_push=settings.vault_push),
         modes=modes,
@@ -421,6 +425,7 @@ def create_app(s: Services) -> FastAPI:
         chat_api.router,
         conversations_api.router,
         goals_api.router,
+        plans_api.router,
         forms_api.router,
         forms_api.questions_router,
         memory_api.router,
