@@ -21,6 +21,7 @@
   import { type Goal, SYNTAX, WAITING, afterEvent, goalArgs, goalLine, goalRunStart, isGoalCommand, startsGoal } from '../lib/goal';
   import { load as loadGrants } from '../lib/grants.svelte';
     import { markdown } from '../lib/markdown';
+  import { type Plan, afterEvent as planAfter, afterRead } from '../lib/plan';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { type Chip, type Skill, chipsFor, filterSkills, hintSkill, insertSkill, isCommand, menuKey, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
@@ -104,6 +105,8 @@
   let busy = $state(false);
   let goal = $state<Goal | null>(null); // the conversation's goal (`/goal`): the line above the box
   let goalPending = $state(false); // a /goal command is on its way
+  let plan = $state<Plan | null>(null); // Clara's plan for the conversation: a card in the side panel, read only
+  let planSeq = 0; // bumped by every `plan` event: a read that began before one is older than it and is dropped
   let goalSeq = 0; // bumped by every event that says what the goal is: a read that began before it is older than it and is dropped
   const compacting = $derived(messages.some((message) => message.compacting));
   let dragging = $state(false);
@@ -235,6 +238,8 @@
     conversation = null;
     goal = null;
     goalSeq++;
+    plan = null;
+    planSeq++;
     taintOpen = false;
     drawing++; // the older exchanges of the conversation before are not drawn into this one
     messages = [];
@@ -264,6 +269,7 @@
       draw(found, history, found.answering ? [] : (found.approvals ?? []));
       loadPanel(id, true);
       void loadGoal(id);
+      void loadPlan(id, true);
       if (found.answering) attach(id, found, history);
     } catch (error) {
       if (mine !== loads) return;
@@ -420,7 +426,7 @@
   }
 
   // ---- the side panel -------------------------------------------------------------------------------------
-  const cards = $derived(side.files.length + side.notes.length + side.forms.length);
+  const cards = $derived(side.files.length + side.notes.length + side.forms.length + (plan ? 1 : 0));
   const showPanel = $derived(cards > 0 && sideOpen);
 
   /** Read what the side panel shows. `first`: the conversation has just been opened (the panel starts closed, unless you left it open). */
@@ -437,6 +443,28 @@
     } catch {
       /* the panel is a convenience: the conversation does not depend on it */
     }
+  }
+
+  /** Read the plan (404: there is none) and show it. `first`: the conversation has just been opened, so the panel opens only if you left it open. */
+  async function loadPlan(id: string, first = false): Promise<void> {
+    const started = planSeq;
+    try {
+      const found: Plan | null = await api.get(`/v1/conversations/${id}/plan`).catch((error) => {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      });
+      if (conversationId === id) showPlan(afterRead(plan, found, started, planSeq), first);
+    } catch {
+      /* the plan is a convenience: the conversation does not depend on it */
+    }
+  }
+
+  /** The plan on screen changes: the panel opens by itself when it is the first card, unless you closed it (as for a file). */
+  function showPlan(next: Plan | null, first = false): void {
+    const before = cards;
+    plan = next;
+    if (first) sideOpen = sideOpen || (panel.choice === 'open' && cards > 0);
+    else if (cards > before && panel.choice !== 'closed') sideOpen = true;
   }
 
   function schedulePanel(id: string): void {
@@ -702,6 +730,10 @@
           case 'goal_state':
             goal = afterEvent(goal, event);
             goalSeq++;
+            break;
+          case 'plan':
+            planSeq++;
+            showPlan(planAfter(plan, event));
             break;
           case 'turn':
             conversations.changed++; // the question is stored: the rail lists the conversation, or moves it up, at once
@@ -1238,7 +1270,7 @@
     {/if}
     {#if cards}
       <button class="ghost panel-toggle" aria-label={showPanel ? 'Close the side panel' : 'Open the side panel'} aria-expanded={showPanel}
-        title="Files, notes and quizzes made in this conversation" onclick={togglePanel}>
+        title="Files, notes, quizzes and the plan of this conversation" onclick={togglePanel}>
         <Icon name="panel" size={18} /><span class="count">{cards}</span>
       </button>
     {/if}
@@ -1476,7 +1508,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (Escape closes the panel too) -->
     <div class="side-scrim" onclick={closePanel} aria-hidden="true"></div>
     <aside class="side-panel" aria-label="Made in this conversation">
-      <SidePanel conversation={conversationId} files={side.files} notes={side.notes} forms={side.forms} bind:quiz onClose={closePanel} onSend={tell} onProgress={progressed} />
+      <SidePanel conversation={conversationId} {plan} files={side.files} notes={side.notes} forms={side.forms} bind:quiz onClose={closePanel} onSend={tell} onProgress={progressed} />
     </aside>
   {/if}
   </div>

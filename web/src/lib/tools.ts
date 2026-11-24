@@ -61,6 +61,8 @@ const NOTES: Record<string, [string, string, string?]> = {
   automation_delete: ['play', 'Deleted an automation'],
   feed_follow: ['link', 'Followed a feed', 'url'],
   skill_run: ['play', 'Ran the skill', 'name'], // her arguments are on the opened call (« Given »)
+  plan_set: ['check', 'Set the plan', 'title'],
+  plan_update: ['check', 'Updated the plan'],
   deferred_book: ['calendar', 'Booked a call for later', 'tool'],
   deferred_list: ['calendar', 'Looked at the booked calls'],
   deferred_cancel: ['calendar', 'Cancelled a booked call'],

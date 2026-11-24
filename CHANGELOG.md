@@ -10,7 +10,10 @@ conversation's plan: a title and a flat list of steps, an empty list removes it)
 `doing`, `done` or `dropped` (several may be `doing`), with at most 30 steps, 200 characters a step, 300 a note and 100 the title. The plan is stored on the server and
 shown to Clara at the end of her prompt at every turn the pack is on; a step written after outside content is marked (`outside`) and asks nothing, since every risky
 action still goes through the gate. New route `GET /v1/conversations/{id}/plan` (read only) and stream event `plan`. Migration 0040 (table `plans`). The plan tools
-cannot be booked. **This is the server half: the web panel comes in the next branch.**
+cannot be booked. **The web chat shows the plan** as a read-only card at the top of the side panel: title, progress (« 3 of 4 done »), numbered steps with a status mark
+(to do, in progress, done, dropped) and the note of each, a visible tag on a step written after outside content. The panel opens by itself on the first plan unless you closed it, the plan
+is read again when a conversation is opened (an automation's too) and follows Clara's changes live, and a finished plan stays until she replaces or removes it. The tool lines read
+« Set the plan » and « Updated the plan ».
 
 **`/goal`: Clara keeps working on a conversation until a condition is met.** `/goal <condition>` sets a goal on a web
 conversation: Clara keeps taking turns, with no new message, until a judge (one model call, no tools) finds it met or impossible, or a limit is

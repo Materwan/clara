@@ -318,13 +318,12 @@ Built on the server (branch `feat/plan-server`, 2026-11-24; `docs/DECISIONS.md`,
 statuses are `todo`, `doing`, `done`, `dropped` and several steps may be `doing`; an empty list removes the plan and a done plan stays shown;
 the default mode gets no `(if tainted)` line for `plan_*`.
 
-Left (the web half, a later branch, as `goal-web` was for `/goal`):
+Built on the web (branch `feat/plan-web`, 2026-11-24; `docs/DECISIONS.md`, « The plan pack on the web »): the read-only Plan card at the top of the side panel,
+read on opening a conversation (an automation's too: same page) and live from the `plan` event, the panel opening on the first plan, the tool labels.
 
-- **The panel card:** read `GET .../plan` when a conversation opens, update on each `plan` event (`plan: null` removes the card), show each step with
-  its status, its note and a flag for `outside` (« written after outside content »), read only. The icon of the pack is `check`.
-- **The tool labels** in `web/src/lib/tools.ts` for `plan_set` and `plan_update` (the web build does not test them; the server tests do not need them).
-- **Not decided:** whether the plan's card opens the side panel by itself (today the first card does, `docs/DECISIONS.md`, line 94), and whether
-  the history of a run reopens its conversation with its side panel (not checked).
+Left:
+
+- **Not seen in a browser yet:** the card in both themes and on a 390 px phone, with a scripted model.
 - **Not tried with a real model:** whether she keeps the plan up to date by herself, and how long a plan she writes.
 
 ## `/goal`: what is left

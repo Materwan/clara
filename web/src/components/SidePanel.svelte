@@ -1,17 +1,20 @@
 <script lang="ts">
   import { download, saveBlob, size } from '../lib/api';
   import { inlineMath } from '../lib/markdown';
+  import { type Plan } from '../lib/plan';
   import { type PanelFile, type PanelNote, baseName, folderOf, libraryLink, noteName, stamp } from '../lib/panel.svelte';
   import type { Form, Progress } from '../lib/qcm';
   import { toast } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
+  import PlanCard from './PlanCard.svelte';
   import QuizView from './QuizView.svelte';
 
   // What Clara made in this conversation, newest first: a card for each workspace file and each vault note (name, folder,
   // when; a click opens it in the Library, a file can also be downloaded) and for each QCM, which replaces the list when
-  // opened. The Library is still the whole workspace and the whole vault.
-  let { conversation, files, notes, forms, quiz = $bindable(null), onClose, onSend, onProgress }: {
+  // opened. Clara's plan (read only) comes first. The Library is still the whole workspace and the whole vault.
+  let { conversation, plan, files, notes, forms, quiz = $bindable(null), onClose, onSend, onProgress }: {
     conversation: string;
+    plan: Plan | null;
     files: PanelFile[];
     notes: PanelNote[];
     forms: Form[];
@@ -59,10 +62,11 @@
     {#key open.ref}
       <QuizView {conversation} form={open} onBack={() => (quiz = null)} {onSend} onProgress={(progress) => onProgress(open.ref, progress)} />
     {/key}
-  {:else if !cards.length}
-    <p class="empty">Files and notes Clara writes and quizzes she makes for you appear here.</p>
+  {:else if !cards.length && !plan}
+    <p class="empty">Files and notes Clara writes, quizzes she makes for you and her plan appear here.</p>
   {:else}
-    <ul class="cards">
+    {#if plan}<PlanCard {plan} />{/if}
+    <ul class="cards" class:after={!!plan}>
       {#each cards as card (card.kind === 'file' ? 'f:' + card.file.path : card.kind === 'note' ? 'n:' + card.note.path : 'q:' + card.form.ref)}
         <li>
           {#if card.kind === 'file'}
@@ -104,3 +108,7 @@
     </ul>
   {/if}
 </div>
+
+<style>
+  .cards.after { margin-top: var(--sp-8); }
+</style>
