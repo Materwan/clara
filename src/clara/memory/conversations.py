@@ -93,6 +93,7 @@ class Conversation:
             "archived": self.archived_at is not None,
             "archived_by": self.archived_by,
             "mode": self.mode,
+            "parent": self.parent_id,  # the conversation that started it, when it is a sub agent's (the web site links back to it)
         }
 
 

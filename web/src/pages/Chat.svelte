@@ -24,6 +24,7 @@
   import { type Plan, afterEvent as planAfter, afterRead } from '../lib/plan';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
+  import { type SubAgent } from '../lib/subagents';
   import { type Chip, type Command, chipsFor, commandOf, drawn, filterSkills, insertSkill, isCommand, menuKey, mirrorOf, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, type Outcome, OUTCOME_TAGS, note, problems, summary, withoutWarnings } from '../lib/tools';
@@ -98,6 +99,9 @@
   // The side panel: what Clara made in this conversation (files, vault notes, QCMs), and the questions she waits on
   let side = $state<{ files: PanelFile[]; notes: PanelNote[]; forms: Form[] }>({ files: [], notes: [], forms: [] });
   let sideOpen = $state(false);
+  let subs = $state<SubAgent[]>([]); // the sub agents this conversation started: cards in the side panel
+  let subsSeq = 0; // the latest read of them: an older one that ends late is dropped
+  let subsTimer: ReturnType<typeof setTimeout> | undefined;
   let quiz = $state<string | null>(null); // the QCM open in the panel (null: the list of cards)
   let pendingAsk = $state<any>(null); // ask_questions: the questions that replace the box you write in
   let outbox: string[] = []; // answers of a QCM to send Clara, one after the other, when she has finished the one before
@@ -245,11 +249,14 @@
     messages = [];
     loadError = null;
     side = { files: [], notes: [], forms: [] };
+    subs = [];
+    subsSeq++;
     sideOpen = false;
     quiz = null;
     pendingAsk = null;
     outbox = [];
     clearTimeout(panelTimer);
+    clearTimeout(subsTimer);
     void loadPickers();
     if (!id) {
       chosenProject = undefined;
@@ -270,6 +277,7 @@
       loadPanel(id, true);
       void loadGoal(id);
       void loadPlan(id, true);
+      void loadSubs(id, true);
       if (found.answering) attach(id, found, history);
     } catch (error) {
       if (mine !== loads) return;
@@ -426,7 +434,7 @@
   }
 
   // ---- the side panel -------------------------------------------------------------------------------------
-  const cards = $derived(side.files.length + side.notes.length + side.forms.length + (plan ? 1 : 0));
+  const cards = $derived(side.files.length + side.notes.length + side.forms.length + subs.length + (plan ? 1 : 0));
   const showPanel = $derived(cards > 0 && sideOpen);
 
   /** Read what the side panel shows. `first`: the conversation has just been opened (the panel starts closed, unless you left it open). */
@@ -465,6 +473,26 @@
     plan = next;
     if (first) sideOpen = sideOpen || (panel.choice === 'open' && cards > 0);
     else if (cards > before && panel.choice !== 'closed') sideOpen = true;
+  }
+
+  /** Read the sub agents of the conversation (the server says each one's state). The panel opens by itself on the first card, as for a file. */
+  async function loadSubs(id: string, first = false): Promise<void> {
+    const mine = ++subsSeq;
+    try {
+      const found: SubAgent[] = (await api.get(`/v1/conversations/${id}/sub-agents`)).sub_agents;
+      if (conversationId !== id || mine !== subsSeq) return;
+      const before = cards;
+      subs = found;
+      if (first) sideOpen = sideOpen || (panel.choice === 'open' && cards > 0);
+      else if (cards > before && panel.choice !== 'closed') sideOpen = true;
+    } catch {
+      /* the cards are a convenience: the conversation does not depend on them */
+    }
+  }
+
+  function scheduleSubs(id: string): void {
+    clearTimeout(subsTimer);
+    subsTimer = setTimeout(() => loadSubs(id), 400);
   }
 
   function schedulePanel(id: string): void {
@@ -746,12 +774,14 @@
             break;
           case 'tool_start':
             addCall(current, { name: event.name, arguments: event.arguments, running: true });
+            if (event.name === 'delegate') scheduleSubs(id); // the sub agent is made as the call starts: its card shows as running
             break;
           case 'tool': {
             const call = openCall(current, event.name, true);
             if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
             else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
             if (WRITES.has(event.name)) schedulePanel(id);
+            if (event.name === 'delegate') void loadSubs(id); // its report is in: the card says done, asked or failed
             break;
           }
           case 'approval':
@@ -813,6 +843,7 @@
   async function finished(mine: AbortController, id: string | null): Promise<void> {
     conversations.changed++;
     if (id) void loadGoal(id); // a goal ends or pauses with its stream: the line says how
+    if (id && subs.length) void loadSubs(id); // a stopped answer stops its sub agents
     if (controller !== mine) return; // left, or another stream has taken over
     controller = null;
     busy = false;
@@ -1221,6 +1252,13 @@
     if (showPanel && narrow.rail) tick().then(() => document.querySelector<HTMLElement>('.side-panel .side-head button')?.focus());
   });
 
+  // A request of a sub agent is answered (here or on another client): its card stops saying it asks you
+  $effect(() => {
+    void live.refresh;
+    const id = conversationId;
+    if (id) untrack(() => { if (subs.length) void loadSubs(id); });
+  });
+
   // Approve all next belongs to the conversation on screen: the server keeps it for 30 minutes, so it is read again when one opens
   $effect(() => {
     void live.refresh;
@@ -1258,6 +1296,7 @@
   <header class="page-head chat-head">
     <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
     <h1 class="title">{conversation?.title || (conversationId ? 'Conversation' : 'New conversation')}</h1>
+    {#if conversation?.parent}<a class="flag parent" href={'#/chat/' + conversation.parent} title="Back to the conversation that started this sub agent"><Icon name="left" size={16} /><span>Parent<span class="more"> conversation</span></span></a>{/if}
     {#if projectName}<a class="flag" href={'#/projects/' + projectId} title="Open the project"><Icon name="folder" size={16} />{projectName}</a>{/if}
     {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
     {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
@@ -1284,7 +1323,7 @@
     {/if}
     {#if cards}
       <button class="ghost panel-toggle" aria-label={showPanel ? 'Close the side panel' : 'Open the side panel'} aria-expanded={showPanel}
-        title="Files, notes, quizzes and the plan of this conversation" onclick={togglePanel}>
+        title="Files, notes, quizzes, sub agents and the plan of this conversation" onclick={togglePanel}>
         <Icon name="panel" size={18} /><span class="count">{cards}</span>
       </button>
     {/if}
@@ -1492,7 +1531,7 @@
           {#if styled}
             <div class="mirror" aria-hidden="true" bind:this={mirror}><span class="command-name" style:letter-spacing={`${spacing(styled.name)}px`}>{styled.name}</span>{styled.rest}<span class="faded">{styled.faded}</span></div>
           {/if}
-          <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={[draft, styled]} bind:this={box} class:mirrored={!!styled}
+          <textarea rows="1" placeholder={conversation?.parent ? 'Write to this sub agent' : 'Write to Clara'} aria-label="Your message" bind:value={draft} use:autosize={[draft, styled]} bind:this={box} class:mirrored={!!styled}
             role={combo ? 'combobox' : undefined} aria-autocomplete={combo ? 'list' : undefined} aria-haspopup={combo ? 'listbox' : undefined}
             aria-expanded={combo ? rows.length > 0 : undefined} aria-controls={rows.length ? 'skill-menu' : undefined}
             aria-activedescendant={rows.length ? optionId(rows[at].name) : undefined}
@@ -1529,7 +1568,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (Escape closes the panel too) -->
     <div class="side-scrim" onclick={closePanel} aria-hidden="true"></div>
     <aside class="side-panel" aria-label="Made in this conversation">
-      <SidePanel conversation={conversationId} {plan} files={side.files} notes={side.notes} forms={side.forms} bind:quiz onClose={closePanel} onSend={tell} onProgress={progressed} />
+      <SidePanel conversation={conversationId} {plan} subAgents={subs} files={side.files} notes={side.notes} forms={side.forms} bind:quiz onClose={closePanel} onSend={tell} onProgress={progressed} />
     </aside>
   {/if}
   </div>

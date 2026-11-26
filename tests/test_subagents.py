@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import itertools
 
+import httpx
 import pytest
 
 from clara.agent.subagents import MAX_DEPTH, REPORT_LIMIT
 from clara.agent.turn import ChatRequest
+from clara.app import create_app
 from clara.gate import Situation
 from clara.packs.deferred import BOOKED_NEVER
 from clara.runtime import KNOBS
@@ -539,3 +541,90 @@ async def test_a_sub_agent_keeps_the_limits_of_the_run_that_started_it(services,
     assert offered == [{"delegate", "probe_urls"}]
     assert services.subagents.limits_of(sub_id) == {"only_tools": ("delegate", "probe_urls")}
     assert services.subagents.limits_of(cid) == {}
+
+
+# ----------------------------------------------------------------------
+# What the web site reads: `parent` on a conversation, and the list of a conversation's sub agents
+# ----------------------------------------------------------------------
+def listed(client, cid):
+    return client.get(f"/v1/conversations/{cid}/sub-agents")
+
+
+async def test_a_conversation_says_which_conversation_started_it(services, llm, cid, client):
+    script(llm, lambda m, t: "ok", lambda m, t: "report")
+    await call(services, cid, **TASK)
+    (sub_id,) = subs_of(services, cid)
+    assert (await client.get(f"/v1/conversations/{sub_id}")).json()["parent"] == cid  # the page links back to it
+    assert (await client.get(f"/v1/conversations/{cid}")).json()["parent"] is None
+    assert (await client.post("/v1/conversations", json={})).json()["parent"] is None
+
+
+async def test_the_sub_agents_of_a_conversation_are_listed_with_their_state_and_what_they_wrote(services, llm, cid, client):
+    def sub(messages, tools):
+        if not after_question(messages):
+            return calls(("ws_write", {"path": "notes/hours.md", "content": "9 to 5"}))
+        return "The library opens at nine.\nOn Sundays it is shut."
+
+    script(llm, delegating(TASK), sub)
+    await say(services, cid)
+    (sub_id,) = subs_of(services, cid)
+    assert (await listed(client, cid)).json() == {"sub_agents": [{
+        "id": sub_id, "title": "Library hours", "state": "done", "report": "The library opens at nine. On Sundays it is shut.",
+        "created_at": services.db.value("SELECT created_at FROM sub_agents"), "updated_at": services.db.value("SELECT updated_at FROM sub_agents"),
+        "waiting": 0, "asking": "", "written": 1,
+    }]}
+    other = services.conversations.create("web", title="Other").id
+    assert (await listed(client, other)).json() == {"sub_agents": []}  # only this conversation's own
+    assert (await listed(client, sub_id)).json() == {"sub_agents": []}  # a sub agent has none of its own here
+    assert (await listed(client, "c" + "0" * 16)).status_code == 404
+    anonymous = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(services)), base_url="http://clara.test")
+    async with anonymous:
+        assert (await listed(anonymous, cid)).status_code == 401  # a /v1 route is protected like every other
+
+
+async def test_the_list_says_running_while_a_task_works_and_asked_when_it_ended_with_a_question(services, llm, cid, client):
+    let_go = _hold(services)
+    answers = iter(["QUESTION: which year?"])
+    script(llm, lambda m, t: "ok", lambda m, t: calls(("hold", {})) if not after_question(m) else next(answers))
+    working = asyncio.ensure_future(call(services, cid, **TASK))
+    await _until(lambda: services.subagents.running(cid) == 1)
+    (row,) = (await listed(client, cid)).json()["sub_agents"]
+    assert row["state"] == "running" and row["report"] == ""
+    let_go.set()
+    await working
+    (row,) = (await listed(client, cid)).json()["sub_agents"]
+    assert row["state"] == "asked" and row["report"] == "QUESTION: which year?"
+
+
+async def test_a_sub_agent_whose_request_waits_for_you_says_so(services, llm, cid, client, probes):
+    asked = lambda m, t: calls(("probe_drive", {})) if not after_question(m) else "I asked to create it."  # noqa: E731
+    script(llm, delegating(TASK), asked)
+    await say(services, cid)
+    (row,) = (await listed(client, cid)).json()["sub_agents"]
+    assert row["waiting"] == 1 and "create a Drive file" in row["asking"] and row["state"] == "done"
+    await services.agent.drain_background()
+
+
+async def test_the_list_is_newest_first_and_is_cut_at_fifty(services, cid, client):
+    from clara.agent.subagents import LISTED
+
+    ids = []
+    for number in range(LISTED + 2):
+        sub = services.conversations.create("web", title=f"Sub {number}", parent_id=cid).id
+        stamp = f"2026-11-26T10:{number:02d}:00Z"
+        services.db.execute("INSERT INTO sub_agents (conversation_id, state, created_at, updated_at) VALUES (?, 'done', ?, ?)", (sub, stamp, stamp))
+        ids.append(sub)
+    found = (await listed(client, cid)).json()["sub_agents"]
+    assert [row["id"] for row in found] == ids[::-1][:LISTED]
+
+
+async def test_the_owner_changes_the_mode_packs_and_model_of_a_sub_agent_like_those_of_any_conversation(services, llm, cid, client):
+    make(services, "everything", line("approve", tool="*"))
+    script(llm, lambda m, t: "ok", lambda m, t: "report")
+    await call(services, cid, **TASK)
+    (sub_id,) = subs_of(services, cid)
+    assert (await client.put(f"/v1/conversations/{sub_id}/mode", json={"mode": "everything"})).json()["mode"] == "everything"
+    changed = (await client.patch(f"/v1/conversations/{sub_id}", json={"packs": ["web", "plan"], "model": "local:big"})).json()
+    assert changed["packs"] == ["web", "plan"] and changed["model"] == "local:big" and changed["parent"] == cid
+    assert services.conversations.get(sub_id).mode == "everything"
+    assert services.conversations.get(cid).mode is None  # the parent is not touched

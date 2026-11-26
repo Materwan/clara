@@ -28,6 +28,7 @@ model, so a sub agent can never be given more than its parent had.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import secrets
 from typing import TYPE_CHECKING, Any
@@ -37,6 +38,7 @@ from ..gate.outside import one_line
 from ..memory.conversations import MAX_TITLE, Conversation
 from ..timeutil import now_iso
 from ..tools.base import Tool, ToolContext, ToolError, fixed
+from ..workspace.store import WorkspaceError
 from .turn import ChatRequest
 
 if TYPE_CHECKING:
@@ -44,6 +46,8 @@ if TYPE_CHECKING:
 
 MAX_DEPTH = 3  # levels of sub agents inside sub agents: a ceiling in the code, not a setting
 REPORT_LIMIT = 20_000  # characters of a report the parent receives
+LISTED = 50  # sub agents a conversation lists (the newest), for the web site's side panel
+GIST = 200  # characters of a report the list shows
 QUESTION = "QUESTION:"  # how a sub agent's last message says it is a question and not a report
 CUT = (
     "[The report was cut here: it is {size:,} characters long and only the first {limit:,} are shown. "
@@ -92,6 +96,43 @@ class SubAgents:
             for restrict in self.s.agent.restrictions:
                 found.update(restrict(parent))
         return found
+
+    async def listing(self, parent_id: str) -> list[dict]:
+        """The sub agents of a conversation, newest first, as the side panel of the web site draws them: the state (`running` while a task
+        is working, whoever sent it), the start of the last report, the requests waiting for the person, and the files and notes written."""
+        s = self.s
+        rows = s.db.all(
+            "SELECT c.id, c.title, a.state, a.report, a.created_at, a.updated_at FROM sub_agents a"
+            " JOIN conversations c ON c.id = a.conversation_id WHERE c.parent_id = ? ORDER BY a.created_at DESC, c.id LIMIT ?",
+            (parent_id, LISTED),
+        )
+        written = await asyncio.gather(*(self._written(row["id"]) for row in rows))
+        found = []
+        for row, count in zip(rows, written, strict=True):
+            asking = s.approvals.waiting(row["id"])
+            found.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "state": "running" if self.busy(row["id"]) else row["state"],
+                    "report": one_line(row["report"], GIST),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "waiting": len(asking),
+                    "asking": one_line(asking[0].summary, GIST) if asking else "",
+                    "written": count,
+                }
+            )
+        return found
+
+    async def _written(self, conversation_id: str) -> int:
+        """How many workspace files and vault notes the conversation wrote (0 when their history cannot be read right now)."""
+        files: list = []
+        if self.s.workspace is not None:
+            with contextlib.suppress(WorkspaceError, TimeoutError):
+                files = await self.s.workspace.conversation_files(conversation_id)
+        notes = await self.s.vault.conversation_notes(conversation_id) if self.s.vault is not None else []
+        return len(files) + len(notes)
 
     def recover(self) -> int:
         """At start: a sub agent that was working when the server stopped did not finish (its parent's call is gone too)."""

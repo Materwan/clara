@@ -1017,7 +1017,7 @@ fieldset:disabled .opt:hover:not(.right, .wrong, .chosen) { border-color: var(--
   .composer { padding: var(--sp-4) var(--sp-10) calc(var(--sp-10) + var(--safe-b)); }
   .composer-hint { display: none; }
   .welcome { padding-top: 8vh; }
-  .context .label, .flag.taint .more { display: none; }
+  .context .label, .flag.taint .more, .flag.parent .more { display: none; }
   .panel { padding: var(--sp-16); }
   .wizard { --pad-x: var(--sp-16); }
   .step:not([aria-current='step']) .step-label { display: none; } /* five steps do not fit with their names: the open one keeps its own */

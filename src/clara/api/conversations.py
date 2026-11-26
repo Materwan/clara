@@ -105,6 +105,12 @@ def get(conversation_id: str, request: Request) -> dict:
     }
 
 
+@router.get("/{conversation_id}/sub-agents")
+async def sub_agents(conversation_id: str, request: Request) -> dict:
+    _get(request, conversation_id)
+    return {"sub_agents": await services(request).subagents.listing(conversation_id)}
+
+
 class ConversationChange(BaseModel):
     title: str | None = Field(default=None, max_length=100)
     archived: bool | None = Field(default=None, description="Archived: it can be read, and takes no new message")

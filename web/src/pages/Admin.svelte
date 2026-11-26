@@ -6,6 +6,7 @@
   import Segmented from '../components/Segmented.svelte';
   import { api, when } from '../lib/api';
   import { confirmDialog, promptDialog } from '../lib/dialog.svelte';
+  import { KEY as SUB_AGENTS, MAX as SUB_AGENTS_MAX, MIN as SUB_AGENTS_MIN, limitProblem } from '../lib/subagents';
   import { live, toast } from '../lib/state.svelte';
 
   type Tab = 'status' | 'tokens' | 'secrets' | 'settings' | 'discord' | 'backups' | 'updates' | 'logs' | 'console';
@@ -26,6 +27,12 @@
     return groups;
   });
   let settings = $state<any[]>([]);
+  // "Sub agents at the same time" has a field of its own above the list: what is typed waits here until it is saved (null: the saved value is shown)
+  let limitDraft = $state<string | null>(null);
+  let limitSaving = $state(false);
+  let limitError = $state('');
+  const limitSaved = $derived(String(settings.find((item) => item.key === SUB_AGENTS)?.value ?? ''));
+  const limitText = $derived(limitDraft ?? limitSaved);
   let backups = $state<any>(null);
   let releases = $state<any>(null);
   let newToken = $state({ name: '', client: 'script', approvals: '' });
@@ -147,6 +154,23 @@
     }
   }
 
+  async function saveLimit(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    limitError = limitProblem(limitText);
+    if (limitError || limitSaving) return;
+    limitSaving = true;
+    try {
+      await api.put(`/v1/admin/settings/${SUB_AGENTS}`, { value: Number(limitText) });
+      limitDraft = null;
+      toast('Saved.', 'ok');
+      await load();
+    } catch (error) {
+      limitError = (error as Error).message; // the server's own words: they name the setting and the rule
+    } finally {
+      limitSaving = false;
+    }
+  }
+
   async function debug(on: boolean): Promise<void> {
     await api.post('/v1/admin/debug', { on });
     load();
@@ -260,9 +284,23 @@
       </section>
     {/each}
   {:else if tab === 'settings'}
+    {#if settings.some((item) => item.key === SUB_AGENTS)}
+      <form class="panel setting" onsubmit={saveLimit}>
+        <label class="field" for="sub-agents-max">
+          <span>Sub agents at the same time</span>
+          <span class="hint" id="sub-agents-note">Per conversation, from 1 to 20. A task sent to a sub agent that is working waits its turn.</span>
+        </label>
+        <div class="row">
+          <input id="sub-agents-max" type="number" min={SUB_AGENTS_MIN} max={SUB_AGENTS_MAX} step="1" inputmode="numeric" value={limitText}
+            aria-describedby="sub-agents-note" aria-invalid={limitError ? 'true' : undefined} oninput={(event) => { limitDraft = event.currentTarget.value; limitError = ''; }} />
+          <button class="primary small" type="submit" disabled={limitSaving || limitDraft === null || limitDraft === limitSaved}>Save</button>
+        </div>
+        {#if limitError}<p class="danger small" role="alert">{limitError}</p>{/if}
+      </form>
+    {/if}
     <table>
       <tbody>
-        {#each settings as item (item.key)}
+        {#each settings.filter((item) => item.key !== SUB_AGENTS) as item (item.key)}
           <tr><td><code>{item.key}</code><div class="muted small">{item.description}</div></td><td><code>{JSON.stringify(item.value)}</code></td>
             <td>{#if !['debug_until', 'sandbox_image'].includes(item.key)}<button class="small" onclick={() => setSetting(item)}>Change</button>{/if}</td></tr>
         {/each}
@@ -371,6 +409,15 @@
     .secret-text {
       grid-column: 1 / -1;
     }
+  }
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-8);
+    margin-bottom: var(--sp-16);
+  }
+  .setting input {
+    width: 6rem;
   }
   .token {
     word-break: break-all;

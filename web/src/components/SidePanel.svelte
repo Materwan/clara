@@ -4,6 +4,7 @@
   import { type Plan } from '../lib/plan';
   import { type PanelFile, type PanelNote, baseName, folderOf, libraryLink, noteName, stamp } from '../lib/panel.svelte';
   import type { Form, Progress } from '../lib/qcm';
+  import { type SubAgent, badge, cardLine } from '../lib/subagents';
   import { toast } from '../lib/state.svelte';
   import Icon from './Icon.svelte';
   import PlanCard from './PlanCard.svelte';
@@ -11,10 +12,12 @@
 
   // What Clara made in this conversation, newest first: a card for each workspace file and each vault note (name, folder,
   // when; a click opens it in the Library, a file can also be downloaded) and for each QCM, which replaces the list when
-  // opened. Clara's plan (read only) comes first. The Library is still the whole workspace and the whole vault.
-  let { conversation, plan, files, notes, forms, quiz = $bindable(null), onClose, onSend, onProgress }: {
+  // opened. Clara's plan (read only) comes first, then the sub agents she started (a card opens the sub agent's own conversation). The Library is
+  // still the whole workspace and the whole vault.
+  let { conversation, plan, subAgents, files, notes, forms, quiz = $bindable(null), onClose, onSend, onProgress }: {
     conversation: string;
     plan: Plan | null;
+    subAgents: SubAgent[];
     files: PanelFile[];
     notes: PanelNote[];
     forms: Form[];
@@ -33,6 +36,13 @@
     ].sort((a, b) => b.at.localeCompare(a.at)),
   );
   const open = $derived(forms.find((form) => form.ref === quiz) ?? null);
+
+  // "Reported 2 minutes ago" moves on by itself while the panel stays open
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(timer);
+  });
 
   async function save(file: PanelFile): Promise<void> {
     try {
@@ -62,11 +72,32 @@
     {#key open.ref}
       <QuizView {conversation} form={open} onBack={() => (quiz = null)} {onSend} onProgress={(progress) => onProgress(open.ref, progress)} />
     {/key}
-  {:else if !cards.length && !plan}
-    <p class="empty">Files and notes Clara writes, quizzes she makes for you and her plan appear here.</p>
+  {:else if !cards.length && !plan && !subAgents.length}
+    <p class="empty">Files and notes Clara writes, quizzes she makes for you, her plan and the sub agents she starts appear here.</p>
   {:else}
     {#if plan}<PlanCard {plan} />{/if}
-    <ul class="cards" class:after={!!plan}>
+    {#if subAgents.length}
+      <section class="subs" class:after={!!plan} aria-labelledby="subs-title">
+        <h3 id="subs-title" class="subs-title">Sub agents</h3>
+        <ul class="cards">
+          {#each subAgents as sub (sub.id)}
+            {@const mark = badge(sub)}
+            <li>
+              <a class="sub-card" href={'#/chat/' + sub.id}>
+                <span class="sub-head">
+                  <strong class="sub-title" title={sub.title}>{sub.title || 'Sub agent'}</strong>
+                  <span class="tag {mark.tone}">{mark.word}</span>
+                </span>
+                <span class="sub-line" title={sub.report || undefined}>{cardLine(sub, now)}</span>
+                <span class="sub-open">Open its conversation <Icon name="chevron" size={14} /></span>
+              </a>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+    {#if subAgents.length && cards.length}<h3 class="subs-title made">Made here</h3>{/if}
+    <ul class="cards" class:after={!!plan && !subAgents.length}>
       {#each cards as card (card.kind === 'file' ? 'f:' + card.file.path : card.kind === 'note' ? 'n:' + card.note.path : 'q:' + card.form.ref)}
         <li>
           {#if card.kind === 'file'}
@@ -110,5 +141,21 @@
 </div>
 
 <style>
-  .cards.after { margin-top: var(--sp-8); }
+  .cards.after, .subs.after { margin-top: var(--sp-8); }
+  .subs-title { margin: 0 0 var(--sp-8); font-size: var(--fs-md); font-weight: 650; color: var(--text-2); }
+  .subs-title.made { margin-top: var(--sp-16); }
+  /* a sub agent: a card with a thin border, the whole of it a link to the sub agent's conversation */
+  .sub-card {
+    display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; padding: var(--sp-12) var(--sp-14);
+    border: 0.5px solid var(--line-strong); border-radius: var(--r-lg); background: var(--raised);
+    color: inherit; text-decoration: none;
+  }
+  .sub-card:hover { border-color: var(--text-2); background: var(--hover); }
+  .sub-card:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .sub-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); min-width: 0; }
+  .sub-title { min-width: 0; font-size: 0.9375rem; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+  .sub-head .tag { flex: none; }
+  .tag.run { background: var(--accent-soft); color: var(--accent-text); }
+  .sub-line { font-size: var(--fs-sm); color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+  .sub-open { display: inline-flex; align-items: center; gap: var(--sp-2); align-self: flex-start; margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--accent-text); }
 </style>
