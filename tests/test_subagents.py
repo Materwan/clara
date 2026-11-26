@@ -12,9 +12,11 @@ from clara.agent.subagents import MAX_DEPTH, REPORT_LIMIT
 from clara.agent.turn import ChatRequest
 from clara.app import create_app
 from clara.gate import Situation
+from clara.llm.types import LlmChunk, ToolCall
 from clara.packs.deferred import BOOKED_NEVER
 from clara.runtime import KNOBS
 from clara.tools.base import Tool, ToolContext, TurnState, fixed
+from conftest import parse_sse
 from fakes import calls
 from modeset import line, make, own
 from test_runs import _hold, _until
@@ -329,6 +331,71 @@ async def test_a_task_queued_behind_one_that_is_working_takes_no_slot(services, 
     await asyncio.gather(first, queued)
 
 
+# ----------------------------------------------------------------------
+# The page of a sub agent follows its answer while it works
+# ----------------------------------------------------------------------
+def at_work(messages, tools):
+    """A sub agent that says something, waits in a tool, then reports."""
+    if after_question(messages):
+        return "The library opens at nine."
+    return [LlmChunk(text="Checking. "), LlmChunk(tool_calls=[ToolCall("hold", {})])]
+
+
+async def working_sub_agent(services, cid):
+    """A delegate call that is held half way: its task, and the sub agent's id once its run is registered."""
+    call_ = asyncio.ensure_future(call(services, cid, **TASK))
+    await _until(lambda: services.subagents.running(cid) == 1)
+    (sub_id,) = subs_of(services, cid)
+    await _until(lambda: services.agent.runs.of(sub_id) is not None)
+    return call_, sub_id
+
+
+async def test_a_sub_agent_at_work_is_a_run_its_page_can_follow_from_its_start(services, llm, cid, client):
+    let_go = _hold(services)
+    script(llm, lambda m, t: "ok", at_work)
+    delegating, sub_id = await working_sub_agent(services, cid)
+    assert (await client.get(f"/v1/conversations/{sub_id}")).json()["answering"] is True
+    page = asyncio.ensure_future(client.get(f"/v1/conversations/{sub_id}/run"))  # opened while it works
+    await _until(lambda: services.agent.runs.of(sub_id).followers == 2)  # the parent's call, and the page
+    written = await client.post("/v1/chat/stream", json={"message": "and?", "conversation": sub_id, "keep_running": True})
+    assert written.status_code == 409  # as for any conversation that is answering: follow it, or stop it
+    let_go.set()
+    events = parse_sse((await page).text)
+    outcome, _ = await delegating
+    assert events[0] == {"type": "resume", "message": TASK["task"], "attachments": []}
+    said = "".join(e["text"] for e in events if e["type"] == "token")
+    assert said.startswith("Checking.") and said.endswith("The library opens at nine.")
+    assert events[-1]["type"] == "done"
+    assert "The library opens at nine." in outcome.text and "finished its task and reports" in outcome.text  # the parent is unchanged
+    assert services.agent.runs.of(sub_id) is None and not services.subagents.busy(sub_id)  # a finished sub agent has no run
+    assert (await client.get(f"/v1/conversations/{sub_id}/run")).status_code == 404
+
+
+async def test_a_page_opened_late_is_given_what_the_sub_agent_has_said_so_far(services, llm, cid, client):
+    let_go = _hold(services)
+    script(llm, lambda m, t: "ok", at_work)
+    delegating, sub_id = await working_sub_agent(services, cid)
+    await _until(lambda: "Checking. " in [e.get("text") for e in services.agent.runs.of(sub_id).events()])
+    page = asyncio.ensure_future(client.get(f"/v1/conversations/{sub_id}/run"))
+    await _until(lambda: services.agent.runs.of(sub_id).followers == 2)
+    let_go.set()
+    events = parse_sse((await page).text)
+    await delegating
+    assert events[1]["type"] == "turn" and {"type": "token", "text": "Checking. "} in events
+
+
+async def test_stopping_a_sub_agent_from_its_page_ends_its_task_and_the_parent_reads_it(services, llm, cid, client):
+    _hold(services)
+    script(llm, lambda m, t: "ok", at_work)
+    delegating, sub_id = await working_sub_agent(services, cid)
+    assert (await client.delete(f"/v1/conversations/{sub_id}/run")).json() == {"ok": True}
+    outcome, _ = await delegating
+    assert outcome.text.startswith("Error: Sub agent") and "could not finish" in outcome.text and "stopped" in outcome.text
+    assert state_of(services, sub_id)[0] == "failed" and not services.subagents.busy(sub_id)
+    assert "[This answer was interrupted: you stopped it.]" in services.conversations.read_back(sub_id)[-1]["content"]
+    assert services.agent.runs.of(sub_id) is None
+
+
 async def test_stopping_the_parent_stops_its_sub_agent(services, llm, cid):
     _hold(services)
     script(llm, delegating(TASK), lambda m, t: calls(("hold", {})))
@@ -340,6 +407,7 @@ async def test_stopping_the_parent_stops_its_sub_agent(services, llm, cid):
     (sub,) = subs_of(services, cid)
     assert not services.subagents.busy(sub) and state_of(services, sub)[0] == "failed"
     assert "interrupted" in services.conversations.read_back(sub)[-1]["content"]
+    assert services.agent.runs.of(sub) is None  # its run goes with the parent's turn
     await services.agent.drain_background()
 
 

@@ -772,7 +772,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   the action is not done, the sub agent is told, and the parent's result says what waits. A sub agent may end its turn with a question (a last message
   that begins `QUESTION:`) instead of a report; the parent answers it with a re-task. A re-task of a sub agent still working is **queued** behind
   its task (the parent is told); the parent waits for the report or the end of the turn, with no timer, and a stop of the parent's turn stops the sub
-  agent. **Limits:** 3 levels deep, fixed in the code (the tool is not offered at the third); `sub_agents_max` (5) work at the same time per
+  agent. **A sub agent's task is a run like any chat answer** (`GET /v1/conversations/{conversation_id}/run`): its conversation, opened while it works, shows the answer as it is given and a page opened late is given what was said so far; **stop** on that page (`DELETE` on the same route) ends the task, and the parent's result says it was stopped. **Limits:** 3 levels deep, fixed in the code (the tool is not offered at the third); `sub_agents_max` (5) work at the same time per
   conversation, and `delegate` refuses a sixth, a re-task of one that is idle included. A sub agent's model calls use the background pool
   (`CLARA_BACKGROUND_SLOTS`), the usage log's kind `subagent`. **On the web site** (section 4, *Chat* and *Admin*): a **Sub agents** section of the
   conversation's side panel, the sub agent's conversation (an ordinary chat page you can write in), and the setting `sub_agents_max` on the Admin page.

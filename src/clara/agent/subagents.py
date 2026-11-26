@@ -39,6 +39,7 @@ from ..memory.conversations import MAX_TITLE, Conversation
 from ..timeutil import now_iso
 from ..tools.base import Tool, ToolContext, ToolError, fixed
 from ..workspace.store import WorkspaceError
+from .runs import AlreadyRunning
 from .turn import ChatRequest
 
 if TYPE_CHECKING:
@@ -233,14 +234,38 @@ class SubAgents:
         return sub
 
     async def _run(self, request: ChatRequest) -> str:
-        """One turn of the sub agent to its end: what its last message said (else the whole reply)."""
+        """One turn of the sub agent to its end: what its last message said (else the whole reply). The turn is a `Run` of the registry
+        every chat uses, so the sub agent's page follows it while it works (`GET /v1/conversations/{id}/run`), and the parent follows it too."""
+        agent = self.s.agent
+        plan = agent.plan(request)
+        failed: list[Exception] = []
+
+        def fail(error: Exception) -> dict:
+            failed.append(error)
+            return {"type": "error", "message": str(error)}
+
+        while True:
+            try:
+                run = agent.runs.start(request, plan, fail)
+                break
+            except AlreadyRunning:  # a task queued behind one that works: it waits for the run to end, as it waited for the lock
+                await asyncio.wait({agent.runs.of(plan.state.conversation_id).task})  # type: ignore[union-attr,arg-type]
         turn_id = reply = ""
-        async with contextlib.aclosing(self.s.agent.turn(request)) as events:
-            async for event in events:
-                if event["type"] == "turn":
-                    turn_id = event["id"]
-                elif event["type"] == "done":
-                    reply = event["reply"]
+        done = False
+        try:
+            async with contextlib.aclosing(run.follow()) as events:
+                async for event in events:
+                    if event["type"] == "turn":
+                        turn_id = event["id"]
+                    elif event["type"] == "done":
+                        done, reply = True, event["reply"]
+        finally:
+            if not run.ended:  # the parent was stopped: its sub agent goes with it, and stores what it had done
+                await agent.runs.stop(run, run.state.stop_reason or "its parent was stopped")
+        if failed:
+            raise failed[0]
+        if not done:  # the run was stopped from the sub agent's own page
+            raise RuntimeError("it was stopped before it ended")
         last = self.s.db.value(
             "SELECT content FROM messages WHERE conversation_id = ? AND turn_id = ? AND role = 'assistant'"
             " ORDER BY id DESC LIMIT 1",
