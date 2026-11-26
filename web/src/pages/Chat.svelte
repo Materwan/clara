@@ -18,13 +18,13 @@
   import { answerFolderCall, budgetBytes, isFolderTool } from '../lib/folders';
   import { type Document, repack, unpack } from '../lib/documents';
   import { type Answer, outcome, withText } from '../lib/dictation';
-  import { type Goal, SYNTAX, WAITING, afterEvent, goalArgs, goalLine, goalRunStart, isGoalCommand, startsGoal } from '../lib/goal';
+  import { type Goal, WAITING, afterEvent, goalArgs, goalLine, goalRunStart, isGoalCommand, startsGoal } from '../lib/goal';
   import { load as loadGrants } from '../lib/grants.svelte';
     import { markdown } from '../lib/markdown';
   import { type Plan, afterEvent as planAfter, afterRead } from '../lib/plan';
   import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
-  import { type Chip, type Skill, chipsFor, filterSkills, hintSkill, insertSkill, isCommand, menuKey, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
+  import { type Chip, type Command, chipsFor, commandOf, drawn, filterSkills, insertSkill, isCommand, menuKey, mirrorOf, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
   import { conversations, go, live, narrow, route, toast, ui } from '../lib/state.svelte';
   import { type Call, type Outcome, OUTCOME_TAGS, note, problems, summary, withoutWarnings } from '../lib/tools';
   import { isKeptQuestion, splitTurns } from '../lib/turns';
@@ -874,7 +874,7 @@
         const index = messages.findIndex((message) => message.id === forkOf);
         if (index >= 0) messages = messages.slice(0, index);
       }
-      const user = yours(text);
+      const user = yours(text, commandOf(text, commands) ? text : undefined); // a command is drawn as one at once, as it is when the history is read back
       user.upload = files;
       user.attachments.push(...files.map((file) => ({ name: file.name })));
       const answer = blank('assistant');
@@ -1071,41 +1071,55 @@
 
   const packLabel = (id: string): string => packList.find((pack) => pack.id === id)?.label ?? id;
 
-  // ---- the "/" menu and the line under the box (lib/skills.ts) ------------------------------------------------------------------
-  let skills = $state<Skill[]>([]); // what this conversation can run: the global skills and those reserved for its project
+  // ---- the "/" menu, the command drawn in the box, and the line under the box (lib/skills.ts) ----------------------------------------
+  let commands = $state<Command[]>([]); // what this conversation can type after a slash: its skills (the global ones and those of its project) and Clara's own commands
   let box = $state<HTMLTextAreaElement>();
+  let mirror = $state<HTMLElement>(); // the layer behind the box that draws the command (see the textarea below)
   let caret = $state(0);
   let menuAt = $state(0);
   let menuShut = $state(false); // Escape, or the box lost the focus: shut until you type again
   let hintPacks = $state<Chip[]>([]); // the packs the skill under the box needs, as the server says they stand in this conversation
   let hintCalls = 0;
   let hintFor = ''; // the skill the chips belong to: another skill clears them at once, the same one keeps them while they are read again
-  // the project whose skills the menu lists (null: a conversation that is still loading does not know its project yet)
+  // the project whose commands the menu lists (null: a conversation that is still loading does not know its project yet)
   const skillsFor = $derived(conversationId && !conversation ? null : String(projectId ?? 'none'));
   const slash = $derived(slashWord(draft, caret));
-  const rows = $derived(slash && !menuShut && !isGoalCommand(draft) ? filterSkills(skills, slash.query) : []);
+  const rows = $derived(slash && !menuShut ? filterSkills(commands, slash.query) : []);
   const at = $derived(Math.min(menuAt, rows.length - 1));
-  const hinted = $derived(hintSkill(draft, skills));
+  const hinted = $derived(commandOf(draft, commands));
+  const styled = $derived(mirrorOf(draft, commands)); // a text that starts with a command is drawn by the mirror; any other is the plain box
   const chips = $derived(chipsFor(hintPacks, activePacks, !!conversationId));
   // the box is a combobox only while a "/word" can be completed, so that it stays the plain text box it was the rest of the time
-  const combo = $derived(!!slash && skills.length > 0);
+  const combo = $derived(!!slash && commands.length > 0);
 
-  async function loadSkills(): Promise<void> {
+  async function loadCommands(): Promise<void> {
     const where = skillsFor;
     if (where === null) return;
     try {
-      const found = (await api.get('/v1/skills', { project: where })).skills;
-      if (where === skillsFor) skills = found;
+      const found = (await api.get('/v1/commands', { project: where })).commands;
+      if (where === skillsFor) commands = found;
     } catch {
       /* the menu is a convenience: the box still sends what you type */
     }
   }
 
+  const sizer = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  /** The name is drawn in the monospace font, but the caret is placed by the box's own font: the name is spaced out (or in) to the width the box gives it, so that
+   *  what follows it lines up with the caret. Inside the name the caret may be a pixel off. 0.88 is the size of `.command-name` (app.css). */
+  function spacing(name: string): number {
+    if (!sizer || !box) return 0;
+    const style = getComputedStyle(box);
+    sizer.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const own = sizer.measureText(name).width;
+    sizer.font = `${0.88 * parseFloat(style.fontSize)}px ${style.getPropertyValue('--font-mono')}`;
+    return (own - sizer.measureText(name).width) / name.length;
+  }
+
   // Once per conversation (per project, which is what decides what it can run); again when the page gets the focus back (a skill may have been added elsewhere)
   $effect(() => {
     void skillsFor;
-    skills = [];
-    untrack(loadSkills);
+    commands = [];
+    untrack(loadCommands);
   });
 
   // The packs of the skill under the box: read again when the skill, a pack or the mode changes (a click on an off chip changes a pack)
@@ -1120,7 +1134,7 @@
         hintFor = skill?.name ?? '';
         hintPacks = [];
       }
-      if (!skill?.packs.length || where === null) {
+      if (skill?.kind !== 'skill' || where === null) {
         hintPacks = [];
         return;
       }
@@ -1135,8 +1149,8 @@
     if (!activePacks.includes(id)) void togglePack(id);
   }
 
-  function pickSkill(skill: Skill): void {
-    const next = insertSkill(draft, skill.name);
+  function pickCommand(command: Command): void {
+    const next = insertSkill(draft, command.name);
     draft = next.text;
     caret = next.caret;
     menuAt = 0;
@@ -1162,7 +1176,7 @@
       if (key) {
         event.preventDefault();
         if ('to' in key) menuAt = key.to;
-        else if ('pick' in key) pickSkill(rows[key.pick]);
+        else if ('pick' in key) pickCommand(rows[key.pick]);
         else menuShut = true;
         return;
       }
@@ -1185,11 +1199,11 @@
     if (files.length) addFiles(files);
   }
 
-  /** The box you write in grows with what you write, up to its CSS max-height. */
-  function autosize(node: HTMLTextAreaElement, _value: string) {
+  /** The box you write in grows with what you write (and with the faded arguments the mirror draws after a command), up to its CSS max-height. */
+  function autosize(node: HTMLTextAreaElement, _value: unknown) {
     const fit = () => {
       node.style.height = 'auto';
-      node.style.height = `${node.scrollHeight}px`;
+      node.style.height = `${Math.max(node.scrollHeight, mirror?.scrollHeight ?? 0)}px`;
     };
     fit();
     return { update: () => queueMicrotask(fit) };
@@ -1215,7 +1229,7 @@
 </script>
 
 <!-- Escape closes the panel when it is a drawer over the page (a phone) and the keys are in it -->
-<svelte:window onfocus={loadSkills} onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
+<svelte:window onfocus={loadCommands} onkeydown={(event) => { if (event.key === 'Escape' && showPanel && narrow.rail && event.target instanceof Element && event.target.closest('.side-panel')) closePanel(); }} />
 
 {#snippet callDetail(call: Shown)}
   {@const read = call.result === undefined ? null : withoutWarnings(call.result)}
@@ -1329,7 +1343,7 @@
                 {#if message.quiz}
                   <div class="bubble quiz-bubble"><span class="quiz-label">{message.quiz.label}</span>
                     {#if message.quiz.body}<div class="markdown" use:markdown={message.quiz.body}></div>{/if}</div>
-                {:else if message.shown?.trim()}<div class="bubble markdown" use:markdown={message.shown}></div>{/if}
+                {:else if message.shown?.trim()}<div class="bubble markdown" use:markdown={message.command ? drawn(message.shown) : message.shown}></div>{/if}
                 {#if message.attachments.length}
                   {@render files(message)}
                 {/if}
@@ -1443,7 +1457,7 @@
         {/key}
       {:else}
       <div class="composer-inner">
-        {#if rows.length}<SkillMenu {rows} {at} projects={projectList} onPick={pickSkill} />{/if}
+        {#if rows.length}<SkillMenu {rows} {at} projects={projectList} onPick={pickCommand} />{/if}
         {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
           <div class="chips" aria-label="Tools of this conversation">
             {#each activePacks.filter((id) => id !== 'web') as id (id)}
@@ -1472,12 +1486,20 @@
             </span>
           </div>
         {/if}
-        <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={draft} bind:this={box}
-          role={combo ? 'combobox' : undefined} aria-autocomplete={combo ? 'list' : undefined} aria-haspopup={combo ? 'listbox' : undefined}
-          aria-expanded={combo ? rows.length > 0 : undefined} aria-controls={rows.length ? 'skill-menu' : undefined}
-          aria-activedescendant={rows.length ? optionId(rows[at].name) : undefined}
-          onkeydown={keydown} onkeyup={moved} onclick={moved} oninput={typed} onfocus={() => (menuShut = false)} onblur={() => (menuShut = true)}
-          onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
+        <!-- A text that starts with a command is drawn by the layer behind the box (same font, padding and wrapping): the name in the accent colour, the arguments the
+             command expects faded after it. The box itself keeps the text, the caret and the selection, and is what is sent: its own letters are transparent only then. -->
+        <div class="box">
+          {#if styled}
+            <div class="mirror" aria-hidden="true" bind:this={mirror}><span class="command-name" style:letter-spacing={`${spacing(styled.name)}px`}>{styled.name}</span>{styled.rest}<span class="faded">{styled.faded}</span></div>
+          {/if}
+          <textarea rows="1" placeholder="Write to Clara" aria-label="Your message" bind:value={draft} use:autosize={[draft, styled]} bind:this={box} class:mirrored={!!styled}
+            role={combo ? 'combobox' : undefined} aria-autocomplete={combo ? 'list' : undefined} aria-haspopup={combo ? 'listbox' : undefined}
+            aria-expanded={combo ? rows.length > 0 : undefined} aria-controls={rows.length ? 'skill-menu' : undefined}
+            aria-activedescendant={rows.length ? optionId(rows[at].name) : undefined}
+            onkeydown={keydown} onkeyup={moved} onclick={moved} oninput={typed} onfocus={() => (menuShut = false)} onblur={() => (menuShut = true)}
+            onscroll={() => { if (mirror && box) mirror.scrollTop = box.scrollTop; }}
+            onpaste={paste} disabled={!!conversation?.archived || !!loadError}></textarea>
+        </div>
         <div class="composer-bar">
           <PlusMenu packs={packList} active={activePacks} projects={projectList} project={projectId} disabled={!!loadError} onFiles={() => picker?.click()}
             onFolder={pickFolder} {folderSupported} onToggle={togglePack} onProject={chooseProject} />
@@ -1496,10 +1518,9 @@
           {/if}
         </div>
       </div>
-      {#if isGoalCommand(draft)}<SkillHint hint={SYNTAX} chips={[]} onOn={() => {}} />{/if}
-      {#if hinted && (hinted.argument_hint || chips.length)}<SkillHint hint={hinted.argument_hint} {chips} onOn={switchOn} />{/if}
+      {#if hinted && chips.length}<SkillHint {chips} onOn={switchOn} />{/if}
       {/if}
-      <p class="composer-hint">Enter sends, Shift+Enter starts a new line.{skills.length ? ' Type / to run a skill.' : ''} Drop or paste files to attach them (4 at most).</p>
+      <p class="composer-hint">Enter sends, Shift+Enter starts a new line.{commands.length ? ' Type / for commands.' : ''} Drop or paste files to attach them (4 at most).</p>
     </div>
   </div>
   <GrantBar />

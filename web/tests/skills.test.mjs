@@ -1,10 +1,10 @@
-// The rules of the skills pages and of the "/" menu (src/lib/skills.ts).
+// The rules of the skills pages and of the "/" menu and how a command is drawn (src/lib/skills.ts).
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { repack } from '../src/lib/documents.ts';
 import {
-  MAX_ZIP, addBody, cap, chipsFor, filterSkills, held, hintSkill, insertSkill, isCommand, isRan, menuKey, previewSource, resendOf, scopeLabel, scopeProblem,
+  MAX_ZIP, addBody, cap, chipsFor, commandOf, drawn, filterSkills, held, insertSkill, isCommand, isRan, menuKey, mirrorOf, previewSource, resendOf, scopeLabel, scopeProblem,
   slashWord, typedCommand, zipProblem,
 } from '../src/lib/skills.ts';
 
@@ -31,11 +31,26 @@ test('the slash word is the first word of a text that starts with a slash, while
 
 test('the menu lists prefix matches first, then names that contain the word, then descriptions, each in name order', () => {
   assert.deepEqual(filterSkills(skills, 'rev').map((s) => s.name), ['review', 'review-pr', 'translate']);
-  assert.deepEqual(filterSkills(skills, 'pr').map((s) => s.name), ['pr-notes', 'review-pr']);
+  assert.deepEqual(filterSkills(skills, 'pr').map((s) => s.name), ['pr-notes', 'review-pr', 'weekly-report']); // the last holds p then r
   assert.deepEqual(filterSkills(skills, 'REV').map((s) => s.name), ['review', 'review-pr', 'translate']);
   assert.deepEqual(filterSkills(skills, '').map((s) => s.name), ['pr-notes', 'review', 'review-pr', 'translate', 'weekly-report']);
   assert.deepEqual(filterSkills(skills, 'nothing'), []);
   assert.equal(filterSkills(skills, 'review')[0].name, 'review'); // the exact name leads
+});
+
+test('the letters of a word in order find a name, after the other groups, and a typing mistake finds nothing', () => {
+  const commands = [
+    { name: 'add-dir', description: 'Add a folder' },
+    { name: 'goal', description: 'Keep working until a condition is met' },
+    { name: 'review', description: 'Look at a file' },
+    { name: 'dir-size', description: 'The addir total' },
+  ];
+  assert.deepEqual(filterSkills(commands, 'addir').map((c) => c.name), ['dir-size', 'add-dir']); // a description first, then the letters in order
+  assert.deepEqual(filterSkills(commands, 'rvw').map((c) => c.name), ['review']);
+  assert.deepEqual(filterSkills(commands, 'gl').map((c) => c.name), ['goal']);
+  assert.deepEqual(filterSkills(commands, 'dir').map((c) => c.name), ['dir-size', 'add-dir']); // starts with, then contains: unchanged
+  assert.deepEqual(filterSkills(commands, 'gaol'), []); // no correction of typing mistakes
+  assert.deepEqual(filterSkills(commands, 'ZZ'), []);
 });
 
 test('the keys: arrows wrap, Tab and Enter pick, Escape closes, Enter sends when the word is already the name', () => {
@@ -61,15 +76,51 @@ test('choosing a skill puts /name and a space in the first word and keeps the ar
   assert.deepEqual(insertSkill('/rev\nmore', 'review-pr'), { text: '/review-pr\nmore', caret: 11 });
 });
 
-test('the line under the box is for a first word that is exactly a skill, followed by a space or the end', () => {
-  assert.equal(hintSkill('/review-pr', skills)?.name, 'review-pr');
-  assert.equal(hintSkill('/review-pr 12 security', skills)?.name, 'review-pr');
-  assert.equal(hintSkill('/review-pr\n12', skills)?.name, 'review-pr');
-  assert.equal(hintSkill('/review-p', skills), null);
-  assert.equal(hintSkill('/Review-pr', skills), null);
-  assert.equal(hintSkill('/', skills), null);
-  assert.equal(hintSkill('say /review', skills), null);
-  assert.equal(hintSkill('/unknown 1', skills), null);
+test('a command is the first word when it is exactly a name, followed by a space, a line break or the end', () => {
+  assert.equal(commandOf('/review-pr', skills)?.name, 'review-pr');
+  assert.equal(commandOf('/review-pr 12 security', skills)?.name, 'review-pr');
+  assert.equal(commandOf('/review-pr\n12', skills)?.name, 'review-pr');
+  assert.equal(commandOf('/review-p', skills), null);
+  assert.equal(commandOf('/Review-pr', skills), null);
+  assert.equal(commandOf('/', skills), null);
+  assert.equal(commandOf('say /review', skills), null);
+  assert.equal(commandOf('/unknown 1', skills), null);
+});
+
+const commands = [
+  { name: 'goal', kind: 'builtin', argument_hint: '[--turns N] <condition> | clear', description: 'Keep working until a condition is met' },
+  { name: 'review-pr', kind: 'skill', argument_hint: '[pull-request-number]', description: 'Review a pull request' },
+  { name: 'summary', kind: 'skill', argument_hint: '', description: 'Summarise' },
+];
+
+test('the box draws the name of a command, and its arguments faded while only one space follows the name', () => {
+  assert.deepEqual(mirrorOf('/goal ', commands), { name: '/goal', rest: ' ', faded: '[--turns N] <condition> | clear' });
+  assert.deepEqual(mirrorOf('/review-pr ', commands), { name: '/review-pr', rest: ' ', faded: '[pull-request-number]' });
+  assert.deepEqual(mirrorOf('/review-pr', commands), { name: '/review-pr', rest: '', faded: '' }); // no space yet: nothing is faded
+  assert.equal(mirrorOf('/review-pr  ', commands)?.faded, ''); // the first letter, or anything else, typed after the name removes them
+  assert.equal(mirrorOf('/review-pr 1', commands)?.faded, '');
+  assert.equal(mirrorOf('/review-pr\n', commands)?.faded, '');
+  assert.deepEqual(mirrorOf('/review-pr 12 security', commands), { name: '/review-pr', rest: ' 12 security', faded: '' });
+  assert.deepEqual(mirrorOf('/summary ', commands), { name: '/summary', rest: ' ', faded: '' }); // a command that expects nothing fades nothing
+});
+
+test('a word that is no command is plain: no colour, no faded arguments', () => {
+  assert.equal(mirrorOf('/review-p ', commands), null); // a name not yet complete
+  assert.equal(mirrorOf('/unknown ', commands), null);
+  assert.equal(mirrorOf('/Goal ', commands), null);
+  assert.equal(mirrorOf('say /goal ', commands), null);
+  assert.equal(mirrorOf(' /goal ', commands), null);
+  assert.equal(mirrorOf('/', commands), null);
+  assert.equal(mirrorOf('', commands), null);
+  assert.equal(mirrorOf('/goal ', []), null); // the list is not read yet
+});
+
+test('a sent command is drawn with its name wrapped, and the rest of the text as it was', () => {
+  assert.equal(drawn('/review-pr 12 security'), '<span class="command-name">/review-pr</span> 12 security');
+  assert.equal(drawn('/summary'), '<span class="command-name">/summary</span>');
+  assert.equal(drawn('/review-pr\nmore'), '<span class="command-name">/review-pr</span>\nmore');
+  assert.equal(drawn('/review-pr<b>'), '/review-pr<b>'); // not a name: nothing is wrapped, so nothing is made of the text
+  assert.equal(drawn('say /review-pr'), 'say /review-pr');
 });
 
 test('a pack is on when the server says so or when you hold it here; a conversation not started goes by what you hold', () => {

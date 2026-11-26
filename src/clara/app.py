@@ -33,6 +33,7 @@ from .api import admin as admin_api
 from .api import auth as auth_api
 from .api import automations as automations_api
 from .api import chat as chat_api
+from .api import commands as commands_api
 from .api import connections as connections_api
 from .api import conversations as conversations_api
 from .api import dictation as dictation_api
@@ -423,6 +424,7 @@ def create_app(s: Services) -> FastAPI:
     for router in (
         auth_api.router,
         chat_api.router,
+        commands_api.router,
         conversations_api.router,
         goals_api.router,
         plans_api.router,

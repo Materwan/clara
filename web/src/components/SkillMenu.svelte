@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { type Project, type Skill, optionId, projectNames } from '../lib/skills';
+  import { type Command, type Project, optionId, projectNames } from '../lib/skills';
 
-  // The menu of "/" above the box you write in: the skills this conversation can run, filtered by what was typed. A listbox the box points
+  // The menu of "/" above the box you write in: the commands this conversation can run, filtered by what was typed. A listbox the box points
   // at (aria-activedescendant): the keys stay in the box, which is why the rows are not focusable. The box handles Up, Down, Tab, Enter
   // and Escape (Chat.svelte, lib/skills.ts menuKey); a click or a tap chooses too.
-  let { rows, at, projects, onPick }: { rows: Skill[]; at: number; projects: Project[]; onPick: (skill: Skill) => void } = $props();
+  let { rows, at, projects, onPick }: { rows: Command[]; at: number; projects: Project[]; onPick: (command: Command) => void } = $props();
 
   // the row the keys are on stays in view inside the list (scrollIntoView would move the page too, under a phone's keyboard)
   $effect(() => {
@@ -18,13 +18,13 @@
 
 <!-- the mouse must not take the focus from the box: a click on a row chooses it, and the keys go on working -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (the box drives the listbox by the keys; the pointer is the same choice) -->
-<ul class="skill-menu frame" id="skill-menu" role="listbox" aria-label="Skills" onmousedown={(event) => event.preventDefault()}>
-  {#each rows as skill, index (skill.name)}
+<ul class="skill-menu frame" id="skill-menu" role="listbox" aria-label="Commands" onmousedown={(event) => event.preventDefault()}>
+  {#each rows as command, index (command.name)}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus (the options are chosen from the box, by aria-activedescendant) -->
-    <li id={optionId(skill.name)} role="option" aria-selected={index === at} class:on={index === at} onclick={() => onPick(skill)}>
-      <span class="name">/{skill.name}</span>
-      <span class="what">{skill.description}</span>
-      {#if skill.scope === 'projects'}<span class="tag where" title={projectNames(skill, projects)}>{projectNames(skill, projects)}</span>{/if}
+    <li id={optionId(command.name)} role="option" aria-selected={index === at} class:on={index === at} onclick={() => onPick(command)}>
+      <span class="name">/{command.name}</span>
+      <span class="what">{command.description}</span>
+      {#if command.scope === 'projects'}<span class="tag where" title={projectNames({ projects: command.projects ?? [] }, projects)}>{projectNames({ projects: command.projects ?? [] }, projects)}</span>{/if}
     </li>
   {/each}
 </ul>

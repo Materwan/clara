@@ -336,53 +336,6 @@ The server and the web page are done (`docs/DECISIONS.md`, « `/goal` »). Left:
   On the web page a paused goal that has reached its turn or time limit shows no **Resume** (the server would answer 409), only **+5 turns** or **+10 min**.
 - **Not tried with a real model:** the web page was checked in a browser against a scripted model and judge only.
 
-## Command display and completion in the web chat box
-
-The web chat box already has a `/` menu for skills (prefix matches first, Tab inserts the name), but a command is written like plain text,
-and the arguments a command expects appear only in a line under the box, not in the box itself. The owner wants the box to draw a command
-as a command, show the expected arguments in faded text as the command is typed, and offer similar commands as the owner types, with Tab
-completing the choice. The list covers every command, including the ones added later.
-
-What the owner decided:
-
-- **Scope:** every command: the skills of the conversation's project and `/goal` today, and any command added later, all from one list the
-  server gives.
-- **Colour:** the name of a command in the box is drawn in the accent colour, in the monospace font; the rest of the text keeps its look.
-- **Sent messages:** a message that starts with a command is drawn in the same style in its bubble.
-- **Arguments:** once the name is complete and nothing but a space follows it, the arguments the command expects appear after it in faded
-  transparent text. The first letter typed after the name removes them.
-- **Similar commands:** the menu keeps its order (names that start with the text, then names that contain it, then descriptions) and adds
-  matches of the letters in order, so `addir` finds `add-dir`. No correction of typing mistakes.
-- **Tab:** completes the row the menu is on, as now. Enter keeps its rule: it sends when the word is already the exact name of that row.
-- **Unknown word:** a word after `/` that is not a command is drawn as plain text, with no colour and no faded arguments.
-
-What I corrected or added to the owner's plan:
-
-- **A list of future commands:** the site cannot know commands that do not exist yet. The list comes from one new server route for the
-  conversation's project: skills and built-in commands (`/goal` among them), each with its name, its argument hint and its description.
-  A command added later gets its row when it is specified. The route is a new API surface, so `FEATURES.md` names it when this is built
-  (`tests/test_docs.py` checks that).
-- **`/goal`:** today the menu is hidden while `/goal` is typed and its syntax is shown under the box. With this item `/goal` is in the menu,
-  completes with Tab, and its argument hint is the faded text.
-
-Not decided:
-
-- Whether the line « Arguments: … » under the box stays once the faded text exists. The owner chose the faded text; the fate of the line is open.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- How the colour and the faded text are drawn over the text box (the caret and the selection keep working), the name and fields of the route,
-  the layout on a phone.
-
-What the current design already sets:
-
-- The box is a plain `textarea` (`web/src/pages/Chat.svelte`). The skill menu is `web/src/components/SkillMenu.svelte`, its rules are in
-  `web/src/lib/skills.ts` (`filterSkills`, `menuKey`, `insertSkill`), and the argument line is `web/src/components/SkillHint.svelte`.
-  The menu is hidden for `/goal` (`isGoalCommand` in `web/src/lib/goal.ts`).
-- The server expands a skill command in the chat request path, and a command goes again as typed (`docs/DECISIONS.md`, « Skills »): colour
-  and faded text never change the text that is sent.
-- Web tests live in `web/tests/` (`skills.test.mjs` covers the menu rules).
-
 ## Sub agents: Clara delegates a task and keeps the context of the work
 
 Clara can hand a task to a sub agent, which works in its own conversation and returns a short report, so the long reading or searching does not fill the context of the conversation that asked. Sub agents were in Clara from migration 0006 and were removed by migration 0019 on 2026-10-24, when the sub agents of the custom console were dropped (`CHANGELOG.md`). This item brings them back for Clara's own use, with a new design and not the old `parent_id` tree.

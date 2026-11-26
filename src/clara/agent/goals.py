@@ -51,6 +51,7 @@ RESULT_CHARS = 1_500
 ARGUMENT_CHARS = 200
 RESULTS_CHARS = 16_000
 FLAGS = ("turns", "minutes", "model")
+SYNTAX = "[--turns N] [--minutes N] [--model provider:model] <condition> | clear | resume"  # what a client shows after `/goal`
 ADDRESS = re.compile(r"https?://\S+", re.IGNORECASE)
 
 JUDGE_INSTRUCTIONS = (

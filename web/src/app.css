@@ -738,6 +738,19 @@ details.setup > summary:hover { color: var(--text); }
 .composer .chips { padding: var(--sp-4) var(--sp-4) var(--sp-8); }
 .composer textarea { width: 100%; border: none; background: transparent; padding: var(--sp-8) var(--sp-10); max-height: 220px; font-size: var(--fs-lg); line-height: 1.5; display: block; resize: none; }
 .composer textarea:focus, .composer textarea:focus-visible { outline: none; }
+/* A command in the box: the layer behind it draws the same text (same font, padding and wrapping) with the name coloured and the arguments faded; the box keeps the
+   caret and the selection, and only its letters turn transparent. */
+.composer .box { position: relative; }
+.composer .mirror {
+  position: absolute; inset: 0; padding: var(--sp-8) var(--sp-10); font-size: var(--fs-lg); line-height: 1.5; white-space: pre-wrap; overflow-wrap: break-word;
+  overflow-y: auto; scrollbar-color: transparent transparent; pointer-events: none; user-select: none; /* the same gutter as the box when it scrolls, drawn invisible */
+}
+.composer .mirror .command-name { line-height: 0; } /* a smaller font must not make the first line taller than the box's */
+.composer .mirror .faded { color: var(--muted); }
+.composer textarea.mirrored { color: transparent; caret-color: var(--text); }
+.composer textarea.mirrored::selection { color: transparent; }
+@media (forced-colors: active) { .composer .mirror { display: none; } } /* the system colours show the box's own letters: it is the plain box then */
+.command-name { font-family: var(--font-mono); font-size: .88em; color: var(--accent-text); } /* a command, in the box and in a sent message */
 .composer-bar { display: flex; align-items: center; gap: var(--sp-6); padding-top: var(--sp-2); }
 .composer-bar .attach { cursor: pointer; }
 .packs { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-12); display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; } /* a fieldset is as wide as its widest control unless told it may shrink */

@@ -7,7 +7,6 @@ export type Goal = {
 };
 
 export const WAITING = 'waiting for your approval'; // the pause that the owner's answer to an approval ends (agent/goals.py WAITING)
-export const SYNTAX = '[--turns N] [--minutes N] [--model provider:model] <condition> | clear | resume';
 
 /** A box that starts with the word `/goal`, alone or followed by a space or a line break: it is sent to the goal route, never to the model. */
 export const isGoalCommand = (text: string): boolean => /^\s*\/goal(\s|$)/.test(text);

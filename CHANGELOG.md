@@ -3,6 +3,16 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## Unreleased
+
+**The web chat box draws commands.** A text that starts with a command (a skill of the conversation's project, or `/goal`) shows the name in the accent colour
+and the monospace font; once the name is followed by one space, the arguments it expects appear after it in faded text until you type a letter (the line
+« Arguments: … » under the box is gone). The `/` menu lists every command, `/goal` included (it was hidden while typed), and now finds names by their
+letters in order (`addir` finds `add-dir`). A sent message that starts with a command is drawn the same way in its bubble. What is sent is exactly what is
+typed. **`goal` is now a reserved name:** a skill can no longer be added with it (it was shadowed by `/goal` anyway). **Interface change:** new route `GET /v1/commands?project=<id>|none`,
+the one list of commands (`name`, `kind`, `argument_hint`, `description`, and for a skill `scope` and `projects`). No migration. **Tried in headless Chromium** (1280 and 390 px, light and dark, a scripted model);
+**not tried** on a real phone, with an IME, or in Safari and Firefox.
+
 ## v1.7.0 — 26/11/2026
 
 **Voice dictation, `/goal`, and a Plan pack.** You can dictate to Clara from the web site, the terminal, Discord, the Windows island and the phone app

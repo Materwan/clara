@@ -59,6 +59,8 @@ RESERVED = frozenset(
         "secrets", "sources", "stop", "tokens", "trust", "update", "upkeep", "usage", "vault",
         # this feature and the usual ones of other agents
         "skills", "skill", "clear", "compact", "config", "settings", "memory", "init", "login", "logout",
+        # a command of the web chat's own (api/commands.py BUILTIN: a test keeps them all here)
+        "goal",
     }
 )  # fmt: skip
 FIELDS = frozenset({"name", "description", "argument-hint", "disable-model-invocation", "packs"})

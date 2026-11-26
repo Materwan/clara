@@ -1,6 +1,7 @@
-// Skills, without the pages: the "/" menu of the chat (the word being typed, the rows, the keys, what goes in when one is chosen), the line
-// under the box (the packs a skill needs), how a stored command is drawn and sent again, and the checks and the body of adding a skill.
-// The server checks everything again (api/skills.py, skills/parse.py); this only says it where you are looking.
+// Skills and commands, without the pages: the "/" menu of the chat (the word being typed, the rows, the keys, what goes in when one is chosen),
+// how a command is drawn in the box and in a bubble, the line under the box (the packs a skill needs), how a stored command is sent again, and
+// the checks and the body of adding a skill. The server checks everything again (api/skills.py, skills/parse.py); this only says it where you
+// are looking.
 
 import { type Document, type Sent, repack, unpack } from './documents';
 
@@ -12,6 +13,11 @@ export const SHOWN_CHARS = 20_000; // the text of a file shown on the page: the 
 export type Skill = {
   name: string; description: string; argument_hint: string; packs: string[]; disable_model_invocation: boolean;
   scope: 'global' | 'projects'; projects: number[]; file_count: number; size: number; created_at: string; created_by: string;
+};
+/** A row of `GET /v1/commands`: what you can type after a slash in this conversation (a skill, or a command of Clara's own such as `/goal`). A skill row also
+ *  says where it is kept, as the Skills page does. */
+export type Command = {
+  name: string; kind: 'skill' | 'builtin'; argument_hint: string; description: string; scope?: 'global' | 'projects'; projects?: number[];
 };
 export type Chip = { id: string; label: string; on: boolean; available: boolean; reason: string };
 export type Project = { id: number; name: string };
@@ -26,12 +32,20 @@ export function slashWord(text: string, caret: number): { query: string; end: nu
   return caret >= 1 && caret <= end ? { query: text.slice(1, end), end } : null;
 }
 
-/** The skills that fit what was typed: the names that start with it first, then those that contain it, then those whose description does; each group in name order. */
+/** Are the letters of `word` in `name`, in that order, with anything between them (`addir` in `add-dir`)? */
+const inOrder = (name: string, word: string): boolean => {
+  let next = 0;
+  for (const letter of name) if (letter === word[next]) next++;
+  return next === word.length;
+};
+
+/** The commands that fit what was typed: the names that start with it first, then those that contain it, then those whose description does, then those
+ *  that hold its letters in order; each group in name order. A typing mistake is not corrected. */
 export function filterSkills<T extends { name: string; description: string }>(skills: T[], query: string): T[] {
   const word = query.toLowerCase();
   const rank = (skill: T): number =>
-    skill.name.startsWith(word) ? 0 : skill.name.includes(word) ? 1 : skill.description.toLowerCase().includes(word) ? 2 : 3;
-  return skills.filter((skill) => rank(skill) < 3).sort((a, b) => rank(a) - rank(b) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    skill.name.startsWith(word) ? 0 : skill.name.includes(word) ? 1 : skill.description.toLowerCase().includes(word) ? 2 : inOrder(skill.name, word) ? 3 : 4;
+  return skills.filter((skill) => rank(skill) < 4).sort((a, b) => rank(a) - rank(b) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 export type MenuKey = { to: number } | { pick: number } | { close: true } | null;
@@ -56,11 +70,24 @@ export function insertSkill(text: string, name: string): { text: string; caret: 
   return { text: head + (/^\s/.test(rest) ? rest : ` ${rest}`), caret: head.length + 1 };
 }
 
-/** The skill the first word names exactly, followed by a space, a line break or the end (the server's own rule): the one the line under the box is about. */
-export function hintSkill<T extends { name: string }>(text: string, skills: T[]): T | null {
+/** The command the first word names exactly, followed by a space, a line break or the end (the server's own rule): the one the box draws as a command. */
+export function commandOf<T extends { name: string }>(text: string, commands: T[]): T | null {
   const word = /^\/(\S*)(?:\s|$)/.exec(text)?.[1];
-  return word ? (skills.find((skill) => skill.name === word) ?? null) : null;
+  return word ? (commands.find((command) => command.name === word) ?? null) : null;
 }
+
+/** What the mirror behind the box draws for a text that starts with a command: its name, the text after it, and the arguments the command expects, faded,
+ *  while nothing but one space follows the name (the first letter typed after it removes them). null: the text is plain, a word that is no command included. */
+export function mirrorOf(text: string, commands: Command[]): { name: string; rest: string; faded: string } | null {
+  const found = commandOf(text, commands);
+  if (!found) return null;
+  const name = `/${found.name}`;
+  const rest = text.slice(name.length);
+  return { name, rest, faded: rest === ' ' ? found.argument_hint : '' };
+}
+
+/** The markdown of a message you typed as a command: its name wrapped, so that the bubble draws it as the box did (CSS `.command-name`). */
+export const drawn = (shown: string): string => shown.replace(/^\/[a-z0-9-]+(?=\s|$)/, (name) => `<span class="command-name">${name}</span>`);
 
 /** The packs of the line under the box. The server says which are on in a conversation that exists; one not started has the packs you hold here. */
 export function chipsFor(packs: Chip[], active: string[], started: boolean): Chip[] {
