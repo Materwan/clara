@@ -335,3 +335,93 @@ The server and the web page are done (`docs/DECISIONS.md`, « `/goal` »). Left:
 - **To confirm with the owner:** `/goal resume` (added, because a bare `/goal` shows the state: something must resume without changing a limit).
   On the web page a paused goal that has reached its turn or time limit shows no **Resume** (the server would answer 409), only **+5 turns** or **+10 min**.
 - **Not tried with a real model:** the web page was checked in a browser against a scripted model and judge only.
+
+## Command display and completion in the web chat box
+
+The web chat box already has a `/` menu for skills (prefix matches first, Tab inserts the name), but a command is written like plain text,
+and the arguments a command expects appear only in a line under the box, not in the box itself. The owner wants the box to draw a command
+as a command, show the expected arguments in faded text as the command is typed, and offer similar commands as the owner types, with Tab
+completing the choice. The list covers every command, including the ones added later.
+
+What the owner decided:
+
+- **Scope:** every command: the skills of the conversation's project and `/goal` today, and any command added later, all from one list the
+  server gives.
+- **Colour:** the name of a command in the box is drawn in the accent colour, in the monospace font; the rest of the text keeps its look.
+- **Sent messages:** a message that starts with a command is drawn in the same style in its bubble.
+- **Arguments:** once the name is complete and nothing but a space follows it, the arguments the command expects appear after it in faded
+  transparent text. The first letter typed after the name removes them.
+- **Similar commands:** the menu keeps its order (names that start with the text, then names that contain it, then descriptions) and adds
+  matches of the letters in order, so `addir` finds `add-dir`. No correction of typing mistakes.
+- **Tab:** completes the row the menu is on, as now. Enter keeps its rule: it sends when the word is already the exact name of that row.
+- **Unknown word:** a word after `/` that is not a command is drawn as plain text, with no colour and no faded arguments.
+
+What I corrected or added to the owner's plan:
+
+- **A list of future commands:** the site cannot know commands that do not exist yet. The list comes from one new server route for the
+  conversation's project: skills and built-in commands (`/goal` among them), each with its name, its argument hint and its description.
+  A command added later gets its row when it is specified. The route is a new API surface, so `FEATURES.md` names it when this is built
+  (`tests/test_docs.py` checks that).
+- **`/goal`:** today the menu is hidden while `/goal` is typed and its syntax is shown under the box. With this item `/goal` is in the menu,
+  completes with Tab, and its argument hint is the faded text.
+
+Not decided:
+
+- Whether the line « Arguments: … » under the box stays once the faded text exists. The owner chose the faded text; the fate of the line is open.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- How the colour and the faded text are drawn over the text box (the caret and the selection keep working), the name and fields of the route,
+  the layout on a phone.
+
+What the current design already sets:
+
+- The box is a plain `textarea` (`web/src/pages/Chat.svelte`). The skill menu is `web/src/components/SkillMenu.svelte`, its rules are in
+  `web/src/lib/skills.ts` (`filterSkills`, `menuKey`, `insertSkill`), and the argument line is `web/src/components/SkillHint.svelte`.
+  The menu is hidden for `/goal` (`isGoalCommand` in `web/src/lib/goal.ts`).
+- The server expands a skill command in the chat request path, and a command goes again as typed (`docs/DECISIONS.md`, « Skills »): colour
+  and faded text never change the text that is sent.
+- Web tests live in `web/tests/` (`skills.test.mjs` covers the menu rules).
+
+## Sub agents: Clara delegates a task and keeps the context of the work
+
+Clara can hand a task to a sub agent, which works in its own conversation and returns a short report, so the long reading or searching does not fill the context of the conversation that asked. Sub agents were in Clara from migration 0006 and were removed by migration 0019 on 2026-10-24, when the sub agents of the custom console were dropped (`CHANGELOG.md`). This item brings them back for Clara's own use, with a new design and not the old `parent_id` tree.
+
+What the owner decided:
+
+- **Clara starts a sub agent herself**, with a tool `delegate`. The owner may also see and write in the sub agent's conversation.
+- **The sub agent inherits the parent's configuration**: its tools and packs, its approval mode (including a mode that allows everything), and its model, which is the parent's model by default and can be changed.
+- **Its report is tainted**: the parent treats it as outside text, as for a web page.
+- **Depth is a setting**, so a sub agent may start its own sub agents up to a ceiling. The ceiling is fixed in the code (3 proposed, accepted by the owner), so a setting cannot make the tree unbounded.
+- **Five sub agents at the same time per conversation** by default. The owner can change this.
+- **The settings are in the Admin page of the site**, read and changed while the server runs. The owner chose this as the easier place over `.env`.
+- **The parent waits for the report** before it answers.
+- **A sub agent's conversation** has a message bar, the list of its packs and its approval mode, all editable. Its mode is the parent's by default, and it may be more permissive than the parent's.
+- **Display**: a card in the side panel of the parent conversation, beside the files the sub agent created. Opening the card opens the sub agent's conversation. Sub agent conversations are not listed in the history.
+- **Re-tasking**: the parent can send a new task to a sub agent that has finished, and the sub agent keeps what it has read and done. A re-task does not count as a new sub agent.
+- **Questions back to the parent**: a sub agent can end its turn with a question instead of a report. The parent receives the question, answers it with a re-task, and the sub agent carries on.
+- **An approval inside a sub agent** does not block the parent: the action is not done, the request goes to the owner, and the parent is told.
+
+What I corrected or added to the owner's plan:
+
+- **Inherited « allow everything » and the taint rule.** A task that has read outside text is tainted, and the gate asks for the classes it raises when tainted (`src/clara/gate/actions.py:140`, `src/clara/gate/modes.py:273`). The owner chose that a sub agent keeps asking for those classes even in a mode that allows everything, so a hostile page cannot make a sub agent send mail or change an account without a question.
+- **No mode or level in the tool.** `delegate` takes no argument that sets a mode or a level. Only a token with the approval scope `all` changes a mode (`docs/DECISIONS.md`, the rule of the scope `all`), and Clara has no tool to do it (`docs/THREAT-MODEL.md`, row 3 of the gate). A sub agent's mode is changed by the owner only.
+- **The owner chose that a sub agent may be more permissive than its parent and may receive packs the parent does not have.** The gate still decides each call of a sub agent, so this does not bypass it, but it is the widest form of the change and should be read as the owner's choice.
+
+Not decided:
+
+- What happens when the parent re-tasks a sub agent that is still running: refused, or queued after the running task.
+- The maximum time the parent waits for a report, and what it receives when that time passes.
+- The largest size of a report, and whether a report that is cut is said to the parent.
+
+Left for the implementation (the owner asked to see the proposal and approve it before it is built):
+
+- The name and fields of the tool and of its re-task form, the layout of the card, how the Admin page shows the settings, the migration that holds the sub agent's link to its parent.
+
+What the current design already sets:
+
+- A conversation's mode is its own, and only a token with the approval scope `all` changes it (`docs/DECISIONS.md`).
+- The quarantined reader already reads outside text in a call without tools or memory, and its report is checked (`src/clara/agent/reader.py`, `docs/DECISIONS.md`, the rows on the quarantined reader).
+- The side panel already lists the files a conversation wrote, found from the workspace's git history (`docs/DECISIONS.md`, the side panel rows).
+- `FEATURES.md` must name the new tool and the settings, and the tool count (95 today, `FEATURES.md`) must be updated, else `tests/test_docs.py` fails.
+- The next migration number is 0041 (the highest is `0040_plans.sql`). Check the other worktrees before taking it.
