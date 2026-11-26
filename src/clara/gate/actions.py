@@ -243,8 +243,8 @@ class Situation:
     # The name of the conversation's mode (gate/modes.py). Toolbox.call fills it from the conversation at every call; a Situation
     # built by hand (the mode tester without one, a record in the audit log) leaves None: the default mode decides.
     mode_name: str | None = None
-    # The conversation is a sub agent's (agent/subagents.py): in a tainted turn it is asked for the classes in RAISED_WHEN_TAINTED
-    # whatever its mode says, even a mode that approves everything (Gate.decide)
+    # The conversation is a sub agent's (agent/subagents.py). It changes no decision (its mode decides, as in any conversation): it
+    # names the request's card (Approvals.create) and the audit log
     sub_agent: bool = False
 
     def describe(self) -> str:

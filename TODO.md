@@ -375,45 +375,6 @@ What the current design already sets:
 - Code: `web/src/lib/tools.ts` (`outcome()`), `src/clara/gate/approvals.py` (`WAITING`, `DENIED`, `finish()`).
 - Read in the code only; the bug was not reproduced in a browser.
 
-## Sub agents: the mode decides after outside content
-
-Today a sub agent that read untrusted content is asked for every class the tainted-turn rule raises (`RAISED_WHEN_TAINTED`:
-mail sending, GitHub and Drive writes, and others), whatever its mode says, even a mode that approves everything. The raise is in
-`Gate.decide` (`src/clara/gate/engine.py`), decided on 2026-11-26 (`docs/DECISIONS.md`, « Sub agents »). The owner asks to remove it:
-a sub agent follows its mode like any other conversation.
-
-What the owner decided:
-
-- **The raise goes:** `Gate.decide` no longer asks a sub agent for the classes of `RAISED_WHEN_TAINTED` because it is a sub agent.
-  Its decision is the verdict of its mode, the default mode when it has none.
-- **The mode decides alone:** a mode that approves a class in a tainted turn lets the sub agent do it without a question, as it
-  does for any conversation.
-- **The mode stays a copy of the parent's:** a sub agent still takes its parent's mode at its start, unchanged.
-
-What I corrected or added to the owner's plan:
-
-- **It reverses a decision of 2026-11-26.** The row « A sub agent that read outside content keeps asking, in every mode » of
-  `docs/DECISIONS.md`, the sub agents paragraph of `FEATURES.md`, the docstring of `src/clara/gate/engine.py` and the three tests of
-  `tests/test_subagents.py` that assert the raise change with it. The build adds a dated entry to `docs/DECISIONS.md`.
-- **The cost is visible.** When a parent's mode approves a mail sending in a tainted turn, a sub agent that read a page sends the
-  mail with no card. The built-in default mode asks for these classes when tainted (`builtin_default` in `src/clara/gate/modes.py`,
-  read in the code, not run), so the cost falls on modes that approve them. This is the cost the owner accepted; it is recorded
-  here so that it is seen when the item is built.
-- **`docs/THREAT-MODEL.md` names no sub agent.** The build adds a row: a page read by a sub agent is handled by the mode the sub
-  agent was given.
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The wording of the approval card for a sub agent's request, and the tests to rewrite.
-
-What the current design already sets:
-
-- The order of a decision in `docs/DECISIONS.md` and the gate docstring (`src/clara/gate/engine.py`): the floor, the local-only
-  rule, the chat-only rule, the mode's verdict, then the secret check, which raises to `ask` in every mode. Nothing here changes.
-- A sub agent takes its parent's mode and packs at its start, and a sub agent's approval does not hold its parent (`docs/DECISIONS.md`,
-  « Sub agents »). Both stay.
-- `Situation.sub_agent` (`src/clara/gate/actions.py`) is still needed for the wording of a request and the audit log.
-
 ## Clara answers the owner while she waits
 
 Today, while Clara's turn waits for a sub agent's report, for an approval card or for the answers to `ask_questions`, a message from the owner does not reach her. The web page holds it in its outbox and sends it when the answer ends (`web/src/pages/Chat.svelte`), and a message sent to the server gets 409 (`src/clara/api/chat.py`). The owner asks that the message interrupt the wait: she reads it, answers with the context of the conversation, and waits again. The turn lock stays, so only one turn runs in a conversation at a time. Checked in the code on 2026-11-26.

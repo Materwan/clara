@@ -11,8 +11,8 @@ parent has: the tools (the packs, the limits of a hook's run), the mode (a mode 
 
 * **The report is outside text.** `delegate` taints the turn like a web page does (`taints=True`): the parent, and every later turn of
   it, treats the report as untrusted. The sub agent is tainted from its first word when the parent was.
-* **It keeps asking.** A sub agent that read untrusted content is asked for the classes the tainted-turn rule raises, in any mode
-  (`Gate.decide`, `Situation.sub_agent`).
+* **Its mode decides alone.** A sub agent is decided like any conversation, after outside content too: a mode that approves a class
+  in a tainted turn lets it act without a card. Its requests say whose they are (`Situation.sub_agent`, the card's last line).
 * **An approval inside it does not block its parent.** The sub agent's turn does not wait for answers: the request goes to the owner,
   the action is not done, the sub agent is told so, and the parent is told with the report.
 * **Depth and number.** `MAX_DEPTH` levels, fixed here (no setting raises it); `sub_agents_max` sub agents of one conversation work

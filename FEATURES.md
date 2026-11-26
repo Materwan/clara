@@ -765,8 +765,9 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   (and the limits of a hook's run), its mode (a mode that approves everything included), its model setting (the parent's own: the default model when the parent follows it), its
   project, incognito and local-only. The tool has **no argument for a mode, a level or a model**, so only you change those afterwards, and Clara has
   no tool to. **The report is outside text** (`delegate` taints, like a web page: the parent stays tainted for good), cut at 20,000 characters with a
-  last line that says so, and the result tells Clara when it was cut; the sub agent is tainted from its first word when its parent was. **A sub agent that
-  read outside content is asked for the classes the tainted-turn rule raises** (section 9) **even in a mode that approves everything.** The task
+  last line that says so, and the result tells Clara when it was cut; the sub agent is tainted from its first word when its parent was. **A sub agent follows its
+  mode, after outside content too:** a mode that approves a class in a tainted turn lets it act with no card, as in any conversation (section 9; the
+  secret check still asks in every mode). Its requests are the ordinary cards of its conversation, with a line `From sub agent "<title>" of this conversation`. The task
   is Clara's text, not yours: the addresses in it are not ones you wrote (only those you wrote in the parent are trusted). **An approval inside a sub
   agent does not hold its parent:** the sub agent's turn does not wait, the request goes to you (the Waiting list, Discord) with its conversation,
   the action is not done, the sub agent is told, and the parent's result says what waits. A sub agent may end its turn with a question (a last message
@@ -1511,11 +1512,6 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 
 ### What no mode changes
 
-- **Sub agents are held to the tainted-turn rule in every mode.** In a sub agent's conversation (`conversations.parent_id`), a turn that read
-  outside content is asked for each class in the raised list above (`github_write`, `drive_write`, `drive_trash`, `mail_send`, `mail_label_delete`,
-  `vault_write`, `vault_destroy`, `run_network`, `automation`, `deferred`, `feed_follow`, `skill_run`, `skill_pack`, `fetch_other`) even when its
-  mode, copied from its parent, approves them: `Gate.decide` raises such a call to `ask` and the request says why. A conversation that is not a sub agent
-  keeps the `(if tainted)` verdicts of its mode.
 - **The floor** (no mode changes it): any target inside the workspace's `.git`, any workspace path that leaves the
   workspace, and, in a local-only conversation, anything that sends something off the machine (section 3) are
   refused. Beyond the gate, by construction: no tool reaches the database, the secrets, the data folder or the

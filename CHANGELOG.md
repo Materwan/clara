@@ -3,6 +3,10 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
+## Unreleased
+
+**Sub agents follow their mode after outside content (reverses a rule of v1.8.0).** A sub agent that read untrusted content is no longer asked for the classes the tainted-turn rule raises whatever its mode says: its mode decides, as in any conversation, so a mode that approves mail sending in a tainted turn now lets a sub agent that read a page send the mail with no card (the built-in default mode still asks). The secret check still asks in every mode. A sub agent's request is the ordinary card plus the line `From sub agent "<title>" of this conversation`. No migration. **Not tried** in a browser or with a real model.
+
 ## v1.8.0 — 26/11/2026
 
 **Sub agents on the web site, command display in the chat box, and the fixes found testing them.**

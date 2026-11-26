@@ -496,9 +496,19 @@ def probe_script(llm, sub_steps):
     script(llm, lambda m, t: "ok", sub)
 
 
-async def test_a_sub_agent_that_read_outside_content_asks_for_what_it_is_raised_to_even_in_a_mode_that_allows_everything(services, llm, cid, probes):
+async def test_a_sub_agent_that_read_outside_content_follows_its_mode_so_a_mode_that_approves_everything_lets_it_send(services, llm, cid, probes):
     make(services, "everything", line("approve", tool="*"))
     own(services, cid, "everything")
+    probe_script(llm, [("fake_fetch", {}), ("probe_send", {})])
+    await call(services, cid, **TASK)
+    (sub_id,) = subs_of(services, cid)
+    assert services.agent.starts_tainted(sub_id)  # it did read outside content
+    assert probes["sent"] == 1 and not services.approvals.waiting(sub_id)  # and sent the mail with no card
+
+
+async def test_a_sub_agent_that_read_outside_content_asks_where_its_mode_asks_and_the_card_names_it(services, llm, cid, probes):
+    make(services, "careful", line("approve", tool="*", tainted="ask"))  # approves, but asks once outside content was read
+    own(services, cid, "careful")
     probe_script(llm, [("fake_fetch", {}), ("probe_send", {})])
     outcome, _ = await call(services, cid, **TASK)
     (sub_id,) = subs_of(services, cid)
@@ -506,20 +516,22 @@ async def test_a_sub_agent_that_read_outside_content_asks_for_what_it_is_raised_
     (request,) = services.approvals.waiting(sub_id)
     assert request.tool == "probe_send" and request.action_class == "mail_send"
     assert "sub agent" in request.situation and "tainted" in request.situation
-    assert "a sub agent that read outside content asks for this" in request.reason
+    assert request.reason.endswith('From sub agent "Library hours" of this conversation')
+    assert "whatever its mode says" not in request.reason and "read outside content" not in request.reason
     assert f"#{request.id}" in outcome.text and "Waiting for the person's permission" in outcome.text and "NOT done" in outcome.text
 
 
-async def test_the_same_calls_run_without_a_question_when_the_sub_agent_read_nothing_from_outside(services, llm, cid, probes):
-    make(services, "everything", line("approve", tool="*"))
-    own(services, cid, "everything")
-    probe_script(llm, [("probe_send", {})])
-    await call(services, cid, **TASK)
-    assert probes["sent"] == 1 and not services.approvals.waiting(subs_of(services, cid)[0])
+async def test_the_card_of_an_ordinary_conversation_has_no_sub_agent_line(services, probes):
+    make(services, "careful", line("approve", tool="*", tainted="ask"))  # approves, but asks once outside content was read
+    conversation = services.conversations.create("web", title="Mine", mode="careful").id
+    context = ToolContext(services, TurnState("t", conversation, "web", tainted=True, waits_for_approvals=False))
+    await services.toolbox.call("probe_send", context, {}, services.toolbox.names)
+    (request,) = services.approvals.waiting(conversation)
+    assert "sub agent" not in request.reason and "sub agent" not in request.situation
 
 
 async def test_an_ordinary_conversation_keeps_the_tainted_verdicts_of_its_mode(services, probes):
-    """The raise is for sub agents: a mode that approves everything, even when tainted, still does in a conversation of its own."""
+    """A mode that approves everything, even when tainted, does in a conversation of its own, as in a sub agent's."""
     make(services, "everything", line("approve", tool="*"))
     conversation = services.conversations.create("web", title="Mine", mode="everything").id
     context = ToolContext(services, TurnState("t", conversation, "web", tainted=True))
@@ -527,23 +539,27 @@ async def test_an_ordinary_conversation_keeps_the_tainted_verdicts_of_its_mode(s
     assert outcome.ran and probes["sent"] == 1
 
 
-def test_the_gate_raises_only_what_the_tainted_turn_rule_raises_and_only_for_a_sub_agent(services):
+def test_the_gate_decides_a_sub_agent_by_its_mode_and_the_secret_check_still_raises(services):
     from clara.gate import Action
 
     make(services, "everything", line("approve", tool="*"))
     send = Action("probe_send", "destructive", "mail_send", ("mail:to:a@b.example",), "send")
-    write = Action("probe_write", "write", "ws_write", ("ws:a.txt",), "write")
+    write = Action("probe_drive", "write", "drive_write", ("drive:f1",), "create a Drive file")
+    leak = Action("probe_send", "destructive", "mail_send", ("mail:to:a@b.example",), "send", secret_kinds=("api key",))
     decide = services.gate.decide
 
-    def situation(**fields):
-        return Situation("interactive", mode_name="everything", **fields)
+    def situation(mode_name="everything", **fields):
+        return Situation("interactive", mode_name=mode_name, **fields)
 
-    assert decide(send, situation(tainted=True, sub_agent=True)).effect == "ask"
-    assert decide(send, situation(tainted=True, sub_agent=True)).raised  # and it says why
-    assert decide(send, situation(tainted=True)).effect == "allow"  # not a sub agent
-    assert decide(send, situation(sub_agent=True)).effect == "allow"  # nothing read from outside
-    assert decide(write, situation(tainted=True, sub_agent=True)).effect == "allow"  # not a class the rule raises
-    assert decide(send, situation(tainted=True, sub_agent=True), approved=True).effect == "allow"  # the person answered
+    for fields in ({}, {"tainted": True}, {"sub_agent": True}, {"tainted": True, "sub_agent": True}):
+        assert decide(send, situation(**fields)).effect == "allow", fields  # the mode approves: a sub agent, tainted or not, is no exception
+    assert not decide(send, situation(tainted=True, sub_agent=True)).raised
+    # a mode with no line for it takes the default mode's `(if tainted)` verdict: a sub agent is no different there either
+    assert decide(write, situation(None, tainted=True, sub_agent=True)).effect == decide(write, situation(None, tainted=True)).effect == "ask"
+    # the secret check stays: it asks in every mode, a sub agent's included
+    raised = decide(leak, situation(tainted=True, sub_agent=True))
+    assert raised.effect == "ask" and "api key" in " ".join(raised.raised)
+    assert decide(leak, situation(tainted=True, sub_agent=True), approved=True).effect == "allow"  # the person answered
     assert Situation("interactive", True, False, None, True).describe() == "interactive, tainted, sub agent"
 
 

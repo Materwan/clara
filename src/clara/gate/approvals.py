@@ -33,10 +33,11 @@ from typing import TYPE_CHECKING
 from ..auth.tokens import TokenInfo
 from ..db import Database
 from ..events import TARGETS, Events
+from ..memory.conversations import MAX_TITLE
 from ..timeutil import iso, now_iso, parse_iso, utcnow
 from .actions import FOR_A_CONVERSATION, NOT_GRANTABLE, NOT_PUBLISHED, Action, Decision, Situation
 from .engine import Audit, args_digest
-from .outside import plain
+from .outside import one_line, plain
 
 if TYPE_CHECKING:
     from ..ops.alerts import Alerts
@@ -239,6 +240,9 @@ class Approvals:
     ) -> Approval:
         conversation_id = context.turn.conversation_id or None
         reasons = [decision.reason, *decision.raised]
+        if situation.sub_agent:  # the ordinary card, plus a line that names the sub agent that asks
+            title = self.db.value("SELECT title FROM conversations WHERE id = ?", (conversation_id,), "")
+            reasons.append(f'From sub agent "{one_line(title, MAX_TITLE)}" of this conversation')
         now = utcnow()
         approval_id = self.db.insert(
             "INSERT INTO approvals (conversation_id, turn_id, tool, arguments, args_digest, target, level, action_class,"
