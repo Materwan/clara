@@ -53,6 +53,7 @@ BOOKED_NEVER = {
     "plan_set": "it works on a conversation's plan, and no conversation is open when a booked call runs",
     "plan_update": "it works on a conversation's plan, and no conversation is open when a booked call runs",
     "skill_run": "its instructions are a message of the conversation it runs in, and nobody is there when a booked call runs",
+    "delegate": "its report goes to a conversation that waits for it, and nobody is there when a booked call runs",
 }
 
 

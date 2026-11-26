@@ -16,6 +16,7 @@ Targets name what is touched, with a prefix:
     history            the conversations, tasks and files of a day, read back (the packs' tools)
     discord            a thread of your Discord server
     deferred           the calls Clara booked to run later
+    subagents          the sub agents Clara hands a task to (the `delegate` tool)
 
 What happens to an action is the verdict of its conversation's mode (gate/modes.py): each tool is approved, asked or
 refused according to it. CLASSES lists the classes; their thresholds are what the default level 3 did, and the built-in
@@ -208,6 +209,7 @@ SPECIAL_TARGETS = (
     "discord",
     "automations",
     "deferred",
+    "subagents",
 )
 _GLOB_CHARS = re.compile(r"[*?\[]")
 
@@ -241,9 +243,15 @@ class Situation:
     # The name of the conversation's mode (gate/modes.py). Toolbox.call fills it from the conversation at every call; a Situation
     # built by hand (the mode tester without one, a record in the audit log) leaves None: the default mode decides.
     mode_name: str | None = None
+    # The conversation is a sub agent's (agent/subagents.py): in a tainted turn it is asked for the classes in RAISED_WHEN_TAINTED
+    # whatever its mode says, even a mode that approves everything (Gate.decide)
+    sub_agent: bool = False
 
     def describe(self) -> str:
-        return f"{self.mode}{', tainted' if self.tainted else ''}{', local only' if self.local_only else ''}"
+        return (
+            f"{self.mode}{', tainted' if self.tainted else ''}{', local only' if self.local_only else ''}"
+            f"{', sub agent' if self.sub_agent else ''}"
+        )
 
 
 def normal_target(pattern: str) -> str:

@@ -9,6 +9,9 @@
 4. **The verdict of the conversation's mode** (modes.py) for this tool, class and target: approve, ask or refuse. A turn
    that read untrusted content (a web page, a fetched file, an issue…) gets the line's `(if tainted)` verdict. A call the
    mode has no line for takes the default mode's. A refusal is final.
+   A sub agent (a conversation Clara handed a task to) that read untrusted content is asked for every class the tainted-turn
+   rule raises (`RAISED_WHEN_TAINTED`) whatever its mode says, even a mode that approves everything: a page cannot make a sub
+   agent send a mail or change an account unasked.
 5. **The secret check**, which only ever makes it stricter: content that looks like a secret, or repeats private text the
    conversation read (a search query: egress.py), leaving the machine becomes at least `ask`, always, in every mode.
 
@@ -27,6 +30,7 @@ from .actions import (
     CLASSES,
     LEAVES_MACHINE,
     OUTSIDE,
+    RAISED_WHEN_TAINTED,
     STRICTNESS,
     Action,
     Decision,
@@ -82,6 +86,15 @@ class Gate:
             return Decision("refuse", reason, by_mode=True)
         effect = "allow" if approved else VERDICT_EFFECT[verdict]
         raised: list[str] = []
+        if (
+            not approved
+            and effect == "allow"
+            and situation.sub_agent
+            and situation.tainted
+            and action.klass in RAISED_WHEN_TAINTED
+        ):
+            effect = "ask"
+            raised.append("a sub agent that read outside content asks for this, whatever its mode says")
         if not approved and self.secret_raise(action):
             if effect == "allow":
                 raised.append(

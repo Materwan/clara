@@ -737,7 +737,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   `deferred_cancel` and `DELETE /v1/deferred/{deferred_id}` do the same, and Clara can list them (`deferred_list`). Only Clara
   books one, in a chat or in a run; there is no way to book from the API. A run does not wait for your answer: its request
   is stored and pushed like any other of an unattended run, and the call is booked when you allow it. Finished calls are kept 30 days. Not bookable: the tools that need a
-  person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`, `plan_set`, `plan_update`),
+  person or a conversation (`ask_person`, `ask_questions`, `qcm`, `finish_run`, `open_second_brain`, `discord_say`, `discord_thread`, `plan_set`, `plan_update`, `delegate`),
   those run by your browser (the computer folder) and a tool that the conversation is not offered.
 - **Plan (the `plan` pack):** with the **Plan** pack (off in a new conversation; for chats and for the runs of automations, a hook's run gets it
   when its list of tools names `plan_set` or `plan_update`), Clara keeps **one plan per conversation** with `plan_set` (create or replace it:
@@ -756,6 +756,25 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
   object, or null once removed>}`) in the answer's stream, kept in a followed run like the others. A done plan stays. It is not in the Tasks
   page, has no reminder, is not read by the goal's judge, and `finish_run` does not look at it; in an automation's run it is her work list,
   read afterwards in the history. A plan tool cannot be booked. The web chat shows the plan as a read-only card in the side panel (section 4, *Chat*).
+- **Sub agents (`delegate`):** Clara hands a task to a **sub agent**, which works in a conversation of its own and answers with a report, so
+  long reading or searching does not fill the conversation that asked. `delegate(task, title)` starts one and waits for its report;
+  `delegate(task, title, sub_agent=<id>)` sends a new task to one of the conversation's sub agents (a **re-task**: it keeps what it has read and
+  done, and is not a new sub agent). A sub agent is an ordinary conversation (`conversations.parent_id`, migration 0041, and the table
+  `sub_agents` with its state `running`, `done`, `asked` or `failed` and its last report), run by the same turn as any other; it is **not listed
+  in the history** and not mirrored on Discord, and it is deleted with its parent. It **starts with what its parent has**: its packs and tools
+  (and the limits of a hook's run), its mode (a mode that approves everything included), its model (the one answering the parent's turn), its
+  project, incognito and local-only. The tool has **no argument for a mode, a level or a model**, so only you change those afterwards, and Clara has
+  no tool to. **The report is outside text** (`delegate` taints, like a web page: the parent stays tainted for good), cut at 20,000 characters with a
+  last line that says so, and the result tells Clara when it was cut; the sub agent is tainted from its first word when its parent was. **A sub agent that
+  read outside content is asked for the classes the tainted-turn rule raises** (section 9) **even in a mode that approves everything.** The task
+  is Clara's text, not yours: the addresses in it are not ones you wrote (only those you wrote in the parent are trusted). **An approval inside a sub
+  agent does not hold its parent:** the sub agent's turn does not wait, the request goes to you (the Waiting list, Discord) with its conversation,
+  the action is not done, the sub agent is told, and the parent's result says what waits. A sub agent may end its turn with a question (a last message
+  that begins `QUESTION:`) instead of a report; the parent answers it with a re-task. A re-task of a sub agent still working is **queued** behind
+  its task (the parent is told); the parent waits for the report or the end of the turn, with no timer, and a stop of the parent's turn stops the sub
+  agent. **Limits:** 3 levels deep, fixed in the code (the tool is not offered at the third); `sub_agents_max` (5) work at the same time per
+  conversation, and `delegate` refuses a sixth, a re-task of one that is idle included. A sub agent's model calls use the background pool
+  (`CLARA_BACKGROUND_SLOTS`), the usage log's kind `subagent`. The web site's card, its conversation and its settings come later.
 - **Notifications:** Clara may notify you (3 per turn, only when asked or when long work is done); you can notify
   yourself from any client or script (10 a minute).
 - **Events:** reminders, notifications, approval requests and their outcomes, alerts, server states, schedule and task
@@ -1491,6 +1510,11 @@ tainted = "ask"                 # the verdict once the conversation read untrust
 
 ### What no mode changes
 
+- **Sub agents are held to the tainted-turn rule in every mode.** In a sub agent's conversation (`conversations.parent_id`), a turn that read
+  outside content is asked for each class in the raised list above (`github_write`, `drive_write`, `drive_trash`, `mail_send`, `mail_label_delete`,
+  `vault_write`, `vault_destroy`, `run_network`, `automation`, `deferred`, `feed_follow`, `skill_run`, `skill_pack`, `fetch_other`) even when its
+  mode, copied from its parent, approves them: `Gate.decide` raises such a call to `ask` and the request says why. A conversation that is not a sub agent
+  keeps the `(if tainted)` verdicts of its mode.
 - **The floor** (no mode changes it): any target inside the workspace's `.git`, any workspace path that leaves the
   workspace, and, in a local-only conversation, anything that sends something off the machine (section 3) are
   refused. Beyond the gate, by construction: no tool reaches the database, the secrets, the data folder or the
@@ -1589,7 +1613,7 @@ the arguments (never the arguments themselves), the effect, the outcome and a de
 
 ## 10. Tools
 
-95 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
+96 tools. "Untrusted" tools taint the turn (section 9). Tools that need something absent (no workspace, no sandbox, no
 vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off, a local-only conversation) are not offered.
 
 | Tool | What it does | Class / level |
@@ -1678,6 +1702,7 @@ vault, no GitHub, Drive, Gmail, Moodle or Auriga connection, a pack that is off,
 | `deferred_cancel` | Cancel a booked call that still waits for its date (pack Booked calls) | memory / write |
 | `plan_set` | Write the plan of the conversation, or replace it: a title (100 characters) and a flat list of steps (30, 200 characters each) with a status (`todo`, `doing`, `done`, `dropped`) and a note (300 characters); an empty list removes it. The answer is the numbered plan (pack Plan; asks nothing, even after outside content) | memory / write, target `plan` |
 | `plan_update` | Change the status or the note of steps of the plan, by number; nothing else (pack Plan; asks nothing) | memory / write, target `plan` |
+| `delegate` | Hand a task to a **sub agent** and wait for its report (section 3, *Sub agents*). Arguments: `task` and `title` (both required) and, to send a new task to one of the conversation's sub agents instead of starting one, `sub_agent` (its id). It has no argument for a mode, a level or a model. The report is outside text: the tool taints the turn, as a web page does, so the conversation stays tainted. Several calls in one answer work at the same time. Not in a pack; not offered at the third level of sub agents, nor to a turn that stores nothing; it cannot be booked | memory / write, target `subagents` |
 | `discord_thread` | Open, write in or remove a Discord thread (pack Discord thread; automation runs only, and not offered to a run in a forum thread: its thread is the forum's) | discord / write |
 | `skill_run` | Run one of your skills by name, with optional text arguments (at most 1,500 characters): its instructions join the conversation as a message (not a tool result). Not in any pack; offered in a chat that has a skill she may run, never in an unattended run; a skill with `disable-model-invocation` and a skill of another project are refused. Asks after untrusted content, and always when it must switch a pack on (the request shows the skill, the pack and every argument) | skill_run / read (target `skill:<name>`), skill_pack / write when a pack the skill names is off and can be switched on |
 | `open_second_brain` | Open the vault and its tools for this conversation | read |
@@ -2049,6 +2074,7 @@ written `provider:model` with both parts filled, or empty where empty means « t
 | `reader_max_chars` | Characters of a text the quarantined reader reads, the rest is cut and the report says so (40,000; a whole number from 1,000 to 400,000, else refused when it is saved) |
 | `goal_turns` | Turns a `/goal` may take before it pauses (10; 1 to 100); a goal may set its own with `--turns` |
 | `goal_minutes` | Minutes of model time a `/goal` may use before it pauses (15; 1 to 240); a goal may set its own with `--minutes` |
+| `sub_agents_max` | Sub agents of one conversation that may work at the same time (5; 1 to 20). How deep they go inside one another is fixed in the code at 3 levels: no setting changes it |
 | `approve_all_minutes` | Minutes an **Approve all next** button stays on after it is pressed (30; 1 to 1,440) |
 | `folder_budget` | Bytes of file content Clara may read from a folder opened in a web chat, per grant (1,000,000; 0 to 100,000,000) |
 | `folder_budget_max` | The most a folder grant's budget may be raised to, in bytes (16,000,000; 1 to 100,000,000) |
@@ -2109,7 +2135,7 @@ keep-alive every 15 s.
 | `POST /v1/chat` | Chat, the whole answer at once |
 | `POST /v1/turns/{turn_id}/tool-results` | Results of client-side tools |
 | `POST /v1/documents/extract` | The text of a document (as the chat would see it) |
-| `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any: `schedule` is the shared conversation of an automation; `history=true` leaves out those of a project or automation not shown in the history; `hide=discord` (client names, separated by commas) leaves out what those clients started, the pinned ones apart; each names its `group`) |
+| `GET /v1/conversations` | List and search conversations (`kind` chat, schedule or any: `schedule` is the shared conversation of an automation; `history=true` leaves out those of a project or automation not shown in the history; `hide=discord` (client names, separated by commas) leaves out what those clients started, the pinned ones apart; each names its `group`; a sub agent's conversation is never listed: it is reached by its id) |
 | `POST /v1/conversations` | Create one (incognito, local only, model, project, `packs`, `mode`; in a project, without `packs`, it starts with the project's; `mode` needs a token that may answer everything) |
 | `GET /v1/conversations/{conversation_id}` | One conversation, with its context, `answering`, `tainted` (it read outside content, so its next turn starts tainted: a tool that taints ran in it, or a marked file or a script's network output was read), files and waiting approvals |
 | `PATCH /v1/conversations/{conversation_id}` | Rename, pin, change model or project, local only |
@@ -2314,6 +2340,7 @@ The web site itself is served at `/` (with `/assets/…`).
 | Skills | 30; 1 MB in all each (`SKILL.md` and the other files, counted as unpacked), `SKILL.md` 100 KB, 50 files, a path of 200 characters, a description of 1,024 characters and an argument hint of 200, a name of 40 characters; an archive of 1.4 MB and 1,000 entries; a skill reserved for 50 projects at most; a command expands to 120,000 bytes at most |
 | Automation conversations kept | `automation_keep_days` 0 to 3,650, `automation_keep_hours` 0 to 8,760, `automation_keep_last` 0 to 10,000 (0: no limit), and the same three on an automation |
 | Approval requests waiting per conversation | 10 |
+| Sub agents | 5 at the same time per conversation (`sub_agents_max`, 1 to 20); 3 levels deep, fixed in the code; a report is cut at 20,000 characters |
 | Notifications | 3 per turn from Clara; 10 a minute from clients |
 | Event text | 2,000 characters (6,000 for what an automation or `discord_say` says in `#general`; the bot splits it into messages of 2,000, Discord's limit); title 100 |
 | Forms | QCM: 20 questions, 2 to 10 options, 4,000 characters for a typed answer. `ask_questions`: 4 questions, 2 to 4 options, a 12-character header, 5 calls per answer |

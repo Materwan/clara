@@ -151,6 +151,12 @@ KNOBS: dict[str, Knob] = {
         "Minutes of model time (the turns' and the judge's, not a wait for an approval) a /goal may use before it pauses, from 1 to "
         "240. A goal may set its own with --minutes.",
     ),
+    "sub_agents_max": Knob(
+        5,
+        _whole(1, 20, 5),
+        "Sub agents of one conversation that may work at the same time, from 1 to 20 (5 unless you change it). How deep sub agents "
+        "may go inside sub agents is fixed in the code at 3 levels: no setting changes it.",
+    ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),
     "hidden_tools": Knob(

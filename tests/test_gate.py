@@ -36,7 +36,8 @@ def test_the_floor_cannot_be_overridden(services):
 
 def test_the_model_has_no_tool_to_approve_or_edit_modes(services):
     names = services.toolbox.names
-    assert not any("rule" in name or "approv" in name or "gate" in name or "mode" in name.split("_") for name in names)
+    # `gate` as a word: `delegate` (the sub agents' tool) only contains it
+    assert not any("rule" in name or "approv" in name or {"gate", "mode"} & set(name.split("_")) for name in names)
 
 
 async def test_an_unattended_ask_never_runs_and_never_blocks(services, llm):

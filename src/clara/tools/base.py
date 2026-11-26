@@ -59,6 +59,8 @@ class TurnState:
     local_only: bool = False
     tainted: bool = False
     mode_name: str | None = None  # the name of the conversation's mode, read again at each call (Toolbox.call)
+    sub_agent: bool = False  # a sub agent's conversation: the gate asks what a tainted turn raises, in any mode
+    model: str = ""  # the model that answers this turn (provider:model), which a sub agent it starts begins with
     read_chars: int = 20_000
     trusted_urls: set[str] = field(default_factory=set)
     # what the turn read from private sources and what the person wrote: a search query that repeats the first asks (egress.py)
@@ -75,7 +77,7 @@ class TurnState:
 
     @property
     def situation(self) -> Situation:
-        return Situation(self.mode, self.tainted, self.local_only, self.mode_name)
+        return Situation(self.mode, self.tainted, self.local_only, self.mode_name, self.sub_agent)
 
 
 @dataclass

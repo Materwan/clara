@@ -68,6 +68,7 @@ class Conversation:
     archived_at: str | None = None  # archived: it can be read, and takes no new message
     archived_by: str = ""  # who archived it: 'you', 'discord' (its idle week there), 'group' (its history switched off)
     mode: str | None = None  # its own mode (gate/modes.py); None: it follows its automation, project or the default
+    parent_id: str | None = None  # a sub agent's parent conversation (agent/subagents.py); None: an ordinary one
 
     def active_packs(self) -> list[str]:
         """The packs switched on, the vault's switch included (it is stored as `vault_open`)."""
@@ -153,6 +154,7 @@ def _conversation(row) -> Conversation:
         row["archived_at"],
         row["archived_by"],
         row["mode"],
+        row["parent_id"],
     )
 
 
@@ -201,12 +203,13 @@ class Conversations:
         conversation_id: str | None = None,
         packs: list[str] | None = None,
         mode: str | None = None,
+        parent_id: str | None = None,
     ) -> Conversation:
         now = now_iso()
         conversation_id = conversation_id or new_id()
         self.db.execute(
             "INSERT INTO conversations (id, title, titled_by, client, kind, project_id, model, incognito, local_only,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " created_at, updated_at, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 conversation_id,
                 title[:MAX_TITLE],
@@ -219,6 +222,7 @@ class Conversations:
                 int(local_only),
                 now,
                 now,
+                parent_id,
             ),
         )
         if packs is None and project_id is not None:  # the special tools the project starts its conversations with
@@ -290,7 +294,7 @@ class Conversations:
         `group` (its automation, else its project, else null). `kind` ANY lists chats and scheduled ones together; `history`
         leaves out those whose group is not shown in the history, the pinned ones apart, and so does `hide_clients` for
         the conversations the listed clients started."""
-        where = []
+        where = ["c.parent_id IS NULL"]  # a sub agent's conversation is shown in its parent's, never in the history
         params: list = []
         if archived is not None:  # False: the ones not archived (the default); True: only the archived ones
             where.append("c.archived_at IS NOT NULL" if archived else "c.archived_at IS NULL")

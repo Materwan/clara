@@ -15,6 +15,7 @@ from .ops.status import StatusProbe
 if TYPE_CHECKING:
     from .agent.goals import Goals
     from .agent.reader import Reader
+    from .agent.subagents import SubAgents
     from .agent.turn import Agent
     from .auth import FailureLimiter, Tokens, WebSessions
     from .automations import Automations
@@ -88,6 +89,7 @@ class Services:
     toolbox: Toolbox = None  # type: ignore[assignment]
     agent: Agent = None  # type: ignore[assignment]
     reader: Reader = None  # type: ignore[assignment]
+    subagents: SubAgents = None  # type: ignore[assignment]
     lifecycle: Lifecycle = None  # type: ignore[assignment]
     workspace: Any = None
     provenance: Any = None

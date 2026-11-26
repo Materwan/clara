@@ -43,6 +43,16 @@ class Persona:
         return self._text
 
 
+SUB_AGENT = (
+    "- You are a sub agent: Clara, in another conversation, handed you the task in the first message and waits for your last message. "
+    "Do the work with your tools, then write your last message as the report she receives as it is (earlier text of yours is not given "
+    "to her): what you found or did, short, with what she needs to go on, in the language of the task. If you cannot go on without an "
+    "answer she or the person must give, end instead with a question: begin your last message with QUESTION: and ask only that; she "
+    "answers by sending you a new task, and you carry on with what you have read and done. A request that needed the person's "
+    "permission was shown to the person, not to her: say in the report what is waiting."
+)
+
+
 @dataclass
 class ScopedFacts:
     """What was learned in the conversations and runs of one project or automation, shown to each of them."""
@@ -73,6 +83,7 @@ class PromptParts:
     incognito: bool = False
     local_only: bool = False
     unattended: bool = False
+    sub_agent: bool = False  # the conversation is a sub agent's: it is told what its last message is for
     summary: str = ""
     news: str = ""
     plan: str = (
@@ -88,6 +99,8 @@ def render(persona: str, parts: PromptParts) -> str:
     ]
     if parts.unattended:
         context.append("- Nobody is watching this turn: it runs by itself (a schedule, a reminder, a follow-up)")
+    if parts.sub_agent:
+        context.append(SUB_AGENT)
     if parts.incognito:
         context.append("- This conversation is incognito: you see no stored facts and save none; it will be deleted")
     if parts.local_only:

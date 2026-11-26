@@ -155,8 +155,8 @@ class Mirror:
 
     @staticmethod
     def _group_key(row) -> str | None:
-        """The place a conversation belongs to, shown or not (None: local-only, which is never on Discord)."""
-        if row["local_only"]:
+        """The place a conversation belongs to, shown or not (None: local-only, which is never on Discord, nor a sub agent's)."""
+        if row["local_only"] or row["parent_id"]:
             return None
         if row["incognito"]:
             return INCOGNITO

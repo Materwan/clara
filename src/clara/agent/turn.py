@@ -415,6 +415,8 @@ class Agent:
             incognito=bool(conversation and conversation.incognito),
             local_only=local_only,
             tainted=request.tainted,
+            sub_agent=bool(conversation and conversation.parent_id),
+            model=choice.ref,
             read_chars=self._read_chars(choice.window),
         )
         if (
@@ -458,7 +460,11 @@ class Agent:
         for name, condition in self.tool_conditions.items():
             if not condition(state):
                 hidden.add(name)
-        hidden |= set(self.s.runtime.get("hidden_tools").get(request.client, []))
+        for client in (
+            {request.client, conversation.client} if conversation and conversation.parent_id else {request.client}
+        ):
+            # a sub agent does not have what is hidden from the client of the conversation that started it
+            hidden |= set(self.s.runtime.get("hidden_tools").get(client, []))
         if request.only_tools:
             hidden |= {
                 name for name in names if not any(fnmatch.fnmatchcase(name, pattern) for pattern in request.only_tools)
@@ -616,6 +622,7 @@ class Agent:
                 incognito=state.incognito,
                 local_only=state.local_only,
                 unattended=state.mode == "unattended",
+                sub_agent=state.sub_agent,
                 summary=conversation.summary if conversation else "",
                 news=news,
                 plan=kept_plan.block() if kept_plan else "",
@@ -738,8 +745,9 @@ class Agent:
         state.trusted_urls |= urls_in(written)  # addresses you wrote: web_fetch reads them without asking
         state.private.allow(written)  # what you wrote, you may search for (egress.py)
         # what the server said in the conversation of an automation run (the run's message, with its events) is not the person's words
-        of_a_run = (
-            conversation is not None and self.s.packs is not None and self.s.packs.run_of(conversation.id) is not None
+        of_a_run = conversation is not None and (
+            bool(conversation.parent_id)  # a sub agent's task is Clara's text, not the person's
+            or (self.s.packs is not None and self.s.packs.run_of(conversation.id) is not None)
         )
         if conversation is not None:
             for message in self.s.conversations.history(conversation.id, 30, conversation.summary_upto):

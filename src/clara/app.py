@@ -28,6 +28,7 @@ from .agent.goals import RESTARTED, Goals
 from .agent.model import ModelRunner
 from .agent.prompt import Persona
 from .agent.reader import Reader
+from .agent.subagents import SubAgents, delegate_tools
 from .agent.turn import Agent
 from .api import admin as admin_api
 from .api import auth as auth_api
@@ -169,6 +170,7 @@ def static_tools() -> list[Tool]:
         *feed_tools(),
         *deferred_tools(),
         *plan_tools(),
+        *delegate_tools(),
         *skill_tools(),
     ]
 
@@ -252,7 +254,15 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
         db, s.conversations, runtime, answering=lambda conversation_id: s.agent.answering(conversation_id)
     )
     s.github_snapshots = GitHubSnapshots()
-    tools = memory_tools() + time_tools() + knowledge_tools() + discord_tools() + folder_tools() + skill_tools()
+    tools = (
+        memory_tools()
+        + time_tools()
+        + knowledge_tools()
+        + discord_tools()
+        + folder_tools()
+        + skill_tools()
+        + delegate_tools()
+    )
     s.modes.audit = audit
     s.toolbox = Toolbox(tools, s.gate, audit)
     s.automations.projects = s.projects
@@ -273,6 +283,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     )
     s.agent = Agent(s, runner, Persona(settings.persona_file))
     s.reader = Reader(s)
+    s.subagents = SubAgents(s)
+    s.agent.tool_conditions["delegate"] = s.subagents.offered
     s.agent.tool_conditions["discord_say"] = can_say
     s.agent.tool_conditions["discord_forget"] = lambda state: False  # only an approved request runs it
     s.agent.tool_conditions["skill_run"] = skill_offered(s)
@@ -340,17 +352,19 @@ def recover(s: Services) -> None:
     failed = s.approvals.recover()
     cut = s.automations.recover()
     booked = s.deferred.recover()
+    stopped = s.subagents.recover()
     if paused:
         log.warning("%d goal(s) that were running are paused: the server restarted", paused)
-    if healed or closed or failed or cut or booked:
+    if healed or closed or failed or cut or booked or stopped:
         log.warning(
             "after an unclean stop: %d question(s) put back, %d unanswered question(s) closed, %d approved action(s) "
-            "marked to check, %d automation run(s) put right, %d booked call(s) marked to check",
+            "marked to check, %d automation run(s) put right, %d booked call(s) marked to check, %d sub agent(s) marked failed",
             healed,
             closed,
             failed,
             cut,
             booked,
+            stopped,
         )
     if s.workspace is not None:
         s.workspace.recover()
