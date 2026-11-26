@@ -9,6 +9,8 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 **OpenCode Go models show their real context window.** The window of each `opencode-go` model now comes from models.dev (the table written by `scripts/refresh_opencode_models.py`, now 44 models), not 131,072 for all; a model the table lacks keeps 131,072 and is shown as « (assumed) » on the Models page and in the context ring's tooltip, and the new runtime setting `opencode_go_windows` (`model=tokens,…`) overrides one model's window. A bigger window lets the per-message limit rise to half of it and drops fallbacks with a smaller window than the chosen model; the other limits keep their own caps. Interface change: `assumed` on each model of `GET /v1/admin/models` and on `context` (`GET /v1/conversations/{id}`, the `done` event). No migration.
 
+**The side panel's sections fold.** In a conversation's side panel, **Sub agents** and **Made here** (its title now shows whenever it has cards, not only beside sub agents) fold and unfold by their title; a folded title shows how many cards it holds (« Sub agents · 2 »), and « 1 asks you » when a sub agent has a request waiting for your permission; a new card opens a folded section again; the plan card does not fold. The choice is kept in the browser, one key for each section. Display only: no interface change, no migration.
+
 ## v1.8.0 — 26/11/2026
 
 **Sub agents on the web site, command display in the chat box, and the fixes found testing them.**

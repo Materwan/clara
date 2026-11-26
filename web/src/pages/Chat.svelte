@@ -22,7 +22,7 @@
   import { load as loadGrants } from '../lib/grants.svelte';
     import { markdown } from '../lib/markdown';
   import { type Plan, afterEvent as planAfter, afterRead } from '../lib/plan';
-  import { type PanelFile, type PanelNote, type Presented, panel, remember } from '../lib/panel.svelte';
+  import { type PanelFile, type PanelNote, type Presented, arrived, fold, panel, remember } from '../lib/panel.svelte';
   import { type Form, type Progress, newForm, quizMessage } from '../lib/qcm';
   import { type SubAgent } from '../lib/subagents';
   import { type Chip, type Command, chipsFor, commandOf, drawn, filterSkills, insertSkill, isCommand, menuKey, mirrorOf, optionId, resendOf, slashWord, typedCommand } from '../lib/skills';
@@ -445,7 +445,10 @@
       const before = cards;
       // a QCM Clara has just made is not stored until her message ends: it stays in the list until the server has it
       const unsaved = side.forms.filter((form) => form.pending && !found.forms.some((item: Form) => item.ref === form.ref));
-      side = { files: found.files, notes: found.notes ?? [], forms: [...found.forms, ...unsaved] };
+      const next = { files: found.files, notes: found.notes ?? [], forms: [...found.forms, ...unsaved] };
+      // a card that reaches a folded Made here opens it again
+      if (!first && (arrived(side.files, next.files, (file) => file.path) || arrived(side.notes, next.notes, (note) => note.path) || arrived(side.forms, next.forms, (form) => form.ref))) fold('made', false);
+      side = next;
       if (first) sideOpen = panel.choice === 'open' && cards > 0;
       else if (cards > before && panel.choice !== 'closed') sideOpen = true;
     } catch {
@@ -482,6 +485,7 @@
       const found: SubAgent[] = (await api.get(`/v1/conversations/${id}/sub-agents`)).sub_agents;
       if (conversationId !== id || mine !== subsSeq) return;
       const before = cards;
+      if (!first && arrived(subs, found, (sub) => sub.id)) fold('subs', false); // a new sub agent opens a folded section again
       subs = found;
       if (first) sideOpen = sideOpen || (panel.choice === 'open' && cards > 0);
       else if (cards > before && panel.choice !== 'closed') sideOpen = true;
@@ -789,7 +793,10 @@
             break;
           case 'qcm':
             current.parts.push({ kind: 'form', form: event.form });
-            if (!side.forms.some((form) => form.ref === event.form.ref)) side.forms.push(newForm(event.form));
+            if (!side.forms.some((form) => form.ref === event.form.ref)) {
+              side.forms.push(newForm(event.form));
+              fold('made', false);
+            }
             openQuiz(event.form.ref);
             break;
           case 'questions':

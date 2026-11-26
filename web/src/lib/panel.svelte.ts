@@ -55,6 +55,37 @@ export function remember(choice: 'open' | 'closed'): void {
   }
 }
 
+/** The sections of the panel that fold. The plan card does not. */
+export type Section = 'subs' | 'made';
+
+const foldKey = (section: Section): string => `clara-panel-${section}`; // one key for each section, never for each conversation
+
+function foldedBefore(section: Section): boolean {
+  try {
+    return localStorage.getItem(foldKey(section)) === 'folded';
+  } catch {
+    return false; // nothing kept, or unreadable: every section starts unfolded
+  }
+}
+
+/** Which sections you folded. Display only: nothing the model sees, no gate rule. */
+export const folded = $state<Record<Section, boolean>>({ subs: foldedBefore('subs'), made: foldedBefore('made') });
+
+export function fold(section: Section, value: boolean): void {
+  folded[section] = value;
+  try {
+    localStorage.setItem(foldKey(section), value ? 'folded' : 'open');
+  } catch {
+    /* not remembered: the page keeps it until reloaded */
+  }
+}
+
+/** Whether `after` holds a card that `before` did not: it has just reached its section (a section you folded opens again). */
+export function arrived<T>(before: T[], after: T[], key: (item: T) => string): boolean {
+  const known = new Set(before.map(key));
+  return after.some((item) => !known.has(key(item)));
+}
+
 export const baseName = (path: string): string => path.split('/').pop() || path;
 
 /** A note is named without its extension, as in Obsidian. */
