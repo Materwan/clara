@@ -3,7 +3,41 @@
 Every release has a section here, under its tag; the release workflow publishes that section as the release notes
 (what changed, migrations, new settings). Dates are in UTC.
 
-## Unreleased
+## v1.7.0 — 26/11/2026
+
+**Voice dictation, `/goal`, and a Plan pack.** You can dictate to Clara from the web site, the terminal, Discord, the Windows island and the phone app
+(transcribed on the machine that hosts her, the audio never kept, the conversation outside content for good); `/goal <condition>` keeps her working on
+a conversation until a judge finds the condition met; and a new **Plan** pack lets her keep a plan for her work, shown read only in the web side panel.
+**Tried for real before this release:** the dictation with the real transcriber (`small`) from the Windows island and the phone app on a throwaway server
+(2026-11-24 and 25), and the plan card in headless Chromium. **Not tried:** the web microphone with a real voice and the real permission prompt, `/goal` and
+the Plan pack with a real model, the terminal `/dictate` with a real recorder, Discord voice messages on a real Discord.
+
+**What changes when you update.**
+
+- **Dictation needs a model, once.** Releases now carry the `dictation` extra (faster-whisper, PyAV, CTranslate2: the release is bigger). Run
+  `/dictation fetch-model` once (about 500 MB from Hugging Face, the only time it uses the network). Without it a dictation answers that the model is
+  missing; nothing else is affected.
+- **Known limits of dictation, found in the real tests.** (1) A dictation near the 5-minute limit can fail: the transcriber runs under a memory cap
+  (`dictation_memory_mb`, 4,096 MB) and a timeout (`dictation_timeout`, 300 s) that were measured on short clips, and a 5-minute clip failed with « The
+  transcriber stopped without an answer » on a loaded 4-core machine. Keep dictations short, or raise those two runtime settings. (2) Under heavy load a
+  transcription can fail the same way; try again. (3) The silence filter catches silence but ambient noise or a long quiet room can still produce words.
+- **The web site may use the microphone.** The `Permissions-Policy` header was `microphone=()` and is now `microphone=(self)` (camera and location stay
+  off). The microphone opens on a button press only and every track is stopped when the recording ends (`docs/THREAT-MODEL.md`).
+- **Nothing to change in `/etc/clara/default-mode.toml`:** there is no new action class. A dictation never answers an approval, and automatic sending
+  (off by default, per client) is changed only by a token that may answer every request.
+- **The Plan pack is off** in a new conversation, until you tick it for a conversation or an automation.
+- **Automatic sending, mode and packs of the island and the phone app** can be set from the apps themselves (a separate repository), with their own token.
+
+**Interface changes.**
+
+- New routes: `POST /v1/dictation/transcribe`, `POST /v1/dictation`, `GET /v1/dictation/clients[/{client}]`, `PUT /v1/dictation/clients/{client}`, `POST
+  /v1/dictation/clients/{client}/conversation`, `GET` and `POST /v1/conversations/{id}/goal`, `GET /v1/conversations/{id}/plan`.
+- New stream events `goal_turn`, `goal_state` and `plan`; the conversation list says `dictation: true`.
+- New tools `plan_set` and `plan_update` (95 tools). New runtime settings `goal_turns`, `goal_minutes`, `dictation_model`, `dictation_language`,
+  `dictation_max_seconds`, `dictation_max_bytes`, `dictation_timeout` and `dictation_memory_mb`.
+- New terminal command `/dictate`; a Discord voice message in a conversation's thread is dictated into it. `/goal` is on the web page only for now.
+
+**Migrations.** 0038 `goals`, 0039 `dictation_clients`, 0040 `plans`. Each adds one table. A backup is taken before they run, as always.
 
 **A Plan pack: Clara keeps a plan for the work she does.** New pack **Plan** (off in a new conversation; chats and automations) with the tools `plan_set` (create or replace the
 conversation's plan: a title and a flat list of steps, an empty list removes it) and `plan_update` (the status or the note of steps by number). A step is `todo`,
