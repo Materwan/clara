@@ -33,6 +33,7 @@
   let limitError = $state('');
   const limitSaved = $derived(String(settings.find((item) => item.key === SUB_AGENTS)?.value ?? ''));
   const limitText = $derived(limitDraft ?? limitSaved);
+  const limitShown = $derived((limitDraft === null ? '' : limitProblem(limitDraft)) || limitError); // what is typed is checked here, before the browser's own bubble
   let backups = $state<any>(null);
   let releases = $state<any>(null);
   let newToken = $state({ name: '', client: 'script', approvals: '' });
@@ -292,10 +293,10 @@
         </label>
         <div class="row">
           <input id="sub-agents-max" type="number" min={SUB_AGENTS_MIN} max={SUB_AGENTS_MAX} step="1" inputmode="numeric" value={limitText}
-            aria-describedby="sub-agents-note" aria-invalid={limitError ? 'true' : undefined} oninput={(event) => { limitDraft = event.currentTarget.value; limitError = ''; }} />
-          <button class="primary small" type="submit" disabled={limitSaving || limitDraft === null || limitDraft === limitSaved}>Save</button>
+            aria-describedby="sub-agents-note" aria-invalid={limitShown ? 'true' : undefined} oninput={(event) => { limitDraft = event.currentTarget.value; limitError = ''; }} />
+          <button class="primary small" type="submit" disabled={limitSaving || limitDraft === null || limitDraft === limitSaved || !!limitShown}>Save</button>
         </div>
-        {#if limitError}<p class="danger small" role="alert">{limitError}</p>{/if}
+        {#if limitShown}<p class="danger small" role="alert">{limitShown}</p>{/if}
       </form>
     {/if}
     <table>

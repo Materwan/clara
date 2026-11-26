@@ -95,7 +95,7 @@ def stored_result(services, cid: str) -> str:
 
 
 def parent_context(services, cid, **fields) -> ToolContext:
-    return ToolContext(services, TurnState("t1", cid, "web", model="local:fake", timezone="UTC", **fields))
+    return ToolContext(services, TurnState("t1", cid, "web", timezone="UTC", **fields))
 
 
 async def call(services, cid, context=None, **arguments):
@@ -378,9 +378,16 @@ async def test_a_sub_agent_starts_with_the_mode_packs_model_and_choices_of_its_p
     (sub_id,) = subs_of(services, parent.id)
     sub = services.conversations.get(sub_id)
     assert sub.mode == "everything" and services.modes.resolve(sub_id) == "everything"  # a mode that allows everything is inherited
-    assert sub.packs == parent.packs and sub.model == "local:fake"
+    assert sub.packs == parent.packs and sub.model == ""  # the parent follows the default: so does the sub agent
     assert sub.incognito and sub.local_only and sub.project_id == parent.project_id
     assert sub.client == "web" and sub.parent_id == parent.id
+
+
+async def test_a_sub_agent_copies_the_model_setting_of_its_parent_not_the_model_that_answered(services, llm):
+    parent = services.conversations.create("web", title="P", model="local:fake")
+    script(llm, lambda m, t: "ok", lambda m, t: "report")
+    await call(services, parent.id, **TASK)
+    assert services.conversations.get(subs_of(services, parent.id)[0]).model == "local:fake"
 
 
 async def test_a_sub_agent_of_a_conversation_on_the_default_mode_follows_the_default_mode(services, llm, cid):

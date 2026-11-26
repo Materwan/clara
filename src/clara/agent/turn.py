@@ -416,7 +416,6 @@ class Agent:
             local_only=local_only,
             tainted=request.tainted,
             sub_agent=bool(conversation and conversation.parent_id),
-            model=choice.ref,
             read_chars=self._read_chars(choice.window),
         )
         if (

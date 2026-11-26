@@ -48,6 +48,6 @@ test('the setting is a whole number from 1 to 20', () => {
   assert.equal([MIN, MAX].join('-'), '1-20');
   for (const good of ['1', '5', ' 20 ', '07']) assert.equal(limitProblem(good), '', good);
   for (const bad of ['', '0', '21', '-1', '2.5', '1e1', 'five', '5 6']) assert.notEqual(limitProblem(bad), '', bad);
-  assert.equal(limitProblem('21'), 'It must be from 1 to 20.');
+  assert.equal(limitProblem('21'), 'Write a whole number from 1 to 20.');
   assert.equal(limitProblem('x'), 'Write a whole number from 1 to 20.');
 });

@@ -5,9 +5,9 @@
 
 A sub agent is an ordinary conversation, run by `Agent.turn` like every other (there is no second turn loop): `conversations.parent_id`
 points to the conversation that started it, which keeps it out of the history and of the Discord mirror. It begins with what its
-parent has: the tools (the packs, the limits of a hook's run), the mode (a mode that approves everything included), the model, the
-project, and incognito and local-only. Only the owner changes those afterwards; `delegate` has no argument for a mode, a level or a
-model, so a sub agent can never be given more than its parent had.
+parent has: the tools (the packs, the limits of a hook's run), the mode (a mode that approves everything included), the model setting
+("" when the parent follows the default), the project, and incognito and local-only. Only the owner changes those afterwards;
+`delegate` has no argument for a mode, a level or a model, so a sub agent can never be given more than its parent had.
 
 * **The report is outside text.** `delegate` taints the turn like a web page does (`taints=True`): the parent, and every later turn of
   it, treats the report as untrusted. The sub agent is tainted from its first word when the parent was.
@@ -218,7 +218,7 @@ class SubAgents:
             parent.client,
             title=title,
             project_id=parent.project_id,
-            model=context.turn.model,
+            model=parent.model,  # the stored setting ("" follows the default), not the model that answered this turn
             incognito=parent.incognito,
             local_only=parent.local_only,
             packs=parent.active_packs(),

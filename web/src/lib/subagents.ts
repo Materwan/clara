@@ -66,7 +66,6 @@ export const MAX = 20;
 /** What is wrong with what was typed for the setting, or '' (a whole number from 1 to 20: the server refuses anything else). */
 export function limitProblem(text: string): string {
   const typed = text.trim();
-  if (!/^\d+$/.test(typed)) return `Write a whole number from ${MIN} to ${MAX}.`;
-  const value = Number(typed);
-  return value < MIN || value > MAX ? `It must be from ${MIN} to ${MAX}.` : '';
+  const value = /^\d+$/.test(typed) ? Number(typed) : NaN;
+  return value >= MIN && value <= MAX ? '' : `Write a whole number from ${MIN} to ${MAX}.`;
 }

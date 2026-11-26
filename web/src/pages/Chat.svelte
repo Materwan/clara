@@ -1296,14 +1296,14 @@
   <header class="page-head chat-head">
     <button class="ghost icon-btn open-rail" aria-label="Open navigation" onclick={() => (ui.rail = true)}><Icon name="menu" /></button>
     <h1 class="title">{conversation?.title || (conversationId ? 'Conversation' : 'New conversation')}</h1>
-    {#if conversation?.parent}<a class="flag parent" href={'#/chat/' + conversation.parent} title="Back to the conversation that started this sub agent"><Icon name="left" size={16} /><span>Parent<span class="more"> conversation</span></span></a>{/if}
+    {#if conversation?.parent}<a class="flag parent" href={'#/chat/' + conversation.parent} title="Back to the conversation that started this sub agent"><Icon name="left" size={16} /><span>Parent<span class="more">{' '}conversation</span></span></a>{/if}
     {#if projectName}<a class="flag" href={'#/projects/' + projectId} title="Open the project"><Icon name="folder" size={16} />{projectName}</a>{/if}
     {#if conversation?.incognito}<span class="flag"><Icon name="incognito" size={16} />Incognito</span>{/if}
     {#if conversation?.local_only}<span class="flag"><Icon name="home" size={16} />Local only</span>{/if}
     {#if conversation?.dictation}<span class="flag" title="Dictated: a microphone put words into this conversation"><Icon name="mic" size={16} />Dictation</span>{/if}
     {#if conversation?.tainted}
       <button type="button" class="flag taint" aria-label="Outside content" aria-expanded={taintOpen} aria-controls={taintOpen ? 'taint-note' : undefined}
-        title={taintNote} onclick={() => (taintOpen = !taintOpen)}><Icon name="shield_warn" size={16} /><span>Outside<span class="more"> content</span></span></button>
+        title={taintNote} onclick={() => (taintOpen = !taintOpen)}><Icon name="shield_warn" size={16} /><span>Outside<span class="more">{' '}content</span></span></button>
     {/if}
     {#if !conversationId}
       <label class="flag" title="No facts read or written; deleted 24 hours after its last message"><Checkbox bind:checked={fresh.incognito} />Incognito</label>
