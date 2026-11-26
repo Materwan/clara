@@ -85,8 +85,8 @@
             <span class="chev" aria-hidden="true"><Icon name="chevron" size={14} /></span>
             <span>Sub agents</span>
             {#if folded.subs}
-              <span class="count">· {subAgents.length}</span>
-              {#if asking}<span class="ask">· {asking} {asking === 1 ? 'asks' : 'ask'} you</span>{/if}
+              <span class="fold-count">· {subAgents.length}</span>
+              {#if asking}<span class="fold-ask">· {asking} {asking === 1 ? 'asks' : 'ask'} you</span>{/if}
             {/if}
           </button>
         </h3>
@@ -113,7 +113,7 @@
           <button type="button" class="ghost fold-toggle" aria-expanded={!folded.made} aria-controls="made-list" onclick={() => fold('made', !folded.made)}>
             <span class="chev" aria-hidden="true"><Icon name="chevron" size={14} /></span>
             <span>Made here</span>
-            {#if folded.made}<span class="count">· {cards.length}</span>{/if}
+            {#if folded.made}<span class="fold-count">· {cards.length}</span>{/if}
           </button>
         </h3>
         <ul id="made-list" class="cards" hidden={folded.made}>
@@ -174,8 +174,8 @@
   .fold-toggle:hover:not(:disabled) { color: var(--text); }
   .chev { display: inline-flex; flex: none; color: var(--muted); }
   .fold-toggle[aria-expanded='true'] .chev { transform: rotate(90deg); }
-  .count { color: var(--muted); font-weight: 500; }
-  .ask { color: var(--warn); } /* the words say it too: colour is not the only sign */
+  .fold-count { color: var(--muted); font-weight: 500; }
+  .fold-ask { color: var(--warn); } /* the words say it too: colour is not the only sign */
   /* a sub agent: a card with a thin border, the whole of it a link to the sub agent's conversation */
   .sub-card {
     display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; padding: var(--sp-12) var(--sp-14);
