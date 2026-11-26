@@ -7,6 +7,8 @@ Every release has a section here, under its tag; the release workflow publishes 
 
 **Sub agents follow their mode after outside content (reverses a rule of v1.8.0).** A sub agent that read untrusted content is no longer asked for the classes the tainted-turn rule raises whatever its mode says: its mode decides, as in any conversation, so a mode that approves mail sending in a tainted turn now lets a sub agent that read a page send the mail with no card (the built-in default mode still asks). The secret check still asks in every mode. A sub agent's request is the ordinary card plus the line `From sub agent "<title>" of this conversation`. No migration. **Not tried** in a browser or with a real model.
 
+**OpenCode Go models show their real context window.** The window of each `opencode-go` model now comes from models.dev (the table written by `scripts/refresh_opencode_models.py`, now 44 models), not 131,072 for all; a model the table lacks keeps 131,072 and is shown as « (assumed) » on the Models page and in the context ring's tooltip, and the new runtime setting `opencode_go_windows` (`model=tokens,…`) overrides one model's window. A bigger window lets the per-message limit rise to half of it and drops fallbacks with a smaller window than the chosen model; the other limits keep their own caps. Interface change: `assumed` on each model of `GET /v1/admin/models` and on `context` (`GET /v1/conversations/{id}`, the `done` event). No migration.
+
 ## v1.8.0 — 26/11/2026
 
 **Sub agents on the web site, command display in the chat box, and the fixes found testing them.**

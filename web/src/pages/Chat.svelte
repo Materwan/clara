@@ -1310,7 +1310,7 @@
       <label class="flag" title="Local models only; nothing leaves your machines"><Checkbox bind:checked={fresh.local_only} />Local only</label>
     {/if}
     {#if conversation?.context}
-      <span class="context" class:hot={percent >= 80} title={`${conversation.context.tokens.toLocaleString()} of ${conversation.context.window.toLocaleString()} tokens`}>
+      <span class="context" class:hot={percent >= 80} title={`${conversation.context.tokens.toLocaleString()} of ${conversation.context.window.toLocaleString()}${conversation.context.assumed ? ' (assumed)' : ''} tokens`}>
         <svg class="ring" viewBox="0 0 36 36" width="22" height="22" aria-hidden="true">
           <circle class="track" cx="18" cy="18" r="15" pathLength="100" />
           <circle class="fill" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray={`${Math.max(0, Math.min(100, percent))} 100`} />

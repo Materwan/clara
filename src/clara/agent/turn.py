@@ -965,7 +965,12 @@ class Agent:
             "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
             "message_id": question_id,
             "versions": self._versions(state.conversation_id, question_id),
-            "context": {"tokens": context_tokens, "window": window, "percent": round(100 * context_tokens / window, 1)},
+            "context": {
+                "tokens": context_tokens,
+                "window": window,
+                "percent": round(100 * context_tokens / window, 1),
+                "assumed": self.s.catalog.assumed(choice.ref),
+            },
             "model": used.ref,
             "tainted": state.tainted,
             "seconds": round(budget.spent, 2),  # model time, which a goal counts
@@ -1321,15 +1326,17 @@ class Agent:
     def context_info(self, conversation_id: str) -> dict:
         conversation = self.s.conversations.require(conversation_id)
         try:
-            window = self.s.router.choose(conversation.model, conversation.local_only).window
+            choice = self.s.router.choose(conversation.model, conversation.local_only)
+            window, assumed = choice.window, self.s.catalog.assumed(choice.ref)
         except NoModel:
-            window = self.settings.ollama_context
+            window, assumed = self.settings.ollama_context, False
         return {
             "conversation": conversation_id,
             "summary": conversation.summary,
             "messages": self.s.conversations.message_count(conversation_id, conversation.summary_upto),
             "tokens": conversation.context_tokens,
             "window": window,
+            "assumed": assumed,
             "percent": round(100 * conversation.context_tokens / window, 1),
         }
 

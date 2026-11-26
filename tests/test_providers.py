@@ -22,6 +22,7 @@ from clara.llm.providers import ProviderError, Providers, build_providers, defau
 from clara.llm.retry import key_refused
 from clara.llm.types import PROTOCOLS, LlmError
 from clara.settings import load_settings
+from conftest import parse_sse
 
 BASE = "https://opencode.ai/inference/go"
 GO_LISTED = ["glm-5.3", "kimi-k3", "claude-haiku-5-5", "muse-spark-1.3-contributor", "beam-free"]
@@ -481,8 +482,102 @@ def test_the_table_is_made_of_the_models_of_go_alone():
     }
     script = refresh_script()
     found = script.table(api)
-    assert found == {"a": ("chat", True, True, False), "b": ("messages", False, True, False),
-                     "c": ("responses", False, True, False), "d-free": ("google", False, True, False)}
+    assert found == {"a": ("chat", True, True, False, 0), "b": ("messages", False, True, False, 0),
+                     "c": ("responses", False, True, False, 0), "d-free": ("google", False, True, False, 0)}
     namespace: dict = {}
     exec(script.render(found), namespace)  # noqa: S102 - the generated file, read back as Python
     assert namespace["MODELS"] == found
+
+
+def test_the_refresh_writes_the_context_window_of_each_model_and_zero_when_models_dev_gives_none():
+    def model(limit):
+        return {"modalities": {"input": ["text"]}, "tool_call": True, "reasoning": False, **({"limit": limit} if limit is not None else {})}
+
+    api = {"opencode-go": {"npm": "@ai-sdk/openai-compatible", "models": {
+        "big": model({"context": 1_000_000, "output": 8_000}), "none": model(None), "empty": model({}),
+        "odd": model({"context": "1M"}), "zero": model({"context": 0}), "flag": model({"context": True})}}}
+    found = refresh_script().table(api)
+    assert {name: entry[4] for name, entry in found.items()} == {"big": 1_000_000, "none": 0, "empty": 0, "odd": 0, "zero": 0, "flag": 0}
+
+
+def test_every_model_of_the_table_has_a_window():
+    assert all(isinstance(entry[4], int) and not isinstance(entry[4], bool) and entry[4] > 0 for entry in MODELS.values())
+    assert len(MODELS) == 44  # what models.dev lists for Go on 2026-11-26
+
+
+GO = "opencode-go:"
+
+
+def test_the_window_of_an_opencode_model_is_the_override_else_the_table_else_the_default(services):
+    services.runtime.set("providers_enabled", ["local", "opencode-go"])
+    services.secrets.set("opencode_go_api_key", "go-key")
+    catalog = services.catalog
+    assert (catalog.window(GO + "deepseek-v4-pro"), catalog.assumed(GO + "deepseek-v4-pro")) == (1_000_000, False)
+    assert (catalog.window(GO + "minimax-m2.7"), catalog.assumed(GO + "minimax-m2.7")) == (204_800, False)
+    assert (catalog.window(GO + "brand-new-model"), catalog.assumed(GO + "brand-new-model")) == (131_072, True)
+    services.runtime.set("opencode_go_windows", "deepseek-v4-pro=500000, brand-new-model = 64000")
+    assert (catalog.window(GO + "deepseek-v4-pro"), catalog.assumed(GO + "deepseek-v4-pro")) == (500_000, False)  # beats the table
+    assert (catalog.window(GO + "brand-new-model"), catalog.assumed(GO + "brand-new-model")) == (64_000, False)  # beats the default
+    assert catalog.window(GO + "hy3") == 256_000  # a model not named keeps the table's window
+    services.runtime.reset("opencode_go_windows")
+    assert catalog.window(GO + "deepseek-v4-pro") == 1_000_000  # live: no restart
+
+
+def test_the_default_of_opencode_go_is_still_the_window_of_a_model_the_table_lacks(settings, services):
+    services.runtime.set("providers_enabled", ["local", "opencode-go"])
+    services.secrets.set("opencode_go_api_key", "go-key")
+    assert services.catalog.window(GO + "brand-new-model") == go_provider(settings).context == 131_072
+
+
+def test_other_providers_are_not_assumed(services):
+    assert (services.catalog.window("local:fake"), services.catalog.assumed("local:fake")) == (services.settings.ollama_context, False)
+    assert services.catalog.assumed("deepseek:deepseek-chat") is False and services.catalog.assumed("nonsense") is False
+
+
+async def test_the_models_api_says_when_a_window_is_assumed(client, services, llm):
+    await opencode_catalogue(services, llm, names=("deepseek-v4-pro", "brand-new-model-free"))
+    models = {model["ref"]: model for model in (await client.get("/v1/admin/models")).json()["models"]}
+    assert (models[GO + "deepseek-v4-pro"]["window"], models[GO + "deepseek-v4-pro"]["assumed"]) == (1_000_000, False)
+    assert (models[GO + "brand-new-model-free"]["window"], models[GO + "brand-new-model-free"]["assumed"]) == (131_072, True)
+    assert models["local:fake"]["assumed"] is False
+
+
+@pytest.mark.parametrize("value", ["deepseek-v4-pro", "deepseek-v4-pro=", "=1000", "deepseek-v4-pro=1e6", "deepseek-v4-pro=0",
+                                   "deepseek-v4-pro=-5", "deepseek-v4-pro=1.5", "deepseek-v4-pro=1 000", "a=1,b=two", "a=1=2",
+                                   "a b=5", "a=" + "9" * 13, ["a=1"], None, 5])
+def test_a_bad_override_is_refused_and_a_bad_pair_is_named(services, value):
+    with pytest.raises(ValueError, match=r"^opencode_go_windows: ") as raised:
+        services.runtime.set("opencode_go_windows", value)
+    if isinstance(value, str) and "," in value:
+        assert "'b=two'" in str(raised.value)
+    assert services.runtime.get("opencode_go_windows") == ""  # nothing was saved
+
+
+def test_an_override_naming_a_model_twice_is_refused(services):
+    with pytest.raises(ValueError, match="'kimi-k3' is named twice"):
+        services.runtime.set("opencode_go_windows", "kimi-k3=1000,kimi-k3=2000")
+
+
+@pytest.mark.parametrize(("value", "saved"), [("", ""), ("  ", ""), ("kimi-k3=262144", "kimi-k3=262144"),
+                                              (" a=1 , b = 2 ,", "a=1 , b = 2 ,")])
+def test_a_good_override_is_saved(services, value, saved):
+    assert services.runtime.set("opencode_go_windows", value) == saved.strip()
+
+
+async def test_the_admin_page_refuses_a_bad_override_and_names_the_pair(client, services):
+    refused = await client.put("/v1/admin/settings/opencode_go_windows", json={"value": "kimi-k3=lots"})
+    assert refused.status_code == 422 and "opencode_go_windows" in refused.text and "kimi-k3=lots" in refused.text
+    saved = await client.put("/v1/admin/settings/opencode_go_windows", json={"value": "kimi-k3=262144"})
+    assert saved.json() == {"key": "opencode_go_windows", "value": "kimi-k3=262144"}
+    assert any(item["key"] == "opencode_go_windows" for item in (await client.get("/v1/admin/settings")).json()["settings"])
+
+
+async def test_the_ring_says_when_the_window_is_assumed(client, services, llm):
+    services.runtime.set("providers_enabled", ["local", "opencode-go"])
+    services.secrets.set("opencode_go_api_key", "go-key")
+    for model, window, assumed in (("deepseek-v4-pro", 1_000_000, False), ("brand-new-model", 131_072, True)):
+        services.runtime.set("default_model", GO + model)
+        done = parse_sse((await client.post("/v1/chat/stream", json={"message": "hi"})).text)[-1]
+        assert done["type"] == "done" and done["context"]["window"] == window and done["context"]["assumed"] is assumed
+        info = (await client.get(f"/v1/conversations/{done['conversation']}")).json()["context"]
+        assert (info["window"], info["assumed"]) == (window, assumed)

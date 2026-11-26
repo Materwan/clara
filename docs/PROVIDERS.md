@@ -56,7 +56,7 @@ raises no key alert for it. Clara identifies itself as `clara/<version>` and doe
 The gateway refuses a request without an `x-opencode-session` header, so Clara sends the conversation's id (a steady
 random one for side jobs). Go's model list refuses a wrong key (HTTP 401, `Invalid credential`) when one is sent, as Clara
 does, so **`/provider check` proves the key is accepted** (read on 18 October 2026; the same list answers with no key
-at all). The window assumed for its models is `CLARA_OPENCODE_GO_CONTEXT` (131,072) as the lists do not say.
+at all). The lists do not give a window, so the table says it for each model it holds (models.dev's `limit.context`; `opencode_go_windows` overrides one by hand); a model the table does not have is assumed to have `CLARA_OPENCODE_GO_CONTEXT` (131,072) and the Models page and the context ring say « assumed ».
 
 The models of `opencode-go` whose names end in `-free` are offered in the pickers without being chosen, as long as the
 lists show them, and come last in them. `/models hide opencode-go:<model>` removes one for good (and `show` brings it back); other models of

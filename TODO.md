@@ -413,41 +413,6 @@ What the current design already sets:
 - `ask_questions` pauses the turn until the answers come back (`docs/DECISIONS.md`, the QCM rows).
 - `docs/DECISIONS.md` has the rule that a conversation which is busy answers 409 to a message (the `/goal` row). This item changes it for waits of a turn only; the row needs a dated entry when the item is built.
 
-## Context window of OpenCode Go models
-
-Clara shows 131,072 tokens for every OpenCode Go model: the default `CLARA_OPENCODE_GO_CONTEXT` (`hosted_context["opencode-go"]`), because OpenCode's model list gives names only. Some models are far larger: `opencode-go:deepseek-v4-pro` has 1,000,000 tokens (found on pi.dev and on the DeepSeek and Vercel pages on 2026-11-26; not yet checked on models.dev). The window feeds the context ring and the compaction rule at 80 % of the window, but the 40,000-token rule fires first on a model of that size, so the visible effect is mainly the ring.
-
-What the owner decided:
-
-- **Source:** the window of each OpenCode Go model comes from models.dev, written by `scripts/refresh_opencode_models.py` into the generated table, as the protocol, pictures, tools and thinking already are.
-- **Unknown model:** a model that models.dev does not list keeps 131,072 tokens and is shown as assumed.
-- **Scope:** OpenCode Go only.
-
-What I corrected or added to the owner's plan:
-
-- **No 1 M default:** raising the default for every model would overflow the prompt of a smaller one; the default stays conservative.
-- **Compaction:** the 40,000-token rule (`compact_tokens`) fires before the 80 % rule on a 1 M model, so the fix changes the ring more than when a conversation is compacted (`src/clara/agent/turn.py`). The other uses of the window are not checked yet.
-
-Not decided:
-
-- Whether a manual override of one model's window exists, and under which setting name.
-- How « assumed » shows on the Models page and in the ring.
-- The 1 M figure on models.dev itself, to check before the item is built.
-- The default windows of DeepSeek (131,072 too), Mistral and Ollama cloud: the same defect, in this item or later.
-- Whether the window feeds other calculations (the budget of a prompt, the callers of `Catalog.window()`).
-
-Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
-
-- The field of the generated table, the check of the refresh script, the wording of the label.
-
-What the current design already sets:
-
-- `hosted_context` and `CLARA_OPENCODE_GO_CONTEXT` (`src/clara/settings.py`, `FEATURES.md`, the settings table).
-- `Catalog.window()` (`src/clara/llm/catalog.py`): the model's own window, else the provider's.
-- `src/clara/llm/opencode_models.py` is generated and marked « do not edit ».
-- `tests/test_providers.py` asserts the default of 131,072 and the setting.
-- The compaction rules (`src/clara/agent/turn.py`): 80 % of the window, or 40,000 tokens past the fixed part.
-
 ## Side panel: sections that fold
 
 The side panel on the right of a conversation lists, in one column, Clara's plan, the sub agents she started (**Sub agents**) and what she made in the conversation (**Made here**: files, notes and quizzes). Today a section cannot be folded: a long list of files pushes the rest down. The owner asks for a way to fold and unfold each section, as the sections of the panel already show them.

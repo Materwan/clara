@@ -79,6 +79,29 @@ def _model_name(value: Any) -> str:
     raise ValueError("a model name such as small (letters, digits, dots, dashes and underscores)")
 
 
+def parse_windows(text: str) -> dict[str, int]:
+    """`model=tokens` pairs separated by commas (`deepseek-v4-pro=1000000`) as {model: tokens}. A pair that is not a model
+    name and a positive whole number, or a model named twice, is refused by naming it."""
+    found: dict[str, int] = {}
+    for pair in filter(None, (part.strip() for part in text.split(","))):
+        name, _, tokens = (part.strip() for part in pair.partition("="))
+        if not re.fullmatch(r"[^\s=,]+", name) or not re.fullmatch(r"[0-9]{1,12}", tokens) or not int(tokens):
+            raise ValueError(
+                f"{pair!r} is not a model name, an equals sign and a positive whole number of tokens, "
+                "such as deepseek-v4-pro=1000000"
+            )
+        if name in found:
+            raise ValueError(f"{name!r} is named twice")
+        found[name] = int(tokens)
+    return found
+
+
+def _windows(value: Any) -> str:
+    text = _text(value).strip()
+    parse_windows(text)
+    return text
+
+
 def _language(value: Any) -> str:
     if isinstance(value, str) and re.fullmatch(r"([a-z]{2,3})?", value):
         return value
@@ -156,6 +179,12 @@ KNOBS: dict[str, Knob] = {
         _whole(1, 20, 5),
         "Sub agents of one conversation that may work at the same time, from 1 to 20 (5 unless you change it). How deep sub agents "
         "may go inside sub agents is fixed in the code at 3 levels: no setting changes it.",
+    ),
+    "opencode_go_windows": Knob(
+        "",
+        _windows,
+        "The context window of OpenCode Go models, as model=tokens pairs separated by commas, for example "
+        "deepseek-v4-pro=1000000. It beats models.dev and the default of 131,072 tokens; empty: no override.",
     ),
     "debug_until": Knob("", _text, "Full prompts and answers go to the debug log until this instant ('': off)."),
     "sandbox_image": Knob("", _text, "The sandbox image pinned by the last release ('': CLARA_SANDBOX_IMAGE)."),

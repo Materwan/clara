@@ -3,7 +3,9 @@
 
 Provider answers are cached for a minute. Sizes and capabilities are kept in the `models` table, so they are known
 when a provider is down. The window of a model is what its provider says (capped, for a local host, at
-CLARA_OLLAMA_CONTEXT, which is also what Clara asks Ollama to use), else the provider's default.
+CLARA_OLLAMA_CONTEXT, which is also what Clara asks Ollama to use), else the provider's default. For OpenCode Go it is
+what you set (`opencode_go_windows`), else what models.dev says (`opencode.py`), else the default, which is then
+*assumed*: the Models page and the context ring say so.
 
 A model is shown in the pickers when you showed it (`/models show`), or, if you never chose either way, when it is
 free (OpenCode's `-free` models) and its provider lists it now. Hiding such a model is a choice too. The pickers list
@@ -20,7 +22,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..db import Database
+from ..runtime import parse_windows
 from ..timeutil import now_iso
+from . import opencode
 from .providers import ProviderError, Providers, make_ref, split_ref
 from .types import Capabilities, Fit
 
@@ -49,6 +53,7 @@ class ModelInfo:
     capabilities: Capabilities
     window: int
     fit: Fit = Fit()  # whether Clara can use it: a model that does not work is never shown in the pickers
+    assumed: bool = False  # the window is the provider's default, not a figure anyone gave
 
     def describe(self) -> dict:
         return {
@@ -61,6 +66,7 @@ class ModelInfo:
             "size_b": self.size_b,
             "capabilities": self.capabilities.describe(),
             "window": self.window,
+            "assumed": self.assumed,
             "fit": self.fit.describe(),
         }
 
@@ -130,14 +136,25 @@ class Catalog:
         return Capabilities.from_json(row["capabilities"]) if row else Capabilities()
 
     def window(self, ref: str) -> int:
+        return self._window(ref)[0]
+
+    def assumed(self, ref: str) -> bool:
+        """Is the window of this model only the provider's default? Said for OpenCode Go, whose lists give no window."""
+        return self._window(ref)[1]
+
+    def _window(self, ref: str) -> tuple[int, bool]:
         try:
-            provider = self.providers.get(split_ref(ref)[0])
+            provider_id, name = split_ref(ref)
+            provider = self.providers.get(provider_id)
         except ProviderError:
-            return 32_768
+            return 32_768, False
+        if provider_id == "opencode-go":
+            said = opencode.window(name, parse_windows(self.providers.runtime.get("opencode_go_windows")))
+            return said or provider.context, said is None
         said = self.capabilities(ref).context
         if provider.local:
-            return min(said, provider.context) if said else provider.context
-        return said or provider.context
+            return (min(said, provider.context) if said else provider.context), False
+        return said or provider.context, False
 
     def _is_free(self, provider_id: str, name: str) -> bool:
         provider = self.providers.all.get(provider_id)
@@ -161,6 +178,7 @@ class Catalog:
         provider_id, name = split_ref(ref)
         row = self._row(ref)
         provider = self.providers.get(provider_id)
+        window, assumed = self._window(ref)
         return ModelInfo(
             ref,
             provider_id,
@@ -170,8 +188,9 @@ class Catalog:
             listed,
             row["size_b"] if row else None,
             Capabilities.from_json(row["capabilities"]) if row else Capabilities(),
-            self.window(ref),
+            window,
             provider.fit(name),
+            assumed,
         )
 
     async def listing(self, force: bool = False) -> list[ModelInfo]:

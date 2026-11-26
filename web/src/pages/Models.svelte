@@ -137,7 +137,7 @@
       <tbody>
         {#each shown as model (model.ref)}
           <tr><td>{#if model.ref === catalogue.default}<Icon name="star" size={16} label="Default model" /> {/if}{model.ref}{model.listed ? '' : ' (not listed now)'}</td>
-            <td class="small">{model.window.toLocaleString()}</td>
+            <td class="small">{model.window.toLocaleString()}{model.assumed ? ' (assumed)' : ''}</td>
             <td class="small">{#if broken(model)}<span class="tag danger">doesn't work</span> {model.fit.why}{:else}{can(model)}{#if model.fit?.works === null} <span class="tag warn" title={model.fit.why}>unverified</span>{/if}{/if}</td>
             <td><Checkbox aria-label={`Show ${model.ref} in pickers`} checked={model.shown} disabled={broken(model)} onchange={() => show(model)} /></td>
             <td class="row"><button class="small" disabled={broken(model)} onclick={() => setDefault(model.ref)}>Default</button>
