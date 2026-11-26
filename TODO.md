@@ -335,3 +335,187 @@ The server and the web page are done (`docs/DECISIONS.md`, « `/goal` »). Left:
 - **To confirm with the owner:** `/goal resume` (added, because a bare `/goal` shows the state: something must resume without changing a limit).
   On the web page a paused goal that has reached its turn or time limit shows no **Resume** (the server would answer 409), only **+5 turns** or **+10 min**.
 - **Not tried with a real model:** the web page was checked in a browser against a scripted model and judge only.
+
+## Permission tags stay on a tool call after the answer
+
+A tool call that waits for your permission shows an « asked permission » tag on its line, and the sub-agent card shows the same
+state. The tag is read from the text stored in the call's result (`web/src/lib/tools.ts`, `outcome()`), which the server writes
+when the call is held (`gate/approvals.py`, `WAITING`). When the request is settled, `finish()` updates only the approvals table:
+the stored message is never rewritten, so the tag stays after you approve or refuse. A refused request also stores an empty result,
+so it stays on « asked permission » instead of saying « refused ».
+
+What the owner decided:
+
+- **After the answer:** the tag shows the real outcome. After a yes, the tool's real result (done or failed). After a no, « refused »
+  on the tool's name. « asked permission » goes away once the request is answered.
+- **Scope:** every conversation, the main chat and the sub-agent conversations, since they share the same card.
+- **Expired request:** a request that ends with no answer shows « not run ».
+
+What I corrected or added to the owner's plan:
+
+- **Refusal:** a refused call must say « refused », not « asked permission ». The text the server writes for a refusal is not stored
+  with the call, so the card cannot read it today.
+- **The stored result stays as it is:** it is also what Clara reads on her next turn, so rewriting it at the answer would change her
+  context. The fix shows the answer without rewriting history.
+
+Not decided:
+
+- Nothing for the owner to decide here.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- Where the card gets the answer: a lookup of the request's status in the approvals table, using the request number in the stored
+  text (the suggested way), or the live approval events in the page. Plus a test.
+
+What the current design already sets:
+
+- `docs/DECISIONS.md` (the row on the « refused, failed, not run or waits for permission » tag) reads the state from the stored words,
+  « which are what is stored ». The fix keeps that for old conversations, or changes that row.
+- The approvals table keeps each request's outcome (`done`, `failed`, `denied`, `expired`) and its result.
+- Code: `web/src/lib/tools.ts` (`outcome()`), `src/clara/gate/approvals.py` (`WAITING`, `DENIED`, `finish()`).
+- Read in the code only; the bug was not reproduced in a browser.
+
+## Sub agents: the mode decides after outside content
+
+Today a sub agent that read untrusted content is asked for every class the tainted-turn rule raises (`RAISED_WHEN_TAINTED`:
+mail sending, GitHub and Drive writes, and others), whatever its mode says, even a mode that approves everything. The raise is in
+`Gate.decide` (`src/clara/gate/engine.py`), decided on 2026-11-26 (`docs/DECISIONS.md`, « Sub agents »). The owner asks to remove it:
+a sub agent follows its mode like any other conversation.
+
+What the owner decided:
+
+- **The raise goes:** `Gate.decide` no longer asks a sub agent for the classes of `RAISED_WHEN_TAINTED` because it is a sub agent.
+  Its decision is the verdict of its mode, the default mode when it has none.
+- **The mode decides alone:** a mode that approves a class in a tainted turn lets the sub agent do it without a question, as it
+  does for any conversation.
+- **The mode stays a copy of the parent's:** a sub agent still takes its parent's mode at its start, unchanged.
+
+What I corrected or added to the owner's plan:
+
+- **It reverses a decision of 2026-11-26.** The row « A sub agent that read outside content keeps asking, in every mode » of
+  `docs/DECISIONS.md`, the sub agents paragraph of `FEATURES.md`, the docstring of `src/clara/gate/engine.py` and the three tests of
+  `tests/test_subagents.py` that assert the raise change with it. The build adds a dated entry to `docs/DECISIONS.md`.
+- **The cost is visible.** When a parent's mode approves a mail sending in a tainted turn, a sub agent that read a page sends the
+  mail with no card. The built-in default mode asks for these classes when tainted (`builtin_default` in `src/clara/gate/modes.py`,
+  read in the code, not run), so the cost falls on modes that approve them. This is the cost the owner accepted; it is recorded
+  here so that it is seen when the item is built.
+- **`docs/THREAT-MODEL.md` names no sub agent.** The build adds a row: a page read by a sub agent is handled by the mode the sub
+  agent was given.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The wording of the approval card for a sub agent's request, and the tests to rewrite.
+
+What the current design already sets:
+
+- The order of a decision in `docs/DECISIONS.md` and the gate docstring (`src/clara/gate/engine.py`): the floor, the local-only
+  rule, the chat-only rule, the mode's verdict, then the secret check, which raises to `ask` in every mode. Nothing here changes.
+- A sub agent takes its parent's mode and packs at its start, and a sub agent's approval does not hold its parent (`docs/DECISIONS.md`,
+  « Sub agents »). Both stay.
+- `Situation.sub_agent` (`src/clara/gate/actions.py`) is still needed for the wording of a request and the audit log.
+
+## Clara answers the owner while she waits
+
+Today, while Clara's turn waits for a sub agent's report, for an approval card or for the answers to `ask_questions`, a message from the owner does not reach her. The web page holds it in its outbox and sends it when the answer ends (`web/src/pages/Chat.svelte`), and a message sent to the server gets 409 (`src/clara/api/chat.py`). The owner asks that the message interrupt the wait: she reads it, answers with the context of the conversation, and waits again. The turn lock stays, so only one turn runs in a conversation at a time. Checked in the code on 2026-11-26.
+
+What the owner decided:
+
+- **The waits concerned:** every wait of a turn, a sub agent's report (`delegate`), an approval card and the questions of `ask_questions`.
+- **The answer:** the message interrupts the wait. Clara answers with the context of the conversation, then goes back to waiting for what she waited for.
+- **Stopping a sub agent:** Clara can stop a sub agent when the owner asks for it in a message. She asks the owner first, with a card.
+- **An open card stays open:** a message is not an answer to an approval card or to a question. The card stays open; Clara asks for it again after her answer.
+- **The wait rule changes:** the parent no longer waits alone for the report. The owner's message wakes it, it answers, then it waits again.
+
+What I corrected or added to the owner's plan:
+
+- **A message is read at a wait point only.** A message that arrives while the model is writing is read when that model call ends, not in the middle of it. Cutting a generation in mid-sentence is worse than a short delay, and the page says so.
+- **The stop tool is a second new tool.** The decision of 2026-11-26 fixed the new tools at one (`delegate`, `docs/DECISIONS.md`, « Sub agents »). The alternative, a stop triggered by the server on the word « stop », was refused because a word can be sent by mistake. The owner must accept the second tool.
+- **The stop tool is asked each time.** Proposed, not checked: the card for the stop is not covered by « Approve all next », as a sub agent's own requests are not (`docs/DECISIONS.md`, « Sub agents »).
+- **Placement:** a new item at the end of the list. It depends on no other item, but it changes `delegate` and the waiting code in `src/clara/agent/subagents.py`, which the item « Sub agents: the mode decides after outside content » also changes.
+
+Not decided:
+
+- Which clients may send the message during a wait: the web page, the Discord bot (scope `safe`), a script with a limited token.
+- How the answer shows in the page: in the same message as the one that was waiting, or as a message of its own.
+- Whether « Approve all next » covers the stop tool.
+- Whether `/goal` runs are concerned: they are not waits of a turn, so they are left out for now.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- How the turn waits again after its answer: one tool or the same call.
+- The exact behaviour of the page during a wait.
+
+What the current design already sets:
+
+- One turn lock per conversation (`Agent._lock`, `src/clara/agent/runs.py`). A message sent while it is taken gets 409 (`src/clara/api/chat.py`).
+- The parent waits for the sub agent's report with no timer. Stopping the parent stops the sub agent, which keeps what it did, marked interrupted (`docs/DECISIONS.md`, « The parent waits, with no timer »).
+- `ask_questions` pauses the turn until the answers come back (`docs/DECISIONS.md`, the QCM rows).
+- `docs/DECISIONS.md` has the rule that a conversation which is busy answers 409 to a message (the `/goal` row). This item changes it for waits of a turn only; the row needs a dated entry when the item is built.
+
+## Context window of OpenCode Go models
+
+Clara shows 131,072 tokens for every OpenCode Go model: the default `CLARA_OPENCODE_GO_CONTEXT` (`hosted_context["opencode-go"]`), because OpenCode's model list gives names only. Some models are far larger: `opencode-go:deepseek-v4-pro` has 1,000,000 tokens (found on pi.dev and on the DeepSeek and Vercel pages on 2026-11-26; not yet checked on models.dev). The window feeds the context ring and the compaction rule at 80 % of the window, but the 40,000-token rule fires first on a model of that size, so the visible effect is mainly the ring.
+
+What the owner decided:
+
+- **Source:** the window of each OpenCode Go model comes from models.dev, written by `scripts/refresh_opencode_models.py` into the generated table, as the protocol, pictures, tools and thinking already are.
+- **Unknown model:** a model that models.dev does not list keeps 131,072 tokens and is shown as assumed.
+- **Scope:** OpenCode Go only.
+
+What I corrected or added to the owner's plan:
+
+- **No 1 M default:** raising the default for every model would overflow the prompt of a smaller one; the default stays conservative.
+- **Compaction:** the 40,000-token rule (`compact_tokens`) fires before the 80 % rule on a 1 M model, so the fix changes the ring more than when a conversation is compacted (`src/clara/agent/turn.py`). The other uses of the window are not checked yet.
+
+Not decided:
+
+- Whether a manual override of one model's window exists, and under which setting name.
+- How « assumed » shows on the Models page and in the ring.
+- The 1 M figure on models.dev itself, to check before the item is built.
+- The default windows of DeepSeek (131,072 too), Mistral and Ollama cloud: the same defect, in this item or later.
+- Whether the window feeds other calculations (the budget of a prompt, the callers of `Catalog.window()`).
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The field of the generated table, the check of the refresh script, the wording of the label.
+
+What the current design already sets:
+
+- `hosted_context` and `CLARA_OPENCODE_GO_CONTEXT` (`src/clara/settings.py`, `FEATURES.md`, the settings table).
+- `Catalog.window()` (`src/clara/llm/catalog.py`): the model's own window, else the provider's.
+- `src/clara/llm/opencode_models.py` is generated and marked « do not edit ».
+- `tests/test_providers.py` asserts the default of 131,072 and the setting.
+- The compaction rules (`src/clara/agent/turn.py`): 80 % of the window, or 40,000 tokens past the fixed part.
+
+## Side panel: sections that fold
+
+The side panel on the right of a conversation lists, in one column, Clara's plan, the sub agents she started (**Sub agents**) and what she made in the conversation (**Made here**: files, notes and quizzes). Today a section cannot be folded: a long list of files pushes the rest down. The owner asks for a way to fold and unfold each section, as the sections of the panel already show them.
+
+What the owner decided:
+
+- **What folds:** each section, **Sub agents** and **Made here**, by its title. The plan card does not fold: it stays open.
+- **Start:** the panel opens with every section unfolded, as it does today.
+- **Memory:** the choice of each section is kept in the browser, per section, as the panel's own opening is. It is not kept per conversation, and not on the server.
+- **New card:** a section folded by the owner opens again when a new card reaches it (a file, a note, a quiz, a sub agent).
+- **Count:** a folded section's title shows how many cards it holds (for example « Sub agents · 2 »).
+
+What I corrected or added to the owner's plan:
+
+- **The title of Made here:** today it shows only when the conversation also has sub agents (`web/src/components/SidePanel.svelte`, the line that tests `subAgents.length && cards.length`). A section that folds needs its title in every case, so « Made here » gets its own title whether or not there are sub agents.
+- **A waiting request stays visible:** a folded Sub agents section that holds a request waiting for the owner's permission shows it in its count (for example « 1 asks you »). The approval itself stays in the chat: the panel approves nothing, and this only stops a folded section from hiding the request.
+- **No effect on what Clara reads:** folding is display only; it changes nothing the model sees, and no gate rule.
+
+Not decided:
+
+- What « Made here » shows when a conversation has no sub agent, folded or not: its title alone, or nothing until a card arrives.
+- Whether a section folds on a phone, where the panel is a drawer.
+
+Left for the implementation (the owner asked to be shown a proposal and to approve it before it is built):
+
+- The look of the fold control (a chevron on the title, a button or the whole title), the keyboard and screen-reader behaviour, and the name of the browser key.
+
+What the current design already sets:
+
+- The panel is closed until something arrives, it opens by itself on the first card unless closed, and its choice is kept in the browser (`FEATURES.md`, section Chat, side panel).
+- The Sub agents section and its cards are in `web/src/components/SidePanel.svelte`; the cards are read from `GET /v1/conversations/{conversation_id}/sub-agents` and `GET /v1/conversations/{conversation_id}/panel` (`FEATURES.md`, the routes table).
+- Approval cards are in the chat, not in the panel (`docs/DECISIONS.md`, « Sub agents » and the approval rows).
