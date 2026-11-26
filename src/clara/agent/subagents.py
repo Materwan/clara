@@ -2,6 +2,7 @@
 
     delegate(task, title)                     starts a sub agent and waits for its report
     delegate(task, title, sub_agent=<id>)     sends a new task to one of this conversation's sub agents (a re-task)
+    stop(sub_agent=<id>)                      stops a sub agent that is working, when the person asks for it in a message
 
 A sub agent is an ordinary conversation, run by `Agent.turn` like every other (there is no second turn loop): `conversations.parent_id`
 points to the conversation that started it, which keeps it out of the history and of the Discord mirror. It begins with what its
@@ -20,7 +21,11 @@ parent has: the tools (the packs, the limits of a hook's run), the mode (a mode 
 * **A re-task of a sub agent that is still working is queued**: the turns of a conversation take one lock (`Agent._lock`), so the new
   task starts when the running one ends, and the parent is told it was queued. The queue is the waiting calls themselves: it does
   not outlive the server, as the parent's call that waits for it does not either.
-* **No timer.** The parent waits for the report or for the end of the sub agent's turn.
+* **No timer.** The parent waits for the report or for the end of the sub agent's turn. It does not wait alone: a message the person
+  writes meanwhile wakes it (`Agent._wait`), it answers, and the same wait goes on. In that answer, and nowhere else, `stop` is offered.
+* **`stop` is asked each time.** Its class `subagent_stop` is in `NOT_GRANTABLE`: « Approve all next » never covers it, and it is not in
+  a pack. It ends the sub agent's run through `Runs.stop`, as the Stop button of the sub agent's own page does, so its task ends marked
+  interrupted and the parent's `delegate` call is told it was stopped.
 * **A report longer than `REPORT_LIMIT` is cut**, ends with a line that says so, and the parent is told.
 * **A question instead of a report.** A sub agent that cannot go on begins its last message with `QUESTION:`; the parent receives it
   and answers by sending a new task to the same sub agent, which keeps what it has read and done.
@@ -33,11 +38,12 @@ import contextlib
 import secrets
 from typing import TYPE_CHECKING, Any
 
+from ..gate.actions import Action
 from ..gate.modes import DEFAULT
 from ..gate.outside import one_line
 from ..memory.conversations import MAX_TITLE, Conversation
 from ..timeutil import now_iso
-from ..tools.base import Tool, ToolContext, ToolError, fixed
+from ..tools.base import Tool, ToolContext, ToolError, acts_as, fixed
 from ..workspace.store import WorkspaceError
 from .runs import AlreadyRunning
 from .turn import ChatRequest
@@ -84,9 +90,13 @@ class SubAgents:
         """Is a task of this sub agent running or queued? (a turn somebody else started in its conversation counts)"""
         return self._open.get(sub_agent, 0) > 0 or self.s.agent.answering(sub_agent)
 
+    def working(self, parent_id: str) -> list[tuple[str, str]]:
+        """The sub agents of a conversation that are working now, as (id, title)."""
+        rows = self.s.db.all("SELECT id, title FROM conversations WHERE parent_id = ?", (parent_id,))
+        return [(row["id"], row["title"]) for row in rows if self.busy(row["id"])]
+
     def running(self, parent_id: str) -> int:
-        rows = self.s.db.all("SELECT id FROM conversations WHERE parent_id = ?", (parent_id,))
-        return sum(self.busy(row["id"]) for row in rows)
+        return len(self.working(parent_id))
 
     def limits_of(self, conversation_id: str) -> dict:
         """What a sub agent keeps of the limits of the conversation that started it, for every later turn of Clara's in its
@@ -209,6 +219,30 @@ class SubAgents:
         # its own name: the person may have changed it since it started
         name = one_line((s.conversations.get(sub.id) or sub).title, MAX_TITLE)
         return self._answer(sub.id, name, report, asked=asked, queued=queued, waiting=s.approvals.waiting(sub.id))
+
+    def at_work(self, context: ToolContext, sub_agent: Any) -> Conversation:
+        """The sub agent of this conversation that `stop` is asked about: one of its own, and working (a run of the registry)."""
+        again = str(sub_agent or "").strip()
+        found = self.s.conversations.get(again) if again else None
+        if found is None or found.parent_id != context.turn.conversation_id:
+            raise ToolError(
+                f"No sub agent {again or '(none)'} in this conversation: use the id of one that is working."
+            )
+        if self.s.agent.runs.of(found.id) is None:
+            raise ToolError(f"Sub agent {found.id} is not working: there is nothing to stop.")
+        return found
+
+    async def stop(self, context: ToolContext, sub_agent: Any) -> str:
+        found = self.at_work(context, sub_agent)
+        run = self.s.agent.runs.of(found.id)
+        if run is None:  # it ended while the request was waiting for the person's answer
+            raise ToolError(f"Sub agent {found.id} is not working any more: there is nothing to stop.")
+        queued = self._open.get(found.id, 0) > 1
+        await self.s.agent.runs.stop(run, "you asked Clara to stop it")
+        return (
+            f"Sub agent {found.id} was stopped. Its task ended marked interrupted, and what it had done is kept. The call that "
+            "waits for it ends with an error that says so." + (" A task queued behind it starts now." if queued else "")
+        )
 
     def _start(self, context: ToolContext, parent_id: str, title: str) -> Conversation:
         """The conversation of a new sub agent, with what its parent has: nothing here is chosen by the model."""
@@ -338,6 +372,23 @@ async def _delegate(context: ToolContext, task: Any = "", title: Any = "", sub_a
     return await context.services.subagents.delegate(context, task, title, sub_agent)
 
 
+@acts_as("subagent_stop")
+def _stop_action(context: ToolContext, arguments: dict) -> Action:
+    found = context.services.subagents.at_work(context, arguments.get("sub_agent"))
+    title = one_line(found.title, 80)
+    return Action(
+        "",
+        "write",
+        "subagent_stop",
+        ("subagents",),
+        f"Stop sub agent {found.id} ({title}): its task ends, marked interrupted",
+    )
+
+
+async def _stop(context: ToolContext, sub_agent: Any = None) -> str:
+    return await context.services.subagents.stop(context, sub_agent)
+
+
 def delegate_tools() -> list[Tool]:
     return [
         Tool(
@@ -367,5 +418,21 @@ def delegate_tools() -> list[Tool]:
             ("task", "title"),
             parallel=True,
             taints=True,
+            waits=True,
+        ),
+        Tool(
+            "stop",
+            "Stop a sub agent that is working, because the person asked you to in a message they wrote while you waited. The person is "
+            "asked first, each time. Its task ends marked interrupted and what it had done is kept; the `delegate` call that waits "
+            "for it ends with an error that says so. Offered only when you answer a message sent during a wait.",
+            _stop,
+            _stop_action,
+            {
+                "sub_agent": {
+                    "type": "string",
+                    "description": "The id of the sub agent to stop, as the note of the message lists it.",
+                }
+            },
+            ("sub_agent",),
         ),
     ]

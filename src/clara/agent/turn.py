@@ -8,7 +8,7 @@
 `warning`.
 
     turn, thinking, token, tool_start, tool, qcm, plan, file, present, tool_requests, approval, retrying, discarded, usage,
-    done, compacting, compacted, warning
+    wait, interjection, done, compacting, compacted, warning
 
 **Client tools** are tools a client describes in its request and runs on its own machine: when the model calls one,
 the turn emits `tool_requests` and waits for the client to post the results (only the token that opened the turn may).
@@ -16,6 +16,12 @@ the turn emits `tool_requests` and waits for the client to post the results (onl
 **Approvals.** A tool call the gate says to *ask* about is shown as an `approval` event. In a chat the turn waits for
 your answer (CLARA_APPROVAL_WAIT); unattended it never waits. Either way, what was not allowed was not done, and the
 model is told so.
+
+**A message during a wait.** A kept answer (`Runs`) that waits for a sub agent's report, an approval or the answers to
+`ask_questions` takes the person's message (`wait` says when it is waiting). The turn reads it at the wait point, never in the
+middle of a model call, shows it (`interjection`), answers it with the turn's context, and the same wait goes on: it does not start
+again, and an open card or question stays open and is asked again after the answer. The answer may call `stop` (a sub agent that
+works), which always asks. The message and its answer are stored in the turn, after the results of the round they interrupted.
 
 **A prompt is never silently truncated.** Before each round the size is estimated; above 95% of the window the older
 turns are summarised, then the oldest replayed turns are left out, then the oldest tool outputs of this answer (each
@@ -39,13 +45,15 @@ import re
 import time
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING
 
 from ..connectors import asks
 from ..connectors.forms import CLIENTS as FORM_CLIENTS
+from ..gate.outside import one_line
 from ..knowledge.attachments import Attached, Image, without_documents
 from ..knowledge.projects import READ_CHARS_LIMIT
 from ..llm import Choice, NoModel, ToolCall
@@ -102,6 +110,10 @@ TITLE_INSTRUCTIONS = (
 )
 MODES = ("interactive", "unattended")
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
+STOP = "stop"  # the tool that stops a sub agent: offered only to the answer to a message sent during a wait
+ASIDE_ROUNDS = 2  # model rounds of that answer: the first may call `stop`, the second says what came of it
+STILL_WAITING = "[This call has not ended: you are still waiting for its result, which comes when the wait is over.]"
+WAIT_OVER = "(The wait is over: the results of your calls are above. Go on with what you were doing.)"
 
 
 class ServerStopping(Exception):
@@ -204,6 +216,22 @@ class ChatRequest:
     folder: FolderRequest | None = None  # a folder on the person's computer, opened in this web chat (folder tools)
     can_answer_questions: bool = False  # not the web site, but a client that shows Clara's questions (island, phone)
     goal: bool = False  # a turn of the conversation's goal (agent/goals.py)
+
+
+# (the page's ref for a message, its text) -> the events of Clara's answer
+Aside = Callable[[str, str], AsyncIterator[dict]]
+
+
+@dataclass
+class _Said:
+    """What the answers to messages sent during a wait added to the turn: messages for the prompt, rows for the conversation."""
+
+    messages: list[dict] = field(default_factory=list)
+    rows: list[TurnRow] = field(default_factory=list)
+
+    def add(self, message: dict, row: TurnRow) -> None:
+        self.messages.append(message)
+        self.rows.append(row)
 
 
 @dataclass
@@ -793,6 +821,7 @@ class Agent:
             current = RoundResult()
             round_open = False
             spoke = False
+            said = _Said()  # what the answers to messages sent during this round's wait added
             finished = False
             reason = "the connection to the client was lost"
             used = choice
@@ -866,8 +895,15 @@ class Agent:
                     round_open = False
                     tools_used += [call.name for call in calls]
                     results: dict[str, str] = {}
+                    listening = (  # only a kept answer is written to while it waits
+                        self._listening(
+                            messages, ids, calls, results, said, state, request, plan, choice, budget, names
+                        )
+                        if state.hears
+                        else None
+                    )
                     async with contextlib.aclosing(
-                        self._run_tools(list(zip(ids, calls)), state, client_tools, results, request, names)
+                        self._run_tools(list(zip(ids, calls)), state, client_tools, results, request, names, listening)
                     ) as events:
                         async for event in events:
                             yield event
@@ -880,6 +916,13 @@ class Agent:
                         messages.append(output)
                         latest_outputs.append(output)
                         rows.append(TurnRow("tool", results[call_id], tool_name=call.name))
+                    # the person wrote during the wait: their message and the answer come after the results
+                    if said.rows:
+                        messages.extend(said.messages)
+                        messages.append(Instructions({"role": "user", "content": WAIT_OVER}))
+                        rows.extend(said.rows)
+                        spoke = True  # what she writes next is a new paragraph after her answer
+                        said = _Said()
                     for ran in state.skills_run:  # skills she ran: their instructions are messages, not tool results
                         messages.append(Instructions({"role": "user", "content": ran.text}))
                         rows.append(TurnRow("user", ran.text, shown=ran.shown))
@@ -917,7 +960,14 @@ class Agent:
                 self.s.questions.release(state.turn_id)  # questions it was still waiting for you to answer
                 if not finished and stored:
                     if self._keep_interrupted(
-                        request, conversation.id, state, rows, current.text if round_open else "", reason, question_id
+                        request,
+                        conversation.id,
+                        state,
+                        rows,
+                        current.text if round_open else "",
+                        reason,
+                        question_id,
+                        said.rows,
                     ):
                         detached.clear()
             reply = "".join(reply_parts).strip()
@@ -1067,9 +1117,11 @@ class Agent:
         results: dict[str, str],
         request: ChatRequest,
         offered: frozenset[str],
+        aside: Aside | None = None,
     ) -> AsyncIterator[dict]:
         """Run a round's calls: server tools here (consecutive read-only ones together), through the gate; client tools
-        and the folder tools (the person's browser runs them) in one `tool_requests` event, settled when it is answered."""
+        and the folder tools (the person's browser runs them) in one `tool_requests` event, settled when it is answered.
+        `aside`: how the person's messages are answered while the turn waits (a `delegate` call, a card, questions)."""
         remote = [(call_id, call) for call_id, call in calls if call.name in client_tools]
         local = [(call_id, call) for call_id, call in calls if call.name not in client_tools]
         toolbox = self.s.toolbox
@@ -1078,16 +1130,21 @@ class Agent:
             for _, call in batch:
                 yield {"type": "tool_start", "name": call.name, "arguments": call.arguments}
             contexts = [ToolContext(self.s, state) for _ in batch]
-            outcomes: list[CallResult] = await asyncio.gather(
+            work = asyncio.gather(
                 *(
                     toolbox.call(call.name, context, call.arguments, offered)
                     for (_, call), context in zip(batch, contexts)
                 )
             )
+            waits = any(toolbox.waits(call.name) for _, call in batch)
+            async with contextlib.aclosing(self._wait(state, work, aside if waits else None)) as waited:
+                async for event in waited:
+                    yield event
+            outcomes: list[CallResult] = work.result()
             asked: list[tuple[str, ToolCall, CallResult, ToolContext]] = []
             for (call_id, call), outcome, context in zip(batch, outcomes, contexts):
                 if context.asks:  # ask_questions: the questions replace the box you write in, and the turn waits
-                    async for event in self._ask(call_id, call, outcome, context, results):
+                    async for event in self._ask(call_id, call, outcome, context, results, aside):
                         yield event
                     continue
                 if outcome.approval is not None and state.waits_for_approvals:
@@ -1105,12 +1162,17 @@ class Agent:
             if asked:
                 for _, _, outcome, _ in asked:
                     yield {"type": "approval", "approval": outcome.approval.describe()}
-                answers = await asyncio.gather(
+                work = asyncio.gather(
                     *(
                         self.s.approvals.wait(outcome.approval.id, self.settings.approval_wait)
                         for _, _, outcome, _ in asked
                     )
                 )
+                reask = partial(self._reasked, [outcome.approval.id for _, _, outcome, _ in asked])
+                async with contextlib.aclosing(self._wait(state, work, aside, reask)) as waited:
+                    async for event in waited:
+                        yield event
+                answers = work.result()
                 for (call_id, call, outcome, context), answer in zip(asked, answers):
                     approval = outcome.approval
                     if answer is None:
@@ -1168,13 +1230,25 @@ class Agent:
                 yield extra
 
     async def _ask(
-        self, call_id: str, call: ToolCall, outcome: CallResult, context: ToolContext, results: dict[str, str]
+        self,
+        call_id: str,
+        call: ToolCall,
+        outcome: CallResult,
+        context: ToolContext,
+        results: dict[str, str],
+        aside: Aside | None = None,
     ) -> AsyncIterator[dict]:
         """Show the questions of an `ask_questions` call, wait for the answers (as long as an approval is waited for),
         and make them the result of the call."""
         pending = context.asks[0]
         yield {"type": "questions", "ask": pending.describe()}
-        reply = await self.s.questions.wait(pending, self.settings.approval_wait)
+        work = asyncio.ensure_future(self.s.questions.wait(pending, self.settings.approval_wait))
+        async with contextlib.aclosing(
+            self._wait(context.turn, work, aside, partial(self._reasked_questions, pending))
+        ) as waited:
+            async for event in waited:
+                yield event
+        reply = work.result()
         declined = reply is not None and bool(reply.get("declined"))
         if reply is None:
             text = asks.TIMED_OUT
@@ -1185,6 +1259,186 @@ class Agent:
         results[call_id] = text
         yield {"type": "questions_done", "id": pending.id, "declined": declined, "timed_out": reply is None}
         yield self._tool_event(call, text, outcome)
+
+    # ------------------------------------------------------------------
+    # A message during a wait
+    # ------------------------------------------------------------------
+    async def _wait(
+        self, state: TurnState, work: asyncio.Future, aside: Aside | None, again: Callable[[], list[dict]] | None = None
+    ) -> AsyncIterator[dict]:
+        """Wait until `work` is done (the caller then reads its result). With `aside` this is a wait the person may break into: a
+        message sent meanwhile is read at once, answered by `aside`, and the same `work` goes on (`again`: what the answer leaves
+        open, said to the person once more). The wait takes a message only until the instant it ends: no `await` lies between
+        the last look at the inbox and `waits` going down."""
+        if aside is None:
+            await work
+            return
+        state.waits += 1
+        yield {"type": "wait", "on": True}
+        try:
+            while True:
+                if state.inbox:
+                    ref, text = state.inbox.pop(0)
+                    try:
+                        async with contextlib.aclosing(aside(ref, text)) as events:
+                            async for event in events:
+                                yield event
+                    except Exception as error:  # the message is kept; the wait goes on
+                        log.warning("the answer to a message sent during a wait failed: %s", error)
+                        yield {
+                            "type": "warning",
+                            "message": f"Clara could not answer your message while she waited: {error}",
+                        }
+                    for event in again() if again else ():
+                        yield event
+                elif work.done():
+                    break
+                else:
+                    state.wake = asyncio.get_running_loop().create_future()
+                    try:
+                        await asyncio.wait({work, state.wake}, return_when=asyncio.FIRST_COMPLETED)
+                    finally:
+                        state.wake = None
+        finally:
+            state.waits -= 1
+            if not work.done():  # the turn was stopped
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+        yield {"type": "wait", "on": False}
+
+    def _reasked(self, approval_ids: list[int]) -> list[dict]:
+        """The cards still open after an answer to the person's message: they are asked again."""
+        found = (self.s.approvals.get(approval_id) for approval_id in approval_ids)
+        return [
+            {"type": "approval", "approval": item.describe()} for item in found if item and item.status == "pending"
+        ]
+
+    @staticmethod
+    def _reasked_questions(pending) -> list[dict]:
+        return [] if pending.future.done() else [{"type": "questions", "ask": pending.describe()}]
+
+    def _listening(
+        self,
+        messages: list[dict],
+        ids: list[str],
+        calls: list[ToolCall],
+        results: dict[str, str],
+        said: _Said,
+        state: TurnState,
+        request: ChatRequest,
+        plan: TurnPlan,
+        choice: Choice,
+        budget: Budget,
+        names: frozenset[str],
+    ) -> Aside:
+        """How the person's messages are answered while this round waits: the prompt so far, the calls of the round that have no
+        result yet standing in as « not ended », and what earlier messages of the same wait were answered."""
+
+        def aside(ref: str, text: str) -> AsyncIterator[dict]:
+            standing = [
+                {"role": "tool", "tool_name": call.name, "content": results.get(call_id, STILL_WAITING)}
+                for call_id, call in zip(ids, calls)
+            ]
+            view = [*messages, *standing, *said.messages]
+            return self._aside(ref, text, view, said, state, request, plan, choice, budget, bool(names))
+
+        return aside
+
+    def _wait_note(self, state: TurnState) -> str:
+        """What the answer to a message sent during a wait is told about the wait."""
+        conversation = state.conversation_id
+        lines = [
+            "(The person wrote this while you wait for something. Answer it now, with what the conversation shows. Your wait goes "
+            "on after your answer: do not start it again.)"
+        ]
+        working = self.s.subagents.working(conversation)
+        if working:
+            lines.append(
+                "Sub agents working now: "
+                + "; ".join(f"{id} “{one_line(title, 60)}”" for id, title in working)
+                + ". If the person "
+                f"asks you to stop one, call `{STOP}` with its id: the person is asked first."
+            )
+        waiting = self.s.approvals.waiting(conversation)
+        if waiting:
+            lines.append(
+                "Requests still waiting for the person: "
+                + "; ".join(f"#{item.id} {item.for_model}" for item in waiting)
+                + ". This message is not an answer to them: they stay open, and the person is asked again after your answer."
+            )
+        if self.s.questions.waiting(conversation):
+            lines.append("Your questions are still open: this message does not answer them.")
+        return "\n".join(lines)
+
+    async def _aside(
+        self,
+        ref: str,
+        text: str,
+        view: list[dict],
+        said: _Said,
+        state: TurnState,
+        request: ChatRequest,
+        plan: TurnPlan,
+        choice: Choice,
+        budget: Budget,
+        tools: bool,
+    ) -> AsyncIterator[dict]:
+        """The person wrote while the turn waits. They see their message (`interjection`), Clara answers it with the turn's
+        context (a message of its own, stored after the results of the round), and may call `stop` when a sub agent works and the
+        person asks for it. The wait the turn was in is not touched."""
+        turn_id = uuid.uuid4().hex
+        yield {"type": "interjection", "ref": ref, "message": text}
+        state.trusted_urls |= urls_in(text)  # their own words, as for a question
+        state.private.allow(text)
+        # `Instructions`: no question of its own, so cutting a long prompt keeps the question of the turn it belongs to
+        said.add(Instructions({"role": "user", "content": text}), TurnRow("user", text, turn_id=turn_id))
+        now = self._clock(state.timezone).strftime("%H:%M")
+        view = [
+            *view,
+            Instructions({"role": "user", "content": f"[time: {now}]\n\n{self._wait_note(state)}\n\n{text}"}),
+        ]
+        schemas = self.s.toolbox.schemas({STOP}) if tools and self.s.subagents.running(state.conversation_id) else None
+        for round_number in range(ASIDE_ROUNDS):
+            offer = schemas if round_number == 0 else None
+            async for event in self._fit(request, plan, view, offer, compact=False):
+                yield event
+            current = RoundResult()
+            async with contextlib.aclosing(
+                self._model_round(current, view, offer, choice, request, state, False, budget)
+            ) as events:
+                async for event in events:
+                    yield event
+            if not (offer and current.calls):
+                if current.text.strip():
+                    said.add(
+                        {"role": "assistant", "content": current.text},
+                        TurnRow("assistant", current.text, turn_id=turn_id),
+                    )
+                return
+            ids = [f"aside_{round_number}_{index}" for index in range(len(current.calls))]
+            call_dicts = [
+                {"function": {"name": c.name, "arguments": c.arguments}}
+                | ({"extra_content": c.extra} if c.extra else {})
+                for c in current.calls
+            ]
+            assistant = {"role": "assistant", "content": current.text, "tool_calls": call_dicts}
+            if current.thinking:
+                assistant["thinking"] = current.thinking
+            view.append(assistant)
+            said.add(
+                assistant,
+                TurnRow("assistant", current.text, call_dicts, thinking=current.thinking or None, turn_id=turn_id),
+            )
+            results: dict[str, str] = {}
+            async with contextlib.aclosing(
+                self._run_tools(list(zip(ids, current.calls)), state, set(), results, request, frozenset({STOP}))
+            ) as events:
+                async for event in events:
+                    yield event
+            for call_id, call in zip(ids, current.calls):
+                output = {"role": "tool", "tool_name": call.name, "content": results[call_id]}
+                view.append(output)
+                said.add(output, TurnRow("tool", results[call_id], tool_name=call.name, turn_id=turn_id))
 
     @staticmethod
     def _tool_event(call: ToolCall, text: str, outcome: CallResult) -> dict:
@@ -1210,9 +1464,12 @@ class Agent:
         partial: str,
         reason: str,
         question_id: int | None,
+        heard: Sequence[TurnRow] = (),
     ) -> bool:
         """Store what an answer cut short had done, ending with its note. An interactive turn stored its question at the send
-        (`question_id`): the note follows it, even when nothing was said. An unattended run stores nothing when it said nothing."""
+        (`question_id`): the note follows it, even when nothing was said. An unattended run stores nothing when it said nothing.
+        `heard`: the messages the person wrote during the wait that was cut, with their answers; the ones nobody read (in the
+        turn's inbox) come last, after the note."""
         if question_id is None and not rows and not partial.strip():
             return False
         rows = list(rows)
@@ -1221,8 +1478,10 @@ class Agent:
             answered = sum(1 for row in rows[last + 1 :] if row.role == "tool")
             for call in rows[last].tool_calls[answered:]:
                 rows.append(TurnRow("tool", NOT_RUN, tool_name=call["function"]["name"]))
+        rows.extend(heard)
         note = interrupted(reason)
         rows.append(TurnRow("assistant", f"{partial.strip()}\n\n{note}" if partial.strip() else note))
+        rows.extend(TurnRow("user", text, turn_id=uuid.uuid4().hex) for _, text in state.inbox)
         try:
             if question_id is not None:
                 self.s.conversations.add_answer(conversation_id, question_id, rows, turn_id=state.turn_id)

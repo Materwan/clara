@@ -4,6 +4,7 @@ POST /v1/chat/stream                  the events of the turn, as they come (`kee
 POST /v1/chat                         the `done` event only (approvals are not waited for: they are pushed)
 GET /v1/conversations/{id}/run        follow the answer a conversation is giving, from its first event
 DELETE /v1/conversations/{id}/run     stop that answer (what was said is kept, marked interrupted)
+POST /v1/conversations/{id}/run/messages   a message for Clara while that answer waits (web only; 409 when it does not wait)
 POST /v1/turns/{id}/tool-results      a client's answers to `tool_requests` (only the token that opened the turn)
 POST /v1/documents/extract            the text of a PDF or Word file, for a client that puts documents in messages
 """
@@ -228,6 +229,34 @@ async def follow_run(conversation_id: str, request: Request):
 async def stop_run(conversation_id: str, request: Request) -> dict:
     run = _running(request, conversation_id)
     await services(request).agent.runs.stop(run, "you stopped it")
+    return {"ok": True}
+
+
+class WaitMessage(BaseModel):
+    message: str = Field(max_length=MAX_MESSAGE)
+    ref: str = Field(
+        default="",
+        max_length=40,
+        description="The page's own id for the message: the `interjection` event brings it back",
+    )
+
+
+@router.post("/conversations/{conversation_id}/run/messages")
+async def message_during_wait(conversation_id: str, body: WaitMessage, request: Request) -> dict:
+    """The one way to write to a conversation that is answering, and only while its answer waits (for a sub agent's report, an
+    approval, the answers to `ask_questions`): Clara reads the message at the wait point and answers it, and the wait goes on. It is
+    not an answer to a request or to questions. Only the web site's tokens may (the Discord bot and scripts keep the 409 of
+    `POST /v1/chat/stream`); text only."""
+    refuse_when_stopping(request)
+    if caller(request).token.client != "web":
+        raise ApiError(409, "Only the web site may write to Clara while she waits.")
+    run = _running(request, conversation_id)
+    if not body.message.strip():
+        raise ApiError(422, "The message is empty.")
+    if not run.tell(body.ref, body.message):
+        raise ApiError(
+            409, "Clara is not waiting for a report, a request or an answer: wait for the end of her answer."
+        )
     return {"ok": True}
 
 

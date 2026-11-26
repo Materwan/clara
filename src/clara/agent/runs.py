@@ -11,6 +11,9 @@ the conversation.
 
 Only an explicit stop (`Runs.stop`) or the server stopping (`Runs.cancel_all`) ends a run early; what had been said is
 then stored as interrupted, as for any turn cut short.
+
+A run that waits (for a sub agent's report, an approval, the answers to `ask_questions`) takes a message of the person
+(`Run.tell`): the turn reads it at its wait point, answers it, and the same wait goes on (`Agent._wait`).
 """
 
 from __future__ import annotations
@@ -53,6 +56,16 @@ class Run:
             self._log.append(event)
         for queue in self._queues:
             queue.put_nowait(event)
+
+    def tell(self, ref: str, text: str) -> bool:
+        """Hand the person's message to the turn if it is waiting now; False when it is not (nothing was taken)."""
+        state = self.state
+        if self.ended or state.waits <= 0:
+            return False
+        state.inbox.append((ref, text))
+        if state.wake is not None and not state.wake.done():
+            state.wake.set_result(None)
+        return True
 
     def end(self) -> None:
         if self.ended:
@@ -104,6 +117,7 @@ class Runs:
         state = plan.state
         if state.conversation_id and self.of(state.conversation_id) is not None:
             raise AlreadyRunning(state.conversation_id)
+        state.hears = not request.goal  # a goal's turns are not waits the person breaks into (DECISIONS, 2026-11-26)
         run = Run(state, request.shown or request.message, [file.name for file in request.files])
         self._runs[run.turn_id] = run
         run.task = asyncio.ensure_future(self._drive(run, self._open(request, plan), fail))

@@ -56,6 +56,7 @@
     version?: number;
     line?: { text: string; note?: boolean }; // a thin divider instead of a bubble: a stored goal message (« Goal, turn 3 of 10 »), or a note from /goal that is not stored
     question?: Message; // a reply: the question it answers (the message before it), so that no reply reads its place in the list
+    heard?: 'sent' | 'read'; // a message written while Clara waited: sent (she has not read it yet) or read at the wait point
     streaming?: boolean;
     compacting?: boolean; // the answer is complete and stored; the conversation is being summarised after it
     error?: string;
@@ -107,6 +108,8 @@
   let outbox: string[] = []; // answers of a QCM to send Clara, one after the other, when she has finished the one before
   let panelTimer: ReturnType<typeof setTimeout> | undefined;
   let busy = $state(false);
+  let waiting = $state(false); // her answer waits (a sub agent's report, a request, her questions): a message you write now interrupts the wait
+  const unread = new Map<string, Message>(); // the messages written during a wait that she has not read yet, by the ref sent with them
   let goal = $state<Goal | null>(null); // the conversation's goal (`/goal`): the line above the box
   let goalPending = $state(false); // a /goal command is on its way
   let plan = $state<Plan | null>(null); // Clara's plan for the conversation: a card in the side panel, read only
@@ -219,6 +222,8 @@
     controller?.abort();
     controller = null;
     busy = false;
+    waiting = false;
+    unread.clear();
   }
 
   // Opening a conversation: the answer must start within 15 s on a slow link, or it is asked again; a long history is read to its end.
@@ -254,6 +259,8 @@
     sideOpen = false;
     quiz = null;
     pendingAsk = null;
+    waiting = false;
+    unread.clear();
     outbox = [];
     clearTimeout(panelTimer);
     clearTimeout(subsTimer);
@@ -744,6 +751,7 @@
   /** Draw the events of an answer into `current` until its stream ends (`id`: the conversation they belong to). */
   async function follow(events: AsyncIterable<any>, user: Message, current: Message, id: string): Promise<void> {
     let turns = 0; // the turns of a goal this stream has begun: the first is the question already drawn, each after it is a divider and a reply of its own
+    const bubbles = [current]; // her replies of this answer: a message written during a wait starts a new one, and the call that waits ends in the first
     try {
       for await (const event of events) {
         switch (event.type) {
@@ -780,8 +788,31 @@
             addCall(current, { name: event.name, arguments: event.arguments, running: true });
             if (event.name === 'delegate') scheduleSubs(id); // the sub agent is made as the call starts: its card shows as running
             break;
+          case 'wait':
+            waiting = !!event.on;
+            break;
+          case 'interjection': {
+            // her answer to a message written during a wait: it comes after that message, as a message of its own
+            const written = unread.get(event.ref);
+            unread.delete(event.ref);
+            let heard: Message;
+            if (written) heard = written;
+            else {
+              messages.push(yours(event.message)); // written on another page, or before this one was opened
+              heard = messages[messages.length - 1];
+            }
+            heard.heard = 'read';
+            const at = messages.findIndex((item) => item.key === heard.key);
+            const answer = blank('assistant');
+            answer.streaming = true;
+            messages.splice(at + 1, 0, answer);
+            current.streaming = false;
+            current = messages[at + 1];
+            bubbles.push(current);
+            break;
+          }
           case 'tool': {
-            const call = openCall(current, event.name, true);
+            const call = bubbles.map((bubble) => openCall(bubble, event.name, true)).find((found) => found);
             if (call) Object.assign(call, { running: false, result: event.result, granted: event.grant });
             else addCall(current, { name: event.name, arguments: event.arguments, result: event.result, granted: event.grant });
             if (WRITES.has(event.name)) schedulePanel(id);
@@ -789,6 +820,12 @@
             break;
           }
           case 'approval':
+            // a request she asks again after answering a message: the one card is the new one
+            for (const bubble of bubbles) {
+              if (bubble.parts.some((part) => part.kind === 'approval' && part.approval.id === event.approval.id)) {
+                bubble.parts = bubble.parts.filter((part) => !(part.kind === 'approval' && part.approval.id === event.approval.id));
+              }
+            }
             current.parts.push({ kind: 'approval', approval: event.approval });
             break;
           case 'qcm':
@@ -854,6 +891,9 @@
     if (controller !== mine) return; // left, or another stream has taken over
     controller = null;
     busy = false;
+    waiting = false;
+    for (const bubble of unread.values()) bubble.heard = undefined; // none was read: the server stored them, and the page reads them back
+    unread.clear();
     pendingAsk = null; // the answer is over: nobody waits for these questions any more
     drain();
     if (!id) return;
@@ -896,6 +936,7 @@
   async function send(text = draft, forkOf: number | null = null, carried?: { name: string; data: string }[]): Promise<void> {
     if (isGoalCommand(text) && forkOf === null && !carried) return runGoal(goalArgs(text), text === draft); // a goal command is never a message for the model
     if (conversation?.archived || loadError) return; // a conversation that did not load takes no message
+    if (busy && waiting && forkOf === null && !carried) return interject(text);
     if (busy || (!text.trim() && !attached.length)) return;
     busy = true;
     const mine = new AbortController();
@@ -937,6 +978,31 @@
       if (current) current.streaming = false;
       turnFolder = null;
       finished(mine, id);
+    }
+  }
+
+  /** A message written while her answer waits: sent at once and drawn at once, and she reads it at the wait point (never in the middle of a sentence).
+   *  Text only. The server refuses (409) when she is not waiting any more: the message goes back in the box. */
+  async function interject(text: string): Promise<void> {
+    const id = conversationId;
+    if (!id || !text.trim()) return;
+    if (attached.length) {
+      toast('A message written while Clara waits carries text only: send the files when she has answered.', 'info');
+      return;
+    }
+    const ref = crypto.randomUUID();
+    messages.push(Object.assign(yours(text), { heard: 'sent' as const }));
+    const user = messages[messages.length - 1];
+    unread.set(ref, user);
+    draft = '';
+    scrollDown(true);
+    try {
+      await api.post(`/v1/conversations/${id}/run/messages`, { message: text, ref });
+    } catch (error) {
+      unread.delete(ref);
+      messages.splice(messages.findIndex((item) => item.key === user.key), 1);
+      draft = text;
+      toast(error instanceof ApiError && error.status === 409 ? 'Clara is not waiting any more: send your message when she has answered.' : (error as Error).message, error instanceof ApiError && error.status === 409 ? 'info' : 'error');
     }
   }
 
@@ -990,6 +1056,7 @@
     const id = conversationId;
     outbox = [];
     pendingAsk = null;
+    waiting = false;
     if (id) await api.del(`/v1/conversations/${id}/run`).catch(() => {});
     controller?.abort();
     if (id) await refresh(id).catch(() => {});
@@ -1393,6 +1460,7 @@
                 {#if message.attachments.length}
                   {@render files(message)}
                 {/if}
+                {#if message.heard}<div class="reply-notes" role="status"><span>{message.heard === 'sent' ? 'Written during a wait: Clara reads it at the wait point.' : 'Read at the wait point.'}</span></div>{/if}
                 {#if !message.quiz && (message.versions || (message.id && !busy))}
                   <div class="msg-actions">
                     {#if message.versions}
@@ -1501,7 +1569,7 @@
         {#key pendingAsk.id}
           <AskQuestions ask={pendingAsk} onDone={() => (pendingAsk = null)} />
         {/key}
-      {:else}
+      {/if}
       <div class="composer-inner">
         {#if rows.length}<SkillMenu {rows} {at} projects={projectList} onPick={pickCommand} />{/if}
         {#if activePacks.some((id) => id !== 'web') || !activePacks.includes('web')}
@@ -1538,7 +1606,7 @@
           {#if styled}
             <div class="mirror" aria-hidden="true" bind:this={mirror}><span class="command-name" style:letter-spacing={`${spacing(styled.name)}px`}>{styled.name}</span>{styled.rest}<span class="faded">{styled.faded}</span></div>
           {/if}
-          <textarea rows="1" placeholder={conversation?.parent ? 'Write to this sub agent' : 'Write to Clara'} aria-label="Your message" bind:value={draft} use:autosize={[draft, styled]} bind:this={box} class:mirrored={!!styled}
+          <textarea rows="1" placeholder={waiting ? 'Clara is waiting: write to her' : conversation?.parent ? 'Write to this sub agent' : 'Write to Clara'} aria-label="Your message" bind:value={draft} use:autosize={[draft, styled]} bind:this={box} class:mirrored={!!styled}
             role={combo ? 'combobox' : undefined} aria-autocomplete={combo ? 'list' : undefined} aria-haspopup={combo ? 'listbox' : undefined}
             aria-expanded={combo ? rows.length > 0 : undefined} aria-controls={rows.length ? 'skill-menu' : undefined}
             aria-activedescendant={rows.length ? optionId(rows[at].name) : undefined}
@@ -1557,15 +1625,15 @@
             {#each models.models as model (model.ref)}<option value={model.ref}>{model.ref}</option>{/each}
           </select>
           <MicButton conversation={conversationId} disabled={!!conversation?.archived || !!loadError} onAnswer={dictated} />
+          {#if !busy || waiting}
+            <button class="send" title={waiting ? 'Send: Clara reads it at the wait point' : 'Send'} aria-label="Send" disabled={!!conversation?.archived || !!loadError || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
+          {/if}
           {#if busy}
             <button class="send stop" title={compacting ? 'Stop compacting' : 'Stop'} aria-label={compacting ? 'Stop compacting' : 'Stop'} onclick={stop}><Icon name="stop" /></button>
-          {:else}
-            <button class="send" title="Send" aria-label="Send" disabled={!!conversation?.archived || !!loadError || (!draft.trim() && !attached.length)} onclick={() => send()}><Icon name="send" /></button>
           {/if}
         </div>
       </div>
       {#if hinted && chips.length}<SkillHint {chips} onOn={switchOn} />{/if}
-      {/if}
       <p class="composer-hint">Enter sends, Shift+Enter starts a new line.{commands.length ? ' Type / for commands.' : ''} Drop or paste files to attach them (4 at most).</p>
     </div>
   </div>

@@ -285,6 +285,8 @@ def build_services(settings: Settings, db: Database, *, provider_factory=None) -
     s.reader = Reader(s)
     s.subagents = SubAgents(s)
     s.agent.tool_conditions["delegate"] = s.subagents.offered
+    # only the answer to a message sent during a wait is offered `stop` (Agent._aside)
+    s.agent.tool_conditions["stop"] = lambda state: False
     s.agent.tool_conditions["discord_say"] = can_say
     s.agent.tool_conditions["discord_forget"] = lambda state: False  # only an approved request runs it
     s.agent.tool_conditions["skill_run"] = skill_offered(s)

@@ -123,6 +123,7 @@ class TurnRow:
     tool_name: str | None = None
     thinking: str | None = None
     shown: str = ""  # a user row after a tool call: the skill Clara ran (RAN)
+    turn_id: str | None = None  # its own turn, when it is not the turn that stores it (a message sent in a wait)
 
 
 def _packs(text: str) -> tuple[str, ...]:
@@ -632,7 +633,7 @@ class Conversations:
                     json.dumps(row.tool_calls, ensure_ascii=False) if row.tool_calls else None,
                     row.tool_name,
                     row.thinking or None,
-                    turn_id,
+                    row.turn_id or turn_id,
                     now,
                     row.shown,
                 ),

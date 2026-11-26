@@ -16,6 +16,7 @@ runs: so it must look only where the gate would allow the same look.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
@@ -73,6 +74,13 @@ class TurnState:
     files_written: list[dict] = field(default_factory=list)  # workspace notes changed this turn (chat cards)
     stop_reason: str = ""  # who cut the turn short, for the note stored with what it had said ("" : the client left)
     folder: FolderGrant | None = None  # the folder open on the person's computer in this web chat (folder tools)
+    # Messages the person sends while the turn waits (a sub agent's report, an approval, the answers to `ask_questions`): the turn reads
+    # them at its wait point (`Agent._wait`). `hears` is set by `Runs.start` for a kept answer, the only turn a page can write to;
+    # `waits` counts the waits in progress, and a message is taken only while it is above 0; `wake` is what the wait sleeps on.
+    hears: bool = False
+    waits: int = 0
+    inbox: list[tuple[str, str]] = field(default_factory=list)  # (the page's ref for the message, its text)
+    wake: asyncio.Future | None = None
 
     @property
     def situation(self) -> Situation:
@@ -122,6 +130,7 @@ class Tool:
     parameters: dict[str, dict] = field(default_factory=dict)
     required: tuple[str, ...] = ()
     parallel: bool = False  # only reads: several calls of such tools in one round run at the same time
+    waits: bool = False  # it waits for something long (a sub agent's report): the person's message breaks into the wait
     taints: bool = False  # it brings untrusted content into the turn (a web page, an issue, a fetched file)
     public: bool = False  # what it returns is public (the web): a search query may repeat it; the rest is private text
     remote: Remote | None = None  # run by the person's browser, not here (`function` is then never called)
@@ -224,6 +233,10 @@ class Toolbox:
     def parallel(self, name: str) -> bool:
         tool = self._tools.get(name)
         return tool is not None and tool.parallel
+
+    def waits(self, name: str) -> bool:
+        tool = self._tools.get(name)
+        return tool is not None and tool.waits
 
     def is_remote(self, name: str) -> bool:
         tool = self._tools.get(name)

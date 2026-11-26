@@ -201,3 +201,8 @@ tainted = "ask"
 [[verdict]]
 class = "skill_pack"
 verdict = "ask"
+
+# Stop a sub agent that is working: the request names it, its task ends marked interrupted, and it is asked each time (no Approve all next)
+[[verdict]]
+class = "subagent_stop"
+verdict = "ask"

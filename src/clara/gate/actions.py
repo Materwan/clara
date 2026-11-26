@@ -124,6 +124,12 @@ CLASSES: dict[str, tuple[str, str, str]] = {
         "Run a skill that needs a tool pack that is off here: the request shows the skill, the pack and every argument, "
         "and allowing it switches the pack on for the conversation",
     ),
+    "subagent_stop": (
+        "any_read",
+        "all",
+        "Stop a sub agent that is working: the request names it, its task ends marked interrupted, and it is asked each "
+        "time (no Approve all next)",
+    ),
 }
 # Classes of a web chat only: a run nobody watches has no browser to answer them, so no mode opens them
 CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
@@ -131,8 +137,9 @@ CHAT_ONLY = frozenset({"folder_read", "folder_sensitive"})
 FOR_A_CONVERSATION = frozenset({"folder_sensitive"})
 # Classes whose card never offers "Approve all next": what the request shows (a feed, with its latest titles) is chosen by a page, so
 # each one must be read; a grant would let a page have the next ones followed unseen. A skill that switches a pack on: a grant on
-# `skill_run` (the same tool) must not carry over to the call that opens a pack, so each one is read
-NOT_GRANTABLE = frozenset({"feed_follow", "skill_pack"})
+# `skill_run` (the same tool) must not carry over to the call that opens a pack, so each one is read. Stopping a sub agent is the
+# owner's call each time (2026-11-26)
+NOT_GRANTABLE = frozenset({"feed_follow", "skill_pack", "subagent_stop"})
 # Classes whose requests are not published as events: their summary names a file of the person's computer, which must
 # not reach Discord's #approval or another client; the web chat shows them on its turn
 NOT_PUBLISHED = frozenset({"folder_sensitive"})

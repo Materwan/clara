@@ -91,7 +91,7 @@
 
   function keydown(event: KeyboardEvent): void {
     if (event.target instanceof Element && event.target.closest('.side-panel')) return; // the panel beside has its own keys
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && !(event.target instanceof HTMLTextAreaElement)) { // not in the box you write to Clara in: it is beside the questions
       event.preventDefault();
       dismiss();
       return;
