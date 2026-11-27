@@ -783,7 +783,7 @@ moves forward by the gap (02:30 becomes 03:30); the hour that repeats in autumn 
 - **A message while she waits:** while a kept answer (`keep_running`, the web's) waits for a sub agent's report (`delegate`), for an approval card or
   for the answers to `ask_questions`, you can write to her. `POST /v1/conversations/{conversation_id}/run/messages` takes `{"message", "ref"}` (text
   only, no file; `ref` is the page's own id for the message) and answers `{"ok": true}` at once: **only the web site's tokens may** (any other token
-  gets 409, and so does a conversation that is answering but not waiting, and `POST /v1/chat/stream` keeps its 409 for everyone; 404 when nothing is
+  gets 409, and so does a conversation that is answering but not waiting, and `POST /v1/chat/stream` is unchanged (its 409 for a busy conversation comes only with `keep_running`; without it the request waits behind the running turn); 404 when nothing is
   answering there). The turn reads the message **at the wait point**, never in the middle of a model call (a message that comes while she is writing
   is read when that call ends, or when the answer to the one before ends), sends `interjection`, and answers it **with the context of the turn** as a
   message of its own, after yours: a prompt with the calls that wait standing in as « not ended », and, listed in a note, the sub agents that work,
