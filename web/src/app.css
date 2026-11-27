@@ -807,7 +807,7 @@ dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 .composer-bar .level-select:hover { background-color: var(--hover); color: var(--text); }
 .composer-bar .mic { margin-left: auto; } /* the microphone and Send sit together at the right: only the first takes the free space */
 .composer-bar .mic + .send, .composer-bar .send + .send { margin-left: 0; } /* Send beside Stop while Clara waits */
-.send { width: 40px; height: 40px; padding: 0; margin-left: auto; border-radius: var(--r-md); background: var(--accent); color: var(--accent-ink); border: none; }
+.send { flex: none; width: 40px; height: 40px; padding: 0; margin-left: auto; border-radius: var(--r-md); background: var(--accent); color: var(--accent-ink); border: none; }
 .send:hover:not(:disabled) { background: var(--accent-hover); }
 .send:disabled { opacity: .35; }
 .send.stop { background: var(--text); color: var(--bg); }
